@@ -13,6 +13,8 @@ import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.widget.EditText
 
+private const val MAX_REMOTE_DELETE_KEYS = 1024
+
 internal class TerminalInputView(
   context: Context,
   private val onInput: (String) -> Unit
@@ -47,6 +49,7 @@ internal class TerminalInputView(
         event.action == KeyEvent.ACTION_DOWN
       val isEnter = isImeSend || isHardwareEnter
       if (isEnter) {
+        commitPendingText()
         // Enter must send CR: raw-mode TUIs treat LF as Ctrl+J (insert newline).
         onInput("\r")
         true
@@ -83,6 +86,7 @@ internal class TerminalInputView(
         true
       }
       keyCode == KeyEvent.KEYCODE_ENTER && event.isShiftPressed -> {
+        commitPendingText()
         onInput("\u001b[13;2u")
         true
       }
@@ -133,6 +137,12 @@ internal class TerminalInputView(
     }
   }
 
+  private fun commitPendingText() {
+    // Some IMEs submit without finishing composition first.
+    BaseInputConnection.removeComposingSpans(text)
+    flushCommittedText()
+  }
+
   private fun flushCommittedText() {
     val editable = text
     if (editable.isEmpty() || BaseInputConnection.getComposingSpanStart(editable) >= 0) return
@@ -151,7 +161,14 @@ internal class TerminalInputView(
   }
 
   private fun sendRemoteDelete(beforeLength: Int, afterLength: Int): Boolean {
-    if (beforeLength < 0 || afterLength < 0) return false
+    // The empty editable cannot bound IME requests. Reject oversized key
+    // expansions rather than allocating on the UI thread or deleting partially.
+    if (
+      beforeLength < 0 || afterLength < 0 ||
+      beforeLength.toLong() + afterLength.toLong() > MAX_REMOTE_DELETE_KEYS
+    ) {
+      return false
+    }
     // The committed text lives in the remote PTY, so Android's empty local
     // editable cannot implement deletion for software keyboards.
     val data = "\u007f".repeat(beforeLength) + "\u001b[3~".repeat(afterLength)

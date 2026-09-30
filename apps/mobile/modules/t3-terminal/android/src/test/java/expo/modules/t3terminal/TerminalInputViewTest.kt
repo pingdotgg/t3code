@@ -3,6 +3,7 @@ package expo.modules.t3terminal
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.TextAttribute
 import android.view.KeyEvent
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,6 +40,23 @@ class TerminalInputViewTest {
   }
 
   @Test
+  fun oversizedSoftwareDeletionIsRejectedBeforeExpandingKeySequences() {
+    val output = mutableListOf<String>()
+    val editor = TerminalInputView(RuntimeEnvironment.getApplication(), output::add)
+    val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
+
+    assertFalse(input.deleteSurroundingText(4096, 0))
+    assertFalse(input.deleteSurroundingText(Int.MAX_VALUE, Int.MAX_VALUE))
+    assertFalse(input.deleteSurroundingTextInCodePoints(Int.MAX_VALUE, 1))
+    assertFalse(input.deleteSurroundingText(-1, 0))
+    assertTrue(input.deleteSurroundingText(0, 0))
+
+    assertEquals(emptyList<String>(), output)
+    assertTrue(input.deleteSurroundingText(2, 1))
+    assertEquals(listOf("\u007f\u007f\u001b[3~"), output)
+  }
+
+  @Test
   fun softwareEnterSendsOneCarriageReturn() {
     val output = mutableListOf<String>()
     val editor = TerminalInputView(RuntimeEnvironment.getApplication(), output::add)
@@ -47,6 +65,19 @@ class TerminalInputViewTest {
     assertTrue(input.performEditorAction(EditorInfo.IME_ACTION_SEND))
 
     assertEquals(listOf("\r"), output)
+  }
+
+  @Test
+  fun softwareEnterCommitsTheCandidateBeforeSubmitting() {
+    val output = mutableListOf<String>()
+    val editor = TerminalInputView(RuntimeEnvironment.getApplication(), output::add)
+    val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
+
+    input.setComposingText("こんにちは", 1)
+    assertTrue(input.performEditorAction(EditorInfo.IME_ACTION_SEND))
+    input.finishComposingText()
+
+    assertEquals(listOf("こんにちは", "\r"), output)
   }
 
   @Test
