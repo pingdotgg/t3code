@@ -1165,6 +1165,63 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a reused subagent's background subagent tracked and stops it", () =>
+    Effect.gen(function* () {
+      const again = "call-middle-again";
+      const { runtime, thread } = yield* resumed([
+        ...nestedLaunch,
+        // The next turn gives the running subagent the thread's rules, and its
+        // model calls the middle subagent again, by its session.
+        out("session.update", { sessionID: DEEP, permissions: "<any>" }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...toolOf(SESSION, again), name: "subagent" }),
+        event("session.tool.called", {
+          ...toolOf(SESSION, again),
+          name: "subagent",
+          input: { description: "Middle", prompt: "again", sessionID: MIDDLE },
+          executed: false,
+        }),
+        event("session.tool.progress", {
+          ...toolOf(SESSION, again),
+          metadata: { sessionID: MIDDLE, status: "running" },
+        }),
+        out("session.update", { sessionID: MIDDLE, permissions: "<any>" }),
+        reply("session.update", null),
+        event("session.execution.started", { sessionID: MIDDLE }),
+        event("session.execution.succeeded", { sessionID: MIDDLE }),
+        event("session.tool.success", {
+          ...toolOf(SESSION, again),
+          content: [{ type: "text", text: `<subagent sessionID="${MIDDLE}" state="completed">` }],
+          metadata: { sessionID: MIDDLE, status: "completed", truncated: false },
+          executed: false,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // A Stop still reaches the subagent the first call started.
+        out("session.interrupt", { sessionID: DEEP }),
+        reply("session.interrupt", { interrupted: true }),
+      ]);
+      const watch = yield* watchNested(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.terminals.length === 1);
+      yield* runtime.startTurn({ ...secondTurn(thread), appThread: withLineage(thread).appThread });
+      yield* watch.until(() => watch.terminals.length === 2);
+      assert.deepEqual(watch.terminals, ["completed", "completed"]);
+      // The first call's background subagent still runs after the second call.
+      assert.equal(watch.deep.at(-1), "running");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      // The replay fails on a Stop that does not interrupt it.
+      yield* watch.until(() => watch.deep.at(-1) === "interrupted");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops the turn a foreground subagent runs to answer its background subagent", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -3544,6 +3601,149 @@ describe("OpenCode2 adapter", () => {
         runtimePolicy: { ...policy(), cwd: target },
       });
       assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+    }).pipe(Effect.scoped),
+  );
+
+  /**
+   * A turn launches a background subagent; its report wakes the session into
+   * a continuation turn. Then `after` runs (a fork or a rollback to the first
+   * turn), which must cut before the report the continuation answers.
+   */
+  const continued = (after: ReadonlyArray<ProviderReplayEntry>) =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequest> = [];
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.inbox.enqueued", {
+          inboxID: "msg_report",
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: CONTINUED_REPORT,
+              description: "Sleep",
+              metadata: {
+                source: "subagent",
+                childID: CHILD,
+                agent: "General",
+                state: "completed",
+              },
+            },
+            delivery: "steer",
+          },
+        }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_followup",
+          ordinal: 0,
+          text: "CHILD_OK",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...after,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Effect.sync(() => void offers.push(request)),
+          take: Effect.never,
+        }),
+      );
+      const turns: Array<OrchestrationV2ProviderTurn> = [];
+      const bothEnded = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "provider_turn.updated" && event.providerTurn.status !== "running") {
+              turns.push(event.providerTurn);
+              if (turns.length === 2) yield* Deferred.succeed(bothEnded, undefined);
+            }
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Effect.gen(function* () {
+        while (offers.length === 0) yield* Effect.yieldNow;
+      }).pipe(Effect.timeout("2 seconds"), Effect.orDie);
+      yield* runtime.startTurn({
+        ...withLineage(thread),
+        runId: RunId.make("run:opencode2-adapter:wake"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:wake"),
+        message: {
+          ...turnInput(thread).message,
+          messageId: MessageId.make("message:opencode2-adapter:wake"),
+          createdBy: "agent" as const,
+          creationSource: "provider" as const,
+        },
+      });
+      yield* Deferred.await(bothEnded);
+      const [first, second] = turns;
+      return { runtime, thread, first: first!, second: second! };
+    });
+  const CONTINUED_PROMPT = `msg_t3_turn_${SESSION}:attempt:attempt:opencode2-adapter`;
+  const CONTINUED_REPORT = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
+  const continuedHistory = {
+    data: [
+      { id: "msg_report", time: { created: 2 }, text: CONTINUED_REPORT, type: "synthetic" },
+      { id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" },
+    ],
+    cursor: {},
+  };
+
+  it.effect("forks before a continuation's report, so the fork leaves out its answer", () =>
+    Effect.gen(function* () {
+      const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+      const { runtime, thread, first, second } = yield* continued([
+        out("message.list", "<any>"),
+        reply("message.list", continuedHistory),
+        // The replay fails on a fork without this cut.
+        out("session.fork", { sessionID: SESSION, before: "msg_report" }),
+        replyData("session.fork", sessionInfo({ id: FORK })),
+        out("session.update", { sessionID: FORK, permissions: "<any>" }),
+        reply("session.update", null),
+      ]);
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: thread,
+        targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+        providerTurnId: first.id,
+        sourceProviderTurns: [first, second],
+      });
+      assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rolls back before a continuation's report, so its answer leaves the history", () =>
+    Effect.gen(function* () {
+      const { runtime, thread, first, second } = yield* continued([
+        out("message.list", "<any>"),
+        reply("message.list", continuedHistory),
+        // The replay fails on a rollback that makes no cut here.
+        out("session.revert.stage", { sessionID: SESSION, messageID: "msg_report", files: false }),
+        replyData("session.revert.stage", { messageID: "msg_report", files: [] }),
+        out("session.revert.commit", { sessionID: SESSION }),
+        reply("session.revert.commit", null),
+        out("message.list", "<any>"),
+        reply("message.list", { data: [continuedHistory.data[1]], cursor: {} }),
+      ]);
+      const snapshot = yield* runtime.rollbackThread({
+        providerThread: thread,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint:first"),
+          appRunOrdinal: 1,
+          providerTurn: first,
+        },
+        providerThreadTurns: [first, second],
+      });
+      assert.deepEqual(
+        snapshot.providerTurns.map((turn) => turn.id),
+        [first.id],
+      );
     }).pipe(Effect.scoped),
   );
 

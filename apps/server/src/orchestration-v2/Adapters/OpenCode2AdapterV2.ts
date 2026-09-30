@@ -210,7 +210,7 @@ interface TurnOwner {
 
 interface ActiveTurn {
   readonly input: TurnOwner;
-  readonly providerTurn: OrchestrationV2ProviderTurn;
+  providerTurn: OrchestrationV2ProviderTurn;
   /** Open text and reasoning blocks, keyed `<assistantMessageID>:<kind>:<ordinal>`. */
   readonly texts: Map<string, OpenBlock>;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
@@ -309,6 +309,8 @@ interface Wake {
   dropped: boolean;
   /** The last report it delivered (inbox ids are history ids): its execution follows it. */
   readonly after: string | undefined;
+  /** The first report it delivered, where fork and rollback cut before its turn. */
+  readonly first: string | undefined;
 }
 
 interface OpenBlock {
@@ -350,7 +352,7 @@ interface ThreadState {
    * Set on a subagent's session: the call that runs it and the thread it
    * shows in. Each of its executions is a runless turn there.
    */
-  readonly subagent:
+  subagent:
     | {
         call: SubagentCall;
         readonly appThread: OrchestrationV2AppThread;
@@ -702,12 +704,13 @@ const promptOf = (turn: OrchestrationV2ProviderTurn) => {
 
 /**
  * Where fork and rollback cut to keep the session's turns up to `kept` (all of
- * them before the first turn when undefined): before the prompt of the next
- * turn that reached OpenCode, whose message is in `prompts`. A turn refused
- * before it prompted is not in the session and is passed over, and so is a
- * continuation turn, which OpenCode started without a prompt of T3's. `null`
- * means nothing follows, so there is no cut; a later turn from before T3
- * chose prompt ids has no known message, so no cut is safe.
+ * them before the first turn when undefined): before the message that starts
+ * the next turn that reached OpenCode, which is in `prompts`. That is a turn's
+ * prompt, or for a continuation the report it answers. A turn refused before
+ * it prompted is not in the session and is passed over, and so is a
+ * continuation that took no report. `null` means nothing follows, so there is
+ * no cut; a later turn from before T3 chose prompt ids has no known message,
+ * so no cut is safe.
  */
 const boundaryAfter = (
   turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
@@ -1446,20 +1449,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         createdAt: now,
         updatedAt: now,
       };
-      // A subagent called again keeps its session and what T3 knew of it,
-      // including how many turns it ran: each one's native id is its own.
+      // A subagent called again keeps its session's state: how many turns it
+      // ran (each one's native id is its own), its grants and rules, and the
+      // background work an earlier call left running, which Stop must reach.
       const previous = threads.get(childId);
-      const child = newThreadState(childId, providerThread, call.state.directory, {
+      const subagent = {
         call,
         appThread,
         turns: previous?.subagent?.turns ?? 0,
         prompt: call.prompt,
         queued: undefined,
-      });
-      child.agent = info?.agent ?? call.agent ?? previous?.agent ?? child.agent;
-      child.grants.push(...(previous?.grants ?? []));
+      };
+      const child =
+        previous ?? newThreadState(childId, providerThread, call.state.directory, subagent);
+      child.subagent = subagent;
+      child.providerThread = providerThread;
+      child.directory = call.state.directory;
+      child.agent = info?.agent ?? call.agent ?? child.agent;
       // OpenCode gives a new session its parent's rules, which are the thread's.
-      child.rules = info?.permissions ?? previous?.rules;
+      child.rules = info?.permissions ?? child.rules;
       threads.set(childId, child);
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
@@ -2304,6 +2312,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
+        first: delivered[0]?.inboxId,
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -3070,17 +3079,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    /** The ids of the session's user messages: the prompts a cut can land on. */
+    /**
+     * The ids fork and rollback can cut before: the session's prompts, and the
+     * reports continuations answer. The list takes one type, so it reads all.
+     */
     const userMessages = (sessionId: string) =>
-      paginate(
-        { sessionID: Session.ID.make(sessionId), type: "user" as const, limit: 100 },
-        client.message.list,
-      ).pipe(
+      paginate({ sessionID: Session.ID.make(sessionId), limit: 100 }, client.message.list).pipe(
         Stream.runCollect,
         Effect.map(
           (messages) =>
             new Set(
-              messages.flatMap((message) => (message.type === "user" ? [String(message.id)] : [])),
+              messages.flatMap((message) =>
+                message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
+              ),
             ),
         ),
       );
@@ -3255,7 +3266,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           nodeId: turnInput.rootNodeId,
           runAttemptId: turnInput.attemptId,
           // The user message it prompts with, where fork and rollback cut. A
-          // continuation prompts nothing, so it has no message to cut at.
+          // continuation prompts nothing; it records the report it answers
+          // once it takes its execution.
           nativeTurnRef: ref(
             isContinuation(turnInput)
               ? wakeTurnId(state.sessionId, turnInput.attemptId)
@@ -3328,6 +3340,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (wake === undefined) return yield* finishTurn(state, { status: "completed" });
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
+          // Its first report is where its history begins, so fork and rollback cut there.
+          if (turn !== undefined && wake.first !== undefined) {
+            turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
+          }
           yield* replay(wake);
         }),
       );
