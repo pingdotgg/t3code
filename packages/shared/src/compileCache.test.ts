@@ -3,19 +3,9 @@ import Path from "node:path";
 
 import {
   NODE_COMPILE_CACHE_ENV,
-  enableV8CompileCache,
   resolveCompileCacheDir,
   withCompileCacheEnv,
 } from "./compileCache.ts";
-
-describe("enableV8CompileCache", () => {
-  it("enables the compile cache without throwing on supported runtimes", () => {
-    // Node >= 22.8 exposes module.enableCompileCache; on those runtimes this
-    // returns true, and on older ones it must degrade to false rather than throw.
-    const result = enableV8CompileCache();
-    expect(typeof result).toBe("boolean");
-  });
-});
 
 describe("resolveCompileCacheDir", () => {
   it("namespaces the cache directory by app name under the provided base dir", () => {

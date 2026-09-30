@@ -2435,7 +2435,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("recovers a review worker from a shell snapshot before navigating", async () => {
+  it("keeps a review worker in the background and opens it on demand", async () => {
     const workerThreadId = ThreadId.make("review-worker-thread");
     let workerSnapshot: OrchestrationReadModel | null = null;
     const mounted = await mountChatView({
@@ -2533,6 +2533,23 @@ describe("ChatView timeline estimator parity (full app)", () => {
               (request) => request._tag === ORCHESTRATION_WS_METHODS.getShellSnapshot,
             ),
           ).toBe(true);
+          expect(document.body.textContent).toContain("Workflow started in background");
+          expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const openThreadButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (element) => element.textContent?.trim() === "Open thread",
+          ) ?? null,
+        "Unable to find Open thread toast action.",
+      );
+      openThreadButton.click();
+
+      await vi.waitFor(
+        () => {
           expect(mounted.router.state.location.pathname).toBe(serverThreadPath(workerThreadId));
         },
         { timeout: 8_000, interval: 16 },
@@ -3610,6 +3627,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 50 },
       );
+      await expect.element(page.getByLabelText("Sidebar icon size")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

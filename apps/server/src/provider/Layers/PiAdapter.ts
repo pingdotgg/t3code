@@ -1073,15 +1073,20 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
           return;
         }
         if (event["probeFailed"] === true) {
-          if (!settleAfterAgentActivity) {
-            yield* finalizeTurn(ctx);
-            return;
-          }
+          // A failed probe is unknown, not proof of idleness: Pi may be
+          // running a blocked extension command that holds the RPC loop past
+          // the probe timeout. Finalizing here would let the next T3 turn run
+          // concurrently with that invisible work, so retry first and keep
+          // the existing terminal behavior only after repeated failures.
           if (attempt < SETTLE_PROBE_MAX_ATTEMPTS) {
             yield* Effect.sleep(SETTLE_PROBE_RETRY_DELAY).pipe(
-              Effect.andThen(scheduleSettleProbe(ctx, turn, true, attempt + 1)),
+              Effect.andThen(scheduleSettleProbe(ctx, turn, settleAfterAgentActivity, attempt + 1)),
               Effect.forkIn(ctx.scope),
             );
+            return;
+          }
+          if (!settleAfterAgentActivity) {
+            yield* finalizeTurn(ctx);
             return;
           }
           ctx.stopRequested = true;

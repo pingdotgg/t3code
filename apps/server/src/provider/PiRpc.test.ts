@@ -59,3 +59,24 @@ it.effect("terminates extension subprocesses that outlive pi in its process grou
     assert.notDeepInclude(signals, [-FAKE_PID, "SIGKILL"]);
   }).pipe(Effect.scoped),
 );
+
+it.effect("fails pending requests when pi exits instead of waiting out timeouts", () =>
+  Effect.gen(function* () {
+    const connection = yield* makePiRpcConnection({
+      command: "pi",
+      args: ["--mode", "rpc"],
+      cwd: undefined,
+      env: {},
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, exitedPiSpawner));
+    assert.equal(yield* connection.exited, 0);
+
+    // The process is already gone (and an extension child may still hold
+    // stdout open, so the reader never ends). The request must fail from the
+    // exit watcher, not from its own 30s timeout.
+    const error = yield* connection.request({ type: "get_state" }, 30_000).pipe(Effect.flip);
+    assert.equal(error._tag, "PiRpcError");
+    if (error._tag === "PiRpcError") {
+      assert.equal(error.operation, "exit");
+    }
+  }).pipe(Effect.scoped),
+);

@@ -65,7 +65,7 @@ interface RegisteredHost {
  */
 const registerHost = Effect.fn("test.registerHost")(function* (input: {
   readonly clientId: string;
-  readonly supportedOperations?: ReadonlyArray<"status" | "preflight">;
+  readonly supportedOperations?: ReadonlyArray<"status" | "preflight" | "click">;
   readonly result: (event: Extract<PreviewAutomationStreamEvent, { type: "request" }>) => unknown;
 }) {
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -123,7 +123,7 @@ it.effect(
         });
         const visible = yield* registerHost({
           clientId: "host-visible",
-          supportedOperations: ["status", "preflight"],
+          supportedOperations: ["status", "preflight", "click"],
           result: (event) => {
             if (event.request.operation === "status") {
               return {
@@ -314,11 +314,34 @@ it.effect(
         });
         expect(JSON.stringify(readyPayload)).not.toContain("secret-token");
 
+        const click = yield* httpClient.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization,
+            "mcp-session-id": sessionId!,
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"preview_click","arguments":{"selector":"#example"}}}`,
+            "application/json",
+          ),
+        });
+        const clickPayload = parseMcpBody(yield* click.text) as {
+          readonly result?: {
+            readonly isError?: boolean;
+            readonly structuredContent?: unknown;
+          };
+        };
+        expect(clickPayload.result?.isError).toBeFalsy();
+        // Strict MCP clients validate `structuredContent` as a record: a
+        // null payload fails them even though the click itself succeeded.
+        expect(clickPayload.result?.structuredContent).toEqual({ ok: true });
+
         // The visible host is the one that served the provider-scoped request.
         expect(visible.received.map(({ operation }) => operation)).toEqual([
           "status",
           "preflight",
           "preflight",
+          "click",
         ]);
         expect(background.received).toEqual([]);
       }),

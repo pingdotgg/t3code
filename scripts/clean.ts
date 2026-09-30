@@ -12,13 +12,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Workspace parents whose immediate child directories are cleaned per-target. */
 const WORKSPACE_GROUPS = ["apps", "packages"] as const;
 
-/** Directory names removed from the repo root. */
 const ROOT_TARGETS = ["node_modules", ".vite-plus"] as const;
 
-/** Directory names removed from each workspace package. */
 const PACKAGE_TARGETS = ["node_modules", "dist", "dist-electron", ".vite-plus"] as const;
 
 async function removeDir(absolutePath: string): Promise<void> {

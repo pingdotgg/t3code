@@ -321,6 +321,7 @@ const TurnActivityExistsRowSchema = Schema.Struct({
 });
 const TranscriptSearchRowSchema = Schema.Struct({
   threadId: ThreadId,
+  messageId: MessageId,
   title: Schema.String,
   projectTitle: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
@@ -3002,6 +3003,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         )
         SELECT
           top_hits."threadId",
+          top_hits."messageId",
           threads.title,
           projects.title AS "projectTitle",
           threads.branch,

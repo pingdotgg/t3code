@@ -6469,6 +6469,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 matches: [
                   {
                     threadId: ThreadId.make("thread-1"),
+                    messageId: MessageId.make("message-1"),
                     title: "Thread A",
                     projectTitle: "Project A",
                     branch: null,
@@ -6557,6 +6558,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepStrictEqual(searchResult.matches, [
         {
           threadId: ThreadId.make("thread-1"),
+          messageId: MessageId.make("message-1"),
           projectId: ProjectId.make("project-a"),
           source: "user",
           snippet: "official search result",

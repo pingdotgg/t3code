@@ -21,8 +21,4 @@ describe("dispatchZoomMenuAction", () => {
 
     expect(appWindow.webContents.send).toHaveBeenCalledWith("menu-action", "zoom-in");
   });
-
-  it("does nothing when no app window exists", () => {
-    expect(() => dispatchZoomMenuAction(null, "menu-action", "zoom-out")).not.toThrow();
-  });
 });

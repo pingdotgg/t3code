@@ -156,6 +156,9 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CURSOR_DRIVER_KIND]: "composer-2",
   [COPILOT_DRIVER_KIND]: "gpt-6-luna",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // "default" defers to the user's own Pi settings.json model selection;
+  // without this the fallback would hand PiTextGeneration a generic slug it rejects.
+  [PI_DRIVER_KIND]: "default",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -207,6 +210,10 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "claude-opus-5.5": "claude-opus-5.5",
     "opus-5": "claude-opus-5",
     "claude-opus-5": "claude-opus-5",
+    "sonnet-5.5": "claude-sonnet-5.5",
+    "claude-sonnet-5.5": "claude-sonnet-5.5",
+    "sonnet-5": "claude-sonnet-5",
+    "claude-sonnet-5": "claude-sonnet-5",
     "6-luna": "gpt-6-luna",
     "gpt-6-luna": "gpt-6-luna",
     "openai/gpt-6-luna": "gpt-6-luna",

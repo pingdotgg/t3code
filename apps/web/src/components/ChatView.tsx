@@ -4710,17 +4710,20 @@ function ChatViewBody(
           }
 
           const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
-          // The review prompt lives in thread detail, whose subscription is
-          // otherwise opened only once the route mounts — a round trip
-          // serialized after navigation. Opening it here overlaps it with the
-          // routability wait and the navigation itself.
-          const releaseThreadDetail = retainThreadDetailSubscription(
-            environmentId,
-            result.threadId,
-          );
-          try {
-            await ensureRoutableServerThread(resultThreadRef);
-            if (!isServerThread || result.threadId !== activeThread.id) {
+          const isSameThread = result.threadId === activeThread.id;
+          // A draft has no server route yet: a same-thread workflow promotes it,
+          // so navigating to the canonical server route is staying put, not
+          // switching threads.
+          if (isSameThread && isServerThread) {
+            return;
+          }
+          if (isSameThread && !isServerThread) {
+            const releaseThreadDetail = retainThreadDetailSubscription(
+              environmentId,
+              result.threadId,
+            );
+            try {
+              await ensureRoutableServerThread(resultThreadRef);
               await navigate({
                 to: "/$environmentId/$threadId",
                 params: {
@@ -4728,7 +4731,50 @@ function ChatViewBody(
                   threadId: result.threadId,
                 },
               });
+            } catch (error) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Workflow started but could not be opened",
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : "Open the workflow thread from the sidebar to continue.",
+                }),
+              );
+            } finally {
+              releaseThreadDetail();
             }
+            return;
+          }
+          // Child-chat workflows run in the background: stay on the current
+          // thread and let the user open the worker on demand (sidebar,
+          // workflow-runs popover, or the toast action).
+          const releaseThreadDetail = retainThreadDetailSubscription(
+            environmentId,
+            result.threadId,
+          );
+          try {
+            await ensureRoutableServerThread(resultThreadRef);
+            toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: "Workflow started in background",
+                description: "It keeps running without switching threads.",
+                actionProps: {
+                  children: "Open thread",
+                  onClick: () => {
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: {
+                        environmentId,
+                        threadId: result.threadId,
+                      },
+                    });
+                  },
+                },
+              }),
+            );
           } catch (error) {
             toastManager.add(
               stackedThreadToast({
@@ -4741,9 +4787,8 @@ function ChatViewBody(
               }),
             );
           } finally {
-            // The mounted route holds its own retain by now, so this only drops
-            // the temporary one. Released subscriptions stay warm rather than
-            // closing immediately, so a slow mount still reuses this one.
+            // Released subscriptions stay warm rather than closing immediately,
+            // so opening the worker later still reuses this one.
             releaseThreadDetail();
           }
         })

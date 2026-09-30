@@ -3219,6 +3219,7 @@ export type OrchestrationSearchTranscriptInput = typeof OrchestrationSearchTrans
 
 export const OrchestrationTranscriptSearchMatch = Schema.Struct({
   threadId: ThreadId,
+  messageId: MessageId,
   title: Schema.String,
   projectTitle: Schema.NullOr(Schema.String),
   branch: Schema.NullOr(Schema.String),
@@ -3241,6 +3242,7 @@ export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsI
 
 export const OrchestrationThreadSearchMatch = Schema.Struct({
   threadId: ThreadId,
+  messageId: MessageId,
   projectId: ProjectId,
   source: Schema.Literals(["user", "assistant"]),
   snippet: Schema.String.check(Schema.isMaxLength(240)),

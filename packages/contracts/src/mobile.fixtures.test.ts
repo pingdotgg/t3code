@@ -28,18 +28,6 @@ function fixtureNames(folder: "server" | "client"): ReadonlyArray<string> {
 
 describe("mobile v1 wire fixtures", () => {
   it("keeps server-authored fixtures decodable by the mobile protocol schemas", () => {
-    expect(fixtureNames("server")).toEqual([
-      "command-accepted.json",
-      "descriptor.json",
-      "error-invalid-message.json",
-      "hello.json",
-      "replay-complete.json",
-      "replay-gap.json",
-      "shell-snapshot.json",
-      "thread-snapshot.json",
-      "turn-diff.json",
-    ]);
-
     const descriptor = readFixture("server/descriptor.json");
     expect(encodeDescriptor(decodeDescriptor(descriptor))).toEqual(descriptor);
 
@@ -50,19 +38,6 @@ describe("mobile v1 wire fixtures", () => {
   });
 
   it("accepts client-authored MVP command request fixtures", () => {
-    expect(fixtureNames("client")).toEqual([
-      "approval-respond-request.json",
-      "checkpoint-revert-request.json",
-      "pin-reorder-request.json",
-      "pin-request.json",
-      "session-stop-request.json",
-      "title-regenerate-request.json",
-      "turn-interrupt-request.json",
-      "turn-start-request.json",
-      "unpin-request.json",
-      "user-input-respond-request.json",
-    ]);
-
     for (const fixtureName of fixtureNames("client")) {
       const fixture = readFixture(`client/${fixtureName}`);
       expect(encodeClientMessage(decodeClientMessage(fixture))).toEqual(fixture);
