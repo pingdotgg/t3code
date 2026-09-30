@@ -56,6 +56,7 @@ import {
   FilesystemBrowseError,
   MessageId,
   ProjectId,
+  ProviderSessionCommandError,
   ServerChatArchiveError,
   ServerProviderListCommandsError,
   ServerExportThreadMarkdownError,
@@ -1642,6 +1643,30 @@ const makeWsRpcLayer = (
                 }),
             }).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.providerSessionCommand]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerSessionCommand,
+            Option.match(providerService, {
+              onNone: () =>
+                Effect.fail(
+                  new ProviderSessionCommandError({
+                    threadId: input.threadId,
+                    detail: "Provider runtime is unavailable in this environment.",
+                  }),
+                ),
+              onSome: (service) =>
+                service.sessionCommand(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionCommandError({
+                        threadId: input.threadId,
+                        detail: cause.message,
+                      }),
+                  ),
+                ),
+            }),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.serverListSkills]: (_input) =>
           observeRpcEffect(

@@ -18,6 +18,7 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSessionCommandInput,
   ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderSteerTurnInput,
@@ -1160,6 +1161,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const sessionCommand: ProviderServiceShape["sessionCommand"] = Effect.fn("sessionCommand")(
+    function* (rawInput) {
+      const operation = "ProviderService.sessionCommand";
+      const input = yield* decodeInputOrValidationError({
+        operation,
+        schema: ProviderSessionCommandInput,
+        payload: rawInput,
+      });
+      let routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation,
+        allowRecovery: false,
+      });
+      if (routed.adapter.sessionCommand === undefined) {
+        return yield* toValidationError(
+          operation,
+          `Provider '${routed.adapter.provider}' does not support session commands.`,
+        );
+      }
+      if (!routed.isActive) {
+        routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation,
+          allowRecovery: true,
+        });
+      }
+      if (routed.adapter.sessionCommand === undefined) {
+        return yield* toValidationError(operation, "Provider does not support session commands.");
+      }
+      return yield* routed.adapter.sessionCommand(input);
+    },
+  );
+
   const listSessions: ProviderServiceShape["listSessions"] = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -1364,6 +1398,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    sessionCommand,
     listSessions,
     prewarmSession,
     getCapabilities,

@@ -2,11 +2,33 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { ServerProvider, ServerProviderListCommandsInput } from "./server.ts";
+import { providerSlashCommandArgumentError } from "./server.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const decodeServerProviderListCommandsInput = Schema.decodeUnknownSync(
   ServerProviderListCommandsInput,
 );
+
+describe("provider slash command arguments", () => {
+  it("enforces declared rules while keeping legacy commands unrestricted", () => {
+    expect(providerSlashCommandArgumentError({ name: "copy", argumentMode: "none" }, "extra")).toBe(
+      "/copy does not accept arguments.",
+    );
+    expect(
+      providerSlashCommandArgumentError({ name: "copy", argumentMode: "none" }, " \n"),
+    ).toBeNull();
+    expect(providerSlashCommandArgumentError({ name: "run", argumentMode: "required" }, " ")).toBe(
+      "/run requires arguments.",
+    );
+    expect(
+      providerSlashCommandArgumentError({ name: "run", argumentMode: "required" }, "task"),
+    ).toBeNull();
+    expect(
+      providerSlashCommandArgumentError({ name: "export", argumentMode: "optional" }, ""),
+    ).toBeNull();
+    expect(providerSlashCommandArgumentError({ name: "legacy" }, "extra")).toBeNull();
+  });
+});
 
 describe("ServerProvider", () => {
   it("defaults capability arrays when decoding provider snapshots", () => {

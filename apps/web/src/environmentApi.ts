@@ -107,6 +107,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       refreshProviders: rpcClient.server.refreshProviders,
       listProviderCommands: rpcClient.server.listProviderCommands,
       prewarmProviderSession: rpcClient.server.prewarmProviderSession,
+      sessionCommand: rpcClient.server.sessionCommand,
       exportThreadMarkdown: rpcClient.server.exportThreadMarkdown,
     },
     orchestration: {

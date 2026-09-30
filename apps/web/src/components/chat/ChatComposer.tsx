@@ -439,6 +439,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  onProviderCommand?: ((name: string) => void) | undefined;
   onComposerIntent: () => void;
   onInterrupt: () => void;
   onSteer: () => void;
@@ -1693,7 +1694,17 @@ export const ChatComposer = memo(
           return;
         }
         if (item.type === "provider-slash-command") {
-          const replacement = `/${item.command.name} `;
+          if (item.command.argumentMode === "none" && props.onProviderCommand) {
+            const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+              expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            });
+            if (applied) {
+              setComposerHighlightedItemId(null);
+              props.onProviderCommand(item.command.name);
+            }
+            return;
+          }
+          const replacement = `/${item.command.name}${item.command.argumentMode === "none" ? "" : " "}`;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
@@ -1729,7 +1740,7 @@ export const ChatComposer = memo(
           return;
         }
       },
-      [applyPromptReplacement, resolveActiveComposerTrigger],
+      [applyPromptReplacement, props.onProviderCommand, resolveActiveComposerTrigger],
     );
 
     const onComposerMenuItemHighlighted = useCallback(
