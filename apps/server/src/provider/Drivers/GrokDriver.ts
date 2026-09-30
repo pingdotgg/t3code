@@ -176,6 +176,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
                 httpClient,
               }),
             ),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           ),
       }).pipe(
         Effect.mapError(

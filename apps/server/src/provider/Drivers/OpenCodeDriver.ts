@@ -242,6 +242,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
                 }),
               ),
               Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
             ),
         },

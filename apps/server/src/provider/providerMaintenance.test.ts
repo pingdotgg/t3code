@@ -9,9 +9,10 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   createProviderVersionAdvisory,
@@ -97,7 +98,10 @@ const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
 
-function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) => string) {
+function stdoutSpawner(
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  exitCode = 0,
+) {
   return ChildProcessSpawner.make((command) => {
     const { command: executable, args } = command as unknown as {
       readonly command: string;
@@ -106,7 +110,7 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -144,6 +148,83 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
       Effect.map((version) => {
         expect(version).toBe("9.9.9");
+      }),
+    ),
+  );
+
+  it.effect.skipIf(windowsHost)("asks npm for the latest version so .npmrc settings apply", () => {
+    const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        stdoutSpawner((command, args) => {
+          spawned.push({ command, args });
+          return '"2.3.4"\n';
+        }),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("npm answered, so the public registry is not contacted")),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("2.3.4");
+        expect(spawned).toEqual([
+          { command: "npm", args: ["view", "@example/package-tool@latest", "version", "--json"] },
+        ]);
+      }),
+    );
+  });
+
+  it.effect("reports no latest version when npm fails, without bypassing its registry", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        stdoutSpawner(() => "", 1),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("a failed npm lookup must not use registry.npmjs.org")),
+      ),
+      Effect.map((version) => {
+        expect(version).toBeNull();
+      }),
+    ),
+  );
+
+  it.effect("falls back to the public registry when npm is not installed", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provideService(ProviderVersionCache, new Map()),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcessSpawner",
+              method: "spawn",
+              pathOrDescriptor: "npm",
+            }),
+          ),
+        ),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { version: "5.0.0" },
+                { headers: { "content-type": "application/json" } },
+              ),
+            ),
+          ),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("5.0.0");
       }),
     ),
   );

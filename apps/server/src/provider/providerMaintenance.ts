@@ -20,12 +20,14 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import * as ProcessRunner from "../processRunner.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 const LATEST_VERSION_CACHE_TTL_MS = 60 * 60 * 1_000;
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const HOMEBREW_INFO_TIMEOUT_MS = 10_000;
 const HOMEBREW_INFO_MAX_BYTES = 256 * 1_024;
+const NPM_VIEW_TIMEOUT_MS = 10_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 /**
@@ -660,7 +662,9 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+const fetchPublicRegistryLatestVersion = Effect.fn("fetchPublicRegistryLatestVersion")(function* (
+  packageName: string,
+) {
   const client = yield* HttpClient.HttpClient;
   const request = HttpClientRequest.get(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
@@ -681,6 +685,37 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
     Effect.orElseSucceed(() => null),
   );
   return payload ? nonEmptyString(payload.version) : null;
+});
+
+const decodeNpmVersion = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+
+/**
+ * Ask npm so the user's `.npmrc` registry, auth, and proxy apply. The public
+ * registry is only used when npm cannot be spawned at all.
+ */
+const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+  const runner = yield* ProcessRunner.make();
+  return yield* runner
+    .run({
+      command: "npm",
+      args: ["view", `${packageName}@latest`, "version", "--json"],
+      timeout: NPM_VIEW_TIMEOUT_MS,
+    })
+    .pipe(
+      Effect.flatMap((result) =>
+        result.code === 0
+          ? Effect.succeed(nonEmptyString(Option.getOrNull(decodeNpmVersion(result.stdout))))
+          : Effect.logWarning("npm latest version lookup failed", { exitCode: result.code }).pipe(
+              Effect.as(null),
+            ),
+      ),
+      Effect.catchTag("ProcessSpawnError", () => fetchPublicRegistryLatestVersion(packageName)),
+      Effect.catch((error) =>
+        Effect.logWarning("npm latest version lookup failed", { errorTag: error._tag }).pipe(
+          Effect.as(null),
+        ),
+      ),
+    );
 });
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (

@@ -283,6 +283,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               maintenanceCapabilities,
             ).pipe(
               Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(ProviderVersionCache, versionCache),
             ),
           {
@@ -388,6 +389,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               targetVersion ??
               (yield* resolveLatestProviderVersion(fresh).pipe(
                 Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.provideService(ProviderVersionCache, versionCache),
               ));
             const advisory =

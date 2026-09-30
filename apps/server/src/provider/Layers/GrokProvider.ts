@@ -561,7 +561,7 @@ export const enrichGrokSnapshot = (input: {
   readonly enableProviderUpdateChecks?: boolean;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
+}): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const { snapshot, publishSnapshot } = input;
 
   return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {

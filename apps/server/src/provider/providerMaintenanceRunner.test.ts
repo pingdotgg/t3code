@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -105,6 +106,19 @@ const latestVersionHttpClient = (version: string) =>
     ),
   );
 
+// These tests run without npm, so the latest version comes from the public
+// registry fallback that `latestVersionHttpClient` answers. Windows shell mode
+// quotes each argument, hence the pattern instead of an exact match.
+const isNpmLatestVersionLookup = (args: ReadonlyArray<string>) => /\bview\b/.test(args[0] ?? "");
+const npmNotInstalled = Effect.fail(
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "ChildProcessSpawner",
+    method: "spawn",
+    pathOrDescriptor: "npm",
+  }),
+);
+
 function mockHandle(result: {
   readonly stdout?: string;
   readonly stderr?: string;
@@ -146,6 +160,7 @@ function mockSpawnerLayer(
         readonly args: ReadonlyArray<string>;
         readonly options: { readonly env?: NodeJS.ProcessEnv | undefined };
       };
+      if (isNpmLatestVersionLookup(childProcess.args)) return npmNotInstalled;
       return Effect.succeed(
         mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
       );
@@ -918,6 +933,7 @@ describe("providerMaintenanceRunner", () => {
                 readonly args: ReadonlyArray<string>;
                 readonly options: { readonly shell?: boolean | string | undefined };
               };
+              if (isNpmLatestVersionLookup(childProcess.args)) return npmNotInstalled;
               captured.push({
                 command: childProcess.command,
                 args: childProcess.args,
