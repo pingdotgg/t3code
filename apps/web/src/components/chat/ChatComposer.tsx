@@ -7296,7 +7296,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           )
                         : undefined
                     }
-                    historyScopeKey={composerTargetKey(routeThreadRef)}
+                    historyScopeKey={composerTargetKey(questionAttachmentTarget ?? routeThreadRef)}
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
