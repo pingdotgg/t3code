@@ -11,7 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { bench, describe } from "vite-plus/test";
+import { describe, test } from "vite-plus/test";
 
 import { issueRemoteWebSocketTicket } from "./authorization/remote.ts";
 import { PrimaryConnectionTarget } from "./connection/model.ts";
@@ -21,6 +21,7 @@ import { fetchEnvironmentThreadSnapshot } from "./state/threadSnapshotHttp.ts";
 import { applyThreadDetailEvent } from "./state/threadReducer.ts";
 
 const timestamp = "2026-09-01T00:00:00.000Z";
+const runOptions = { warmupTime: 1_000, time: 1_500 };
 const thread: OrchestrationThread = {
   id: ThreadId.make("thread-1"),
   projectId: ProjectId.make("project-1"),
@@ -102,15 +103,13 @@ const requests: Record<
 
 describe("remote HTTP processing with an in-memory transport", () => {
   for (const [name, request] of Object.entries(requests)) {
-    bench(
-      name,
-      async () => {
+    test(name, async ({ bench }) => {
+      await bench(name, async () => {
         await Effect.runPromise(
           request.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
         );
-      },
-      { warmupTime: 1_000, time: 1_500 },
-    );
+      }).run(runOptions);
+    });
   }
 });
 
@@ -150,16 +149,15 @@ describe("remote message replay", () => {
       ...delta,
       payload: { ...delta.payload, messageId: loaded.messages.at(-1)!.id },
     };
-    bench(
-      `apply 200 text deltas to ${count} loaded messages`,
-      () => {
+    const name = `apply 200 text deltas to ${count} loaded messages`;
+    test(name, async ({ bench }) => {
+      await bench(name, () => {
         let current: OrchestrationThread = loaded;
         for (let index = 0; index < 200; index += 1) {
           const result = applyThreadDetailEvent(current, event);
           if (result.kind === "updated") current = result.thread;
         }
-      },
-      { warmupTime: 1_000, time: 1_500 },
-    );
+      }).run(runOptions);
+    });
   }
 });

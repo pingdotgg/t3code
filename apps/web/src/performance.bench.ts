@@ -6,7 +6,7 @@ import {
   sortThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { formatHourShort, formatRelativeHourShort } from "@t3tools/shared/usageFormat";
-import { bench, describe } from "vite-plus/test";
+import { describe, test } from "vite-plus/test";
 
 import { deriveActivePlanState } from "./session-logic";
 
@@ -41,25 +41,37 @@ const hours = Array.from({ length: 24 }, (_, index) =>
 const referenceTime = "2026-08-12T00:00:00.000Z";
 
 describe("client performance", () => {
-  bench("sort 1000 threads by recent activity", () => {
-    sortThreads(threads, "updated_at");
+  test("sort 1000 threads by recent activity", async ({ bench }) => {
+    await bench("sort", () => {
+      sortThreads(threads, "updated_at");
+    }).run();
   });
-  bench("sort 1000 active threads", () => {
-    sortActiveThreadsByOrderKey(threads);
+  test("sort 1000 active threads", async ({ bench }) => {
+    await bench("sort", () => {
+      sortActiveThreadsByOrderKey(threads);
+    }).run();
   });
-  bench("sort 1000 keyless pinned threads", () => {
-    sortPinnedThreadsByOrderKey(threads);
+  test("sort 1000 keyless pinned threads", async ({ bench }) => {
+    await bench("sort", () => {
+      sortPinnedThreadsByOrderKey(threads);
+    }).run();
   });
-  bench("select latest project thread from 1000 threads", () => {
-    getLatestThreadForProject(threads, projectId, "updated_at");
+  test("select latest project thread from 1000 threads", async ({ bench }) => {
+    await bench("select", () => {
+      getLatestThreadForProject(threads, projectId, "updated_at");
+    }).run();
   });
-  bench("derive plan from 500 activities with 5 plan updates", () => {
-    deriveActivePlanState(activities, turnId);
+  test("derive plan from 500 activities with 5 plan updates", async ({ bench }) => {
+    await bench("derive", () => {
+      deriveActivePlanState(activities, turnId);
+    }).run();
   });
-  bench("format 24 hourly usage labels and tooltips", () => {
-    hours.map((hour) => [
-      formatHourShort(hour, "America/New_York"),
-      formatRelativeHourShort(hour, referenceTime, "America/New_York"),
-    ]);
+  test("format 24 hourly usage labels and tooltips", async ({ bench }) => {
+    await bench("format", () => {
+      hours.map((hour) => [
+        formatHourShort(hour, "America/New_York"),
+        formatRelativeHourShort(hour, referenceTime, "America/New_York"),
+      ]);
+    }).run();
   });
 });

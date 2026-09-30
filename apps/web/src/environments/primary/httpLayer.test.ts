@@ -6,7 +6,7 @@ import { HttpClient } from "effect/unstable/http";
 import { __resetDesktopPrimaryAuthForTests } from "./desktopAuth";
 import { makePrimaryEnvironmentHttpLayer } from "./httpLayer";
 
-describe.sequential("primary environment HTTP layer", () => {
+describe("primary environment HTTP layer", { concurrent: false }, () => {
   afterEach(() => {
     __resetDesktopPrimaryAuthForTests();
     Reflect.deleteProperty(globalThis, "window");

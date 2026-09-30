@@ -22,7 +22,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "node scripts/generate.ts",
     "probe": "node test/examples/codex-app-server-probe.ts"
   },
