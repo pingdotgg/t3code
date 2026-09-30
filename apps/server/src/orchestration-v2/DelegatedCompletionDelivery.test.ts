@@ -7,6 +7,7 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2RuntimeRequest,
   NodeId,
   ProjectId,
   ProviderDriverKind,
@@ -714,8 +715,8 @@ it.layer(TestLayer)("paused delegated task wakes", (it) => {
   const pendingRequest = (input: {
     readonly childThreadId: ThreadId;
     readonly requestId: RuntimeRequestId;
-    readonly kind: "command" | "user_input";
-    readonly status?: "pending" | "resolved";
+    readonly kind: OrchestrationV2RuntimeRequest["kind"];
+    readonly status?: OrchestrationV2RuntimeRequest["status"];
     readonly now: DateTime.Utc;
   }) => ({
     id: EventId.make(`event:${input.requestId}:${input.status ?? "pending"}`),
@@ -820,13 +821,241 @@ it.layer(TestLayer)("paused delegated task wakes", (it) => {
         summary: 'Delegated task "Inspect the delivered ownership edge." is waiting for approval',
       });
       assert.include(approval?.text ?? "", String(taskId));
-      assert.include(approval?.text ?? "", "task_cancel");
+      assert.include(approval?.text ?? "", "does not authorize broader permissions");
+      assert.notInclude(approval?.text ?? "", "delegate again");
       assert.equal(
         question?.notification?.summary,
         'Delegated task "Inspect the delivered ownership edge." is waiting for an answer',
       );
       assert.include(question?.text ?? "", String(questionId));
       assert.include(question?.text ?? "", "t3_pending_request_respond");
+    }),
+  );
+
+  it.effect(
+    "delivers each sibling's approval independently and deduplicates repeated questions",
+    () =>
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const parent = yield* seedParentWithAsyncChild("paused-siblings", now);
+        const kinds = ["command", "file-change"] as const;
+        const requests = [];
+        for (const kind of kinds) {
+          const taskId = NodeId.make(`node:paused-sibling-${kind}`);
+          const childThreadId = ThreadId.make(`thread:paused-sibling-${kind}`);
+          yield* attachChildThread({
+            parentThreadId: parent.threadId,
+            taskId,
+            childThreadId,
+            completionWake: "always",
+            now,
+          });
+          requests.push(
+            pendingRequest({
+              childThreadId,
+              requestId: RuntimeRequestId.make(`runtime-request:sibling-${kind}`),
+              kind,
+              now,
+            }),
+          );
+        }
+        const question = pendingRequest({
+          childThreadId: parent.childThreadId,
+          requestId: RuntimeRequestId.make("runtime-request:sibling-question"),
+          kind: "user_input",
+          now,
+        });
+        const nextQuestion = pendingRequest({
+          childThreadId: parent.childThreadId,
+          requestId: RuntimeRequestId.make("runtime-request:sibling-next-question"),
+          kind: "user_input",
+          now,
+        });
+        const afterSequence = yield* sink.latestSequence();
+        yield* sink.write({ events: [...requests, question] });
+        yield* awaitWake(parent.threadId, afterSequence, "an answer");
+        const afterFirstQuestion = yield* sink.latestSequence();
+        yield* sink.write({
+          events: [
+            { ...question, id: EventId.make("event:sibling-question-replayed") },
+            nextQuestion,
+          ],
+        });
+        const wakes = yield* awaitWake(parent.threadId, afterFirstQuestion, "an answer");
+        assert.lengthOf(wakes, kinds.length + 2);
+        const approvals = wakes.filter((message) =>
+          message.notification?.summary.endsWith("approval"),
+        );
+        assert.sameDeepMembers(
+          approvals.map((message) => message.notification?.source),
+          kinds.map((kind) => ({
+            kind: "delegated_task" as const,
+            taskIds: [NodeId.make(`node:paused-sibling-${kind}`)],
+            childThreadId: ThreadId.make(`thread:paused-sibling-${kind}`),
+          })),
+        );
+        for (const wake of approvals) {
+          assert.include(wake.text, "does not authorize broader permissions");
+        }
+        assert.lengthOf(
+          wakes.filter((message) => message.text.includes(String(question.payload.id))),
+          1,
+        );
+      }),
+  );
+
+  it.effect("ignores cancelled, expired, and message-response requests before delivery", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const child = yield* seedParentWithAsyncChild("paused-stale", now);
+      const witness = yield* seedParentWithAsyncChild("paused-stale-witness", now);
+      const afterSequence = yield* sink.latestSequence();
+      const requests = ["cancelled", "expired"] as const;
+      const events = requests.flatMap((status) => {
+        const request = pendingRequest({
+          childThreadId: child.childThreadId,
+          requestId: RuntimeRequestId.make(`runtime-request:stale-${status}`),
+          kind: "command",
+          now,
+        });
+        return [
+          request,
+          {
+            ...request,
+            id: EventId.make(`event:stale-${status}`),
+            payload: { ...request.payload, status, resolvedAt: now },
+          },
+        ];
+      });
+      const question = pendingRequest({
+        childThreadId: child.childThreadId,
+        requestId: RuntimeRequestId.make("runtime-request:stale-message"),
+        kind: "user_input",
+        now,
+      });
+      yield* sink.write({
+        events: [
+          ...events,
+          {
+            ...question,
+            payload: { ...question.payload, responseCapability: { type: "message" as const } },
+          },
+          pendingRequest({
+            childThreadId: witness.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:stale-witness"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+      yield* awaitWake(witness.threadId, afterSequence, "approval");
+      const orchestrator = yield* OrchestratorV2;
+      const parent = yield* orchestrator.getThreadProjection(child.threadId);
+      assert.deepEqual(
+        parent.messages.filter((message) => message.notification !== undefined),
+        [],
+      );
+    }),
+  );
+
+  it.effect("does not restart a stopped parent when a child pauses", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const orchestrator = yield* OrchestratorV2;
+      const now = yield* DateTime.now;
+      const child = yield* seedParentWithAsyncChild("paused-stopped", now);
+      const witness = yield* seedParentWithAsyncChild("paused-stopped-witness", now);
+      const before = yield* orchestrator.getThreadProjection(child.threadId);
+      const run = before.runs[0]!;
+      const task = before.subagents[0]!;
+      const afterSequence = yield* sink.latestSequence();
+      // Stop disposes delivery without terminalizing the separately running child.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:paused-stopped-run"),
+            type: "run.updated",
+            threadId: child.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: {
+              ...run,
+              status: "interrupted",
+              completedAt: now,
+              delegatedCompletion: { disposition: "stopped", nextGeneration: 2, delivery: null },
+            },
+          },
+          {
+            id: EventId.make("event:paused-stopped-task"),
+            type: "subagent.updated",
+            threadId: child.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...task, completionDelivery: { state: "disposed", observedByRunId: null } },
+          },
+          pendingRequest({
+            childThreadId: child.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:stopped-approval"),
+            kind: "command",
+            now,
+          }),
+          pendingRequest({
+            childThreadId: witness.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:stopped-witness"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+      yield* awaitWake(witness.threadId, afterSequence, "approval");
+      const after = yield* orchestrator.getThreadProjection(child.threadId);
+      assert.deepEqual(
+        after.messages.filter((message) => message.notification !== undefined),
+        [],
+      );
+      assert.deepEqual(
+        after.runs.map((row) => row.id),
+        [run.id],
+      );
+    }),
+  );
+
+  it.effect("starts a new run for an idle parent when its child pauses", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const orchestrator = yield* OrchestratorV2;
+      const now = yield* DateTime.now;
+      const child = yield* seedParentWithAsyncChild("paused-idle", now);
+      const before = yield* orchestrator.getThreadProjection(child.threadId);
+      const run = before.runs[0]!;
+      const afterSequence = yield* sink.latestSequence();
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:paused-idle-run"),
+            type: "run.updated",
+            threadId: child.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+          pendingRequest({
+            childThreadId: child.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:idle-approval"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+      const [wake] = yield* awaitWake(child.threadId, afterSequence, "approval");
+      assert.isDefined(wake);
+      const after = yield* orchestrator.getThreadProjection(child.threadId);
+      const started = after.runs.find((row) => row.userMessageId === wake!.id);
+      assert.isDefined(started);
+      assert.notEqual(started!.id, run.id);
+      assert.notEqual(started!.status, "queued");
     }),
   );
 

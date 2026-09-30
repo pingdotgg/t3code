@@ -9299,8 +9299,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (candidate) =>
               candidate.origin === "app_owned" && candidate.childThreadId === childThreadId,
           );
+          const parentRun = parent.runs.find((run) => run.id === task?.runId);
           if (
             task === undefined ||
+            parentRun === undefined ||
+            (parentRun.delegatedCompletion !== undefined &&
+              parentRun.delegatedCompletion.disposition !== "open") ||
             !isOrchestrationV2WorkActive(task.status) ||
             parent.thread.archivedAt !== null ||
             parent.thread.deletedAt !== null ||

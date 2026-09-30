@@ -277,8 +277,17 @@ completion ever reaches the parent on its own. `workState` is then
 `blocked_on_request` and `pendingRequests` lists what it is paused on. The
 parent is also woken by a notification: once per task for approvals, which only
 a person can answer in the child's thread, and once per question, which the
-parent can answer with `t3_pending_request_respond`. A parent still blocked in
-`mode: "wait"` is not woken; its call returns the paused task instead.
+parent can answer with `t3_pending_request_respond` when the user's instructions
+settle the answer. Check `task_status` before acting on a queued notice because
+the child may already have resumed. Stopping the owning parent run prevents
+later pause notices from restarting it. A parent still blocked in `mode: "wait"`
+is not woken; its call returns the paused task instead.
+
+Pause notices are best effort. A failed enqueue is only retried if another
+request arrives; a child blocked on a question may never emit one. If a blocking
+wait ends without upgrading its wake policy, a pause skipped during the parent's
+active turn is not checked again when that turn settles. `task_status` still
+reports the pending request.
 
 ### `task_cancel`
 

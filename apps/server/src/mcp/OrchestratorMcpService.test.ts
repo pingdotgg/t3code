@@ -703,7 +703,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         startedAt: null,
         completedAt: null,
       };
-      const pausedChild = {
+      let pausedChild = {
         ...childProjection,
         runs: [{ id: RunId.make("run:mcp-providers-child"), ordinal: 1, status: "running" }],
         runtimeRequests: [
@@ -780,6 +780,27 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(yield* Ref.get(dispatched), [
           "delegated_task.request",
           "delegated_task.wake-policy",
+        ]);
+        // A resolved approval must stop reporting a pause.
+        const approval = pausedChild.runtimeRequests[0]!;
+        pausedChild = { ...pausedChild, runtimeRequests: [{ ...approval, status: "resolved" }] };
+        const resumed = yield* service.taskStatus(scope, taskId);
+        assert.equal(resumed.workState, "working");
+        assert.deepEqual(resumed.pendingRequests, []);
+
+        // A subsequent question is its own blocker, even after an approval was answered.
+        const questionId = RuntimeRequestId.make("runtime-request:mcp-providers-live-question");
+        pausedChild = {
+          ...pausedChild,
+          runtimeRequests: [
+            { ...approval, status: "resolved" },
+            { ...approval, id: questionId, kind: "user_input" },
+          ],
+        };
+        const questioned = yield* service.taskStatus(scope, taskId);
+        assert.equal(questioned.workState, "blocked_on_request");
+        assert.deepEqual(questioned.pendingRequests, [
+          { requestId: questionId, kind: "user_input" },
         ]);
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),

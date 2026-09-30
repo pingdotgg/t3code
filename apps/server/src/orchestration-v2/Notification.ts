@@ -223,12 +223,12 @@ export function delegatedTaskBlockedWake(
   const source = { kind: "delegated_task" as const, taskIds: [task.id], childThreadId };
   if (request.kind === "user_input") {
     return {
-      text: `Delegated task ${task.id} is paused on a question. Read it with t3_pending_request_read and answer it with t3_pending_request_respond, using threadId ${childThreadId} and requestId ${request.id}.`,
+      text: `Delegated task ${task.id} was observed paused on a question. Check task_status first; this notice may have queued before the task resumed. If the question is still pending, read it with t3_pending_request_read using threadId ${childThreadId} and requestId ${request.id}. Answer with t3_pending_request_respond only when the delegation or the user's instructions settle the answer; otherwise ask the user.`,
       notification: { source, outcome: "updated", summary: `${named} is waiting for an answer` },
     };
   }
   return {
-    text: `Delegated task ${task.id} is paused: its thread ${childThreadId} is waiting for a person to respond to a ${request.kind} request, and this thread cannot respond to it. Tell the user it needs their approval in that thread, or call task_cancel and delegate again without a narrower runtimeMode. Later approval requests from this task will not wake this thread; its result still will.`,
+    text: `Delegated task ${task.id} was observed paused: its thread ${childThreadId} was waiting for a person to respond to a ${request.kind} request, and this thread cannot respond to it. Check task_status first; this notice may have queued before the task resumed. If it still needs approval, tell the user to respond in that thread. This notification does not authorize broader permissions or a change to the delegated task's runtime mode. Later approval requests from this task will not wake this thread; its result still will.`,
     notification: { source, outcome: "updated", summary: `${named} is waiting for approval` },
   };
 }
