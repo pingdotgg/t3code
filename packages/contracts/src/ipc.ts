@@ -79,6 +79,7 @@ import type {
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import type { ProviderSessionCommandInput, ProviderSessionCommandResult } from "./provider.ts";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -1104,6 +1105,7 @@ export interface LocalApi {
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;
     prewarmProviderSession: (input: ServerProviderPrewarmSessionInput) => Promise<unknown>;
+    sessionCommand: (input: ProviderSessionCommandInput) => Promise<ProviderSessionCommandResult>;
     listSkills: () => Promise<ServerListSkillsResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
@@ -1280,6 +1282,7 @@ export interface EnvironmentApi {
       input: ServerProviderListCommandsInput,
     ) => Promise<ServerProviderListCommandsResult>;
     prewarmProviderSession: (input: ServerProviderPrewarmSessionInput) => Promise<unknown>;
+    sessionCommand: (input: ProviderSessionCommandInput) => Promise<ProviderSessionCommandResult>;
   };
   workflow: {
     run: (input: WorkflowRunInput) => Promise<WorkflowRunResult>;

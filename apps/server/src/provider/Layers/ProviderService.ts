@@ -18,6 +18,7 @@ import {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
+  ProviderSessionCommandInput,
   ProviderSessionForkInput,
   ProviderSessionStartInput,
   ProviderSteerTurnInput,
@@ -371,7 +372,48 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          // The cursor persists before the terminal event publishes so a
+          // subscriber acting on completion (or a crash right after it)
+          // observes the fresh rollback boundary, not the previous one.
+          Effect.andThen(() => persistPiTurnResumeCursor(source, canonicalEvent)),
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+        ),
+      ),
+    );
+
+  /**
+   * Pi records a turn's rollback boundary (its first user entry id) only once
+   * the turn settles, so the cursor persisted at sendTurn time still names the
+   * previous turn. Save the fresh cursor when the terminal event arrives: if
+   * the reaper stops the session or the server crashes before the next turn,
+   * recovery would otherwise lose the boundary and rollback would fail.
+   * Best-effort and Pi-only; failures must never break the event flow.
+   */
+  const persistPiTurnResumeCursor = (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (source.provider !== "pi") return;
+      if (event.type !== "turn.completed" && event.type !== "turn.aborted") return;
+      const adapter = yield* getAdapter(source.instanceId);
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === event.threadId,
+      );
+      if (session?.resumeCursor === undefined) return;
+      const binding = yield* directory.getBinding(event.threadId);
+      if (Option.isNone(binding)) return;
+      yield* directory.upsert({ ...binding.value, resumeCursor: session.resumeCursor });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to persist turn resume state", {
+          provider: source.provider,
+          cause,
+        }),
       ),
     );
 
@@ -1122,6 +1164,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const sessionCommand: ProviderServiceShape["sessionCommand"] = Effect.fn("sessionCommand")(
+    function* (rawInput) {
+      const operation = "ProviderService.sessionCommand";
+      const input = yield* decodeInputOrValidationError({
+        operation,
+        schema: ProviderSessionCommandInput,
+        payload: rawInput,
+      });
+      let routed = yield* resolveRoutableSession({
+        threadId: input.threadId,
+        operation,
+        allowRecovery: false,
+      });
+      if (routed.adapter.sessionCommand === undefined) {
+        return yield* toValidationError(
+          operation,
+          `Provider '${routed.adapter.provider}' does not support session commands.`,
+        );
+      }
+      if (!routed.isActive) {
+        routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation,
+          allowRecovery: true,
+        });
+      }
+      if (routed.adapter.sessionCommand === undefined) {
+        return yield* toValidationError(operation, "Provider does not support session commands.");
+      }
+      return yield* routed.adapter.sessionCommand(input);
+    },
+  );
+
   const listSessions: ProviderServiceShape["listSessions"] = Effect.fn("listSessions")(
     function* () {
       const currentAdapters = yield* getAdapterEntries;
@@ -1239,6 +1314,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.rollback_turns": input.numTurns,
       });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      // A Pi rollback forks the native session into a new session file. The
+      // adapter only holds that cursor in memory, so persist it before
+      // reporting success: if the session is stopped or reaped first,
+      // recovery would otherwise reopen the pre-rollback file and restore
+      // the discarded conversation.
+      const rolledBackSession = (yield* routed.adapter.listSessions()).find(
+        (session) => session.threadId === routed.threadId,
+      );
+      if (rolledBackSession !== undefined) {
+        yield* upsertSessionBinding(
+          { ...rolledBackSession, providerInstanceId: routed.instanceId },
+          input.threadId,
+        );
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
         turns: input.numTurns,
@@ -1312,6 +1401,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    sessionCommand,
     listSessions,
     prewarmSession,
     getCapabilities,
