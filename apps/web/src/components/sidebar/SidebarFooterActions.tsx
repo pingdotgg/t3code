@@ -14,9 +14,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 const FOOTER_ICON_BUTTON_CLASS =
-  "inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors outline-hidden hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors outline-hidden hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
 const FOOTER_ICON_BUTTON_ACTIVE_CLASS = "bg-accent text-foreground";
-const FOOTER_ICON_CLASS = "size-4";
+const FOOTER_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 export function SidebarFooterActions() {
   const navigate = useNavigate();
@@ -30,7 +30,11 @@ export function SidebarFooterActions() {
     enabled: rebuildState?.enabled === true,
     intervalMinutes: checkMinutes,
   });
-  const { requestLocalRebuild, isStartingLocalRebuild } = useRequestLocalRebuild();
+  const {
+    requestLocalRebuild,
+    isStartingLocalRebuild,
+    lifecycle: rebuildLifecycle,
+  } = useRequestLocalRebuild();
 
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
@@ -62,19 +66,33 @@ export function SidebarFooterActions() {
   const showRebuild = rebuildState?.enabled === true;
   const rebuildBusy = checking || isStartingLocalRebuild;
   const rebuildBehind = staleness?.behind === true;
+  const canPullLatest = rebuildBehind && staleness?.readyToPull === true;
   const remoteRef =
     staleness?.remoteBranch !== null && staleness?.remoteBranch !== undefined
       ? `origin/${staleness.remoteBranch}`
       : "the remote default branch";
+  const failureDescription =
+    rebuildLifecycle?.phase === "failed"
+      ? `Last rebuild failed: ${rebuildLifecycle.message ?? "Installer did not complete."}${
+          rebuildLifecycle.logPath ? ` Log: ${rebuildLifecycle.logPath}` : ""
+        }`
+      : null;
+  const updateDescription =
+    staleness?.behindBy !== null && staleness?.behindBy !== undefined
+      ? `${remoteRef} has ${staleness.behindBy} new ${staleness.behindBy === 1 ? "commit" : "commits"}`
+      : `${remoteRef} has newer changes`;
   const rebuildTooltip = !staleness
     ? "Checking for source updates…"
-    : rebuildBehind
-      ? staleness.behindBy !== null && staleness.behindBy !== undefined
-        ? `${remoteRef} has ${staleness.behindBy} new ${staleness.behindBy === 1 ? "commit" : "commits"} — pull, rebuild and restart`
-        : `${remoteRef} has newer changes — pull, rebuild and restart`
-      : staleness.error
-        ? `Could not check for source updates: ${staleness.error}`
-        : "No rebuild needed";
+    : rebuildBehind && !staleness.readyToPull
+      ? `${updateDescription}, but ${staleness.readinessReason ?? "the source checkout is not ready to pull."}`
+      : canPullLatest
+        ? `${failureDescription ? `${failureDescription} ` : ""}${updateDescription} — pull, rebuild and restart`
+        : rebuildLifecycle?.phase === "running"
+          ? "Local rebuild and install are in progress."
+          : (failureDescription ??
+            (staleness.error
+              ? `Could not check for source updates: ${staleness.error}`
+              : "No rebuild needed"));
 
   return (
     <SidebarFooter className="p-2">
@@ -152,14 +170,14 @@ export function SidebarFooterActions() {
                   <button
                     aria-label="Rebuild and restart"
                     className={cn(
-                      "inline-flex size-7 items-center justify-center rounded-md outline-hidden transition-colors focus-visible:ring-1 focus-visible:ring-ring",
-                      rebuildBehind
+                      "inline-flex size-5 items-center justify-center rounded-md outline-hidden transition-colors focus-visible:ring-1 focus-visible:ring-ring",
+                      canPullLatest
                         ? "cursor-pointer text-muted-foreground/65 hover:bg-accent hover:text-foreground"
                         : "cursor-default text-muted-foreground/40",
-                      rebuildBehind && FOOTER_ICON_BUTTON_ACTIVE_CLASS,
+                      canPullLatest && FOOTER_ICON_BUTTON_ACTIVE_CLASS,
                     )}
                     data-testid="sidebar-footer-rebuild"
-                    disabled={!rebuildBehind || rebuildBusy}
+                    disabled={!canPullLatest || rebuildBusy}
                     onClick={() => requestLocalRebuild({ pullLatest: true })}
                     // Native fallback: disabled buttons do not fire the hover
                     // events the popup relies on.

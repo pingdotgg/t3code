@@ -2,8 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampPreviewMiniPlayerPosition,
-  resolveDeviceMiniPlayerCornerRadius,
-  resolveDeviceMiniPlayerSourceSize,
   resolvePreviewMiniPlayerFrame,
 } from "./previewMiniPlayerLayout";
 
@@ -24,18 +22,6 @@ describe("previewMiniPlayerLayout", () => {
         { width: 320, height: 200 },
       ),
     ).toEqual({ x: 168, y: 12 });
-  });
-
-  it("uses reported device orientation and platform-specific clipping", () => {
-    expect(
-      resolveDeviceMiniPlayerSourceSize("ios", {
-        width: 852,
-        height: 393,
-        orientation: "landscape_left",
-      }),
-    ).toEqual({ width: 852, height: 393 });
-    expect(resolveDeviceMiniPlayerCornerRadius("ios", { width: 240, height: 520 })).toBe(12);
-    expect(resolveDeviceMiniPlayerCornerRadius("android", { width: 240, height: 520 })).toBe(34);
   });
 
   it("keeps the player above a reserved bottom inset", () => {

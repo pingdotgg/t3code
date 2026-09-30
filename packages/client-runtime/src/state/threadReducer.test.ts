@@ -639,6 +639,143 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.activities[0]?.id).toBe("activity-0");
       }
     });
+
+    it("re-sorts when a live activity arrives before the current tail", () => {
+      const makeActivity = (id: string, createdAt: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: id,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        createdAt,
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [
+            makeActivity("activity-a", "2026-04-01T11:00:00.000Z"),
+            makeActivity("activity-c", "2026-04-01T11:02:00.000Z"),
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 131,
+          occurredAt: "2026-04-01T11:03:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-b", "2026-04-01T11:01:00.000Z"),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+      }
+    });
+
+    it("repairs snapshot ordering before streaming appends use it", () => {
+      const makeActivity = (id: string, createdAt: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary: id,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        createdAt,
+      });
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [
+            makeActivity("activity-b", "2026-04-01T11:01:00.000Z"),
+            makeActivity("activity-a", "2026-04-01T11:00:00.000Z"),
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 132,
+          occurredAt: "2026-04-01T11:03:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            activity: makeActivity("activity-c", "2026-04-01T11:02:00.000Z"),
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+      }
+    });
+
+    it("replaces a replayed activity after consecutive streaming appends", () => {
+      const makeActivity = (id: string, createdAt: string, summary: string) => ({
+        id: EventId.make(id),
+        tone: "tool" as const,
+        kind: "command",
+        summary,
+        payload: {},
+        turnId: TurnId.make("turn-1"),
+        createdAt,
+      });
+      const makeEvent = (sequence: number, activity: ReturnType<typeof makeActivity>) =>
+        ({
+          ...baseEventFields,
+          sequence,
+          occurredAt: activity.createdAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.activity-appended",
+          payload: { threadId: ThreadId.make("thread-1"), activity },
+        }) as const;
+
+      const first = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          activities: [makeActivity("activity-a", "2026-04-01T11:00:00.000Z", "first")],
+        },
+        makeEvent(133, makeActivity("activity-b", "2026-04-01T11:01:00.000Z", "second")),
+      );
+      expect(first.kind).toBe("updated");
+      if (first.kind !== "updated") return;
+
+      const second = applyThreadDetailEvent(
+        first.thread,
+        makeEvent(134, makeActivity("activity-c", "2026-04-01T11:02:00.000Z", "third")),
+      );
+      expect(second.kind).toBe("updated");
+      if (second.kind !== "updated") return;
+
+      const replayed = applyThreadDetailEvent(
+        second.thread,
+        makeEvent(135, makeActivity("activity-c", "2026-04-01T11:02:00.000Z", "third (replayed)")),
+      );
+      expect(replayed.kind).toBe("updated");
+      if (replayed.kind === "updated") {
+        expect(replayed.thread.activities.map((activity) => activity.id)).toEqual([
+          "activity-a",
+          "activity-b",
+          "activity-c",
+        ]);
+        expect(replayed.thread.activities.at(-1)?.summary).toBe("third (replayed)");
+      }
+    });
   });
 
   describe("thread.child-lifecycle-notified", () => {

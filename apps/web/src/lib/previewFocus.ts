@@ -11,5 +11,5 @@ export function isPreviewFocused(): boolean {
   if (!(activeElement instanceof HTMLElement)) return false;
   if (!activeElement.isConnected) return false;
   if (activeElement.tagName.toLowerCase() === "webview") return true;
-  return activeElement.closest("[data-preview-panel-mode]") !== null;
+  return activeElement.closest("[data-preview-panel-mode], [data-preview-menu]") !== null;
 }

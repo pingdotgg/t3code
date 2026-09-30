@@ -32,6 +32,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
+import { parsePiSessionCommand } from "@t3tools/client-runtime/state/threads";
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
@@ -1669,6 +1670,10 @@ function ChatViewBody(
     () => deriveActivePlanState(threadStateActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadStateActivities],
   );
+  const activeTaskSteps =
+    !latestTurnSettled && activePlan && activePlan.turnId === activeLatestTurn?.turnId
+      ? activePlan.steps
+      : null;
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
@@ -3326,7 +3331,7 @@ function ChatViewBody(
     ],
   );
 
-  const onSend = async (e?: { preventDefault: () => void }) => {
+  const onSend = async (e?: { preventDefault: () => void }, providerCommand?: string) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
@@ -3350,10 +3355,13 @@ function ChatViewBody(
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
     const draftPromptForSend = promptRef.current;
-    const promptForSend = composerPreviewAnnotations.reduce(
-      (prompt, annotation) => appendPreviewAnnotationPrompt(prompt, annotation),
-      draftPromptForSend,
-    );
+    const promptForSend =
+      providerCommand !== undefined
+        ? `/${providerCommand}`
+        : composerPreviewAnnotations.reduce(
+            (prompt, annotation) => appendPreviewAnnotationPrompt(prompt, annotation),
+            draftPromptForSend,
+          );
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -3364,6 +3372,131 @@ function ChatViewBody(
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
     });
+    const piSessionCommand = ctxSelectedProvider === "pi" ? parsePiSessionCommand(trimmed) : null;
+    if (piSessionCommand) {
+      const composerHasNonPromptContent =
+        composerImages.length > 0 ||
+        composerTerminalContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0;
+      if ("error" in piSessionCommand || composerHasNonPromptContent) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Invalid Pi command",
+            description:
+              "error" in piSessionCommand
+                ? piSessionCommand.error
+                : "Session commands do not accept attachments or context items.",
+          }),
+        );
+        return;
+      }
+      const hasMessages = isServerThread
+        ? serverMessageIds.length > 0
+        : activeThread.messages.length > 0;
+      if (!isServerThread || !hasMessages) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start a Pi thread first",
+            description: "Send a message before using session commands.",
+          }),
+        );
+        return;
+      }
+      sendInFlightRef.current = true;
+      const notice = toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title:
+            piSessionCommand.command === "share" ? "Sharing Pi session…" : "Running Pi command…",
+          timeout: 0,
+        }),
+      );
+      try {
+        const result = await api.server.sessionCommand({
+          threadId: activeThread.id,
+          ...piSessionCommand,
+        });
+        if (result.command === "copy") {
+          try {
+            if (typeof navigator.clipboard?.writeText !== "function") {
+              throw new Error("Clipboard is unavailable.");
+            }
+            await navigator.clipboard.writeText(result.text);
+          } catch {
+            toastManager.update(notice, {
+              type: "error",
+              title: "Could not copy the Pi response",
+              description:
+                "The response was retrieved. Clipboard access was denied by the browser.",
+              timeout: 0,
+            });
+            return;
+          }
+          toastManager.update(notice, {
+            type: "success",
+            title: "Response copied",
+            timeout: 5_000,
+          });
+        } else if (result.command === "export") {
+          const url = URL.createObjectURL(
+            new Blob([result.html], { type: "text/html;charset=utf-8" }),
+          );
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = result.fileName;
+          anchor.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 0);
+          toastManager.update(notice, {
+            type: "success",
+            title: "Pi session exported",
+            description: result.outputPath,
+            timeout: 5_000,
+          });
+        } else {
+          toastManager.update(notice, {
+            type: "success",
+            title: "Pi session shared",
+            description: (
+              <a href={result.url} target="_blank" rel="noopener noreferrer" className="underline">
+                {result.url}
+              </a>
+            ),
+            actionProps: {
+              children: "Copy link",
+              onClick: () =>
+                void navigator.clipboard?.writeText(result.url).catch(() =>
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Could not copy the share link",
+                    }),
+                  ),
+                ),
+            },
+            timeout: 0,
+          });
+        }
+        // Only clear a draft the command actually came from. A menu pick
+        // already removed its trigger and passes the command separately.
+        if (providerCommand === undefined && promptRef.current === promptForSend) {
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+        }
+      } catch (error) {
+        toastManager.update(notice, {
+          type: "error",
+          title: `Could not ${piSessionCommand.command} Pi session`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+          timeout: 0,
+        });
+      } finally {
+        sendInFlightRef.current = false;
+      }
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -4615,17 +4748,20 @@ function ChatViewBody(
           }
 
           const resultThreadRef = scopeThreadRef(environmentId, result.threadId);
-          // The review prompt lives in thread detail, whose subscription is
-          // otherwise opened only once the route mounts — a round trip
-          // serialized after navigation. Opening it here overlaps it with the
-          // routability wait and the navigation itself.
-          const releaseThreadDetail = retainThreadDetailSubscription(
-            environmentId,
-            result.threadId,
-          );
-          try {
-            await ensureRoutableServerThread(resultThreadRef);
-            if (!isServerThread || result.threadId !== activeThread.id) {
+          const isSameThread = result.threadId === activeThread.id;
+          // A draft has no server route yet: a same-thread workflow promotes it,
+          // so navigating to the canonical server route is staying put, not
+          // switching threads.
+          if (isSameThread && isServerThread) {
+            return;
+          }
+          if (isSameThread && !isServerThread) {
+            const releaseThreadDetail = retainThreadDetailSubscription(
+              environmentId,
+              result.threadId,
+            );
+            try {
+              await ensureRoutableServerThread(resultThreadRef);
               await navigate({
                 to: "/$environmentId/$threadId",
                 params: {
@@ -4633,7 +4769,50 @@ function ChatViewBody(
                   threadId: result.threadId,
                 },
               });
+            } catch (error) {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Workflow started but could not be opened",
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : "Open the workflow thread from the sidebar to continue.",
+                }),
+              );
+            } finally {
+              releaseThreadDetail();
             }
+            return;
+          }
+          // Child-chat workflows run in the background: stay on the current
+          // thread and let the user open the worker on demand (sidebar,
+          // workflow-runs popover, or the toast action).
+          const releaseThreadDetail = retainThreadDetailSubscription(
+            environmentId,
+            result.threadId,
+          );
+          try {
+            await ensureRoutableServerThread(resultThreadRef);
+            toastManager.add(
+              stackedThreadToast({
+                type: "success",
+                title: "Workflow started in background",
+                description: "It keeps running without switching threads.",
+                actionProps: {
+                  children: "Open thread",
+                  onClick: () => {
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: {
+                        environmentId,
+                        threadId: result.threadId,
+                      },
+                    });
+                  },
+                },
+              }),
+            );
           } catch (error) {
             toastManager.add(
               stackedThreadToast({
@@ -4646,9 +4825,8 @@ function ChatViewBody(
               }),
             );
           } finally {
-            // The mounted route holds its own retain by now, so this only drops
-            // the temporary one. Released subscriptions stay warm rather than
-            // closing immediately, so a slow mount still reuses this one.
+            // Released subscriptions stay warm rather than closing immediately,
+            // so opening the worker later still reuses this one.
             releaseThreadDetail();
           }
         })
@@ -5271,7 +5449,8 @@ function ChatViewBody(
                     respondingRequestIds={respondingRequestIds}
                     showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                     activeProposedPlan={activeProposedPlan}
-                    activePlan={activePlan as { turnId?: TurnId } | null}
+                    activePlan={activePlan}
+                    activeTaskSteps={activeTaskSteps}
                     sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
                     planSidebarLabel={planSidebarLabel}
                     planSidebarOpen={planSidebarOpen}
@@ -5291,6 +5470,7 @@ function ChatViewBody(
                     shouldAutoScrollRef={isAtEndRef}
                     scheduleStickToBottom={scrollToEnd}
                     onSend={onSend}
+                    onProviderCommand={(name) => void onSend(undefined, name)}
                     onComposerIntent={prewarmComposerProviderSession}
                     onInterrupt={onInterrupt}
                     onSteer={onSteer}

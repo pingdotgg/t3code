@@ -228,5 +228,11 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    sessionCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:thread:session-command",
+      tag: WS_METHODS.providerSessionCommand,
+      scheduler,
+      concurrency,
+    }),
   };
 }

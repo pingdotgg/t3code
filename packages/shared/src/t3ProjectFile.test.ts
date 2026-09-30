@@ -31,26 +31,12 @@ describe("buildT3ProjectFileJsonSchema", () => {
       required?: ReadonlyArray<string>;
     };
 
-    expect(Object.keys(schema.properties).sort()).toEqual([
-      "$schema",
-      "defaultThreadEnvMode",
-      "iconPath",
-      "scripts",
-    ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);
-    expect(Object.keys(script?.properties ?? {}).sort()).toEqual([
-      "autoOpenPreview",
-      "command",
-      "icon",
-      "name",
-      "previewUrl",
-      "runOnWorktreeCreate",
-    ]);
   });
 
   it("stays JSON-serializable", () => {

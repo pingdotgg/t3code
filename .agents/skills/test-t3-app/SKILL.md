@@ -73,8 +73,16 @@ Use this skill for the web client. For native mobile testing (simulator builds, 
 2. Choose a base directory that belongs only to the current worktree or test:
    - Use the repository's ignored `.t3` directory for reusable worktree-local state.
    - Use `mktemp -d /tmp/t3code-test.XXXXXX` for disposable state and retain the printed absolute path.
-3. Start the full web stack with `pnpm dev --home-dir <absolute-base-dir> --no-browser`. Always pass the isolated directory explicitly; this runner does not automatically select a worktree-local home. The root script runs `scripts/dev-runner.ts`, which has no `--share` flag.
-4. Keep the terminal session alive and read the selected server port, web port, base directory, and pairing URL from its output.
+3. Start the full web stack with `t3-code.terminal_start`, passing the foreground command `pnpm dev --home-dir <absolute-base-dir> --no-browser`. Search for the tool if it is deferred. Always pass the isolated directory explicitly; this runner does not automatically select a worktree-local home. The root script runs `scripts/dev-runner.ts`, which has no `--share` flag.
+4. Keep the returned `terminalId`. Use `terminal_read` to read the selected server port, web port, base directory, and pairing information, and verify readiness with a health request. `terminal_start` returning successfully means the terminal accepted the command, not that the app is ready. `terminal_list` recovers existing terminal IDs after a lost response; inspect these before retrying a launch.
+
+Retained servers belong in T3-managed terminals, not provider-attached background shells.
+Copilot ACP can keep `session/prompt` pending until attached shell work exits, even after the
+model has written its final answer. A retained `pnpm dev` in `bash(mode: "async")` can therefore
+leave the chat showing Working indefinitely. Do not work around this with `nohup`, `&`, or
+unowned detached processes. If managed terminal tools are unavailable, use a task-scoped server
+and explicitly stop its exact shell session before your final answer; report that the preview
+cannot be retained. Finite builds and tests may still use provider shell tools.
 
 Treat a base directory as disposable only when it was created or deliberately selected for the current test. Never delete or directly seed the shared `~/.t3` directory. Prefer starting with a new temporary base directory over clearing state of uncertain ownership.
 
@@ -97,6 +105,7 @@ Do not open the other person's complete pairing URL during this reachability che
 Treat the overall testing or implementation loop—not an assistant turn or one verification pass—as the environment lifecycle boundary.
 
 - Keep the dev process, base directory, selected ports, authenticated browser tab, registered projects, and seeded fixtures alive while the user may inspect the result or request follow-up changes.
+- Use `terminal_list` and `terminal_read` to reuse this chat's T3-managed server across turns. Its lifetime is independent of Copilot completion and interruption; chat archive/deletion or T3 shutdown closes it. This is not a promise of survival across T3 restarts.
 - Do not stop the server merely because one verification pass completed or because you are yielding a response to the user.
 - Before starting another environment, check whether the existing process and browser tab still serve the task. Reuse them when healthy instead of discarding useful state.
 - On a later turn, verify that the existing process is alive and reuse its printed ports and base directory. If it exited, restart with the same base directory; create a new pairing token only when the browser session is no longer valid.
@@ -132,7 +141,7 @@ Tear down when the user explicitly asks, confirms the iteration is finished, or 
 
 When teardown is appropriate:
 
-1. Stop the dev process with its terminal interrupt.
+1. Stop the exact managed terminal with `terminal_stop({terminalId})`. For a legacy provider-attached server, use its original shell stop/interrupt tool instead. Do not stop another chat's server or unrelated processes.
 2. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
 3. Otherwise remove only a path created for this test after resolving and verifying the exact target.
 

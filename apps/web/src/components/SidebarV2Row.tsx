@@ -419,7 +419,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
                 {pill ? (
                   <ThreadStatusLabel compact status={pill} />
                 ) : (
-                  <InboxIcon className="size-3.5 shrink-0" />
+                  <InboxIcon className="size-[length:var(--app-sidebar-icon-size)] shrink-0" />
                 )}
                 <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-title-font-size)] font-medium text-foreground">
                   {thread.title}

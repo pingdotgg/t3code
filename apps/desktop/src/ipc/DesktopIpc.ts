@@ -153,10 +153,6 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
 
 export const layer = (ipcMain: DesktopIpcMain) => Layer.succeed(DesktopIpc, make(ipcMain));
 
-/**
- * Convenience helpers for creating IPC methods
- */
-
 export interface DesktopIpcMethodRegistration<
   Payload,
   EncodedPayload,

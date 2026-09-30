@@ -8,6 +8,8 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderSessionCommandInput,
+  ProviderSessionCommandResult,
   ProviderSessionForkInput,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
@@ -303,6 +305,14 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         sessions.clear();
       }),
   );
+
+  const sessionCommand = vi.fn(
+    (
+      input: ProviderSessionCommandInput,
+    ): Effect.Effect<ProviderSessionCommandResult, ProviderAdapterError> =>
+      Effect.succeed({ command: "copy", text: `response-${input.threadId}` }),
+  );
+
   const forkSession = vi.fn(
     (input: ProviderSessionForkInput): Effect.Effect<ProviderSession, ProviderAdapterError> =>
       startSession({
@@ -327,6 +337,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    sessionCommand,
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -363,6 +374,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    sessionCommand,
     stopAll,
   };
 }
@@ -1085,6 +1097,68 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect(
+    "routes a session command after recovering a stopped session without sending a turn",
+    () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        const threadId = asThreadId("thread-session-command-recover");
+        yield* provider.startSession(threadId, {
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: codexInstanceId,
+          threadId,
+          cwd: "/tmp/session-command-project",
+          runtimeMode: "full-access",
+        });
+        yield* routing.codex.stopSession(threadId);
+        routing.codex.startSession.mockClear();
+        routing.codex.sendTurn.mockClear();
+        routing.codex.sessionCommand.mockClear();
+        const result = yield* provider.sessionCommand({ threadId, command: "copy" });
+        assert.deepStrictEqual(result, { command: "copy", text: `response-${threadId}` });
+        assert.strictEqual(routing.codex.startSession.mock.calls.length, 1);
+        assert.deepStrictEqual(routing.codex.sessionCommand.mock.calls, [
+          [{ threadId, command: "copy" }],
+        ]);
+        assert.strictEqual(routing.codex.sendTurn.mock.calls.length, 0);
+      }),
+  );
+
+  it.effect("rejects a session command for an unsupported provider without resuming it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const threadId = asThreadId("thread-session-command-unsupported");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* routing.claude.stopSession(threadId);
+      routing.claude.startSession.mockClear();
+      // The shared fake supports session commands; simulate a provider that
+      // does not by hiding the optional adapter method for this test.
+      const claudeAdapter = routing.claude.adapter as unknown as {
+        sessionCommand?: unknown;
+      };
+      const saved = claudeAdapter.sessionCommand;
+      claudeAdapter.sessionCommand = undefined;
+      try {
+        const error = yield* provider
+          .sessionCommand({ threadId, command: "copy" })
+          .pipe(Effect.flip);
+        assert.strictEqual(
+          error._tag,
+          "ProviderValidationError",
+          `expected validation error, got ${String(error)}`,
+        );
+        assert.strictEqual(routing.claude.startSession.mock.calls.length, 0);
+      } finally {
+        claudeAdapter.sessionCommand = saved;
+      }
     }),
   );
 
@@ -2171,10 +2245,10 @@ validation.layer("ProviderServiceLive validation", (it) => {
   );
 });
 
-describe("agent browser access", () => {
+describe("agent MCP access", () => {
   const startSessionWithBrowserAccess = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
     Effect.gen(function* () {
-      const issued: Array<ThreadId> = [];
+      const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
       const revoked: Array<readonly [ThreadId, ProviderInstanceId]> = [];
       const codex = makeFakeCodexAdapter();
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -2186,7 +2260,10 @@ describe("agent browser access", () => {
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
           Effect.sync(() => {
-            issued.push(request.threadId);
+            issued.push({
+              threadId: request.threadId,
+              capabilities: [...(request.capabilities ?? [])],
+            });
             return undefined;
           }),
         revokeMcpCredential: (revokedThreadId, providerInstanceId) =>
@@ -2219,13 +2296,13 @@ describe("agent browser access", () => {
       return { issued, revoked };
     });
 
-  it.effect("withholds and revokes the MCP credential when browser access is off", () =>
+  it.effect("keeps managed terminals available without granting disabled browser access", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-off");
       const result = yield* startSessionWithBrowserAccess(false, threadId);
 
-      assert.deepEqual(result.issued, []);
-      assert.deepEqual(result.revoked, [[threadId, codexInstanceId]]);
+      assert.deepEqual(result.issued, [{ threadId, capabilities: ["terminal"] }]);
+      assert.deepEqual(result.revoked, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -2234,7 +2311,7 @@ describe("agent browser access", () => {
       const threadId = asThreadId("thread-browser-on");
       const result = yield* startSessionWithBrowserAccess(true, threadId);
 
-      assert.deepEqual(result.issued, [threadId]);
+      assert.deepEqual(result.issued, [{ threadId, capabilities: ["terminal", "preview"] }]);
       assert.deepEqual(result.revoked, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -2366,3 +2443,131 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+const piDriver = ProviderDriverKind.make("pi");
+const piInstanceId = ProviderInstanceId.make("pi");
+
+function makePiProviderServiceLayer() {
+  const pi = makeFakeCodexAdapter(piDriver);
+  const registry = makeInstanceRegistryMock({
+    [piDriver]: pi.adapter,
+  });
+  const providerInstanceLayer = Layer.succeed(ProviderInstanceRegistry, registry);
+  const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const providerLayer = Layer.mergeAll(
+    makeProviderServiceLive().pipe(
+      Layer.provide(providerInstanceLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
+      Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    ),
+    directoryLayer,
+    runtimeRepositoryLayer,
+    NodeServices.layer,
+  );
+  return { pi, providerLayer };
+}
+
+it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-pi-turn-boundary");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-turn-boundary",
+        runtimeMode: "full-access",
+      });
+      // The adapter records the turn's first user entry only once the turn
+      // settles, so the live session holds a cursor the binding does not.
+      const settledCursor = {
+        schemaVersion: 1,
+        sessionFile: "/pi/sessions/thread.jsonl",
+        turnEntryIds: ["user-1"],
+      };
+      pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: settledCursor }));
+      // Snapshot the binding at the moment turn.completed is delivered: the
+      // cursor must already be persisted then, not after.
+      const seenAtDelivery = yield* Ref.make<unknown>(null);
+      const collector = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (event.type === "turn.completed") {
+            const atDelivery = yield* directory.getBinding(threadId);
+            yield* Ref.set(
+              seenAtDelivery,
+              Option.isSome(atDelivery) ? atDelivery.value.resumeCursor : null,
+            );
+          }
+        }),
+      ).pipe(Effect.forkScoped);
+      // Let the service subscription attach before publishing: an unbounded
+      // PubSub drops messages published with zero subscribers.
+      yield* sleep(50);
+      pi.emit({
+        eventId: asEventId("evt-pi-turn-settled"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId: asTurnId("pi-turn"),
+        payload: { state: "completed" },
+      });
+      yield* sleep(50);
+      yield* Fiber.interrupt(collector);
+      assert.deepEqual(yield* Ref.get(seenAtDelivery), settledCursor);
+      const binding = yield* directory.getBinding(threadId);
+      assert.isTrue(Option.isSome(binding));
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, settledCursor);
+      }
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive persists the forked Pi session file on rollback", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-pi-rollback-persist");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-rollback-persist",
+        runtimeMode: "full-access",
+      });
+      // Simulate the adapter's in-memory fork: rollback swaps the session
+      // file, and the service must persist it before reporting success.
+      const forkedCursor = {
+        schemaVersion: 1,
+        sessionFile: "/pi/sessions/fork.jsonl",
+        turnEntryIds: [],
+      };
+      pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: forkedCursor }));
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      const binding = yield* directory.getBinding(threadId);
+      assert.isTrue(Option.isSome(binding));
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, forkedCursor);
+      }
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

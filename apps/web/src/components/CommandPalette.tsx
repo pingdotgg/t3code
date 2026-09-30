@@ -827,7 +827,11 @@ function OpenCommandPaletteDialog() {
       metadataGroups: filteredGroups,
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       runThread: async (ref) => {
-        await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(ref),
+          search: (previous) => ({ ...previous, message: ref.messageId }),
+        });
       },
     });
     return items.length > 0
@@ -1198,6 +1202,7 @@ function OpenCommandPaletteDialog() {
             isActionsOnly={isActionsOnly}
             keybindings={keybindings}
             onExecuteItem={executeItem}
+            query={deferredQuery}
             {...(relativePathNeedsActiveProject
               ? { emptyStateMessage: "Relative paths require an active project." }
               : willCreateProjectPath

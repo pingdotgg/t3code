@@ -3,7 +3,11 @@ import { Effect, Stream } from "effect";
 import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { collectStreamAsString, providerModelsFromSettings } from "./providerSnapshot.ts";
+import {
+  buildServerProvider,
+  collectStreamAsString,
+  providerModelsFromSettings,
+} from "./providerSnapshot.ts";
 
 const OPENCODE_CUSTOM_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -54,5 +58,52 @@ describe("collectStreamAsString", () => {
     );
 
     expect(result).toBe("hello world");
+  });
+});
+
+describe("buildServerProvider", () => {
+  it("propagates presentation capability flags to the snapshot", () => {
+    const snapshot = buildServerProvider({
+      presentation: {
+        displayName: "Pi",
+        badgeLabel: "Early Access",
+        showInteractionModeToggle: false,
+        reportsContextWindow: true,
+        requiresNewThreadForModelChange: false,
+        supportsConversationRollback: true,
+      },
+      enabled: true,
+      checkedAt: "2026-09-30T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: "0.99.1",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    });
+
+    expect(snapshot.reportsContextWindow).toBe(true);
+    expect(snapshot.requiresNewThreadForModelChange).toBe(false);
+    expect(snapshot.supportsConversationRollback).toBe(true);
+  });
+
+  it("omits capability flags the presentation does not declare", () => {
+    const snapshot = buildServerProvider({
+      presentation: { displayName: "Legacy" },
+      enabled: true,
+      checkedAt: "2026-09-30T00:00:00.000Z",
+      models: [],
+      probe: {
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "unknown" },
+      },
+    });
+
+    expect(snapshot.reportsContextWindow).toBeUndefined();
+    expect(snapshot.requiresNewThreadForModelChange).toBeUndefined();
+    expect(snapshot.supportsConversationRollback).toBeUndefined();
   });
 });

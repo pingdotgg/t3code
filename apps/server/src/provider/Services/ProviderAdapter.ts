@@ -11,6 +11,8 @@ import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderDriverKind,
+  ProviderSessionCommandInput,
+  ProviderSessionCommandResult,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -140,6 +142,13 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Run a client-requested session utility without creating an agent turn.
+   */
+  readonly sessionCommand?: (
+    input: ProviderSessionCommandInput,
+  ) => Effect.Effect<ProviderSessionCommandResult, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

@@ -23,6 +23,8 @@ const UPDATE_CHECK_CHANNEL = "desktop:update-check";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const LOCAL_REBUILD_GET_STATE_CHANNEL = "desktop:local-rebuild-get-state";
+const LOCAL_REBUILD_GET_LIFECYCLE_CHANNEL = "desktop:local-rebuild-get-lifecycle";
+const LOCAL_REBUILD_LIFECYCLE_CHANNEL = "desktop:local-rebuild-lifecycle";
 const LOCAL_REBUILD_START_CHANNEL = "desktop:local-rebuild-start";
 const LOCAL_REBUILD_CHECK_STALENESS_CHANNEL = "desktop:local-rebuild-check-staleness";
 const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
@@ -221,6 +223,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
   getLocalRebuildState: () => ipcRenderer.invoke(LOCAL_REBUILD_GET_STATE_CHANNEL),
+  getLocalRebuildLifecycle: () => ipcRenderer.invoke(LOCAL_REBUILD_GET_LIFECYCLE_CHANNEL),
+  onLocalRebuildLifecycleChanged: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+      if (typeof state !== "object" || state === null) return;
+      listener(state as Parameters<typeof listener>[0]);
+    };
+
+    ipcRenderer.on(LOCAL_REBUILD_LIFECYCLE_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(LOCAL_REBUILD_LIFECYCLE_CHANNEL, wrappedListener);
+    };
+  },
   rebuildAndRestart: (options) => ipcRenderer.invoke(LOCAL_REBUILD_START_CHANNEL, options),
   checkLocalRebuildStaleness: () => ipcRenderer.invoke(LOCAL_REBUILD_CHECK_STALENESS_CHANNEL),
   showNotification: (request) => ipcRenderer.invoke(SHOW_NOTIFICATION_CHANNEL, request),

@@ -1,8 +1,33 @@
 import { Undo2Icon } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { useLocation } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { settingsSearchId } from "./settingsSearch";
+
+const SettingsTargetContext = createContext("");
+
+function focusSettingsTarget(target: HTMLElement) {
+  target.scrollIntoView({ block: "center", behavior: "smooth" });
+  target.focus({ preventScroll: true });
+}
+
+export function scrollToSettingsTarget(id: string) {
+  const target = document.getElementById(id);
+  if (!target) return;
+  focusSettingsTarget(target);
+}
+
+function useSettingsTarget(id: string) {
+  const targetId = useContext(SettingsTargetContext);
+  return useCallback(
+    (element: HTMLElement | null) => {
+      if (element && targetId === id) focusSettingsTarget(element);
+    },
+    [id, targetId],
+  );
+}
 
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
@@ -27,8 +52,15 @@ export function SettingsSection({
   headerAction?: ReactNode;
   children: ReactNode;
 }) {
+  const id = `section-${settingsSearchId(title).slice("setting-".length)}`;
+  const targetRef = useSettingsTarget(id);
   return (
-    <section className="space-y-2.5">
+    <section
+      ref={targetRef}
+      id={id}
+      tabIndex={-1}
+      className="space-y-2.5 focus-visible:outline-2 focus-visible:outline-ring"
+    >
       <div className="flex items-start justify-between gap-3 px-1">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/50">
@@ -64,11 +96,16 @@ export function SettingsRow({
   control?: ReactNode;
   children?: ReactNode;
 }) {
+  const id = typeof title === "string" ? settingsSearchId(title) : undefined;
+  const targetRef = useSettingsTarget(id ?? "");
   return (
     <div
+      ref={targetRef}
+      id={id}
+      tabIndex={id ? -1 : undefined}
       className={`border-t border-border/60 px-4 pt-4 first:border-t-0 sm:px-5${
         children ? "" : " pb-4"
-      }`}
+      } focus-visible:outline-2 focus-visible:outline-ring`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 flex-1 space-y-1">
@@ -125,18 +162,22 @@ export function SettingsPageContainer({
   children: ReactNode;
   width?: "narrow" | "wide";
 }) {
+  const hash = useLocation({ select: (location) => location.hash });
+
   return (
-    <div className="scrollbar-gutter-both flex-1 overflow-y-auto p-6 sm:p-8">
-      <div
-        className={
-          width === "wide"
-            ? "mx-auto flex w-full max-w-4xl flex-col gap-8"
-            : "mx-auto flex w-full max-w-3xl flex-col gap-8"
-        }
-      >
-        {children}
+    <SettingsTargetContext value={hash.replace(/^#/, "")}>
+      <div className="scrollbar-gutter-both flex-1 overflow-y-auto p-6 sm:p-8">
+        <div
+          className={
+            width === "wide"
+              ? "mx-auto flex w-full max-w-4xl flex-col gap-8"
+              : "mx-auto flex w-full max-w-3xl flex-col gap-8"
+          }
+        >
+          {children}
+        </div>
       </div>
-    </div>
+    </SettingsTargetContext>
   );
 }
 

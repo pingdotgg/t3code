@@ -135,6 +135,112 @@ it.layer(WorkspaceBindingClearTestLayer)("Workspace binding recovery", (it) => {
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
 
 it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
+  it.effect("folds message shell fields directly without reconciliation jobs", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-incremental-message-summary");
+      const project = (event: Parameters<typeof projectionPipeline.projectEvent>[0]) =>
+        projectionPipeline.projectEvent(event);
+
+      yield* project({
+        sequence: 1,
+        type: "thread.created",
+        eventId: EventId.make("evt-incremental-message-summary-1"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-03-01T08:00:00.000Z",
+        commandId: CommandId.make("cmd-incremental-message-summary-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-incremental-message-summary-1"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-incremental-message-summary"),
+          title: "Incremental message summary",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-03-01T08:00:00.000Z",
+          updatedAt: "2026-03-01T08:00:00.000Z",
+        },
+      });
+
+      const messageEvent = (
+        sequence: number,
+        role: "user" | "assistant",
+        createdAt: string,
+        occurredAt: string,
+      ) =>
+        ({
+          sequence,
+          type: "thread.message-sent",
+          eventId: EventId.make(`evt-incremental-message-summary-${sequence}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt,
+          commandId: CommandId.make(`cmd-incremental-message-summary-${sequence}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`cmd-incremental-message-summary-${sequence}`),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make(`message-incremental-message-summary-${sequence}`),
+            role,
+            text: role === "user" ? "Please continue" : "Continuing",
+            turnId: null,
+            streaming: role === "assistant",
+            createdAt,
+            updatedAt: occurredAt,
+          },
+        }) as const;
+
+      yield* project(
+        messageEvent(2, "user", "2026-03-01T08:00:02.000Z", "2026-03-01T08:00:02.000Z"),
+      );
+      yield* project(
+        messageEvent(3, "assistant", "2026-03-01T08:00:03.000Z", "2026-03-01T08:00:03.000Z"),
+      );
+      yield* project(
+        messageEvent(4, "user", "2026-03-01T08:00:01.000Z", "2026-03-01T08:00:04.000Z"),
+      );
+
+      assert.deepEqual(
+        yield* sql<{
+          readonly latestUserMessageAt: string | null;
+          readonly pendingJobs: number;
+          readonly updatedAt: string;
+        }>`
+          SELECT
+            latest_user_message_at AS "latestUserMessageAt",
+            updated_at AS "updatedAt",
+            (
+              SELECT COUNT(*)
+              FROM projection_reconciliation_jobs
+            ) AS "pendingJobs"
+          FROM projection_threads
+          WHERE thread_id = ${threadId}
+        `,
+        [
+          {
+            latestUserMessageAt: "2026-03-01T08:00:02.000Z",
+            pendingJobs: 0,
+            updatedAt: "2026-03-01T08:00:04.000Z",
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-message-summary-")),
+      ),
+    ),
+  );
+
   it.effect("preserves unrelated links and provenance during singular PR refreshes", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -475,7 +581,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
       const receipt = yield* appendAndProject({
-        type: "thread.message-sent",
+        type: "thread.activity-appended",
         eventId: EventId.make("evt-deferred-reconciliation-3"),
         aggregateKind: "thread",
         aggregateId: threadId,
@@ -483,87 +589,6 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         commandId: CommandId.make("cmd-deferred-reconciliation-3"),
         causationEventId: null,
         correlationId: CorrelationId.make("cmd-deferred-reconciliation-3"),
-        metadata: {},
-        payload: {
-          threadId,
-          messageId: MessageId.make("message-deferred-reconciliation"),
-          role: "user",
-          text: "Reconcile after commit",
-          turnId: null,
-          streaming: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-
-      const before = yield* sql<{
-        readonly latestUserMessageAt: string | null;
-        readonly pendingJobs: number;
-      }>`
-        SELECT
-          latest_user_message_at AS "latestUserMessageAt",
-          (
-            SELECT COUNT(*)
-            FROM projection_reconciliation_jobs
-          ) AS "pendingJobs"
-        FROM projection_threads
-        WHERE thread_id = ${threadId}
-      `;
-      assert.deepEqual(before, [{ latestUserMessageAt: null, pendingJobs: 1 }]);
-
-      yield* sql`
-        CREATE TRIGGER fail_deferred_shell_reconciliation
-        BEFORE UPDATE ON projection_threads
-        WHEN NEW.thread_id = 'thread-deferred-reconciliation'
-        BEGIN
-          SELECT RAISE(ABORT, 'forced-shell-reconciliation-failure');
-        END;
-      `;
-      const reconciliationResult = yield* Effect.result(receipt.reconcile);
-      assert.equal(reconciliationResult._tag, "Failure");
-
-      const afterFailure = yield* sql<{
-        readonly latestUserMessageAt: string | null;
-        readonly pendingJobs: number;
-      }>`
-        SELECT
-          latest_user_message_at AS "latestUserMessageAt",
-          (
-            SELECT COUNT(*)
-            FROM projection_reconciliation_jobs
-          ) AS "pendingJobs"
-        FROM projection_threads
-        WHERE thread_id = ${threadId}
-      `;
-      assert.deepEqual(afterFailure, [{ latestUserMessageAt: null, pendingJobs: 1 }]);
-
-      yield* sql`DROP TRIGGER fail_deferred_shell_reconciliation`;
-      yield* projectionPipeline.bootstrap;
-
-      const after = yield* sql<{
-        readonly latestUserMessageAt: string | null;
-        readonly pendingJobs: number;
-      }>`
-        SELECT
-          latest_user_message_at AS "latestUserMessageAt",
-          (
-            SELECT COUNT(*)
-            FROM projection_reconciliation_jobs
-          ) AS "pendingJobs"
-        FROM projection_threads
-        WHERE thread_id = ${threadId}
-      `;
-      assert.deepEqual(after, [{ latestUserMessageAt: now, pendingJobs: 0 }]);
-
-      const userInputReceipt = yield* appendAndProject({
-        type: "thread.activity-appended",
-        eventId: EventId.make("evt-deferred-reconciliation-4"),
-        aggregateKind: "thread",
-        aggregateId: threadId,
-        occurredAt: now,
-        commandId: CommandId.make("cmd-deferred-reconciliation-4"),
-        causationEventId: null,
-        correlationId: CorrelationId.make("cmd-deferred-reconciliation-4"),
         metadata: {},
         payload: {
           threadId,
@@ -578,7 +603,65 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           },
         },
       });
-      yield* userInputReceipt.reconcile;
+
+      const before = yield* sql<{
+        readonly pendingUserInputCount: number;
+        readonly pendingJobs: number;
+      }>`
+        SELECT
+          pending_user_input_count AS "pendingUserInputCount",
+          (
+            SELECT COUNT(*)
+            FROM projection_reconciliation_jobs
+          ) AS "pendingJobs"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(before, [{ pendingUserInputCount: 0, pendingJobs: 1 }]);
+
+      yield* sql`
+        CREATE TRIGGER fail_deferred_shell_reconciliation
+        BEFORE UPDATE ON projection_threads
+        WHEN NEW.thread_id = 'thread-deferred-reconciliation'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced-shell-reconciliation-failure');
+        END;
+      `;
+      const reconciliationResult = yield* Effect.result(receipt.reconcile);
+      assert.equal(reconciliationResult._tag, "Failure");
+
+      const afterFailure = yield* sql<{
+        readonly pendingUserInputCount: number;
+        readonly pendingJobs: number;
+      }>`
+        SELECT
+          pending_user_input_count AS "pendingUserInputCount",
+          (
+            SELECT COUNT(*)
+            FROM projection_reconciliation_jobs
+          ) AS "pendingJobs"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(afterFailure, [{ pendingUserInputCount: 0, pendingJobs: 1 }]);
+
+      yield* sql`DROP TRIGGER fail_deferred_shell_reconciliation`;
+      yield* projectionPipeline.bootstrap;
+
+      const after = yield* sql<{
+        readonly pendingUserInputCount: number;
+        readonly pendingJobs: number;
+      }>`
+        SELECT
+          pending_user_input_count AS "pendingUserInputCount",
+          (
+            SELECT COUNT(*)
+            FROM projection_reconciliation_jobs
+          ) AS "pendingJobs"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+      assert.deepEqual(after, [{ pendingUserInputCount: 1, pendingJobs: 0 }]);
 
       const proposedPlanReceipt = yield* appendAndProject({
         type: "thread.proposed-plan-upserted",
