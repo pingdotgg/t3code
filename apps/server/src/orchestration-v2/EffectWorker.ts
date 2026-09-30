@@ -358,6 +358,33 @@ export const layerExecutor: Layer.Layer<
                   : { answers: effect.request.answers }),
               })
               .pipe(
+                // Dispatch resolves the request before delivery, so the last
+                // failed attempt records the failure where the user sees it
+                // instead of leaving the run to spin with no question.
+                Effect.tapCause((cause) =>
+                  willRetry ||
+                  Cause.hasInterruptsOnly(cause) ||
+                  effect.request.type !== "runtime-request.respond"
+                    ? Effect.void
+                    : threads
+                        .dispatch({
+                          type: "runtime-request.delivery.fail",
+                          commandId: CommandId.make(`${effect.commandId}:delivery-failed`),
+                          threadId: effect.threadId,
+                          requestId: effect.request.requestId,
+                        })
+                        .pipe(
+                          Effect.catchCause((reopenCause) =>
+                            Effect.logWarning(
+                              "Failed to record undelivered runtime request answer",
+                              {
+                                effectId: effect.id,
+                                cause: reopenCause,
+                              },
+                            ),
+                          ),
+                        ),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

@@ -3126,6 +3126,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
   }),
+  /** Records that delivering the answer to request `requestId` failed for good. */
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.delivery.fail"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
