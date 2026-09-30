@@ -440,20 +440,31 @@ describe("assistant citation source lifecycle", () => {
     source.cleanup();
   });
 
-  it("uses instant navigation and removes the temporary quote highlight for reduced motion", async () => {
-    const source = createSource({ reducedMotion: true });
-    source.mount();
-    source.flushFrame();
-    expect(source.scrollToOffset).toHaveBeenCalledWith({ offset: 80, animated: false });
-    expect(source.highlight()).toBeUndefined();
-    await source.finishScroll();
-    expect(source.target.activationRef.current.pulse?.reducedMotion).toBe(true);
-    expect(source.highlight()?.toString()).toBe("quote");
-    await source.finishPulse();
-    expect(source.highlight()).toBeUndefined();
-    expect(source.root.focus).not.toHaveBeenCalled();
-    source.cleanup();
-  });
+  it.each(["reduced motion", "missing matchMedia"])(
+    "uses instant navigation and preserves selection and acknowledgement with %s",
+    async (preference) => {
+      const source = createSource({ reducedMotion: true });
+      if (preference === "missing matchMedia") vi.stubGlobal("window", {});
+      const selection = new TestSelection();
+      const selectedRange = new TestRange(source.text, () => rect(0));
+      selection.addRange(selectedRange);
+      source.root.ownerDocument.getSelection = () => selection;
+      source.mount();
+      source.flushFrame();
+      expect(source.scrollToOffset).toHaveBeenCalledWith({ offset: 80, animated: false });
+      expect(source.highlight()).toBeUndefined();
+      await source.finishScroll();
+      expect(source.scrollNode.scrollTop).toBe(80);
+      expect(source.target.onComplete).toHaveBeenCalledOnce();
+      expect(selection.ranges).toEqual([selectedRange]);
+      expect(source.target.activationRef.current.pulse?.reducedMotion).toBe(true);
+      expect(source.highlight()?.toString()).toBe("quote");
+      await source.finishPulse();
+      expect(source.highlight()).toBeUndefined();
+      expect(source.root.focus).not.toHaveBeenCalled();
+      source.cleanup();
+    },
+  );
 
   it("does not revive a quote when remounting after its original pulse deadline", async () => {
     const source = createSource();

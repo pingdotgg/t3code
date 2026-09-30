@@ -91,6 +91,15 @@ describe("theme role reveal", () => {
     select("surface", true);
     frames.shift()!(0);
     expect(querySelector).toHaveBeenLastCalledWith('[data-theme-color-role="surface"]');
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "auto", block: "nearest" });
+    expect(findFields(renderPanel()).find((field) => field.props.selected)?.props.role).toBe(
+      "surface",
+    );
+
+    window.matchMedia = vi.fn(() => ({ matches: false }) as MediaQueryList);
+    select("surface", true);
+    frames.shift()!(0);
+    expect(querySelector).toHaveBeenLastCalledWith('[data-theme-color-role="surface"]');
     expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "smooth", block: "nearest" });
     expect(findFields(renderPanel()).find((field) => field.props.selected)?.props.role).toBe(
       "surface",

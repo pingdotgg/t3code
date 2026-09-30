@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vite-plus/test";
+import { afterEach, describe, expect, test, vi } from "vite-plus/test";
 
 import {
   createPageScrollController,
@@ -80,7 +80,46 @@ class TestClock {
   }
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("page scroll motion preference", () => {
+  test.each(["missing window", "missing matchMedia"])(
+    "reaches the same destination and acknowledges the action with %s",
+    (unavailable) => {
+      const clock = new TestClock();
+      const container = {
+        clientHeight: 600,
+        scrollHeight: 4_000,
+        scrollTop: 0,
+        getBoundingClientRect: () => ({ height: 600 }),
+      };
+      vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+      const started: string[] = [];
+      const controller = createPageScrollController({
+        getContainer: () => container,
+        getScrollPaddingBottomPx: () => 24,
+        onScrollStart: (key) => started.push(key),
+        env: clock.env,
+      });
+      controller.handleKeyDown("PageDown");
+      controller.handleKeyUp("PageDown");
+      expect(container.scrollTop).toBe(0);
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+      const destination = container.scrollTop;
+      expect(destination).toBeGreaterThan(0);
+
+      container.scrollTop = 0;
+      vi.stubGlobal("window", unavailable === "missing window" ? undefined : {});
+      controller.handleKeyDown("PageDown");
+      controller.handleKeyUp("PageDown");
+      expect(container.scrollTop).toBe(destination);
+      expect(started).toEqual(["PageDown", "PageDown"]);
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+      expect(container.scrollTop).toBe(destination);
+      controller.dispose();
+    },
+  );
+
   test("reaches the same page immediately after the preference changes", () => {
     const clock = new TestClock();
     const container = {
@@ -218,11 +257,13 @@ describe("createPageScrollController", () => {
     const controller = createPageScrollController({
       getContainer: () => container,
       getScrollPaddingBottomPx: () => 24,
+      isReducedMotion: () => false,
       env: clock.env,
     });
 
     controller.handleKeyDown("PageDown");
     controller.handleKeyUp("PageDown");
+    expect(container.scrollTop).toBe(0);
     clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
 
     expect(container.scrollTop).toBeCloseTo(
@@ -234,33 +275,37 @@ describe("createPageScrollController", () => {
     );
   });
 
-  test("continues scrolling on hold without repeated keydown events and stops on keyup", () => {
-    const clock = new TestClock();
-    const container = {
-      clientHeight: 600,
-      scrollHeight: 4_000,
-      scrollTop: 0,
-      getBoundingClientRect: () => ({ height: 600 }),
-    };
-    const controller = createPageScrollController({
-      getContainer: () => container,
-      getScrollPaddingBottomPx: () => 24,
-      env: clock.env,
-    });
-    controller.handleKeyDown("PageDown");
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
+  test.each([false, true])(
+    "continues held scrolling and stops on keyup (reduced motion: %s)",
+    (reducedMotion) => {
+      const clock = new TestClock();
+      const container = {
+        clientHeight: 600,
+        scrollHeight: 4_000,
+        scrollTop: 0,
+        getBoundingClientRect: () => ({ height: 600 }),
+      };
+      const controller = createPageScrollController({
+        getContainer: () => container,
+        getScrollPaddingBottomPx: () => 24,
+        isReducedMotion: () => reducedMotion,
+        env: clock.env,
+      });
+      controller.handleKeyDown("PageDown");
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
 
-    const afterHoldStarts = container.scrollTop;
-    clock.advanceBy(200);
+      const afterHoldStarts = container.scrollTop;
+      clock.advanceBy(200);
 
-    expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
+      expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
 
-    const stoppedAt = container.scrollTop;
-    controller.handleKeyUp("PageDown");
-    clock.advanceBy(250);
+      const stoppedAt = container.scrollTop;
+      controller.handleKeyUp("PageDown");
+      clock.advanceBy(250);
 
-    expect(container.scrollTop).toBe(stoppedAt);
-  });
+      expect(container.scrollTop).toBe(stoppedAt);
+    },
+  );
 
   test("notifies once when a page scroll starts", () => {
     const clock = new TestClock();

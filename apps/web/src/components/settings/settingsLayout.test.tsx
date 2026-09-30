@@ -90,11 +90,12 @@ describe("settings search targets", () => {
   it("keeps the destination and focus when the preference changes or is unavailable", () => {
     const scrollIntoView = vi.fn();
     const focus = vi.fn();
+    const classList = { remove: vi.fn(), add: vi.fn() };
     const target = {
       tagName: "DIV",
       scrollIntoView,
       focus,
-      classList: { remove: vi.fn(), add: vi.fn() },
+      classList,
       addEventListener: vi.fn(),
       offsetWidth: 100,
     } as unknown as HTMLElement;
@@ -107,11 +108,22 @@ describe("settings search targets", () => {
     reducedMotion = true;
     expect(scrollToSettingsTarget("word-wrap")).toBe(true);
     expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "auto", block: "center" });
+    classList.add.mockClear();
     vi.stubGlobal("window", {});
     expect(scrollToSettingsTarget("word-wrap")).toBe(true);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "auto", block: "center" });
+    expect(classList.remove).toHaveBeenLastCalledWith("settings-search-target-pulse");
+    expect(classList.add).not.toHaveBeenCalled();
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    expect(scrollToSettingsTarget("word-wrap")).toBe(true);
     expect(scrollIntoView).toHaveBeenLastCalledWith({ behavior: "smooth", block: "center" });
-    expect(getElementById.mock.calls).toEqual([["word-wrap"], ["word-wrap"], ["word-wrap"]]);
-    expect(focus).toHaveBeenCalledTimes(3);
+    expect(getElementById.mock.calls).toEqual([
+      ["word-wrap"],
+      ["word-wrap"],
+      ["word-wrap"],
+      ["word-wrap"],
+    ]);
+    expect(focus).toHaveBeenCalledTimes(4);
     expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
   });
 

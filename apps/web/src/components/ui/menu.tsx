@@ -25,6 +25,7 @@ function MenuPopup({
   alignOffset,
   side = "bottom",
   anchor,
+  keepMounted = false,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -32,16 +33,10 @@ function MenuPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
+  keepMounted?: boolean;
 }) {
-  const hasExplicitWidthClass =
-    typeof className === "string" &&
-    className.split(/\s+/).some((classToken) => {
-      const utility = classToken.split(":").at(-1) ?? classToken;
-      return /^(?:min-|max-)?w-/.test(utility);
-    });
-
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
@@ -54,7 +49,12 @@ function MenuPopup({
         <MenuPrimitive.Popup
           className={cn(
             "dropdown-glass relative flex origin-(--transform-origin) rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none focus:outline-none dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
-            !hasExplicitWidthClass && "min-w-32",
+            // Portaled menus can overlap an Electron window drag region (e.g.
+            // the Review panel header). Drag hit-testing ignores z-index, so
+            // the topmost row would stay unhoverable without this opt-out.
+            "[-webkit-app-region:no-drag]",
+            // Menus size to their content from one minimum, never past the viewport.
+            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
             className,
           )}
           data-slot="menu-popup"
@@ -74,10 +74,12 @@ function MenuGroup(props: MenuPrimitive.Group.Props) {
 function MenuItem({
   className,
   inset,
+  density = "default",
   variant = "default",
   ...props
 }: MenuPrimitive.Item.Props & {
   inset?: boolean;
+  density?: "default" | "touch";
   variant?: "default" | "destructive" | "ghost";
 }) {
   return (
@@ -90,11 +92,28 @@ function MenuItem({
             size: "compact",
             className: "h-auto min-h-7 w-full sm:text-xs",
           }),
+        density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
+      data-density={density}
       data-inset={inset}
       data-slot="menu-item"
       data-variant={variant}
+      {...props}
+    />
+  );
+}
+
+// Trim font leading so visible letters center with the icons in touch rows.
+// Symmetric padding keeps accents and descenders inside truncated labels.
+function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
+  return (
+    <span
+      data-slot="menu-item-label"
+      className={cn(
+        "min-w-0 truncate in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
+        className,
+      )}
       {...props}
     />
   );
@@ -114,7 +133,9 @@ function MenuCheckboxItem({
       checked={checked}
       className={cn(
         "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-sm py-1 ps-2 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        variant === "switch" ? "grid-cols-[1fr_auto] gap-4 pe-1.5" : "grid-cols-[1rem_1fr] pe-4",
+        variant === "switch"
+          ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
+          : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
         className,
       )}
       data-slot="menu-checkbox-item"
@@ -247,10 +268,12 @@ function MenuSub(props: MenuPrimitive.SubmenuRoot.Props) {
 function MenuSubTrigger({
   className,
   inset,
+  density = "default",
   children,
   ...props
 }: MenuPrimitive.SubmenuTrigger.Props & {
   inset?: boolean;
+  density?: "default" | "touch";
 }) {
   return (
     <MenuPrimitive.SubmenuTrigger
@@ -261,8 +284,10 @@ function MenuSubTrigger({
         // also a direct svg — on a sub-trigger with no leading icon it is the
         // only one, and these rules would take away its `ms-auto` alignment.
         "[&>svg:not(:last-child)]:-mx-0.5 flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:cursor-not-allowed data-disabled:pointer-events-none data-highlighted:bg-accent data-popup-open:bg-accent data-inset:ps-8 data-highlighted:text-accent-foreground data-popup-open:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground [&>svg:not(:last-child):not([class*='opacity-'])]:opacity-80 [&_svg]:pointer-events-none [&>svg]:shrink-0",
+        density === "touch" && "min-h-10 sm:min-h-10",
         className,
       )}
+      data-density={density}
       data-inset={inset}
       data-slot="menu-sub-trigger"
       {...props}
@@ -309,6 +334,7 @@ export {
   MenuGroup,
   MenuGroup as DropdownMenuGroup,
   MenuItem,
+  MenuItemLabel,
   MenuItem as DropdownMenuItem,
   MenuCheckboxItem,
   MenuCheckboxItem as DropdownMenuCheckboxItem,
