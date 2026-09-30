@@ -993,6 +993,16 @@ label:has(> select#reasoning-effort) select {
   line-height: 1.35;
 }
 
+[data-chat-composer-form] {
+  --chat-composer-surface: var(--card);
+  --chat-composer-outline: rgb(0 0 0 / 8%);
+
+  @variant dark {
+    --chat-composer-surface: color-mix(in srgb, var(--chat-background) 97%, var(--color-white));
+    --chat-composer-outline: rgb(255 255 255 / 5%);
+  }
+}
+
 /* Composer footer: scale buttons/icons to match input font size setting */
 [data-chat-composer-footer] {
   font-size: var(--app-input-font-size);
