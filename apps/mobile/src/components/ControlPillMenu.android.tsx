@@ -1,5 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { cloneElement, isValidElement, type ReactElement } from "react";
+import type { AccessibilityProps } from "react-native";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import type { ControlPillMenuProps } from "./ControlPillMenu.types";
 
@@ -9,7 +10,11 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
   // an injected onLongPress (mirroring the iOS context-menu interaction)
   // so its own tap handling still works.
   if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
-    const child = props.children as ReactElement<{ onLongPress?: () => void }>;
+    const child = props.children as ReactElement<
+      Pick<AccessibilityProps, "accessible" | "accessibilityLabel" | "accessibilityRole"> & {
+        onLongPress?: () => void;
+      }
+    >;
     return (
       <AndroidAnchoredMenu
         actions={props.actions}
@@ -20,6 +25,9 @@ export function ControlPillMenu(props: ControlPillMenuProps) {
       >
         {(open) =>
           cloneElement(child, {
+            accessible: props.accessible ?? child.props.accessible,
+            accessibilityLabel: props.accessibilityLabel ?? child.props.accessibilityLabel,
+            accessibilityRole: props.accessibilityRole ?? child.props.accessibilityRole,
             onLongPress: () => {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               open();

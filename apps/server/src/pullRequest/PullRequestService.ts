@@ -611,6 +611,12 @@ function withRateLimitBackoff(
     Record<Exclude<keyof PullRequestProviderApi, keyof typeof wrapped>, never>;
 }
 
+// Capture before the provider read so a slow response keeps its original freshness through caches.
+const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A, E, R>) {
+  const observedAt = yield* Clock.currentTimeMillis;
+  return { value: yield* read, observedAt };
+});
+
 export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
@@ -1076,6 +1082,7 @@ export const make = Effect.gen(function* () {
     readonly project: SupportedProject;
     readonly item: ProviderChangeRequest;
     readonly viewer: string;
+    readonly observedAt: number;
   }): PullRequestListEntry => {
     const viewer = input.viewer.toLowerCase();
     return {
@@ -1098,6 +1105,7 @@ export const make = Effect.gen(function* () {
       deletions: input.item.deletions,
       createdAt: input.item.createdAt,
       updatedAt: input.item.updatedAt,
+      observedAt: input.observedAt,
       ...(input.item.checksState === undefined || input.item.checksState === null
         ? {}
         : { checksState: input.item.checksState }),
@@ -1246,7 +1254,8 @@ export const make = Effect.gen(function* () {
                   }),
             })
             .pipe(
-              Effect.map((page): RepositoryBatch => {
+              observeRead,
+              Effect.map(({ value: page, observedAt }): RepositoryBatch => {
                 // The boundary instant was asked for inclusively, so the rows already sent at it
                 // come back with the slice. Dropping them here rather than asking for strictly
                 // older is what keeps their neighbours at the same instant from being skipped.
@@ -1262,7 +1271,7 @@ export const make = Effect.gen(function* () {
                   key,
                   entries: items
                     .filter((item) => matchesRowFilters(item, input.filters, viewer))
-                    .map((item) => toEntry({ project, item, viewer })),
+                    .map((item) => toEntry({ project, item, viewer, observedAt })),
                   errors: [],
                   truncated: page.truncated,
                   nextCursor:
@@ -1323,7 +1332,8 @@ export const make = Effect.gen(function* () {
             ? {}
             : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
         }).pipe(
-          Effect.flatMap((page) =>
+          observeRead,
+          Effect.flatMap(({ value: page, observedAt }) =>
             Effect.flatMap(Clock.currentTimeMillis, (now) => {
               const rows = new Map<string, Array<ProviderChangeRequest>>();
               for (const [key, visibleAt] of searchVisibleAt) {
@@ -1384,7 +1394,7 @@ export const make = Effect.gen(function* () {
                     key: project.cursorKey,
                     entries: items
                       .filter((item) => matchesRowFilters(item, input.filters, viewer))
-                      .map((item) => toEntry({ project, item, viewer })),
+                      .map((item) => toEntry({ project, item, viewer, observedAt })),
                     errors: [],
                     truncated: page.truncated,
                     nextCursor:
@@ -1551,7 +1561,8 @@ export const make = Effect.gen(function* () {
             : project.api.getChangeRequestSummary(providerInput);
         return read.pipe(
           Effect.mapError(toPullRequestError("summary")),
-          Effect.map((changeRequest): PullRequestSummary => ({
+          observeRead,
+          Effect.map(({ value: changeRequest, observedAt }): PullRequestSummary => ({
             provider: project.api.kind,
             projectId: project.project.id,
             repository: project.repository,
@@ -1564,6 +1575,7 @@ export const make = Effect.gen(function* () {
             closedAt: changeRequest.closedAt ?? null,
             mergedAt: changeRequest.mergedAt ?? null,
             updatedAt: changeRequest.updatedAt,
+            observedAt,
             ...(changeRequest.isDraft === undefined ? {} : { isDraft: changeRequest.isDraft }),
             ...(changeRequest.author === undefined ? {} : { author: changeRequest.author }),
             ...(changeRequest.additions === undefined
@@ -1634,12 +1646,12 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
               })
-              .pipe(Effect.mapError(toPullRequestError("detail"))),
+              .pipe(Effect.mapError(toPullRequestError("detail")), observeRead),
             viewerOf(project),
           ],
           { concurrency: 2 },
         ).pipe(
-          Effect.map(([changeRequest, viewer]): PullRequestDetail => ({
+          Effect.map(([{ value: changeRequest, observedAt }, viewer]): PullRequestDetail => ({
             provider: project.api.kind,
             capabilities: project.api.capabilities,
             projectId: project.project.id,
@@ -1664,6 +1676,7 @@ export const make = Effect.gen(function* () {
             baseBranch: changeRequest.baseBranch,
             createdAt: changeRequest.createdAt,
             updatedAt: changeRequest.updatedAt,
+            observedAt,
             mergedAt: changeRequest.mergedAt,
             closedAt: changeRequest.closedAt,
             reviewers: changeRequest.reviewers,
@@ -2738,7 +2751,7 @@ export const make = Effect.gen(function* () {
       `project:${input.projectId}`,
       refScope(input),
     ]);
-    const decoded = yield* Schema.decodeUnknownEffect(codec)(payload).pipe(Effect.option);
+    const decoded = yield* Schema.decodeEffect(codec)(payload).pipe(Effect.option);
     return Option.isSome(decoded) ? decoded.value : yield* lookup;
   });
   const summaryCodec = Schema.fromJsonString(PullRequestSummary);
@@ -2894,12 +2907,14 @@ export const make = Effect.gen(function* () {
     closedAt: detail.closedAt,
     mergedAt: detail.mergedAt,
     updatedAt: detail.updatedAt,
+    observedAt: detail.observedAt,
   });
   const shouldReplaceHeldSummary = (key: string, next: PullRequestSummary) => {
     const current = lastGoodSummary.peek(key);
     if (current === undefined) return true;
     if (current.state === "merged" && next.state !== "merged") return false;
-    return next.updatedAt >= current.updatedAt;
+    if (next.updatedAt !== current.updatedAt) return next.updatedAt > current.updatedAt;
+    return (next.observedAt ?? -Infinity) >= (current.observedAt ?? -Infinity);
   };
   const detail: PullRequestService["Service"]["detail"] = (input) => {
     const key = refCacheKey(input);

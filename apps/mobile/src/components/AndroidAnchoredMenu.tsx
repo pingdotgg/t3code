@@ -7,9 +7,9 @@ import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
 import { OverlayPortal } from "./OverlayPortal";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { MaterialMenuPopup } from "./MaterialMenuPopup";
 
-const MENU_WIDTH = 250;
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
 
@@ -58,6 +58,7 @@ export type AndroidAnchoredMenuProps = Pick<
  * menus use the native popup for placement, animation and dismissal.
  */
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
+  const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   // Height of the modal's root view, in the modal's own coordinate space.
@@ -71,6 +72,10 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   // are converted into this frame, so the menu lands correctly no matter
   // where the portal host sits (status bar, keyboard resize, etc.).
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
+  const menuWidth =
+    overlay === null
+      ? desiredMenuWidth
+      : Math.min(desiredMenuWidth, Math.max(0, overlay.width - 2 * SCREEN_MARGIN));
   const anchorRef = useRef<View>(null);
   const overlayRef = useRef<View>(null);
 
@@ -134,14 +139,11 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       ? 0
       : local.x + local.width / 2 <= overlay.width / 2
         ? local.x
-        : local.x + local.width - MENU_WIDTH;
+        : local.x + local.width - menuWidth;
   const left =
     overlay === null
       ? 0
-      : Math.min(
-          Math.max(preferredLeft, SCREEN_MARGIN),
-          overlay.width - MENU_WIDTH - SCREEN_MARGIN,
-        );
+      : Math.min(Math.max(preferredLeft, SCREEN_MARGIN), overlay.width - menuWidth - SCREEN_MARGIN);
   // The keyboard stays up while the menu is open (in-window overlay, no
   // focus change), so the space it covers is not usable — without this the
   // composer-pill menus "open down" into the IME and can't be tapped.
@@ -206,6 +208,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             {!placeable || local === null ? null : !anchor.keyboardWasVisible ? (
               <MaterialMenuPopup
                 anchor={local}
+                menuWidth={menuWidth}
                 actions={levelActions}
                 title={props.title}
                 parent={parent}
@@ -216,10 +219,12 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             ) : (
               <Animated.View
                 entering={FadeIn.duration(120)}
-                className="absolute w-[250px] overflow-hidden rounded-[4px] bg-card-alt shadow-md"
+                className="absolute overflow-hidden bg-card-alt shadow-md"
                 style={{
                   left,
                   maxHeight,
+                  width: menuWidth,
+                  borderRadius: 4 * scale,
                   ...(opensDown
                     ? { top: local.y + local.height + ANCHOR_GAP }
                     : { bottom: (rootHeight ?? 0) - local.y + ANCHOR_GAP }),
@@ -232,7 +237,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   active editor; the first item tap must act, not just
                   dismiss the keyboard. */}
                 <ScrollView
-                  contentContainerClassName="py-2"
+                  contentContainerStyle={{ paddingVertical: 7 * scale }}
                   bounces={false}
                   keyboardShouldPersistTaps="always"
                   showsVerticalScrollIndicator={false}
@@ -240,6 +245,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                   <MaterialMenuPopup
                     inline
                     anchor={local}
+                    menuWidth={menuWidth}
                     actions={levelActions}
                     title={props.title}
                     parent={parent}
