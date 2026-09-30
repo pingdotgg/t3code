@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
+import { buildCodexInitializeParams } from "../src/provider/Layers/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -66,11 +67,6 @@ import { makeReplayRecorderDeferredRegistry } from "./replayRecorderDeferredRegi
 const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
   process.env.T3_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
   "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
-const CODEX_CLIENT_INFO = {
-  name: "t3code_desktop",
-  title: "T3 Code Desktop",
-  version: "0.1.0",
-} as const;
 // Match the V2 adapter's initialize, thread and turn frames so recordings replay
 // against it without hand edits.
 const CODEX_CLIENT_CAPABILITIES = {
@@ -1370,7 +1366,7 @@ function runReplaySession({
       });
 
       yield* client.request("initialize", {
-        clientInfo: CODEX_CLIENT_INFO,
+        clientInfo: buildCodexInitializeParams().clientInfo,
         capabilities: CODEX_CLIENT_CAPABILITIES,
       });
 
