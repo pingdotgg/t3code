@@ -1,6 +1,7 @@
 import {
   ConnectionPersistenceError,
   EnvironmentCacheStore,
+  encodeShellSnapshotForCache,
 } from "@t3tools/client-runtime/platform";
 import {
   type EnvironmentId,
@@ -15,7 +16,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as MobileDatabase from "../persistence/mobile-database";
-import { attachProjectFaviconDatabase, projectFaviconCache } from "../lib/projectFaviconCache";
+import {
+  attachProjectFaviconDatabase,
+  projectFaviconDatabaseCache,
+} from "../lib/projectFaviconDatabaseCache";
 
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
 // v3 adds windowed (paginated) snapshots carrying `page` metadata; the bump
@@ -53,7 +57,6 @@ const StoredVcsRefs = Schema.Struct({
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredShellSnapshot),
 );
-const encodeStoredShellSnapshot = Schema.encodeEffect(Schema.fromJsonString(StoredShellSnapshot));
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredThreadSnapshot),
 );
@@ -130,14 +133,21 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
           stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
-      }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate()))),
+      }).pipe(Effect.tap(() => Effect.promise(() => projectFaviconDatabaseCache.hydrate()))),
     ),
     saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
-      const payload = yield* encodeStoredShellSnapshot({
-        schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
-        environmentId,
-        snapshot,
-      }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+      const encodedSnapshot = yield* encodeShellSnapshotForCache(snapshot).pipe(
+        Effect.mapError((cause) => persistenceError("save-shell", cause)),
+      );
+      const payload = yield* Effect.try({
+        try: () =>
+          JSON.stringify({
+            schemaVersion: SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            environmentId,
+            snapshot: encodedSnapshot,
+          } satisfies typeof StoredShellSnapshot.Encoded),
+        catch: (cause) => persistenceError("save-shell", cause),
+      });
       yield* database
         .saveCache(environmentId, "shell", "snapshot", SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION, payload)
         .pipe(Effect.mapError(mapDatabaseError("save-shell")));
@@ -241,7 +251,7 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         .pipe(Effect.mapError(mapDatabaseError("clear-vcs-refs"))),
     ),
     clear: Effect.fn("MobileEnvironmentCache.clear")((environmentId) =>
-      Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)).pipe(
+      Effect.promise(() => projectFaviconDatabaseCache.clearEnvironment(environmentId)).pipe(
         Effect.andThen(database.clearEnvironmentCache(environmentId)),
         Effect.mapError(mapDatabaseError("clear-environment")),
       ),
