@@ -10,12 +10,12 @@ import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
 } from "./AcpRegistryProbe.ts";
-import { AcpRegistryRuntimeCoordinator } from "./AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 
 describe("AcpRegistryRuntimeCoordinator", () => {
   it.effect("suppresses a background probe while foreground startup is active", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const foregroundStarted = yield* Deferred.make<void>();
       const releaseForeground = yield* Deferred.make<void>();
       const foreground = yield* coordinator
@@ -33,12 +33,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
 
       yield* Deferred.succeed(releaseForeground, undefined);
       yield* Fiber.join(foreground);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("interrupts an active background probe when foreground startup begins", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const probeStarted = yield* Deferred.make<void>();
       const probeFinalized = yield* Deferred.make<void>();
       const releaseForeground = yield* Deferred.make<void>();
@@ -61,12 +64,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
 
       yield* Deferred.succeed(releaseForeground, undefined);
       yield* Fiber.join(foreground);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("serializes native session mutations across callers", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const firstEntered = yield* Deferred.make<void>();
       const releaseFirst = yield* Deferred.make<void>();
       const secondEntered = yield* Deferred.make<void>();
@@ -88,12 +94,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Fiber.join(first);
       yield* Fiber.join(second);
       expect(Option.isSome(yield* Deferred.poll(secondEntered))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("replays and replaces late command advertisements per provider instance", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const codex = ProviderInstanceId.make("acpRegistry_codex");
       const kilo = ProviderInstanceId.make("acpRegistry_kilo");
       const firstSeen = yield* Deferred.make<void>();
@@ -136,12 +145,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       );
       yield* coordinator.clearAvailableCommands(codex);
       expect(Option.isNone(yield* coordinator.getAvailableCommands(codex))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("replays and replaces live configuration per provider instance", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_kilo");
       const firstSeen = yield* Deferred.make<void>();
       const replacementSeen = yield* Deferred.make<void>();
@@ -177,12 +189,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(yield* coordinator.getLiveConfiguration(instanceId)).toEqual(Option.some(replacement));
       yield* coordinator.clearLiveConfiguration(instanceId);
       expect(Option.isNone(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("requires matching user consent before accepting URL authentication", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_antigravity");
       const action = {
         elicitationId: "login-1",
@@ -219,12 +234,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(yield* Fiber.join(request)).toBe(true);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("expires stale URL authentication actions without accepting them", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_expired");
       const actionSeen = yield* Deferred.make<void>();
       const consumer = yield* coordinator
@@ -253,12 +271,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       ).toBe(false);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("publishes a replacement URL action before retiring the previous request", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_replacement");
       const received: Array<string | null> = [];
       const firstSeen = yield* Deferred.make<void>();
@@ -305,12 +326,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       ).toBe(true);
       expect(yield* Fiber.join(replacement)).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 
   it.effect("clears a published URL action when its request is interrupted", () =>
     Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator;
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const instanceId = ProviderInstanceId.make("acpRegistry_interrupted");
       const actionSeen = yield* Deferred.make<void>();
       const cleared = yield* Deferred.make<void>();
@@ -334,6 +358,9 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Deferred.await(cleared);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
       yield* Fiber.interrupt(consumer);
-    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator.layer),
+      Effect.scoped,
+    ),
   );
 });

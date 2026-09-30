@@ -179,6 +179,7 @@ import {
   type TimelineEntriesProjection,
   deriveActivePlanState,
   deriveActiveWorkStartedAt,
+  deriveCanInterruptRunningThread,
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestRunSettled,
@@ -4288,7 +4289,10 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  const canInterruptRunningThread = activeThread !== undefined && phase === "running";
+  const canInterruptRunningThread = deriveCanInterruptRunningThread(
+    activeThread !== undefined,
+    activeRuntime,
+  );
   const onInterrupt = useCallback(async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -10372,7 +10376,7 @@ export default function ChatView(props: ChatViewProps) {
     threadId: activeThread.id,
     ...(draftId ? { draftId } : {}),
     activeProjectName: activeProject?.title,
-    activeProjectScripts: activeProject?.scripts,
+    activeProjectScripts: activeProject ? activeProjectScripts : undefined,
     preferredScriptId: activeProject
       ? (lastInvokedScriptByProjectId[activeProject.id] ?? null)
       : null,
@@ -10830,6 +10834,7 @@ export default function ChatView(props: ChatViewProps) {
                                 isLocalDraftThread && activeProject === null
                               }
                               phase={phase}
+                              canInterrupt={canInterruptRunningThread}
                               isConnecting={isConnecting}
                               isSendBusy={isSendBusy || isSavingQueuedEdit || isResuming}
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}

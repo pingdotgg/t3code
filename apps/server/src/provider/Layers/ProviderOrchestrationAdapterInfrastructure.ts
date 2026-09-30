@@ -1,25 +1,16 @@
 import * as Layer from "effect/Layer";
 
-import {
-  ClaudeAgentSdkQueryRunner,
-  claudeAgentSdkQueryRunnerLiveLayer,
-} from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import {
-  CodexAppServerClientFactory,
-  codexAppServerClientFactoryFromSettingsLayer,
-} from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import {
-  CursorAgentSdkRunner,
-  cursorAgentSdkRunnerLiveLayer,
-} from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
-import { layer as providerContinuationRequestsLayer } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import * as ClaudeAdapterV2 from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 
 export type ProviderOrchestrationAdapterInfrastructure =
-  | ClaudeAgentSdkQueryRunner
-  | CodexAppServerClientFactory
-  | CursorAgentSdkRunner
-  | IdAllocatorV2;
+  | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
+  | CodexAdapterV2.CodexAppServerClientFactory
+  | CursorAgentSdk.CursorAgentSdkRunner
+  | IdAllocator.IdAllocatorV2;
 
 /**
  * Infrastructure shared by the V2 adapters materialized inside provider
@@ -28,9 +19,9 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * Effect layer memoization yields one shared queue.
  */
 export const ProviderOrchestrationAdapterInfrastructureLive = Layer.mergeAll(
-  claudeAgentSdkQueryRunnerLiveLayer,
-  codexAppServerClientFactoryFromSettingsLayer,
-  cursorAgentSdkRunnerLiveLayer,
-  idAllocatorLayer,
-  providerContinuationRequestsLayer,
+  ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer,
+  CodexAdapterV2.codexAppServerClientFactoryFromSettingsLayer,
+  CursorAgentSdk.cursorAgentSdkRunnerLiveLayer,
+  IdAllocator.layer,
+  ProviderContinuationRequests.layer,
 );

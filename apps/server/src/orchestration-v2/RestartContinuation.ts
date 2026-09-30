@@ -10,8 +10,8 @@ import {
 import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
-import { ServerSettingsService } from "../serverSettings.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
   isRestartNoteSource,
   restartCancelledBackgroundWorkNote,
@@ -91,10 +91,10 @@ export function restartContinuationRun(
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
   function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
-    const settings = yield* ServerSettingsService;
+    const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
-    const threads = yield* ThreadManagementService;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
       input.threadId,

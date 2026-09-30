@@ -30,10 +30,10 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
-import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -415,10 +415,10 @@ export function makePiProviderAdapterRegistryLayer<E, R>(input: {
   readonly environment?: ProviderInstanceEnvironment;
 }) {
   const serverConfigLayer = Layer.effect(
-    ServerConfig,
+    ServerConfig.ServerConfig,
     makeReplayServerConfig(`pi-${input.scenario}`).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return makeProviderAdapterRegistryDriverLayer({
+  return ProviderAdapterRegistry.makeDriverLayer({
     drivers: [PiAdapterV2Driver],
     configMap: {
       [PI_PROVIDER]: {

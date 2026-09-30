@@ -5,19 +5,15 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient } from "effect/unstable/http";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
-import {
-  fetchEnvironmentThreadSnapshot,
-  ThreadSnapshotLoader,
-  type ThreadSnapshotLoadResult,
-} from "./threadSnapshotHttp.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 // Same cold-open budget as the full snapshot path; bounded payloads should fit.
 const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
@@ -28,8 +24,10 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 )(function* (input: {
   readonly prepared: PreparedConnection;
   readonly threadId: ThreadId;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly timeoutMs?: number;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -56,24 +54,26 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
  * socket path remains a last resort for connectivity issues.
  */
 export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
-  ThreadSnapshotLoader,
+  ThreadSnapshotLoader.ThreadSnapshotLoader,
   never,
   HttpClient.HttpClient
 > = Layer.effect(
-  ThreadSnapshotLoader,
+  ThreadSnapshotLoader.ThreadSnapshotLoader,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-    return ThreadSnapshotLoader.of({
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    );
+    return ThreadSnapshotLoader.ThreadSnapshotLoader.of({
       load: (prepared: PreparedConnection, threadId: ThreadId) => {
-        const loadFullFallback = fetchEnvironmentThreadSnapshot({
+        const loadFullFallback = ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
           signer,
           remoteAuthorization,
         }).pipe(
-          Effect.map((snapshot): ThreadSnapshotLoadResult => ({
+          Effect.map((snapshot): ThreadSnapshotLoader.ThreadSnapshotLoadResult => ({
             _tag: "present",
             snapshot,
           })),
@@ -84,7 +84,9 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
                 "Full thread snapshot not found over HTTP after bounded fallback; treating the thread as deleted.",
               ).pipe(
                 Effect.annotateLogs({ threadId }),
-                Effect.as({ _tag: "missing" } satisfies ThreadSnapshotLoadResult),
+                Effect.as({
+                  _tag: "missing",
+                } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
               ),
           }),
           Effect.catchCause((cause) =>
@@ -92,7 +94,9 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
               "Could not load the full thread snapshot over HTTP after bounded fallback; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
-              Effect.as({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+              Effect.as({
+                _tag: "unavailable",
+              } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
             ),
           ),
         );
@@ -103,7 +107,7 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
           signer,
           remoteAuthorization,
         }).pipe(
-          Effect.map((bounded): ThreadSnapshotLoadResult => ({
+          Effect.map((bounded): ThreadSnapshotLoader.ThreadSnapshotLoadResult => ({
             _tag: "present",
             snapshot: {
               snapshotSequence: bounded.snapshotSequence,
@@ -123,7 +127,9 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
                 "Bounded thread snapshot not found over HTTP; treating the thread as deleted.",
               ).pipe(
                 Effect.annotateLogs({ threadId }),
-                Effect.as({ _tag: "missing" } satisfies ThreadSnapshotLoadResult),
+                Effect.as({
+                  _tag: "missing",
+                } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
               ),
             RemoteEnvironmentAuthInvalidJsonError: (error) =>
               Effect.logDebug(
@@ -144,7 +150,9 @@ export const boundedThreadSnapshotLoaderLayer: Layer.Layer<
               "Could not load the bounded thread snapshot over HTTP; using the socket snapshot instead.",
             ).pipe(
               Effect.annotateLogs({ threadId, cause: Cause.pretty(cause) }),
-              Effect.as({ _tag: "unavailable" } satisfies ThreadSnapshotLoadResult),
+              Effect.as({
+                _tag: "unavailable",
+              } satisfies ThreadSnapshotLoader.ThreadSnapshotLoadResult),
             ),
           ),
         );

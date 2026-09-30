@@ -12,7 +12,7 @@ import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAda
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
 import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
@@ -99,7 +99,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     fixtureInput,
     driver: input.driver.driver,
     modelSelection: input.driver.modelSelection,
-  }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+  }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
   const scenario = {
     name: `${input.fixtureName}/${input.driver.driver}`,
     transcript,

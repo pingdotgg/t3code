@@ -29,13 +29,14 @@ import {
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
 } from "./runtime.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
   isRpcClientError,
@@ -365,8 +366,8 @@ export interface ServerConfigSubscriptionOptions {
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
   function* (subscription: ServerConfigSubscriptionOptions) {
-    const supervisor = yield* EnvironmentSupervisor;
-    const cache = yield* EnvironmentCacheStore;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
     const cachedConfig = yield* cache.loadServerConfig(environmentId).pipe(
       Effect.catch((error) =>
@@ -509,7 +510,7 @@ export function resolveServerWelcomeState(
 
 export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWelcomeState.make")(
   function* () {
-    const supervisor = yield* EnvironmentSupervisor;
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const initialSession = Option.getOrNull(yield* SubscriptionRef.get(supervisor.session));
     const state = yield* SubscriptionRef.make<EnvironmentServerWelcomeState>({
       currentSession: initialSession,
@@ -608,7 +609,10 @@ export function resolveServerConfigValue(
 }
 
 export function createServerEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
+    E
+  >,
   options: {
     readonly initialConfigValueAtom: (
       environmentId: EnvironmentId,
@@ -677,7 +681,7 @@ export function createServerEnvironmentAtoms<R, E>(
   const updateStateAtom = (environmentId: EnvironmentId | null) =>
     environmentId === null ? EMPTY_SERVER_UPDATE_STATE_ATOM : updateStateValueAtom(environmentId);
   const updateServer = createRuntimeCommand<
-    EnvironmentRegistry | EnvironmentCacheStore | R,
+    EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
     E,
     ServerUpdateTarget,
     ServerSelfUpdateResult,
@@ -702,7 +706,7 @@ export function createServerEnvironmentAtoms<R, E>(
       });
 
       return Effect.gen(function* () {
-        const environmentRegistry = yield* EnvironmentRegistry;
+        const environmentRegistry = yield* EnvironmentRegistry.EnvironmentRegistry;
         const desktopCommitStarting = yield* Deferred.make<void>();
         const desktopReconnectObserverArmed = yield* Deferred.make<void>();
         const desktopReconnected = yield* Deferred.make<void>();
@@ -997,6 +1001,27 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:auth-complete",
       tag: WS_METHODS.providerAuthComplete,
     }),
+    chatGptReconnectProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:chatgpt:reconnect-profile",
+      tag: WS_METHODS.chatGptReconnectProfile,
+    }),
+    chatGptImportProfile: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:chatgpt:import-profile",
+      tag: WS_METHODS.chatGptImportProfile,
+    }),
+    chatGptHandoffState: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:chatgpt:handoff",
+      sensitiveInput: true,
+      // OAuth must not be replayed when the connection recovers.
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.chatGptHandoffSubscribe>) =>
+        runStream(WS_METHODS.chatGptHandoffSubscribe, input),
+      idleTtlMs: 0,
+    }),
+    codexAuthCallbackState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:codex:auth-callback",
+      tag: WS_METHODS.codexAuthCallbackSubscribe,
+      idleTtlMs: 0,
+    }),
     cancelProviderAuth: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:provider:auth-cancel",
       tag: WS_METHODS.providerAuthCancel,
@@ -1231,6 +1256,12 @@ export function createServerEnvironmentAtoms<R, E>(
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",
       tag: WS_METHODS.scheduledTasksUpsert,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    updateScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:update",
+      tag: WS_METHODS.scheduledTasksUpdate,
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

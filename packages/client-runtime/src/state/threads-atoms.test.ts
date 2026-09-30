@@ -22,29 +22,23 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import type { ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type NetworkStatus,
   type PreparedConnection,
 } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import {
-  ThreadHistoryController,
-  threadHistoryControllerLayer,
-} from "./threadHistoryController.ts";
-import {
-  createEnvironmentThreadStateAtoms,
-  ThreadSnapshotLoader,
-  type EnvironmentThreadState,
-} from "./threads.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
+import { createEnvironmentThreadStateAtoms, type EnvironmentThreadState } from "./threads.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -110,7 +104,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     probe: Effect.void,
     closed: Effect.never,
   };
-  const supervisor = EnvironmentSupervisor.of({
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
     session: yield* SubscriptionRef.make(Option.some(session)),
@@ -128,7 +122,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     disconnect: Effect.void,
     retryNow: Effect.void,
   });
-  const environmentRegistry = EnvironmentRegistry.of({
+  const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
     entries: yield* SubscriptionRef.make<ReadonlyMap<EnvironmentId, ConnectionCatalogEntry>>(
       new Map(),
     ),
@@ -145,15 +139,15 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     state: () => SubscriptionRef.get(supervisor.state),
     stateChanges: () => SubscriptionRef.changes(supervisor.state),
     run: (_environmentId, effect) =>
-      Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     runStream: (_environmentId, stream) =>
-      Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     followStream: (_environmentId, stream) =>
-      Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
   });
-  const historyController = yield* Effect.service(ThreadHistoryController).pipe(
-    Effect.provide(threadHistoryControllerLayer),
-  );
+  const historyController = yield* Effect.service(
+    ThreadHistoryController.ThreadHistoryController,
+  ).pipe(Effect.provide(ThreadHistoryController.layer));
   const historyHttpClient = HttpClient.make((request, url) =>
     Effect.gen(function* () {
       const response = yield* Deferred.make<OrchestrationV2ThreadHistoryPage>();
@@ -166,12 +160,12 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   );
   const runtime = Atom.runtime(
     Layer.mergeAll(
-      Layer.succeed(ThreadHistoryController, historyController),
+      Layer.succeed(ThreadHistoryController.ThreadHistoryController, historyController),
       Layer.succeed(HttpClient.HttpClient, historyHttpClient),
-      Layer.succeed(EnvironmentRegistry, environmentRegistry),
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
-        EnvironmentCacheStore,
-        EnvironmentCacheStore.of({
+        Persistence.EnvironmentCacheStore,
+        Persistence.EnvironmentCacheStore.of({
           loadShell: () => Effect.succeedNone,
           saveShell: () => Effect.void,
           loadThread: () =>
@@ -191,8 +185,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
         }),
       ),
       Layer.succeed(
-        ThreadSnapshotLoader,
-        ThreadSnapshotLoader.of({
+        ThreadSnapshotLoader.ThreadSnapshotLoader,
+        ThreadSnapshotLoader.ThreadSnapshotLoader.of({
           load: () =>
             Effect.sync(() => {
               httpLoads += 1;

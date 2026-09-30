@@ -1,4 +1,4 @@
-import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -20,20 +20,20 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { ServerConfig } from "../config.ts";
-import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
+import * as ServerConfig from "../config.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
-import { ProjectService } from "../project/ProjectService.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceRegistry.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import {
   OrchestrationV2EventSinkLayerLive,
@@ -44,7 +44,9 @@ import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.
 
 const PlatformTestLayer = Layer.merge(
   NodeServices.layer,
-  Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => Effect.die("unused title link") }),
+  Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+    resolveLink: () => Effect.die("unused title link"),
+  }),
 );
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -89,25 +91,28 @@ const providerInstance = {
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
 
-const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
-  getInstance: (instanceId) =>
-    Effect.succeed(instanceId === providerInstance.instanceId ? providerInstance : undefined),
-  listInstances: Effect.succeed([providerInstance]),
-  listUnavailable: Effect.succeed([]),
-  streamChanges: Stream.empty,
-  subscribeChanges: Effect.never,
-});
+const TestProviderInstanceRegistry = Layer.succeed(
+  ProviderInstanceRegistry.ProviderInstanceRegistry,
+  {
+    getInstance: (instanceId) =>
+      Effect.succeed(instanceId === providerInstance.instanceId ? providerInstance : undefined),
+    listInstances: Effect.succeed([providerInstance]),
+    listUnavailable: Effect.succeed([]),
+    streamChanges: Stream.empty,
+    subscribeChanges: Effect.never,
+  },
+);
 
 const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
   Layer.provideMerge(ProjectServiceLayerLive),
   Layer.provide(
-    Layer.mock(WorkspacePaths)({
+    Layer.mock(WorkspacePaths.WorkspacePaths)({
       normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
     }),
   ),
   Layer.provide(worktreeRepairDependenciesTestLayer),
   Layer.provide(
-    Layer.succeed(ProjectEnrichmentService, {
+    Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
       peek: () =>
         Effect.succeed({
           repositoryIdentity: null,
@@ -125,11 +130,11 @@ const TestLayer = Layer.mergeAll(OrchestrationV2LayerLive, OrchestrationV2EventS
       subscribeChanges: Effect.never,
     }),
   ),
-  Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
   Layer.provide(ServerConfigLayer),
-  Layer.provide(ServerSettingsService.layerTest()),
+  Layer.provide(ServerSettings.layerTest()),
   Layer.provide(TestProviderInstanceRegistry),
   Layer.provide(PlatformTestLayer),
 );
@@ -146,9 +151,9 @@ const seedParentWithTerminalTask = (input: {
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
-    const projects = yield* ProjectService;
-    const orchestrator = yield* OrchestratorV2;
-    const eventSink = yield* EventSinkV2;
+    const projects = yield* ProjectService.ProjectService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     const providerThreadId = ProviderThreadId.make(
       `provider-thread:${String(input.threadId).replace("thread:", "")}`,
     );
@@ -288,8 +293,8 @@ const seedParentWithTerminalTask = (input: {
 it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
   it.effect("acceptance batches pending siblings without acknowledging their results", () =>
     Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const sink = yield* EventSinkV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("mailbox-batch");
       const runId = RunId.make("mailbox-parent");
@@ -381,7 +386,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
 
   it.effect("builds completion text and metadata from the same live cohort", () =>
     Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:delegated-delivery-live-cohort");
       const projectId = ProjectId.make("project:delegated-delivery-live-cohort");
@@ -431,7 +436,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
 
   it.effect("does not re-offer when wake-policy upgrades after delivered ownership settled", () =>
     Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:delegated-delivery-a1");
       const projectId = ProjectId.make("project:delegated-delivery-a1");
@@ -496,7 +501,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
     "treats repeated acknowledge and dispose with distinct command IDs as successful no-ops",
     () =>
       Effect.gen(function* () {
-        const orchestrator = yield* OrchestratorV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread:delegated-delivery-a2");
         const projectId = ProjectId.make("project:delegated-delivery-a2");

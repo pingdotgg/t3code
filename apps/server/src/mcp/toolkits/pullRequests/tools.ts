@@ -10,12 +10,12 @@ import * as Tool from "effect/unstable/ai/Tool";
 import * as Toolkit from "effect/unstable/ai/Toolkit";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestratorV2,
+  Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,
 ];
 

@@ -59,6 +59,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
+  exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -91,6 +92,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   onExit(callback: (event: PtyAdapter.PtyExitEvent) => void): () => void {
+    if (this.exitOnSubscribe) callback(this.exitOnSubscribe);
     this.exitListeners.add(callback);
     return () => {
       this.exitListeners.delete(callback);
@@ -116,6 +118,7 @@ class FakePtyAdapter {
   readonly spawnFailures: Error[] = [];
   private readonly mode: "sync" | "async";
   private nextPid = 9000;
+  exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
 
   constructor(mode: "sync" | "async" = "sync") {
     this.mode = mode;
@@ -136,6 +139,7 @@ class FakePtyAdapter {
       );
     }
     const process = new FakePtyProcess(this.nextPid++);
+    process.exitOnSubscribe = this.exitOnSubscribe;
     this.processes.push(process);
     if (this.mode === "async") {
       return Effect.tryPromise({
@@ -635,6 +639,36 @@ it.layer(
         cause: {
           _tag: "PlatformError",
         },
+      });
+    }),
+  );
+
+  it.effect("handles an exit replayed during subscription after publishing startup", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new FakePtyAdapter();
+      ptyAdapter.exitOnSubscribe = { exitCode: 7, signal: null };
+      const { manager, getEvents } = yield* createManager(5, { ptyAdapter });
+      const exited = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "exited"
+          ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* Deferred.await(exited);
+      const events = yield* getEvents;
+      expect(events.map((event) => event.type)).toEqual(["started", "exited"]);
+      expect(events[1]).toMatchObject({ exitCode: 7 });
+      const attached: TerminalAttachStreamEvent[] = [];
+      const stopAttach = yield* manager.attachStream(openInput(), (event) =>
+        Effect.sync(() => {
+          attached.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stopAttach));
+      expect(attached.find((event) => event.type === "snapshot")).toMatchObject({
+        snapshot: { status: "exited", exitCode: 7 },
       });
     }),
   );

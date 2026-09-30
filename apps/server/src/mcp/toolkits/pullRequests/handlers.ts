@@ -23,7 +23,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
@@ -148,7 +148,7 @@ export function listThreadPullRequests(
 }
 
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestratorV2;
+  const engine = yield* Orchestrator.OrchestratorV2;
 
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;

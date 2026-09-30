@@ -208,6 +208,7 @@ const desktopApplicationLayer = Layer.mergeAll(
 // Clerk resolves userData before Electron is ready, so it gets the synchronous FileSystem.
 const desktopClerkLayer = DesktopClerk.layer.pipe(
   Layer.provide(DesktopPreReadyFileSystem.layer),
+  Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(desktopEnvironmentLayer),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ElectronApp.layer),

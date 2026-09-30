@@ -10,6 +10,7 @@ import {
 
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { cn } from "../../lib/utils";
+import { runCapReached } from "../settings/scheduledTasksSettings.logic";
 import { relativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -158,11 +159,13 @@ export function ThreadAutomationsPanel(props: {
               </span>
               <p className="truncate text-2xs text-muted-foreground">
                 {scheduleLabel(task.schedule)}
-                {task.enabled && task.nextRunAt !== null
-                  ? ` · next ${relativeLabel(task.nextRunAt)}`
-                  : task.enabled
-                    ? ""
-                    : " · paused"}
+                {runCapReached(task)
+                  ? ` · Run limit reached (${task.runCount}/${task.schedule.maxRuns})`
+                  : task.enabled && task.nextRunAt !== null
+                    ? ` · next ${relativeLabel(task.nextRunAt)}`
+                    : task.enabled
+                      ? ""
+                      : " · paused"}
               </p>
             </div>
             <Tooltip>
@@ -194,18 +197,24 @@ export function ThreadAutomationsPanel(props: {
                     variant="ghost"
                     part="icon"
                     aria-label={`Run ${task.title} now`}
-                    disabled={busyTaskId !== null || task.lastRunStatus === "running"}
+                    disabled={
+                      busyTaskId !== null || task.lastRunStatus === "running" || runCapReached(task)
+                    }
                     onClick={() => void runNow(task)}
                   >
                     <PlayIcon className="size-3.5" />
                   </ThreadDetailsControl>
                 }
               />
-              <TooltipPopup>Run now</TooltipPopup>
+              <TooltipPopup>
+                {runCapReached(task)
+                  ? "Raise or clear the run limit in Settings before running again"
+                  : "Run now"}
+              </TooltipPopup>
             </Tooltip>
             <Switch
               checked={task.enabled}
-              disabled={busyTaskId !== null}
+              disabled={busyTaskId !== null || runCapReached(task)}
               aria-label={task.enabled ? `Pause ${task.title}` : `Resume ${task.title}`}
               onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
             />

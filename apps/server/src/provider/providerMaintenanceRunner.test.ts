@@ -20,7 +20,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
@@ -190,7 +190,7 @@ function makeRegistry(
       );
     });
 
-    const registry: ProviderRegistryShape = {
+    const registry: ProviderRegistry.ProviderRegistryShape = {
       getProviders: Ref.get(providersRef),
       refresh: () => Ref.get(providersRef),
       refreshInstance: () => Ref.get(providersRef),
@@ -210,13 +210,17 @@ function makeRegistry(
 }
 
 const makeTestRunner = (
-  registry: ProviderRegistryShape,
+  registry: ProviderRegistry.ProviderRegistryShape,
   // Generic updater fixtures use synthetic versions. Keep their compatibility
   // unknown so real harness minimums do not bypass the command under test.
   manifest: ModelManifest.ModelManifestData = {
     version: 1,
     currentModels: {},
-    compatibility: [{ driver: CODEX_DRIVER, t3CodeRange: ">=0.0.42", ranges: [] }],
+    compatibility: [CODEX_DRIVER, OPENCODE_DRIVER].map((driver) => ({
+      driver,
+      t3CodeRange: ">=0.0.42",
+      ranges: [],
+    })),
   },
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
@@ -224,7 +228,7 @@ const makeTestRunner = (
       ProviderMaintenanceRunner.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(ProviderRegistry, registry),
+            Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
             Layer.succeed(ModelManifest.ModelManifest, {
               current: Effect.succeed(manifest),
               refresh: Effect.succeed(manifest),

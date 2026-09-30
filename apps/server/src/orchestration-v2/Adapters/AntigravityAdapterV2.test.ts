@@ -22,10 +22,10 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
   makeAntigravityAcpAdapterFlavor,
@@ -128,7 +128,7 @@ describe("AntigravityAdapterV2 flavor", () => {
 
 const sessionLayer = Layer.mergeAll(
   NodeServices.layer,
-  idAllocatorLayer,
+  IdAllocator.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-v2-adapter-" }).pipe(
     Layer.provide(NodeServices.layer),
   ),
@@ -140,7 +140,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -156,7 +156,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         fileSystem,
         path,
-        idAllocator: yield* IdAllocatorV2,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig,
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
@@ -294,7 +294,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -308,7 +308,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         fileSystem,
         path,
-        idAllocator: yield* IdAllocatorV2,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig,
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
@@ -431,7 +431,7 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const crypto = yield* Crypto.Crypto;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -458,7 +458,7 @@ describe("AntigravityAdapterV2 client file system under restrictive policies", (
           selfInvocation: yield* resolveSelfInvocation(),
           fileSystem,
           path,
-          idAllocator: yield* IdAllocatorV2,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
           serverConfig,
           makeRuntime: (input) =>
             makeAntigravityAcpRuntime({

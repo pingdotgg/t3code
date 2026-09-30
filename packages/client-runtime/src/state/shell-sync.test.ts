@@ -27,7 +27,8 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import { makeEnvironmentShellState } from "./shell.ts";
+import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import { v2Project, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -98,13 +99,13 @@ describe("environment shell synchronization", () => {
       });
       // Cold cache with no HTTP snapshot available → falls back to the
       // socket-embedded snapshot.
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeedNone,
       });
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       yield* SubscriptionRef.set(supervisorState, {
@@ -197,8 +198,8 @@ describe("environment shell synchronization", () => {
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(
-          ShellSnapshotLoader,
-          ShellSnapshotLoader.of({ load: () => Effect.succeed(Option.none()) }),
+          ShellSnapshotLoader.ShellSnapshotLoader,
+          ShellSnapshotLoader.ShellSnapshotLoader.of({ load: () => Effect.succeed(Option.none()) }),
         ),
       );
       yield* SubscriptionRef.set(supervisorState, {
@@ -298,7 +299,7 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () =>
           SubscriptionRef.update(loaderCalls, (count) => count + 1).pipe(
             Effect.as(Option.some(httpSnapshot)),
@@ -307,7 +308,7 @@ describe("environment shell synchronization", () => {
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       // Wait until the subscription is established from the warm cache.
@@ -375,7 +376,7 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () =>
           Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
             Effect.map((count) =>
@@ -386,7 +387,7 @@ describe("environment shell synchronization", () => {
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
         Effect.provideService(
           ConnectionWakeups.ConnectionWakeups,
           ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
@@ -485,14 +486,14 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
 
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       const sendSnapshot = Effect.fn(function* (sequence: number) {
@@ -574,14 +575,14 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
 
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       yield* SubscriptionRef.set(supervisorState, {
@@ -716,14 +717,14 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
 
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       yield* SubscriptionRef.set(supervisorState, {
@@ -836,7 +837,7 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.none()),
       });
 
@@ -844,7 +845,7 @@ describe("environment shell synchronization", () => {
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
         Scope.provide(scope),
       );
 
@@ -931,13 +932,13 @@ describe("environment shell synchronization", () => {
         clearVcsRefs: () => Effect.void,
         clear: () => Effect.void,
       });
-      const snapshotLoader = ShellSnapshotLoader.of({
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () => Effect.succeed(Option.some(httpSnapshot)),
       });
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
 
       yield* SubscriptionRef.changes(shellState).pipe(

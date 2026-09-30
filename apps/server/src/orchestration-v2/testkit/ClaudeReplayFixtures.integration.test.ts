@@ -11,8 +11,8 @@ import * as Effect from "effect/Effect";
 
 import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
-import { OrchestratorV2 } from "../Orchestrator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
+import * as Orchestrator from "../Orchestrator.ts";
 import { userFacingDispatchErrorMessage } from "../UserFacingErrors.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
@@ -146,7 +146,7 @@ describe("Claude Agent SDK replay fixtures", () => {
         fixtureInput: subagentInput(),
         driver: ProviderDriverKind.make("claudeAgent"),
         modelSelection: CLAUDE_MODEL_SELECTION,
-      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
       const scenario = {
         name: "subagent/claudeAgent:read-only-child",
         transcript,
@@ -156,7 +156,7 @@ describe("Claude Agent SDK replay fixtures", () => {
       };
       yield* Effect.gen(function* () {
         const result = yield* runOrchestratorV2Scenario(scenario);
-        const orchestrator = yield* OrchestratorV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
         const child = [...result.projections.values()].find((projection) =>
           isProviderNativeSubagentThread(projection.thread),
         );

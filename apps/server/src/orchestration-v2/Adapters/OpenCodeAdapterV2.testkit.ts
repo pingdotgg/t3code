@@ -6,19 +6,12 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../../provider/opencodeRuntime.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "../../provider/Layers/ProviderEventLoggers.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as ServerConfig from "../../config.ts";
+import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
-import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -341,7 +334,7 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
 
 function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript) {
   return Layer.effect(
-    OpenCodeRuntime,
+    OpenCodeRuntime.OpenCodeRuntime,
     Effect.gen(function* () {
       const controller = new OpenCodeReplayController(transcript);
       yield* Effect.addFinalizer(() =>
@@ -350,10 +343,10 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
         }),
       );
       const client = makeReplayClient(controller);
-      return OpenCodeRuntime.of({
+      return OpenCodeRuntime.OpenCodeRuntime.of({
         startOpenCodeServerProcess: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "startOpenCodeServerProcess",
               detail: "OpenCode replay uses an external in-memory SDK boundary.",
             }),
@@ -367,7 +360,7 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
           }),
         runOpenCodeCommand: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "runOpenCodeCommand",
               detail: "OpenCode replay does not execute commands.",
             }),
@@ -375,43 +368,43 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
         createOpenCodeSdkClient: () => client,
         loadOpenCodeInventory: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeInventory",
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
         loadInventoryFromCli: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadInventoryFromCli",
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
         loadOpenCodeSkills: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeSkills",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
         loadSkillsFromCli: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadSkillsFromCli",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
-      } satisfies OpenCodeRuntimeShape);
+      } satisfies OpenCodeRuntime.OpenCodeRuntimeShape);
     }),
   );
 }
 
 function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
   const serverConfigLayer = Layer.effect(
-    ServerConfig,
+    ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return makeProviderAdapterRegistryDriverLayer({
+  return ProviderAdapterRegistry.makeDriverLayer({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
       [OPENCODE_DEFAULT_INSTANCE_ID]: {
@@ -425,8 +418,11 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
         makeOpenCodeReplayRuntimeLayer(transcript),
         serverConfigLayer,
         NodeServices.layer,
-        idAllocatorLayer,
-        Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+        IdAllocator.layer,
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
       ),
     ),
   );

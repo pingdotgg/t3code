@@ -14,6 +14,15 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("requires explicit support for atomic scheduled-task edits", () => {
+    expect(decodeDescriptor(descriptor).capabilities.scheduledTaskUpdate).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, scheduledTaskUpdate: true },
+      }).capabilities.scheduledTaskUpdate,
+    ).toBe(true);
+  });
   it("requires an advertised required-worktree bootstrap capability", () => {
     expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
     expect(

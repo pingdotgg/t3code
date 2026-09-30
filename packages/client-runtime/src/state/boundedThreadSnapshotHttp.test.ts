@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { boundedThreadSnapshotLoaderLayer } from "./boundedThreadSnapshotHttp.ts";
-import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: "environment-bounded" as never,
@@ -100,7 +100,7 @@ describe("boundedThreadSnapshotLoader", () => {
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader;
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
       expect(result._tag).toBe("present");
       if (result._tag === "present") {
@@ -133,7 +133,7 @@ describe("boundedThreadSnapshotLoader", () => {
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader;
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
       expect(result).toEqual({ _tag: "missing" });
     }).pipe(
@@ -170,7 +170,7 @@ describe("boundedThreadSnapshotLoader", () => {
     }) satisfies typeof fetch;
 
     return Effect.gen(function* () {
-      const loader = yield* ThreadSnapshotLoader;
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
       const result = yield* loader.load(PREPARED, THREAD_ID);
       expect(result).toEqual({ _tag: "missing" });
       expect(fullCalls).toBe(1);
@@ -200,7 +200,7 @@ describe("boundedThreadSnapshotLoader", () => {
       }) satisfies typeof fetch;
 
       return Effect.gen(function* () {
-        const loader = yield* ThreadSnapshotLoader;
+        const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
         const result = yield* loader.load(PREPARED, THREAD_ID);
         expect(result).toEqual({ _tag: "unavailable" });
         expect(fullCalls).toBe(0);

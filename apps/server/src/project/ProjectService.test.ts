@@ -10,8 +10,8 @@ import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { ServerConfig } from "../config.ts";
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
+import * as ServerConfig from "../config.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -20,7 +20,7 @@ import {
   OrchestrationV2EventSinkLayerLive,
   ProjectServiceLayerLive,
 } from "../orchestration-v2/runtimeLayer.ts";
-import { layer as threadCommandExecutorLayer } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
@@ -75,7 +75,7 @@ const ProjectServiceDependenciesLayer = Layer.mergeAll(
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
-  threadCommandExecutorLayer,
+  ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provideMerge(
     LegacyV1ThreadImporter.layer.pipe(Layer.provide(OrchestrationV2EventSinkLayerLive)),
@@ -706,11 +706,11 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
 
 it.effect("serializes two projects claiming the same workspace root", () =>
   Effect.gen(function* () {
-    const eventSink = yield* EventSinkV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     const firstReachedCommit = yield* Deferred.make<void>();
     const releaseFirst = yield* Deferred.make<void>();
     // Hold the first claim between its plan and its commit.
-    const gatedSink = EventSinkV2.of({
+    const gatedSink = EventSink.EventSinkV2.of({
       ...eventSink,
       commitProjectCommand: (input) =>
         input.projectId === "project:race:first"
@@ -720,7 +720,9 @@ it.effect("serializes two projects claiming the same workspace root", () =>
             )
           : eventSink.commitProjectCommand(input),
     });
-    const service = yield* ProjectService.make.pipe(Effect.provideService(EventSinkV2, gatedSink));
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
     const claim = (name: string) =>
       service.create({
         commandId: CommandId.make(`command:race:${name}`),
@@ -744,11 +746,11 @@ it.effect("serializes two projects claiming the same workspace root", () =>
 
 it.effect("rejects an update that waited on the lock while its project was deleted", () =>
   Effect.gen(function* () {
-    const eventSink = yield* EventSinkV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     const deleteReachedCommit = yield* Deferred.make<void>();
     const releaseDelete = yield* Deferred.make<void>();
     // Hold the delete between its plan and its commit, inside the project lock.
-    const gatedSink = EventSinkV2.of({
+    const gatedSink = EventSink.EventSinkV2.of({
       ...eventSink,
       commitProjectCommand: (input) =>
         input.commandType === "project.delete"
@@ -758,7 +760,9 @@ it.effect("rejects an update that waited on the lock while its project was delet
             )
           : eventSink.commitProjectCommand(input),
     });
-    const service = yield* ProjectService.make.pipe(Effect.provideService(EventSinkV2, gatedSink));
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
     const sql = yield* SqlClient.SqlClient;
     const projectId = ProjectId.make("project:update-race");
     yield* service.create({

@@ -51,6 +51,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -665,6 +666,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const continuationRequests = yield* ProviderContinuationRequests;
   const providerSessions = yield* ProviderSessionManagerV2;
@@ -4147,6 +4149,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
           return;
         }
+      }
+
+      // Commands serialize per thread, so an archive or delete accepted ahead
+      // of this dispatch is already committed here: rejecting keeps a stale
+      // sendToThread validation from starting work on a thread that no longer
+      // accepts runs. Restart continuations take the preserve path above
+      // instead — they are stale deliveries, not new work.
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is archived or deleted.`,
+        });
       }
 
       if (projection.thread.settledOverride !== null) {
@@ -7909,6 +7924,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (command.restoreFiles !== false) {
         const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
+          projects,
+          path,
           fileSystem,
           projections: projectionStore,
         }).pipe(
@@ -9453,6 +9470,7 @@ export const layer: Layer.Layer<
   never,
   | CheckpointServiceV2
   | FileSystem.FileSystem
+  | Path.Path
   | CommandPolicyV2
   | CommandReceiptStoreV2
   | ContextHandoffServiceV2

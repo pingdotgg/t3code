@@ -25,17 +25,13 @@ import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
 } from "../orchestration-v2/Orchestrator.ts";
-import {
-  ThreadManagementService,
-  ThreadManagementThreadArchivedError,
-  type ThreadManagementSendResult,
-} from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
+import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
-import { layer as worktreeMcpServiceLayer, WorktreeMcpService } from "./WorktreeMcpService.ts";
+import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-worktree-test");
 const threadId = ThreadId.make("thread-worktree-test");
@@ -177,14 +173,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
     switch (options.continuation ?? "queued") {
       case "fails":
         return Effect.fail(
-          new ThreadManagementThreadArchivedError({
+          new ThreadManagementService.ThreadManagementThreadArchivedError({
             threadId,
           }),
         );
       case "dies":
         return Effect.die(new Error("send defect"));
       default:
-        return Effect.succeed({ delivery: "queued" } as ThreadManagementSendResult);
+        return Effect.succeed({
+          delivery: "queued",
+        } as ThreadManagementService.ThreadManagementSendResult);
     }
   });
   const getById = vi.fn((id: ProjectId) =>
@@ -294,8 +292,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const posixIsAbsolute = (value: string) => value.startsWith("/");
   const serviceLayer =
     options.pathSemantics === undefined
-      ? worktreeMcpServiceLayer
-      : worktreeMcpServiceLayer.pipe(
+      ? WorktreeMcpService.layer
+      : WorktreeMcpService.layer.pipe(
           Layer.provide(
             Layer.succeed(Path.Path, {
               isAbsolute: options.pathSemantics === "win32" ? win32IsAbsolute : posixIsAbsolute,
@@ -305,11 +303,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
   const layer = serviceLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords,
           sendToThread,
-        } satisfies Partial<ThreadManagementService["Service"]>),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
           getById,
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
@@ -329,9 +327,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
         } satisfies Partial<ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]>),
-        Layer.mock(VcsStatusBroadcaster)({
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           refreshStatus,
-        } satisfies Partial<VcsStatusBroadcaster["Service"]>),
+        } satisfies Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>),
         NodeServices.layer,
       ),
     ),
@@ -368,21 +366,21 @@ const expectTypedFailure = (exit: Exit.Exit<unknown, unknown>, expected: object)
 // the layer's closure, so a fresh layer per call would never see it).
 const resolveService = (harness: ReturnType<typeof makeHarness>) =>
   Effect.gen(function* () {
-    return yield* WorktreeMcpService;
+    return yield* WorktreeMcpService.WorktreeMcpService;
   }).pipe(Effect.provide(harness.layer));
 
 const runHandoff = (
   harness: ReturnType<typeof makeHarness>,
-  input: Parameters<WorktreeMcpService["Service"]["handoff"]>[1],
+  input: Parameters<WorktreeMcpService.WorktreeMcpService["Service"]["handoff"]>[1],
 ) =>
   Effect.gen(function* () {
-    const service = yield* WorktreeMcpService;
+    const service = yield* WorktreeMcpService.WorktreeMcpService;
     return yield* service.handoff(harness.scope, input);
   }).pipe(Effect.provide(harness.layer));
 
 const runStatus = (harness: ReturnType<typeof makeHarness>) =>
   Effect.gen(function* () {
-    const service = yield* WorktreeMcpService;
+    const service = yield* WorktreeMcpService.WorktreeMcpService;
     return yield* service.status(harness.scope);
   }).pipe(Effect.provide(harness.layer));
 

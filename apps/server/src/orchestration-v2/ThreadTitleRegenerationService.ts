@@ -17,7 +17,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "../textGeneration/ThreadTitleContext.ts";
 export { formatThreadTitleContext } from "../textGeneration/ThreadTitleContext.ts";
@@ -39,7 +39,7 @@ export class ThreadTitleRegenerationService extends Context.Service<
 >()("t3/orchestration-v2/ThreadTitleRegenerationService") {}
 
 const make = Effect.gen(function* () {
-  const threads = yield* ThreadManagementService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;

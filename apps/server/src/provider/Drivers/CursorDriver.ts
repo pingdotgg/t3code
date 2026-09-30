@@ -16,8 +16,8 @@ import { HttpClient } from "effect/unstable/http";
 import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import {
   CursorAdapterV2Driver,
@@ -28,7 +28,7 @@ import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
 } from "../Layers/CursorProvider.ts";
-import { CursorSdkCatalogLive } from "../Layers/CursorSdkCatalog.ts";
+import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -64,9 +64,9 @@ export type CursorDriverEnv =
   | Path.Path
   | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
-  | ServerConfig
+  | ServerConfig.ServerConfig
   | ServerSecretStore.ServerSecretStore
-  | ServerSettingsService;
+  | ServerSettings.ServerSettingsService;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -78,7 +78,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   defaultConfig: (): CursorSettings => decodeCursorSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
@@ -99,7 +99,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(
         instanceId,
         path.join(
-          (yield* ServerConfig).stateDir,
+          (yield* ServerConfig.ServerConfig).stateDir,
           "provider-auth",
           encodeURIComponent(instanceId),
           "cursor.json",
@@ -231,7 +231,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.map(stampSnapshot),
-        Effect.provide(CursorSdkCatalogLive),
+        Effect.provide(CursorSdkCatalog.CursorSdkCatalogLive),
       );
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);

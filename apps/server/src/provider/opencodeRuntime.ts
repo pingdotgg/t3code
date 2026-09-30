@@ -30,6 +30,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { signalProcessGroup } from "../process/processGroup.ts";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "./providerSnapshot.ts";
@@ -609,7 +610,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ? child.kill({ killSignal: "SIGKILL" }).pipe(Effect.asVoid)
           : Effect.sync(() => {
               try {
-                process.kill(-Number(child.pid), "SIGKILL");
+                signalProcessGroup(Number(child.pid), "SIGKILL");
               } catch {
                 // The command and its process group may already have exited.
               }
@@ -731,7 +732,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ? child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid)
           : Effect.sync(() => {
               try {
-                process.kill(-Number(child.pid), signal);
+                signalProcessGroup(Number(child.pid), signal);
               } catch {
                 // The direct child may already have exited after starting the
                 // server; the process group kill is best-effort cleanup for

@@ -11,7 +11,6 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import type {
   EnvironmentId,
   ModelSelection,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
   ScheduledTaskId,
@@ -20,6 +19,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  scheduledTaskLegacyUpsert,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -56,6 +56,12 @@ import {
   type DraftState,
   type WorkspaceMode,
 } from "./scheduledTasksSettings.logic";
+import {
+  buildScheduledTaskUpdateInput,
+  moveDetachesThreadBinding,
+  workspaceStrategyFromDraft,
+  workspaceStrategyReady,
+} from "./scheduledTasks.logic";
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
@@ -131,7 +137,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   htmlFor?: string;
   children: ReactNode;
 }) {
@@ -440,7 +446,7 @@ function ScheduledTaskRow({
         <div className="flex items-center gap-2">
           <Switch
             checked={task.enabled}
-            disabled={busy}
+            disabled={busy || runCapReached(task)}
             aria-label={`Enable ${task.title}`}
             onCheckedChange={() => void act("toggle")}
           />
@@ -462,7 +468,7 @@ function ScheduledTaskRow({
                 <PencilIcon />
                 Edit
               </MenuItem>
-              <MenuItem onClick={() => void act("run")}>
+              <MenuItem disabled={runCapReached(task)} onClick={() => void act("run")}>
                 <PlayIcon />
                 Run now
               </MenuItem>
@@ -512,6 +518,9 @@ function ScheduledTaskEditorDialog({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
+  const updateTask = useAtomCommand(serverEnvironment.updateScheduledTask, {
+    label: "scheduled task update",
+  });
   const instanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -522,6 +531,10 @@ function ScheduledTaskEditorDialog({
   const [draft, setDraft] = useState<DraftState>(() =>
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
+  // The draft as the editor opened it. Dirty detection compares the draft
+  // against this snapshot — not the live task — so edits another client
+  // commits while the dialog is open are never reverted by a save.
+  const [baselineDraft] = useState(draft);
   const [saving, setSaving] = useState(false);
   const submissionPending = useRef(false);
   const editingTaskMissing =
@@ -594,7 +607,7 @@ function ScheduledTaskEditorDialog({
       reportFailure("Invalid time window", "The window start must be a valid time before its end.");
       return;
     }
-    if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
+    if (!workspaceStrategyReady(draft)) {
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
@@ -606,36 +619,56 @@ function ScheduledTaskEditorDialog({
       draft.baseModelSelection.model === selection.model
         ? draft.baseModelSelection
         : selection;
-    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
-      draft.workspaceMode === "root"
-        ? { type: "root" }
-        : draft.workspaceMode === "existing_worktree"
-          ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
-          : {
-              type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
-              startFromOrigin: draft.startFromOrigin,
-            };
-    const input: ScheduledTaskUpsertInput = {
-      ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId, requireExisting: true } : {}),
-      title: draft.title.trim(),
-      prompt: draft.prompt.trim(),
-      enabled: draft.enabled,
-      schedule,
-      projectId: selectedProjectId as ProjectId,
-      threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
-      workspaceStrategy,
-      modelSelection,
-      runtimeMode: draft.runtimeMode,
-      interactionMode: draft.interactionMode,
-      creationSource: "web",
-    };
+    const workspaceStrategy = workspaceStrategyFromDraft(draft);
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
     setSaving(true);
-    const result = await upsertTask({ environmentId, input });
+    // Existing tasks save as a dirty-field patch through the atomic update
+    // path: a stale editor can never overwrite fields another client changed,
+    // and a delete racing the save is a typed not-found, not a resurrection.
+    let result;
+    if (draft.editingId !== null) {
+      // editingTaskMissing already guarantees the task is in the live list.
+      const editingTask = tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId);
+      if (editingTask === undefined) {
+        submissionPending.current = false;
+        setSaving(false);
+        return;
+      }
+      const patch = buildScheduledTaskUpdateInput(
+        draft,
+        baselineDraft,
+        editingTask,
+        modelSelection,
+        workspaceStrategy,
+      );
+      result =
+        patch === null
+          ? null
+          : environment?.serverConfig?.environment.capabilities.scheduledTaskUpdate === true
+            ? await updateTask({ environmentId, input: patch })
+            : await upsertTask({
+                environmentId,
+                input: scheduledTaskLegacyUpsert(editingTask, patch),
+              });
+    } else {
+      const input: ScheduledTaskUpsertInput = {
+        title: draft.title.trim(),
+        prompt: draft.prompt.trim(),
+        enabled: draft.enabled,
+        schedule,
+        projectId: selectedProjectId as ProjectId,
+        threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+        workspaceStrategy,
+        modelSelection,
+        runtimeMode: draft.runtimeMode,
+        interactionMode: draft.interactionMode,
+        creationSource: "web",
+      };
+      result = await upsertTask({ environmentId, input });
+    }
     setSaving(false);
-    if (result._tag === "Failure") {
+    if (result !== null && result._tag === "Failure") {
       submissionPending.current = false;
       if (!isAtomCommandInterrupted(result)) {
         reportFailure("Could not save scheduled task", squashAtomCommandFailure(result));
@@ -730,7 +763,15 @@ function ScheduledTaskEditorDialog({
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Project" htmlFor="scheduled-task-project">
+              <Field
+                label="Project"
+                hint={
+                  moveDetachesThreadBinding(draft, baselineDraft)
+                    ? "detaches the thread binding"
+                    : undefined
+                }
+                htmlFor="scheduled-task-project"
+              >
                 <Select
                   value={selectedProjectId}
                   onValueChange={(projectId) =>
@@ -997,7 +1038,8 @@ function ScheduledTaskEditorDialog({
                   <span className="text-sm text-muted-foreground">runs</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  The task pauses itself at the limit. Leave empty to run indefinitely.
+                  The task pauses at the limit. Raise or clear it, then turn on Enabled to resume.
+                  Leave empty for no limit.
                 </p>
               </div>
             </div>

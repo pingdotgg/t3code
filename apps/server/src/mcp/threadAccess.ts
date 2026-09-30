@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
-import { type McpInvocationScope, McpInvocationContext } from "./McpInvocationContext.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export const unavailable = () =>
   new OrchestratorMcpFailure({
@@ -19,7 +19,7 @@ export const unavailable = () =>
   });
 
 export const readCaller = Effect.fn("mcp.readCaller")(function* () {
-  const scope = yield* McpInvocationContext;
+  const scope = yield* McpInvocationContext.McpInvocationContext;
   if (!scope.capabilities.has("orchestration")) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
@@ -42,7 +42,7 @@ function assertLiveCaller({
   scope,
 }: {
   caller: OrchestrationV2ThreadShell;
-  scope: McpInvocationScope;
+  scope: McpInvocationContext.McpInvocationScope;
 }) {
   return caller.archivedAt !== null ||
     caller.activeRunId === null ||

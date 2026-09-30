@@ -22,7 +22,7 @@ import {
   makeCursorAgentSdkReplayRunner,
   makeCursorProviderAdapterRegistryReplayLayer,
 } from "../Adapters/CursorAdapterV2.testkit.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import {
@@ -291,7 +291,7 @@ describe("orchestrator replay recovery", () => {
           assert.lengthOf(projection.providerThreads, 1);
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
         ),
       ),
   );
@@ -307,7 +307,7 @@ describe("orchestrator replay recovery", () => {
           yield* runner.assertComplete;
         }).pipe(
           provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
         ),
       ),
   );
@@ -417,7 +417,7 @@ describe("orchestrator replay recovery", () => {
         );
       }).pipe(
         provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
       ),
     ),
   );

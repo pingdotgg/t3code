@@ -42,9 +42,9 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ModelManifest from "../ModelManifest.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
-import { ServerConfig } from "../../config.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -314,12 +314,12 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
 });
 
 export const ProviderRegistryLive = Layer.effect(
-  ProviderRegistry,
+  ProviderRegistry.ProviderRegistry,
   Effect.gen(function* () {
-    const instanceRegistry = yield* ProviderInstanceRegistry;
+    const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
     const serviceScope = yield* Effect.scope;
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -947,6 +947,6 @@ export const ProviderRegistryLive = Layer.effect(
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },
-    } satisfies ProviderRegistryShape;
+    } satisfies ProviderRegistry.ProviderRegistryShape;
   }),
 );

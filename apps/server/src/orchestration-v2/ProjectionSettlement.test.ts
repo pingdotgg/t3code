@@ -22,14 +22,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Statement from "effect/unstable/sql/Statement";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionStoreV2,
-  layer as projectionStoreLayer,
-  layerMemory,
-} from "./ProjectionStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { isAutoSettlementCandidate, resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
 
-const SqlLayer = projectionStoreLayer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const SqlLayer = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
 const old = DateTime.subtract(now, { days: 10 });
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -40,7 +36,7 @@ const createThread = Effect.fn(function* (
   name: string,
   overrides: Partial<OrchestrationV2AppThread> = {},
 ) {
-  const store = yield* ProjectionStoreV2;
+  const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = ThreadId.make(`thread:settlement:${name}`);
   const thread: OrchestrationV2AppThread = {
     createdBy: "user",
@@ -81,7 +77,7 @@ const createRun = Effect.fn(function* (
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
 ) {
-  const store = yield* ProjectionStoreV2;
+  const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
   yield* store.apply({
     id: EventId.make(`event:${runId}`),
@@ -115,7 +111,7 @@ const createItem = Effect.fn(function* (
   status: "idle" | "running" | "completed",
   persistent = false,
 ) {
-  const store = yield* ProjectionStoreV2;
+  const store = yield* ProjectionStore.ProjectionStoreV2;
   yield* store.apply({
     id: EventId.make(`event:item:${runId}`),
     type: "turn-item.updated",
@@ -146,13 +142,13 @@ const createItem = Effect.fn(function* (
 
 for (const [name, testLayer] of [
   ["sql", SqlLayer],
-  ["memory", layerMemory],
+  ["memory", ProjectionStore.layerMemory],
 ] as const) {
   it.effect(
     `${name}: discovers settlement work with the same activity and background semantics as the shell`,
     () =>
       Effect.gen(function* () {
-        const store = yield* ProjectionStoreV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
         const idle = yield* createThread("idle");
         const completed = yield* createThread("completed");
         yield* createRun(completed);
@@ -311,11 +307,11 @@ const pullRequestLink = (number: number) => ({
 
 for (const [name, testLayer] of [
   ["sql", SqlLayer],
-  ["memory", layerMemory],
+  ["memory", ProjectionStore.layerMemory],
 ] as const) {
   it.effect(`${name}: lists only active threads with pull request links, oldest first`, () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       yield* createThread("no-links");
       yield* createThread("empty-links", { pullRequests: [] });
       yield* createThread("archived-link", {
@@ -346,11 +342,11 @@ for (const [name, testLayer] of [
 
 for (const [name, testLayer] of [
   ["sql", SqlLayer],
-  ["memory", layerMemory],
+  ["memory", ProjectionStore.layerMemory],
 ] as const) {
   it.effect(`${name}: an unsettled-only shell read skips settled threads`, () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const open = yield* createThread("unsettled-open");
       const reopened = yield* createThread("unsettled-reopened", { settledOverride: "active" });
       yield* createThread("unsettled-manual", { settledOverride: "settled", settledAt: old });
@@ -373,7 +369,7 @@ it.effect(
   "reads settlement candidates and thread metadata without loading historical or archived payloads",
   () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const source = yield* createThread("historical-source", { archivedAt: old });
       const sourceRun = yield* createRun(source);
@@ -436,7 +432,7 @@ it.effect(
 
 it.effect("shell failure lookups stay on the thread's own turn items", () =>
   Effect.gen(function* () {
-    const store = yield* ProjectionStoreV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
     const sql = yield* SqlClient.SqlClient;
     const failed = yield* createThread("failed-latest");
     yield* createRun(failed, "failed");

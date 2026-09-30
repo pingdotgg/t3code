@@ -17,14 +17,14 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   PrimaryConnectionTarget,
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { createProjectFaviconCache } from "../projectFaviconCache.ts";
@@ -93,7 +93,10 @@ describe("createAssetEnvironmentAtoms", () => {
                 ? new AssetWorkspaceContextNotFoundError({ resource })
                 : new AssetWorkspaceAssetNotFoundError({ resource });
         const calls: EnvironmentId[] = [];
-        const supervisors = new Map<EnvironmentId, EnvironmentSupervisor["Service"]>();
+        const supervisors = new Map<
+          EnvironmentId,
+          EnvironmentSupervisor.EnvironmentSupervisor["Service"]
+        >();
         for (const environmentId of [remoteId, localId]) {
           const client = {
             [WS_METHODS.assetsCreateUrl]: () => {
@@ -109,7 +112,7 @@ describe("createAssetEnvironmentAtoms", () => {
           const session = { client } as RpcSession;
           supervisors.set(
             environmentId,
-            EnvironmentSupervisor.of({
+            EnvironmentSupervisor.EnvironmentSupervisor.of({
               target: new PrimaryConnectionTarget({
                 environmentId,
                 label: environmentId,
@@ -128,12 +131,20 @@ describe("createAssetEnvironmentAtoms", () => {
             }),
           );
         }
-        const environments = EnvironmentRegistry.of({
+        const environments = EnvironmentRegistry.EnvironmentRegistry.of({
           run: (id, effect) =>
-            Effect.provideService(effect, EnvironmentSupervisor, supervisors.get(id)!),
+            Effect.provideService(
+              effect,
+              EnvironmentSupervisor.EnvironmentSupervisor,
+              supervisors.get(id)!,
+            ),
           followStream: (id, stream) =>
-            Stream.provideService(stream, EnvironmentSupervisor, supervisors.get(id)!),
-        } as EnvironmentRegistry["Service"]);
+            Stream.provideService(
+              stream,
+              EnvironmentSupervisor.EnvironmentSupervisor,
+              supervisors.get(id)!,
+            ),
+        } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
         const localTarget = {
@@ -144,7 +155,7 @@ describe("createAssetEnvironmentAtoms", () => {
           scenario.primary === "none" || scenario.primary === "reconnecting" ? null : localTarget,
         );
         const assets = createAssetEnvironmentAtoms(
-          Atom.runtime(Layer.succeed(EnvironmentRegistry, environments)),
+          Atom.runtime(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments)),
           localEnvironment,
         );
         const query = assets.createUrl({ environmentId: remoteId, input: { resource } });
@@ -170,7 +181,7 @@ describe("createAssetEnvironmentAtoms", () => {
 
   it("keys asset URL queries by environment and resource", () => {
     const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
-      EnvironmentRegistry,
+      EnvironmentRegistry.EnvironmentRegistry,
       never
     >;
     const assets = createAssetEnvironmentAtoms(runtime);
@@ -229,7 +240,7 @@ describe("createAssetEnvironmentAtoms", () => {
 
   it("keys collections while preserving independent resource queries", () => {
     const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
-      EnvironmentRegistry,
+      EnvironmentRegistry.EnvironmentRegistry,
       never
     >;
     const assets = createAssetEnvironmentAtoms(runtime);

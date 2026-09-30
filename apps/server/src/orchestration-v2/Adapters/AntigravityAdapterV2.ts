@@ -34,7 +34,6 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
-import type { AcpSessionRuntimeStartResult } from "../../provider/acp/AcpSessionRuntime.ts";
 import type { IdAllocatorV2 } from "../IdAllocator.ts";
 import {
   AcpProviderCapabilitiesV2,
@@ -83,7 +82,7 @@ export interface AntigravityAdapterV2Options {
   /** Model to select for the provider default alias, from the manifest. */
   readonly defaultModel: Effect.Effect<string | undefined>;
   readonly onSessionStarted?: (
-    started: AcpSessionRuntimeStartResult,
+    started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd: string,
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];

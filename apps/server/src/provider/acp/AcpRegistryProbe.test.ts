@@ -22,7 +22,7 @@ import {
   normalizeAcpRegistryCommands,
   probeAcpRegistryConfiguration,
 } from "./AcpRegistryProbe.ts";
-import { AcpRegistryCatalog } from "./AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 
 const instanceId = ProviderInstanceId.make("acpRegistry_codex");
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -324,8 +324,8 @@ describe("ACP Registry probe", () => {
       ]);
     }).pipe(
       Effect.provideService(
-        AcpRegistryCatalog,
-        AcpRegistryCatalog.of({
+        AcpRegistrySupport.AcpRegistryCatalog,
+        AcpRegistrySupport.AcpRegistryCatalog.of({
           search: () => Effect.die("unused search"),
           prepare: () => Effect.die("unused prepare"),
           inspect: () => Effect.die("unused inspect"),
@@ -359,7 +359,7 @@ describe("ACP Registry probe", () => {
   it.effect("includes package resolution in the probe timeout", () =>
     Effect.gen(function* () {
       const resolveStarted = yield* Deferred.make<void>();
-      const catalog = AcpRegistryCatalog.of({
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
         search: () => Effect.die("unused search"),
         prepare: () => Effect.die("unused prepare"),
         inspect: () => Effect.die("unused inspect"),
@@ -373,7 +373,7 @@ describe("ACP Registry probe", () => {
         cwd: process.cwd(),
         environment: process.env,
       }).pipe(
-        Effect.provideService(AcpRegistryCatalog, catalog),
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.flip,
         Effect.forkChild({ startImmediately: true }),
       );
@@ -389,7 +389,7 @@ describe("ACP Registry probe", () => {
   );
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
-    const catalog = AcpRegistryCatalog.of({
+    const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
       prepare: () => Effect.die("unused prepare"),
       inspect: () => Effect.die("unused inspect"),
@@ -438,14 +438,14 @@ describe("ACP Registry probe", () => {
       });
       yield* logoutAcpRegistry(input);
     }).pipe(
-      Effect.provideService(AcpRegistryCatalog, catalog),
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provide(NodeServices.layer),
       Effect.scoped,
     );
   });
 
   it.effect("preserves the ACP method error for unsupported session management", () => {
-    const catalog = AcpRegistryCatalog.of({
+    const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
       prepare: () => Effect.die("unused prepare"),
       inspect: () => Effect.die("unused inspect"),
@@ -482,7 +482,7 @@ describe("ACP Registry probe", () => {
         cause: { _tag: "AcpRequestError", code: -32601 },
       });
     }).pipe(
-      Effect.provideService(AcpRegistryCatalog, catalog),
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provide(NodeServices.layer),
       Effect.scoped,
     );

@@ -21,19 +21,19 @@ import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
 } from "../../provider/acp/AcpRegistryProbe.ts";
-import { AcpRegistryCatalog } from "../../provider/acp/AcpRegistrySupport.ts";
-import { AcpRegistryRuntimeCoordinator } from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistrySupport from "../../provider/acp/AcpRegistrySupport.ts";
+import * as AcpRegistryRuntimeCoordinator from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
-import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { IdAllocatorV2 } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterDriverCreateError,
@@ -62,10 +62,10 @@ export interface AcpRegistryAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocatorV2["Service"];
-  readonly resolver: Pick<AcpRegistryCatalog["Service"], "resolve">;
-  readonly runtimeCoordinator?: AcpRegistryRuntimeCoordinator["Service"];
-  readonly serverConfig: ServerConfig["Service"];
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly resolver: Pick<AcpRegistrySupport.AcpRegistryCatalog["Service"], "resolve">;
+  readonly runtimeCoordinator?: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"];
+  readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
@@ -262,11 +262,11 @@ export type AcpRegistryAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | AcpRegistryCatalog
-  | IdAllocatorV2
+  | AcpRegistrySupport.AcpRegistryCatalog
+  | IdAllocator.IdAllocatorV2
   | Path.Path
-  | ProviderEventLoggers
-  | ServerConfig;
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ServerConfig.ServerConfig;
 
 export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   AcpRegistrySettings,
@@ -282,12 +282,14 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
-      const providerEventLoggers = yield* ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      const resolver = yield* AcpRegistryCatalog;
-      const runtimeCoordinator = yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator);
+      const resolver = yield* AcpRegistrySupport.AcpRegistryCatalog;
+      const runtimeCoordinator = yield* Effect.serviceOption(
+        AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+      );
       return makeAcpRegistryAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },

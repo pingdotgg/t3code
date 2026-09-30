@@ -12,7 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 
 export interface CreatedPullRequestKey {
@@ -61,9 +61,9 @@ export const linkCreatedPullRequest = <E>(input: {
   readonly threadId: ThreadId;
   readonly result: Pick<GitRunStackedActionResult, "pr">;
   readonly commandId: Effect.Effect<CommandId, E>;
-}): Effect.Effect<void, never, OrchestratorV2 | ProjectService.ProjectService> =>
+}): Effect.Effect<void, never, Orchestrator.OrchestratorV2 | ProjectService.ProjectService> =>
   Effect.gen(function* () {
-    const engine = yield* OrchestratorV2;
+    const engine = yield* Orchestrator.OrchestratorV2;
     const projects = yield* ProjectService.ProjectService;
     const thread = yield* engine
       .getThreadShell(input.threadId)

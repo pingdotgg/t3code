@@ -4,6 +4,7 @@ import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
   ScopedProjectRef,
   ServerConfig,
   ServerProvider,
@@ -13,7 +14,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { CommandId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
   ArrowRightIcon,
@@ -60,6 +66,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
+import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
+import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
+import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
+import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -82,7 +92,7 @@ import { formatRelativeTime } from "../../timestampFormat";
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
  * fresh install (no completed-onboarding flag, empty workspace). Flow per the
  * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
- * agent setup with inline install terminal → project import → main screen.
+ * managed Codex setup or an inline CLI terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
  */
@@ -97,17 +107,21 @@ const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations m
 export function WelcomeWizard({
   localAvailable,
   onDone,
+  resumeEnvironmentId,
 }: {
   /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
+  readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const [step, setStep] = useState<WizardStep>("connection");
+  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
-  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>([]);
+  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
+    resumeEnvironmentId ? [resumeEnvironmentId] : [],
+  );
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -198,6 +212,7 @@ export function WelcomeWizard({
   return (
     <Dialog open disablePointerDismissal onOpenChange={(_, event) => event.cancel()}>
       <WizardPopup
+        size="wide"
         bottomStickOnMobile={false}
         showCloseButton={false}
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
@@ -262,6 +277,7 @@ export function WelcomeWizard({
           )}
         </WizardPanel>
       </WizardPopup>
+      <ChatGptWelcomeCoordinator />
     </Dialog>
   );
 }
@@ -610,7 +626,7 @@ function PairingForm({
 
 // ── Step 3: agents ───────────────────────────────────────────
 
-const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
+const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
 /** Setup values stay fixed while provider probes refresh the surrounding cards. */
@@ -623,13 +639,7 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-/**
- * Claude Code and Codex use live probe status. Install opens the built-in
- * terminal inline with the vendor's standalone installer pre-typed. The update
- * RPC can't install a binary that isn't there yet (it infers the installer from
- * the installed binary's path), and the terminal also handles the interactive
- * login that follows.
- */
+/** Codex uses managed setup; existing CLI installs retain the terminal path. */
 function AgentsStep({
   environmentIds,
   onContinue,
@@ -639,8 +649,11 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell title="Your agents" description="Agents available on your selected computers.">
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-96">
+    <StepShell
+      title="Connect your agents"
+      description="Choose an agent to start coding. You can add more later."
+    >
+      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
             <ConnectedAgentsStep
@@ -677,6 +690,12 @@ function ConnectedAgentsStep({
   });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [createdAccount, setCreatedAccount] = useState<{
+    instanceId: ProviderInstanceId;
+    displayName: string;
+    autoStart: boolean;
+  } | null>(null);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -686,44 +705,114 @@ function ConnectedAgentsStep({
 
   const byDriver = useMemo(() => selectOnboardingProvidersByDriver(providers), [providers]);
 
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.map((driver) => ({
-    driver,
-    provider: byDriver.get(driver),
-  }));
+  const primaryAgents = PRIMARY_AGENT_DRIVERS.flatMap((driver) => {
+    const instances =
+      driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
+    return instances?.length
+      ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
+      : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
+  });
+  // Keep the newly created row mounted while settings and provider snapshots catch up.
+  if (createdAccount) {
+    const index = primaryAgents.findIndex(
+      (agent) => agent.instanceId === createdAccount.instanceId,
+    );
+    const [existing] = index >= 0 ? primaryAgents.splice(index, 1) : [];
+    primaryAgents.unshift(
+      existing ?? {
+        driver: "codex",
+        provider: undefined,
+        instanceId: createdAccount.instanceId,
+      },
+    );
+  }
   return (
     <section>
       <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
       <div className="space-y-1.5">
-        {primaryAgents.map(({ driver, provider }) => (
-          <AgentCard
-            key={driver}
-            driver={driver}
-            provider={provider}
-            terminalOpen={terminalSession?.driver === driver}
-            terminalAvailable={serverConfig !== null}
-            onOpenTerminal={() => {
-              if (provider === undefined || serverConfig === null) return;
-              setTerminalSession({
-                environmentId,
-                driver,
-                providerInstanceId: provider.instanceId,
-                cwd: serverConfig.cwd,
-                command: provider.installed
-                  ? resolveOnboardingProviderLoginCommand(
-                      provider,
-                      serverConfig.settings,
-                      serverConfig.environment.platform.os,
-                    )
-                  : resolveOnboardingProviderInstallCommand(
-                      driver,
-                      serverConfig.environment.platform.os,
-                    ),
-                keybindings: serverConfig.keybindings,
-              });
-            }}
-          />
-        ))}
+        {primaryAgents.map(({ driver, provider, instanceId }) =>
+          driver === "codex" && serverConfig !== null ? (
+            <OnboardingCodexSetup
+              key={instanceId ?? driver}
+              environmentId={environmentId}
+              provider={provider}
+              serverConfig={serverConfig}
+              createdAccount={instanceId === createdAccount?.instanceId ? createdAccount : null}
+              onAutoStartConsumed={() =>
+                setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
+              }
+              terminalOpen={terminalSession?.driver === driver}
+              onOpenTerminal={() => {
+                if (provider === undefined) return;
+                setTerminalSession({
+                  environmentId,
+                  driver,
+                  providerInstanceId: provider.instanceId,
+                  cwd: serverConfig.cwd,
+                  command: provider.installed
+                    ? resolveOnboardingProviderLoginCommand(
+                        provider,
+                        serverConfig.settings,
+                        serverConfig.environment.platform.os,
+                      )
+                    : resolveOnboardingProviderInstallCommand(
+                        driver,
+                        serverConfig.environment.platform.os,
+                      ),
+                  keybindings: serverConfig.keybindings,
+                });
+              }}
+            />
+          ) : (
+            <AgentCard
+              key={driver}
+              driver={driver}
+              provider={provider}
+              terminalOpen={terminalSession?.driver === driver}
+              terminalAvailable={serverConfig !== null}
+              onOpenTerminal={() => {
+                if (provider === undefined || serverConfig === null) return;
+                setTerminalSession({
+                  environmentId,
+                  driver,
+                  providerInstanceId: provider.instanceId,
+                  cwd: serverConfig.cwd,
+                  command: provider.installed
+                    ? resolveOnboardingProviderLoginCommand(
+                        provider,
+                        serverConfig.settings,
+                        serverConfig.environment.platform.os,
+                      )
+                    : resolveOnboardingProviderInstallCommand(
+                        driver,
+                        serverConfig.environment.platform.os,
+                      ),
+                  keybindings: serverConfig.keybindings,
+                });
+              }}
+            />
+          ),
+        )}
       </div>
+      {providers?.some(
+        (provider) =>
+          provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
+      ) ? (
+        <div className="mt-3">
+          <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
+            Connect another ChatGPT account
+          </Button>
+        </div>
+      ) : null}
+      {addingAccount ? (
+        <AddManagedCodexAccountDialog
+          environmentId={environmentId}
+          onClose={() => setAddingAccount(false)}
+          onAccountCreated={(instanceId, displayName) =>
+            setCreatedAccount({ instanceId, displayName, autoStart: true })
+          }
+        />
+      ) : null}
       {terminalSession !== null ? (
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
@@ -735,6 +824,93 @@ function ConnectedAgentsStep({
         />
       ) : null}
     </section>
+  );
+}
+
+function OnboardingCodexSetup({
+  createdAccount,
+  onAutoStartConsumed,
+  environmentId,
+  provider,
+  serverConfig,
+  terminalOpen,
+  onOpenTerminal,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly provider: ServerProvider | undefined;
+  readonly serverConfig: ServerConfig;
+  readonly terminalOpen: boolean;
+  readonly onOpenTerminal: () => void;
+  readonly createdAccount: {
+    instanceId: ProviderInstanceId;
+    displayName: string;
+    autoStart: boolean;
+  } | null;
+  readonly onAutoStartConsumed: () => void;
+}) {
+  const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
+  const instanceId =
+    createdAccount?.instanceId ??
+    provider?.instanceId ??
+    defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
+  const settings = serverConfig.settings;
+  const instance = settings.providerInstances[instanceId] ?? {
+    driver: ProviderDriverKind.make("codex"),
+    enabled: settings.providers.codex.enabled,
+    config: createdAccount ? { enabled: true, setupMode: "managed" } : settings.providers.codex,
+  };
+  const mode = readCodexSetupMode(instance.config);
+  const existingChosen =
+    mode === "existing" &&
+    instance.config !== null &&
+    typeof instance.config === "object" &&
+    "setupMode" in instance.config &&
+    instance.config.setupMode === "existing";
+  const changeMode = (setupMode: "managed" | "existing") => {
+    void update({
+      environmentId,
+      input: {
+        patch: buildProviderInstanceUpdatePatch({
+          settings,
+          instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          isDefault: instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("codex")),
+          instance: {
+            ...instance,
+            enabled: true,
+            config: {
+              ...(instance.config !== null && typeof instance.config === "object"
+                ? instance.config
+                : {}),
+              enabled: true,
+              setupMode,
+            },
+          },
+        }),
+      },
+    });
+  };
+  return existingChosen ? (
+    <AgentCard
+      driver="codex"
+      provider={provider}
+      terminalOpen={terminalOpen}
+      terminalAvailable
+      onOpenTerminal={onOpenTerminal}
+    />
+  ) : (
+    <CodexSetupSection
+      presentation="onboarding"
+      autoStart={createdAccount?.autoStart === true}
+      displayName={createdAccount?.displayName}
+      onAutoStartConsumed={onAutoStartConsumed}
+      environmentId={environmentId}
+      instanceId={instanceId}
+      provider={provider}
+      mode={mode}
+      enabled={provider?.enabled ?? true}
+      onModeChange={changeMode}
+    />
   );
 }
 
@@ -752,12 +928,13 @@ function AgentCard({
   readonly onOpenTerminal: () => void;
 }) {
   const meta = getDriverOption(ProviderDriverKind.make(driver));
-  const displayName = driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver);
+  const displayName =
+    provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
       <ProviderInstanceIcon
         driverKind={ProviderDriverKind.make(driver)}
         displayName={displayName}
@@ -766,8 +943,8 @@ function AgentCard({
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {summary.headline}
-          {summary.detail ? ` · ${summary.detail}` : ""}
+          {providerState === "ready" ? "Ready to code." : summary.headline}
+          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
         </p>
       </div>
       <div className="shrink-0">

@@ -19,8 +19,8 @@ import * as Effect from "effect/Effect";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -48,8 +48,8 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
   for (const status of ["failed", "interrupted", "cancelled"] as const) {
     it.effect(`bounds ${driver} context when continuing a fork of a ${status} run`, () =>
       Effect.gen(function* () {
-        const orchestrator = yield* OrchestratorV2;
-        const eventSink = yield* EventSinkV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
         const now = yield* DateTime.now;
         const sourceThreadId = ThreadId.make("fork-boundary-source");
         const targetThreadId = ThreadId.make("fork-boundary-target");

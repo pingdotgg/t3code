@@ -30,13 +30,16 @@ import {
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
-import { ThreadMetadataMcpService } from "../../ThreadMetadataMcpService.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, OrchestratorMcpService];
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  OrchestratorMcpService.OrchestratorMcpService,
+];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
-  ThreadMetadataMcpService,
+  ThreadMetadataMcpService.ThreadMetadataMcpService,
 ];
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
@@ -93,7 +96,7 @@ const TaskCancelTool = Tool.make("task_cancel", {
 
 export const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
-    "Create persistent recurring work in the app scheduler, which runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text: {type:'interval', everyMs:3600000} means hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} means weekday mornings. Interval schedules accept optional restrictions: weekdays limits the days it may run ([1,2,3,4,5] means Monday to Friday), window restricts runs to local hours such as {start:'09:00', end:'17:00'} for business hours, and maxRuns stops the task after that many runs by pausing it, e.g. {type:'interval', everyMs:1800000, weekdays:[1,2,3,4,5], window:{start:'09:00', end:'17:00'}, maxRuns:16} checks every half hour during weekday business hours and stops after 16 checks. maxRuns also works on fixed_time schedules. By default (bindToCurrentThread=true) each run posts into THIS thread; use false only when the user wants a fresh top-level thread per run. Provider, model, and runtime settings inherit from this thread. Report the returned schedule and nextRunAt after success.",
+    "Create persistent recurring work in the app scheduler, which runs even when no turn is active. Requires a live caller-owned run. Pass schedule as a STRUCTURED OBJECT, never JSON text: {type:'interval', everyMs:3600000} means hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} means weekday mornings. Interval schedules also accept weekdays, a same-day window such as {start:'09:00',end:'17:00'}, and maxRuns; fixed_time also accepts maxRuns. The cap counts lifetime runs and pauses the task at its limit. By default (bindToCurrentThread=true) each run posts into THIS thread; use false only when the user wants a fresh top-level thread per run. A task bound to a thread pauses automatically when that thread is archived or deleted, and stays paused until re-enabled after the thread is unarchived. Provider, model, and runtime settings inherit from this thread. Report the returned schedule and nextRunAt after success.",
   parameters: OrchestratorMcpScheduleTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -119,7 +122,7 @@ const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
 
 const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
   description:
-    "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run. Raising or clearing maxRuns on a task that stopped at its limit re-arms it.",
+    "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run. Edits that can arm or redirect execution — enabling, changing the prompt or schedule, or rebinding — additionally require the caller's runtime/interaction modes to cover the modes the task's runs will execute under (the bound destination thread's modes, or the task's own modes once unbound); disabling and renaming do not, so any caller may pause a misbehaving task. Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run. Enabling or binding a task to an archived thread fails until the thread is unarchived. A supplied schedule replaces the entire schedule. Raising or clearing maxRuns keeps a paused task paused; explicitly set enabled=true to resume after changing the cap.",
   parameters: OrchestratorMcpUpdateScheduledTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -131,7 +134,7 @@ const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
 
 const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
-    "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
+    "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run; deletion cannot arm work, so no mode coverage is required. The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
   parameters: OrchestratorMcpDeleteScheduledTaskInput,
   success: OrchestratorMcpDeleteScheduledTaskResult,
   failure: OrchestratorMcpFailure,

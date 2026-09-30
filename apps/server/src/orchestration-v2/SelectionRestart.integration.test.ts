@@ -25,20 +25,16 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
 } from "./ProviderAdapter.ts";
-import {
-  ProviderAdapterRegistryV2,
-  makeLayer as makeProviderAdapterRegistryLayer,
-  makeSingleLayer as makeSingleProviderAdapterRegistryLayer,
-} from "./ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
@@ -407,10 +403,10 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         closedSessionCount: 0,
         failedReplacementOpen: false,
       });
-      const registry = makeSingleProviderAdapterRegistryLayer(makeRestartAdapter(state));
+      const registry = ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state));
 
       const result = yield* Effect.gen(function* () {
-        const orchestrator = yield* OrchestratorV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
@@ -559,14 +555,14 @@ for (const deadStatus of ["stopped", "error"] as const) {
             // simulated replacement-open failure is skipped.
             failedReplacementOpen: true,
           });
-          const registry = makeSingleProviderAdapterRegistryLayer(
+          const registry = ProviderAdapterRegistry.makeSingleLayer(
             makeRestartAdapter(state, exclusiveCapabilities),
           );
 
           const result = yield* Effect.gen(function* () {
-            const orchestrator = yield* OrchestratorV2;
-            const worker = yield* OrchestrationEffectWorkerV2;
-            const eventSink = yield* EventSinkV2;
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            const eventSink = yield* EventSink.EventSinkV2;
             const dispatch = (step: string, modelSelection: ModelSelection) =>
               Effect.gen(function* () {
                 const terminal = yield* orchestrator.streamDomainEvents.pipe(
@@ -725,13 +721,13 @@ it.live("detaches the old provider session after an active provider handoff", ()
         failedReplacementOpen: false,
       });
       const targetStartCount = yield* Ref.make(0);
-      const registry = makeProviderAdapterRegistryLayer([
+      const registry = ProviderAdapterRegistry.makeLayer([
         makeRestartAdapter(state, exclusiveCapabilities),
         makeCompletingHandoffAdapter(targetStartCount),
       ]);
 
       const result = yield* Effect.gen(function* () {
-        const orchestrator = yield* OrchestratorV2;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
@@ -872,7 +868,7 @@ for (const mode of ["active", "idle", "selection-command", "pooled", "separate-h
               ),
           } satisfies ProviderAdapterV2Shape;
         });
-        const registry = Layer.succeed(ProviderAdapterRegistryV2, {
+        const registry = Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
           get: (instanceId) =>
             Effect.succeed(adapters.find((adapter) => adapter.instanceId === instanceId)!),
           list: () => Effect.succeed([providerInstanceId, targetId]),
@@ -886,8 +882,8 @@ for (const mode of ["active", "idle", "selection-command", "pooled", "separate-h
             }),
         });
         yield* Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
-          const worker = yield* OrchestrationEffectWorkerV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           const selection = {
             ...initialSelection,
             model: mode === "active" ? initialSelection.model : "complete",

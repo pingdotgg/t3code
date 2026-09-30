@@ -11,8 +11,8 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { ProviderRegistryLive } from "./Layers/ProviderRegistry.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
@@ -67,21 +67,25 @@ describe("provider compatibility", () => {
     }
   });
 
-  it("supports Codex 0.156 and marks Codex without Thread.projectId broken", () => {
-    const bundled = ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility;
-    for (const [t3CodeVersion, codexVersion, expected] of [
-      ["0.0.42", "0.148.0", "broken"],
-      ["0.0.42", "0.149.0", "unsupported"],
-      ["0.0.42", "0.155.0", "unsupported"],
-      ["0.0.42", "0.156.0", "supported"],
-      ["0.0.43-nightly.20260924.2200", "0.153.3", "unsupported"],
-      ["0.0.43-nightly.20260924.2200", "0.156.1", "supported"],
+  it("supports OpenCode 2 and gives OpenCode 1.x limited support", () => {
+    const opencode = ProviderDriverKind.make("opencode");
+    for (const [version, expected] of [
+      ["2.0.18", "supported"],
+      ["2.1.0", "supported"],
+      // Early OpenCode 2 releases predate the API the adapter was built against.
+      ["2.0.17", "unsupported"],
+      ["2.0.0", "unsupported"],
+      ["1.99.0", "graceful"],
+      ["1.14.19", "graceful"],
+      ["1.14.18", "broken"],
     ] as const) {
-      assert.strictEqual(
-        resolveProviderCompatibility(bundled, driver, codexVersion, t3CodeVersion)?.status,
-        expected,
-        `T3 Code ${t3CodeVersion} with Codex ${codexVersion}`,
+      const advisory = resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        opencode,
+        version,
       );
+      assert.strictEqual(advisory?.status, expected, `OpenCode ${version}`);
+      assert.strictEqual(advisory?.recommendedRange, ">=2.0.18");
     }
   });
 
@@ -275,7 +279,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
         forceRefresh: refresh,
         refreshInBackground: Effect.void,
       }),
-      Layer.succeed(ProviderInstanceRegistry, {
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (id) => Effect.succeed(id === instance.instanceId ? instance : undefined),
         listInstances: Effect.succeed([instance]),
         listUnavailable: Effect.succeed([]),
@@ -287,7 +291,7 @@ it.effect("a remote policy refresh preserves a newer health result on the regist
       ),
     );
     yield* Effect.gen(function* () {
-      const registry = yield* ProviderRegistry;
+      const registry = yield* ProviderRegistry.ProviderRegistry;
       yield* Deferred.await(started);
       assert.strictEqual(
         (yield* registry.getProviders)[0]?.compatibilityAdvisory?.status,

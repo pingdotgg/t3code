@@ -1,6 +1,6 @@
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
-import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as NodeCrypto from "node:crypto";
 
 import * as DateTime from "effect/DateTime";
@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
+import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
+import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AcpRegistryOperationError,
@@ -83,6 +85,7 @@ import {
   PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  ScheduledTaskError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -110,7 +113,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
-import { ProviderSessionManagerV2 } from "./orchestration-v2/ProviderSessionManager.ts";
+import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
@@ -159,17 +162,12 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
-import {
-  AcpRegistryCatalog,
-  AcpRegistryError,
-  isAcpRegistryError,
-  toAcpRegistryOperationError,
-} from "./provider/acp/AcpRegistrySupport.ts";
-import { AcpRegistryRuntimeCoordinator } from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistrySupport from "./provider/acp/AcpRegistrySupport.ts";
+import * as AcpRegistryRuntimeCoordinator from "./provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as ProviderMaintenance from "./provider/providerMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
-import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "./provider/Services/ProviderAuthService.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -240,7 +238,7 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
-import { AgentSessionImporter } from "./project/AgentSessionImporter.ts";
+import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1086,7 +1084,7 @@ const makeWsRpcLayer = (
       const projectService = yield* ProjectService.ProjectService;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
-      const providerSessionsV2 = yield* ProviderSessionManagerV2;
+      const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const analytics = yield* AnalyticsService.AnalyticsService;
       // Client-origin attribution (#7774): every thread/turn the connecting
       // client starts is credited to its surface + app version. Best-effort:
@@ -1101,14 +1099,14 @@ const makeWsRpcLayer = (
         }
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
-      const providerSessionManager = yield* ProviderSessionManagerV2;
+      const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
-      const orchestrationEngine = yield* OrchestratorV2;
+      const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
       const crypto = yield* Crypto.Crypto;
       const serverCommandId = (tag: string) =>
         crypto.randomUUIDv4.pipe(
@@ -1132,7 +1130,7 @@ const makeWsRpcLayer = (
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
-      const agentSessionImporter = yield* AgentSessionImporter;
+      const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -1149,10 +1147,11 @@ const makeWsRpcLayer = (
       const modelManifest = yield* ModelManifest.ModelManifest;
       const providerVersionCache = yield* ProviderMaintenance.ProviderVersionCache;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-      const acpRegistryCatalog = yield* AcpRegistryCatalog;
-      const acpRegistryRuntimeCoordinator = yield* AcpRegistryRuntimeCoordinator;
+      const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
+      const acpRegistryRuntimeCoordinator =
+        yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
-      const providerAuth = yield* ProviderAuthService;
+      const providerAuth = yield* ProviderAuthService.ProviderAuthService;
       const providerInstallation = yield* makeProviderInstallation();
       const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
       const config = yield* ServerConfig.ServerConfig;
@@ -1977,16 +1976,51 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scheduledTasksUpsert, scheduledTasks.upsert(input), {
             "rpc.aggregate": "scheduledTasks",
           }),
+        [WS_METHODS.scheduledTasksUpdate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksUpdate,
+            scheduledTasks.update(input).pipe(
+              Effect.flatMap((updated) =>
+                Option.isNone(updated)
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Schedule task not found in this project.",
+                        taskId: input.id,
+                      }),
+                    )
+                  : Effect.succeed(updated.value),
+              ),
+            ),
+            {
+              "rpc.aggregate": "scheduledTasks",
+              "scheduled_task.id": input.id,
+            },
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksSetEnabled, scheduledTasks.setEnabled(input), {
             "rpc.aggregate": "scheduledTasks",
             "scheduled_task.id": input.id,
           }),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksDelete, scheduledTasks.delete(input), {
-            "rpc.aggregate": "scheduledTasks",
-            "scheduled_task.id": input.id,
-          }),
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksDelete,
+            scheduledTasks.delete(input).pipe(
+              Effect.flatMap((deleted) =>
+                Option.isNone(deleted)
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Schedule task not found.",
+                        taskId: input.id,
+                      }),
+                    )
+                  : Effect.succeed(deleted.value),
+              ),
+            ),
+            {
+              "rpc.aggregate": "scheduledTasks",
+              "scheduled_task.id": input.id,
+            },
+          ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksRunNow, scheduledTasks.runNow(input), {
             "rpc.aggregate": "scheduledTasks",
@@ -2007,13 +2041,17 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverSearchAcpRegistry,
-            acpRegistryCatalog.search(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            acpRegistryCatalog
+              .search(input)
+              .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
             { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverPrepareAcpRegistryAgent,
-            acpRegistryCatalog.prepare(input).pipe(Effect.mapError(toAcpRegistryOperationError)),
+            acpRegistryCatalog
+              .prepare(input)
+              .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
             {
               "rpc.aggregate": "server",
               "acp_registry.agent_id": input.agentId,
@@ -2042,15 +2080,15 @@ const makeWsRpcLayer = (
               )
               .pipe(
                 Effect.mapError((cause) =>
-                  isAcpRegistryError(cause)
+                  AcpRegistrySupport.isAcpRegistryError(cause)
                     ? cause
-                    : new AcpRegistryError({
+                    : new AcpRegistrySupport.AcpRegistryError({
                         reason: "install_failed",
                         detail: `Could not read provider settings while checking references for ACP Registry agent ${input.agentId}.`,
                         cause,
                       }),
                 ),
-                Effect.mapError(toAcpRegistryOperationError),
+                Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError),
               ),
             {
               "rpc.aggregate": "server",
@@ -2357,6 +2395,18 @@ const makeWsRpcLayer = (
             WS_METHODS.providerAuthComplete,
             providerAuth.complete(input, currentSessionId),
             { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.chatGptReconnectProfile]: (input) => providerAuth.reconnectProfile(input),
+        [WS_METHODS.chatGptImportProfile]: (input) => providerAuth.importProfile(input),
+        [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
+          subscribeChatGptHandoff(input, currentSessionId),
+        [WS_METHODS.codexAuthCallbackSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.codexAuthCallbackSubscribe,
+            subscribeCodexAuthCallback(input),
+            {
+              "rpc.aggregate": "provider",
+            },
           ),
         [WS_METHODS.providerAuthCancel]: (input) =>
           observeRpcEffect(
@@ -3189,13 +3239,13 @@ const makeWsRpcLayer = (
                             result,
                             commandId: serverCommandId("pr-created-link"),
                           }).pipe(
-                            Effect.provideService(OrchestratorV2, orchestrationEngine),
+                            Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                             Effect.provideService(ProjectService.ProjectService, projectService),
                           )
                       ).pipe(
                         Effect.andThen(
                           refreshPushedPullRequests(input, result).pipe(
-                            Effect.provideService(OrchestratorV2, orchestrationEngine),
+                            Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                             Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
                             Effect.provideService(
                               PullRequestService.PullRequestService,

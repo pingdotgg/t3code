@@ -29,6 +29,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import { signalProcessGroup } from "../../process/processGroup.ts";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./AcpStderr.ts";
 import {
   collectSessionConfigOptionValues,
@@ -1647,7 +1648,7 @@ export const make = (
     const signalOwnedProcessGroup = (signal: NodeJS.Signals) =>
       Effect.try({
         try: () => {
-          process.kill(-Number(child.pid), signal);
+          signalProcessGroup(Number(child.pid), signal);
           return true;
         },
         catch: (cause) =>

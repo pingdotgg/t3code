@@ -23,12 +23,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 
-import {
-  makeAntigravityInstallation,
-  type AntigravityExecutable,
-  type AntigravityInstallation,
-  type AntigravityInstallationOptions,
-} from "./AntigravityInstallation.ts";
+import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
 import type { AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
@@ -135,7 +130,7 @@ interface HarnessOptions {
   readonly path?: string;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
-  readonly validate?: AntigravityInstallationOptions["validate"];
+  readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
 }
 
@@ -159,7 +154,10 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   }
   const stagingReleased = yield* Deferred.make<void>();
   const requests: string[] = [];
-  const validations: Array<{ executable: AntigravityExecutable; version: string }> = [];
+  const validations: Array<{
+    executable: AntigravityInstallation.AntigravityExecutable;
+    version: string;
+  }> = [];
   const installationFs = options.fileSystem ?? fs;
   const trackedFs = FileSystem.FileSystem.of({
     ...installationFs,
@@ -172,13 +170,13 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
           )
         : installationFs.makeTempDirectoryScoped(settings),
   });
-  const installation = yield* makeAntigravityInstallation({
+  const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir,
     releaseAsset: asset,
     ...(options.useDefaultValidation
       ? {}
       : {
-          validate: (executable: AntigravityExecutable, version: string) =>
+          validate: (executable: AntigravityInstallation.AntigravityExecutable, version: string) =>
             Effect.sync(() => validations.push({ executable, version })).pipe(
               Effect.andThen(options.validate?.(executable, version) ?? Effect.void),
             ),
@@ -222,7 +220,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   return { installation, fs, path, baseDir, requests, validations, stagingReleased };
 });
 
-const terminalState = (installation: AntigravityInstallation["Service"]) =>
+const terminalState = (installation: AntigravityInstallation.AntigravityInstallation["Service"]) =>
   installation.changes.pipe(
     Stream.filter((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)),
     Stream.runHead,
@@ -230,7 +228,7 @@ const terminalState = (installation: AntigravityInstallation["Service"]) =>
   );
 
 const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")(function* (
-  installation: AntigravityInstallation["Service"],
+  installation: AntigravityInstallation.AntigravityInstallation["Service"],
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

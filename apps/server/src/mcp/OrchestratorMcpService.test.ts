@@ -7,23 +7,24 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskId,
+  ScheduledTaskError,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type ScheduledTask,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
-import {
-  ProviderAdapterRegistryLookupError,
-  ProviderAdapterRegistryV2,
-} from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
-import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
@@ -64,7 +65,7 @@ describe("OrchestratorMcpService", () => {
       let hasNestedWork = true;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -100,9 +101,11 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
         }),
-        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
         environmentId: EnvironmentId.make("environment:mcp-ack"),
@@ -167,7 +170,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -175,9 +178,11 @@ describe("OrchestratorMcpService", () => {
               Effect.as({} as never),
             ),
         }),
-        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
         environmentId: EnvironmentId.make("environment:mcp-cancel"),
@@ -233,7 +238,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -241,9 +246,11 @@ describe("OrchestratorMcpService", () => {
               Effect.andThen(Effect.fail(new Error("simulated interrupt failure") as never)),
             ),
         }),
-        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
         environmentId: EnvironmentId.make("environment:mcp-cancel-failed"),
@@ -302,7 +309,7 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
           dispatch: (command) =>
@@ -314,9 +321,11 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
         }),
-        Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
       const scope: McpInvocationScope = {
         environmentId: EnvironmentId.make("environment:mcp-cancel-dispose-failed"),
@@ -341,6 +350,410 @@ describe("OrchestratorMcpService", () => {
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
   );
+
+  describe("scheduled-task authorization", () => {
+    const parentThreadId = ThreadId.make("thread:mcp-sched-parent");
+    const destinationThreadId = ThreadId.make("thread:mcp-sched-destination");
+    const projectId = ProjectId.make("project:mcp-sched");
+    const scheduledTaskId = ScheduledTaskId.make("scheduled-task:mcp-sched-1");
+    // The stored task is bound to a full-access/default destination thread —
+    // its runs execute under that thread's modes, not the task's stored ones.
+    const privilegedTask = {
+      id: scheduledTaskId,
+      projectId,
+      title: "nightly sync",
+      prompt: "run the sync",
+      enabled: true,
+      threadId: destinationThreadId,
+      schedule: { type: "interval", everyMs: 60_000 },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      nextRunAt: null,
+      lastRunStatus: "never",
+    } as unknown as ScheduledTask;
+
+    const liveRun = {
+      id: RunId.make("run:mcp-sched-live"),
+      ordinal: 1,
+      status: "running",
+      rootNodeId: NodeId.make("node:mcp-sched-root"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    };
+
+    const callerProjection = (
+      runtimeMode: string,
+      interactionMode: string,
+      runs: ReadonlyArray<unknown>,
+    ) =>
+      ({
+        thread: {
+          id: parentThreadId,
+          projectId,
+          runtimeMode,
+          interactionMode,
+          archivedAt: null,
+          deletedAt: null,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-terra",
+          },
+        },
+        runs,
+        contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
+      }) as unknown as OrchestrationV2ThreadProjection;
+
+    const schedScope: McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment:mcp-sched"),
+      threadId: parentThreadId,
+      providerSessionId: "provider-session:mcp-sched",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["orchestration"]),
+      issuedAt: 1,
+    };
+
+    const scheduleDeps = (
+      projection: OrchestrationV2ThreadProjection,
+      writes: Ref.Ref<number>,
+      listedTask: ScheduledTask = privilegedTask,
+      captured?: Ref.Ref<ReadonlyArray<unknown>>,
+    ) => {
+      const record = (input: unknown) =>
+        Ref.update(writes, (count) => count + 1).pipe(
+          Effect.andThen(
+            captured === undefined ? Effect.void : Ref.update(captured, (all) => [...all, input]),
+          ),
+        );
+      return Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === destinationThreadId
+                ? ({
+                    id: destinationThreadId,
+                    projectId,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                  } as never)
+                : null,
+            ),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [listedTask] }),
+          upsert: (input) => record(input).pipe(Effect.as({ task: listedTask })),
+          update: (input) => record(input).pipe(Effect.as(Option.some({ task: listedTask }))),
+          delete: (input) => record(input).pipe(Effect.as(Option.some({ id: scheduledTaskId }))),
+        }),
+      );
+    };
+
+    it.effect("rejects schedule mutations when the caller owns no live run", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "default", []);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const scheduled = yield* service
+            .scheduleTask(schedScope, {
+              prompt: "check in",
+              schedule: { type: "interval", everyMs: 60_000 },
+            })
+            .pipe(Effect.flip);
+          assert.equal(scheduled.code, "parent_not_active");
+          const updated = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(updated.code, "parent_not_active");
+          const deleted = yield* service
+            .deleteScheduledTask(schedScope, { scheduledTaskId })
+            .pipe(Effect.flip);
+          assert.equal(deleted.code, "parent_not_active");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("rejects schedule mutations from a run owned by another provider instance", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "default", [
+          { ...liveRun, providerInstanceId: ProviderInstanceId.make("claude") },
+        ]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "parent_not_active");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("rejects schedule mutations from an archived caller thread", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const base = callerProjection("full-access", "default", [liveRun]);
+        // Archive commits before provider detachment lands: the caller's run
+        // still reads active, but the thread itself is dead and cannot arm
+        // new unattended work.
+        const projection = {
+          ...base,
+          thread: { ...base.thread, archivedAt: "2026-09-19T00:00:00.000Z" },
+        } as unknown as OrchestrationV2ThreadProjection;
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const scheduled = yield* service
+            .scheduleTask(schedScope, {
+              prompt: "check in",
+              schedule: { type: "interval", everyMs: 60_000 },
+            })
+            .pipe(Effect.flip);
+          assert.equal(scheduled.code, "parent_not_active");
+          const updated = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(updated.code, "parent_not_active");
+          const deleted = yield* service
+            .deleteScheduledTask(schedScope, { scheduledTaskId })
+            .pipe(Effect.flip);
+          assert.equal(deleted.code, "parent_not_active");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("rejects re-enabling a task whose runtime mode exceeds the caller's", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("approval-required", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "runtime_mode_escalation_denied");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("permits disabling and deleting a task whose modes exceed the caller's", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("approval-required", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          // De-escalating operations arm nothing, so a restricted caller
+          // may still pause or delete a privileged task in its project.
+          const disabled = yield* service.updateScheduledTask(schedScope, {
+            scheduledTaskId,
+            enabled: false,
+          });
+          assert.equal(disabled.scheduledTaskId, scheduledTaskId);
+          const deleted = yield* service.deleteScheduledTask(schedScope, {
+            scheduledTaskId,
+          });
+          assert.equal(deleted.deleted, true);
+          assert.equal(yield* Ref.get(writes), 2);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("still requires mode coverage when a disable rides with arming fields", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("approval-required", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          // enabled=false cannot launder a prompt or rebinding change past
+          // the check — the update still touches execution-relevant state.
+          const prompted = yield* service
+            .updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+              prompt: "tampered",
+            })
+            .pipe(Effect.flip);
+          assert.equal(prompted.code, "runtime_mode_escalation_denied");
+          const rebound = yield* service
+            .updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+              bindToCurrentThread: false,
+            })
+            .pipe(Effect.flip);
+          assert.equal(rebound.code, "runtime_mode_escalation_denied");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect(
+      "pins the authorizing run and destination modes into every scheduled-task write",
+      () =>
+        Effect.gen(function* () {
+          const writes = yield* Ref.make(0);
+          const captured = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const projection = callerProjection("full-access", "default", [liveRun]);
+          const dependencies = scheduleDeps(projection, writes, privilegedTask, captured);
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* service.scheduleTask(schedScope, {
+              prompt: "check in",
+              schedule: { type: "interval", everyMs: 60_000 },
+            });
+            // The live-run pin applies to de-escalating writes too: the
+            // service re-checks it inside the transaction, so a mutation
+            // landing after the authorizing run settled must fail there.
+            yield* service.updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+            });
+            yield* service.deleteScheduledTask(schedScope, { scheduledTaskId });
+            const calls = (yield* Ref.get(captured)) as ReadonlyArray<Record<string, unknown>>;
+            assert.equal(calls.length, 3);
+            for (const call of calls) {
+              assert.deepEqual(call["expectedActiveRun"], {
+                id: liveRun.id,
+                threadId: parentThreadId,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              });
+            }
+            // Creation also pins the modes the snapshot authorized so a
+            // concurrent destination-mode change fails the upsert.
+            assert.equal(calls[0]?.["expectedExecutionRuntimeMode"], "full-access");
+            assert.equal(calls[0]?.["expectedExecutionInteractionMode"], "default");
+          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }),
+    );
+
+    it.effect(
+      "rejects re-enabling a task whose interaction mode exceeds a plan-mode caller's",
+      () =>
+        Effect.gen(function* () {
+          const writes = yield* Ref.make(0);
+          const projection = callerProjection("full-access", "plan", [liveRun]);
+          const dependencies = scheduleDeps(projection, writes);
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const error = yield* service
+              .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+              .pipe(Effect.flip);
+            assert.equal(error.code, "interaction_mode_escalation_denied");
+            assert.equal(yield* Ref.get(writes), 0);
+          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }),
+    );
+
+    it.effect("denies a plan-mode caller even when it unbinds the privileged task", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "plan", [liveRun]);
+        // Unbinding leaves the task's stored default mode governing each
+        // launched run, so the plan-mode caller still fails the check.
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: true,
+              bindToCurrentThread: false,
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "interaction_mode_escalation_denied");
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("permits a plan-mode caller to mutate a task bound to its own thread", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "plan", [liveRun]);
+        // Bound to the calling thread, the run executes under the caller's own
+        // modes — the stored modes never govern this binding.
+        const ownBoundTask = {
+          ...privilegedTask,
+          threadId: parentThreadId,
+        } as unknown as ScheduledTask;
+        const dependencies = scheduleDeps(projection, writes, ownBoundTask);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const updated = yield* service.updateScheduledTask(schedScope, {
+            scheduledTaskId,
+            enabled: true,
+          });
+          assert.equal(updated.scheduledTaskId, scheduledTaskId);
+          assert.equal(yield* Ref.get(writes), 1);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("preserves the update failure cause behind a stable caller message", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "default", [liveRun]);
+        const cause = new ScheduledTaskError({
+          message: "internal storage failure",
+          taskId: scheduledTaskId,
+        });
+        const dependencies = Layer.merge(
+          scheduleDeps(projection, writes),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+            list: () => Effect.succeed({ tasks: [privilegedTask] }),
+            update: () => Effect.fail(cause),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const error = yield* service
+            .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "orchestration_error");
+          assert.equal(error.message, "Could not update scheduled task.");
+          assert.strictEqual(error.cause, cause);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("permits schedule mutations for a live caller whose modes cover the task's", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("full-access", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const updated = yield* service.updateScheduledTask(schedScope, {
+            scheduledTaskId,
+            enabled: true,
+          });
+          assert.equal(updated.scheduledTaskId, scheduledTaskId);
+          const scheduled = yield* service.scheduleTask(schedScope, {
+            prompt: "check in",
+            schedule: { type: "interval", everyMs: 60_000 },
+          });
+          assert.equal(scheduled.scheduledTaskId, scheduledTaskId);
+          assert.equal(yield* Ref.get(writes), 2);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+  });
 });
 
 describe("OrchestratorMcpService provider resolution", () => {
@@ -386,13 +799,15 @@ describe("OrchestratorMcpService provider resolution", () => {
 
   const adapterRegistryLayer = (instanceIds: ReadonlyArray<ProviderInstanceId>) =>
     Layer.succeed(
-      ProviderAdapterRegistryV2,
-      ProviderAdapterRegistryV2.of({
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
         list: () => Effect.succeed(instanceIds),
         get: (instanceId) =>
           instanceIds.includes(instanceId)
             ? Effect.succeed({ instanceId } as unknown as ProviderAdapterV2Shape)
-            : Effect.fail(new ProviderAdapterRegistryLookupError({ instanceId })),
+            : Effect.fail(
+                new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
+              ),
       }),
     );
 
@@ -492,10 +907,12 @@ describe("OrchestratorMcpService provider resolution", () => {
         ];
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
-          Layer.mock(ThreadManagementService)({
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: () => Effect.succeed(parentProjection([])),
           }),
-          Layer.mock(ProviderRegistry)({ getProviders: Effect.sync(() => providers) }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.sync(() => providers),
+          }),
           adapterRegistryLayer([
             codexInstanceId,
             ProviderInstanceId.make("claudeAgent"),
@@ -504,7 +921,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             antigravityInstanceId,
             disabledAntigravityInstanceId,
           ]),
-          Layer.mock(ScheduledTaskService)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
 
         yield* Effect.gen(function* () {
@@ -606,7 +1023,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const dependencies = Layer.mergeAll(
           NodeServices.layer,
-          Layer.mock(ThreadManagementService)({
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
             getThreadRecords: (threadId) =>
               Effect.succeed(
                 threadId === parentThreadId
@@ -632,7 +1049,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 } as never),
               ),
           }),
-          Layer.mock(ProviderRegistry)({
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([
               providerSnapshot({
                 instanceId: codexInstanceId,
@@ -647,7 +1064,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ]),
           }),
           adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-          Layer.mock(ScheduledTaskService)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
 
         yield* Effect.gen(function* () {
@@ -699,7 +1116,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       let delegated = false;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
@@ -725,7 +1142,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               } as never),
             ),
         }),
-        Layer.mock(ProviderRegistry)({
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([
             providerSnapshot({
               instanceId: codexInstanceId,
@@ -740,7 +1157,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
 
       yield* Effect.gen(function* () {
@@ -774,10 +1191,10 @@ describe("OrchestratorMcpService provider resolution", () => {
       });
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService)({
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(parentProjection([])),
         }),
-        Layer.mock(ProviderRegistry)({
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([
             providerSnapshot({
               instanceId: codexInstanceId,
@@ -788,7 +1205,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ScheduledTaskService)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
 
       yield* Effect.gen(function* () {
@@ -908,7 +1325,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           let delegated = false;
           const dependencies = Layer.mergeAll(
             NodeServices.layer,
-            Layer.mock(ThreadManagementService)({
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
@@ -934,7 +1351,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            Layer.mock(ProviderRegistry)({
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed([
                 providerSnapshot({
                   instanceId: codexInstanceId,
@@ -951,7 +1368,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               ]),
             }),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
-            Layer.mock(ScheduledTaskService)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
 
           yield* Effect.gen(function* () {

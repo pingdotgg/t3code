@@ -31,10 +31,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 
 import {
   advanceOpenCodePromptAdmission,
@@ -147,7 +147,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
 ) {
-  const idAllocator = yield* IdAllocatorV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
@@ -168,7 +168,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     serverConfig: {
       cwd: "/workspace",
       attachmentsDir: "/tmp/attachments",
-    } as ServerConfig["Service"],
+    } as ServerConfig.ServerConfig["Service"],
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -374,7 +374,7 @@ describe("OpenCodeAdapterV2", () => {
                 hasSubagents: false,
               },
         );
-      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+      }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
     );
   }
 
@@ -452,7 +452,7 @@ describe("OpenCodeAdapterV2", () => {
         deliver = true;
         // Failed delivery leaves the request available for an explicit retry.
         yield* harness.runtime.respondToRuntimeRequest(response);
-      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+      }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
     );
   }
 
@@ -491,7 +491,7 @@ describe("OpenCodeAdapterV2", () => {
         "children:child",
         "stream.close",
       ]);
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
@@ -544,7 +544,7 @@ describe("OpenCodeAdapterV2", () => {
         const result = yield* Fiber.join(stop);
         assert.equal(Exit.isSuccess(result), failure === "not-found");
         if (failure === "timeout") assert.isTrue(childSignal?.aborted);
-      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+      }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
     );
   }
 
@@ -709,7 +709,7 @@ describe("OpenCodeAdapterV2", () => {
         const assistant = items.filter((item) => item.type === "assistant_message");
         assert.equal(assistant.at(-1)?.text, "Tool results received");
         assert.equal(assistant.at(-1)?.status, "completed");
-      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+      }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   // Event order from a live OpenCode 1.18.32 run of a `task` call with
@@ -804,7 +804,7 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(status(child, "idle"));
       yield* push({ type: "session.idle", properties: { sessionID: child } });
       assert.isFalse(yield* hasPendingBackgroundWork, "an idle child must not pin idle release");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("titles OpenCode reads and searches from their input", () =>
@@ -881,7 +881,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.deepEqual(webSearch?.type === "web_search" ? webSearch.patterns : null, [
         "OpenCode documentation",
       ]);
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("admits a native command on its user receipt before generation completes", () =>
@@ -944,7 +944,7 @@ describe("OpenCodeAdapterV2", () => {
       yield* Fiber.join(start);
       assert.equal(promptCalls, 0);
       release.resolve();
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("sends unadvertised slash commands as ordinary prompts", () =>
@@ -971,7 +971,7 @@ describe("OpenCodeAdapterV2", () => {
       });
       yield* harness.startTurn("/unknown words");
       assert.deepEqual(prompts, [[{ type: "text", text: "/unknown words" }]]);
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("compacts with the native summarize API and emits a completed compaction", () =>
@@ -1026,7 +1026,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.isTrue(
         events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
       );
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("does not restore messages beyond OpenCode's persisted revert boundary", () =>
@@ -1111,12 +1111,12 @@ describe("OpenCodeAdapterV2", () => {
         ["user-kept", "assistant-kept"],
       );
       assert.equal(snapshot.providerThread.nativeConversationHeadRef?.nativeId, "user-kept");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const nativeEvents = asyncEventStream();
       const prompt = promiseGate<void>();
       const promptStarted = promiseGate<void>();
@@ -1196,7 +1196,7 @@ describe("OpenCodeAdapterV2", () => {
         serverConfig: {
           cwd: "/workspace",
           attachmentsDir: "/tmp/attachments",
-        } as ServerConfig["Service"],
+        } as ServerConfig.ServerConfig["Service"],
       });
       const threadId = ThreadId.make("thread-opencode-admission-race");
       const providerSessionId = ProviderSessionId.make("session-opencode-admission-race");
@@ -1429,12 +1429,12 @@ describe("OpenCodeAdapterV2", () => {
       );
       const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
       assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("interrupts an initial prompt while its SDK request is pending", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const nativeEvents = asyncEventStream();
       const promptStarted = promiseGate<void>();
       const abortCalled = promiseGate<void>();
@@ -1491,7 +1491,7 @@ describe("OpenCodeAdapterV2", () => {
         serverConfig: {
           cwd: "/workspace",
           attachmentsDir: "/tmp/attachments",
-        } as ServerConfig["Service"],
+        } as ServerConfig.ServerConfig["Service"],
       });
       const threadId = ThreadId.make("thread-opencode-initial-stop");
       const providerSessionId = ProviderSessionId.make("session-opencode-initial-stop");
@@ -1595,7 +1595,7 @@ describe("OpenCodeAdapterV2", () => {
             (event.type === "provider_session.updated" && event.providerSession.status === "error"),
         ),
       );
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
@@ -1638,7 +1638,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(terminal?.failure?.class, "transport_error");
       assert.equal(terminal?.threadDisposition, "broken");
       assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("fails compaction when its response races stream termination", () =>
@@ -1699,7 +1699,7 @@ describe("OpenCodeAdapterV2", () => {
             event.turnItem.status === "completed",
         ),
       );
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("does not register a turn after the OpenCode event stream ends", () =>
@@ -1757,7 +1757,7 @@ describe("OpenCodeAdapterV2", () => {
 
       assert.isTrue(Exit.isFailure(yield* Fiber.join(start)));
       assert.equal(promptCalls, 0);
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it("holds stale idle through prompt admission until the new user message is observed", () => {
@@ -1935,7 +1935,7 @@ describe("OpenCodeAdapterV2", () => {
       assert.lengthOf(terminals, 1);
       assert.equal(terminals[0]?.status, "completed");
       assert.isNull(terminals[0]?.failure ?? null);
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("does not let a queued status retry adopt a newer steer generation", () =>
@@ -2038,7 +2038,7 @@ describe("OpenCodeAdapterV2", () => {
       });
       assert.equal(statusCallCount, 1);
       assert.equal(afterRetry.providerTurns.at(-1)?.status, "running");
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
   it.effect("ignores a delayed status reply after steering starts a newer admission", () =>
@@ -2081,7 +2081,7 @@ describe("OpenCodeAdapterV2", () => {
 
   it.effect("logs bounded structural protocol diagnostics without native payload values", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const records: Array<unknown> = [];
       const nativeEventLogger: EventNdjsonLogger = {
         filePath: "/tmp/provider-native.ndjson",
@@ -2109,13 +2109,13 @@ describe("OpenCodeAdapterV2", () => {
       assert.include(serialized, '"protocol":"opencode-sdk.sse"');
       assert.include(serialized, '"method":"session.prompt"');
       assert.include(serialized, '"fieldCount":2');
-    }).pipe(Effect.provide(idAllocatorLayer)),
+    }).pipe(Effect.provide(IdAllocator.layer)),
   );
 
   it.effect("adopts the handed-over provider thread identity on session create", () =>
     Effect.gen(function* () {
-      const idAllocator = yield* IdAllocatorV2;
-      const serverConfig = yield* ServerConfig;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       let createCount = 0;
       const createInputs: Array<unknown> = [];
       const fakeClient = {
@@ -2222,10 +2222,10 @@ describe("OpenCodeAdapterV2", () => {
       Effect.scoped,
       Effect.provide(
         Layer.mergeAll(
-          idAllocatorLayer,
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-v2-adapter-" }).pipe(
-            Layer.provide(NodeServices.layer),
-          ),
+          IdAllocator.layer,
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-opencode-v2-adapter-",
+          }).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),
@@ -2423,5 +2423,5 @@ it.effect.each([false, true])(
         assert.equal(result.messages.length, 0);
         assert.deepEqual(calls, ["fork", "permissions"]);
       }
-    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
 );
