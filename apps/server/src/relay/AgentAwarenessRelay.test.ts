@@ -100,7 +100,7 @@ function makeMemorySecretStore() {
   };
 }
 
-describe.sequential("signRelayAgentActivityPublishProof", () => {
+describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
   it("distinguishes pending link credentials from disabled publication", () => {
     expect(
       AgentAwarenessRelay.resolveAgentActivityPublishingStartupState({
@@ -977,7 +977,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
   );
 });
 
-describe.sequential("startup catch-up", () => {
+describe("startup catch-up", { concurrent: false }, () => {
   // An unlinked relay with publishing off. `link` writes the link secrets and
   // `enablePublishing` the opt-in. Counts link checks (relay URL reads) and
   // catch-up publishes (shell snapshot reads).

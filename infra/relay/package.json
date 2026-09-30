@@ -7,7 +7,7 @@
     "push:android:smoke": "node scripts/android-push-smoke.ts",
     "push:android:watch": "node scripts/android-push-watch.ts",
     "destroy": "alchemy destroy",
-    "test": "vp test run",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

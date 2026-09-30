@@ -8,10 +8,19 @@ import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 /** Compose a wizard from its header, panel, and footer; flow logic stays with the caller. */
 export function WizardPopup({
   children,
+  size = "default",
   ...props
-}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style">) {
+}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style"> & {
+  readonly size?: "default" | "wide";
+}) {
   return (
-    <DialogPopup {...props} className="max-w-xl overflow-x-hidden overflow-y-auto">
+    <DialogPopup
+      {...props}
+      className={cn(
+        "overflow-x-hidden overflow-y-auto",
+        size === "wide" ? "max-w-3xl" : "max-w-xl",
+      )}
+    >
       <div className="flex min-h-0 flex-col">{children}</div>
     </DialogPopup>
   );
