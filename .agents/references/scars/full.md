@@ -237,6 +237,8 @@
 
 ## Pairing and environment recovery
 
+- The shared WebSocket transport normalizes its endpoint pathname to `/ws`. Native proxy gateways must bind environment identity to single-use tickets, not rely on a URL path prefix surviving that normalization.
+- `/api/auth/session` can report revoked credentials with HTTP 200 and `authenticated: false`; native account HTTP renewal must handle that response as well as HTTP 401.
 - SSH device startup must lock per host, not across the service; keep settings revocation coordinated with those locks so a slow remote install cannot block healthy hosts or publish readiness after access is disabled.
 - Persist agent endpoints under the adapter's reconnect lock using its current endpoint; a service-only lock cannot prevent a stale readiness snapshot from overwriting a new tunnel configuration.
 - Host IDs are environment-local. Cross-environment edits and removals must confirm the SSH destination before trusting an ID, and must not append a duplicate ID belonging to an unrelated host.

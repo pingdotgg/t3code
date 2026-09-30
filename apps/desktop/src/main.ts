@@ -1,4 +1,10 @@
 import * as ChildProcess from "node:child_process";
+import { pathToFileURL } from "node:url";
+import type { ConnectAccountDriver } from "@t3tools/shared/desktopConnect";
+import {
+  CONNECT_ACCOUNT_SCHEME,
+  createConnectAccountTransport,
+} from "./connectAccountTransport.ts";
 import {
   discoverLocalEnvironments,
   inspectLocalEnvironment,
@@ -715,6 +721,10 @@ function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
 }
 
 protocol.registerSchemesAsPrivileged([
+  {
+    scheme: CONNECT_ACCOUNT_SCHEME,
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+  },
   {
     scheme: DESKTOP_SCHEME,
     privileges: {
@@ -1682,7 +1692,68 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
   });
 }
 
+let accountTransport: ReturnType<typeof createConnectAccountTransport> | undefined;
+let accountTransportPromise: Promise<ReturnType<typeof createConnectAccountTransport>> | undefined;
+
+function accountTrustedOrigin(): string {
+  return new URL(isDevelopment ? resolveDesktopDevServerUrl() : backendHttpUrl).origin;
+}
+
+function getAccountTransport() {
+  return (accountTransportPromise ??= (async () => {
+    const moduleUrl = pathToFileURL(
+      Path.join(Path.dirname(resolveBackendEntry()), "desktopAccount.mjs"),
+    ).href;
+    const module: {
+      createDesktopAccountDriver: (input: {
+        baseDir: string;
+        openBrowser: (url: string) => Promise<void>;
+      }) => ConnectAccountDriver;
+    } = await import(moduleUrl);
+    const transport = createConnectAccountTransport({
+      driver: module.createDesktopAccountDriver({
+        // This is an app identity, not the selected host's OAuth store.
+        baseDir: Path.join(app.getPath("userData"), "connect-account"),
+        openBrowser: (url) => shell.openExternal(url),
+      }),
+      trustedOrigin: accountTrustedOrigin,
+      onInvalidated: () => mainWindow?.webContents.send("desktop:connect-account-invalidated"),
+    });
+    protocol.handle(CONNECT_ACCOUNT_SCHEME, (request) => transport.handle(request));
+    accountTransport = transport;
+    return transport;
+  })().catch((error) => {
+    accountTransportPromise = undefined;
+    throw error;
+  }));
+}
+
 function registerIpcHandlers(): void {
+  ipcMain.removeHandler("desktop:connect-account");
+  ipcMain.handle(
+    "desktop:connect-account",
+    async (event, method: unknown, accountId: unknown, environmentId: unknown) => {
+      if (
+        event.sender !== mainWindow?.webContents ||
+        event.senderFrame !== mainWindow.webContents.mainFrame ||
+        new URL(event.senderFrame.url).origin !== accountTrustedOrigin()
+      )
+        throw new Error("T3 Connect is only available in the desktop application.");
+      const transport = await getAccountTransport();
+      if (method === "discover") return transport.discover();
+      if (method === "login") return transport.login();
+      if (method === "logout") return transport.logout();
+      if (
+        (method === "connect" || method === "socketUrl") &&
+        typeof accountId === "string" &&
+        accountId.length > 0 &&
+        typeof environmentId === "string" &&
+        environmentId.length > 0
+      )
+        return transport[method](accountId, environmentId);
+      throw new Error("Invalid T3 Connect request.");
+    },
+  );
   ipcMain.removeHandler("desktop:local-environments");
   ipcMain.handle("desktop:local-environments", async (event) => {
     if (
@@ -2481,6 +2552,7 @@ function startDesktopApplication(): void {
   configureAppIdentity();
 
   app.on("before-quit", () => {
+    accountTransport?.dispose();
     isQuitting = true;
     void previewRuntime?.dispose();
     previewRuntime = null;

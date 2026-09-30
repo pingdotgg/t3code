@@ -40,6 +40,20 @@ const SHOW_NOTIFICATION_CHANNEL = "desktop:show-notification";
 const NOTIFICATION_CLICKED_CHANNEL = "desktop:notification-clicked";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  connectAccount: {
+    discover: () => ipcRenderer.invoke("desktop:connect-account", "discover"),
+    login: () => ipcRenderer.invoke("desktop:connect-account", "login"),
+    logout: () => ipcRenderer.invoke("desktop:connect-account", "logout"),
+    connect: (accountId, environmentId) =>
+      ipcRenderer.invoke("desktop:connect-account", "connect", accountId, environmentId),
+    socketUrl: (accountId, environmentId) =>
+      ipcRenderer.invoke("desktop:connect-account", "socketUrl", accountId, environmentId),
+    onInvalidated: (listener) => {
+      const handler = () => listener();
+      ipcRenderer.on("desktop:connect-account-invalidated", handler);
+      return () => ipcRenderer.removeListener("desktop:connect-account-invalidated", handler);
+    },
+  },
   getLocalEnvironments: () => ipcRenderer.invoke("desktop:local-environments"),
   selectLocalEnvironment: (baseDir) =>
     ipcRenderer.invoke("desktop:select-local-environment", baseDir),

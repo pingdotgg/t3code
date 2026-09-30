@@ -23,6 +23,7 @@ import {
 import { DateTime } from "effect";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { DesktopConnectAccountSettings } from "./DesktopConnectAccountSettings";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import {
@@ -1186,6 +1187,7 @@ export function ConnectionsSettings() {
   const savedEnvironmentIds = useMemo(
     () =>
       Object.values(savedEnvironmentsById)
+        .filter((record) => !record.accountId)
         .toSorted((left, right) => left.label.localeCompare(right.label))
         .map((record) => record.environmentId),
     [savedEnvironmentsById],
@@ -1601,8 +1603,8 @@ export function ConnectionsSettings() {
               </Badge>
             ) : null}
             <Badge variant="secondary" size="sm">
-              {savedEnvironmentIds.length}{" "}
-              {savedEnvironmentIds.length === 1 ? "environment" : "environments"}
+              {Object.keys(savedEnvironmentsById).length}{" "}
+              {Object.keys(savedEnvironmentsById).length === 1 ? "environment" : "environments"}
             </Badge>
             {canManageLocalBackend ? (
               <Badge variant="secondary" size="sm">
@@ -1613,6 +1615,7 @@ export function ConnectionsSettings() {
         }
       />
       <LocalEnvironmentsSettings />
+      <DesktopConnectAccountSettings />
       {canManageLocalBackend ? (
         <>
           <RemoteAccessSettings />

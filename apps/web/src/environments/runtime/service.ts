@@ -55,6 +55,7 @@ import {
   writeSavedEnvironmentBearerToken,
 } from "./catalog";
 import { createEnvironmentConnection, type EnvironmentConnection } from "./connection";
+import { startDesktopConnectDiscovery } from "./desktopAccount";
 import {
   useStore,
   selectProjectsAcrossEnvironments,
@@ -1048,18 +1049,26 @@ function createPrimaryEnvironmentClient(
 
 function createSavedEnvironmentClient(
   record: SavedEnvironmentRecord,
-  bearerToken: string,
+  bearerToken: string | null,
 ): WsRpcClient {
   useSavedEnvironmentRuntimeStore.getState().ensure(record.environmentId);
 
   return createWsRpcClient(
     new WsTransport(
-      () =>
-        resolveRemoteWebSocketConnectionUrl({
+      () => {
+        if (record.accountId) {
+          const bridge = window.desktopBridge?.connectAccount;
+          if (!bridge)
+            return Promise.reject(new Error("Desktop account transport is unavailable."));
+          return bridge.socketUrl(record.accountId, record.environmentId);
+        }
+        if (!bearerToken) return Promise.reject(new Error("Missing environment credential."));
+        return resolveRemoteWebSocketConnectionUrl({
           wsBaseUrl: record.wsBaseUrl,
           httpBaseUrl: record.httpBaseUrl,
           bearerToken,
-        }),
+        });
+      },
       {
         onAttempt: () => {
           setRuntimeConnecting(record.environmentId);
@@ -1087,7 +1096,7 @@ function createSavedEnvironmentClient(
 
 async function refreshSavedEnvironmentMetadata(
   record: SavedEnvironmentRecord,
-  bearerToken: string,
+  bearerToken: string | null,
   client: WsRpcClient,
   roleHint?: AuthSessionRole | null,
   configHint?: ServerConfig | null,
@@ -1096,7 +1105,7 @@ async function refreshSavedEnvironmentMetadata(
     configHint ? Promise.resolve(configHint) : client.server.getConfig(),
     fetchRemoteSessionState({
       httpBaseUrl: record.httpBaseUrl,
-      bearerToken,
+      bearerToken: bearerToken ?? undefined,
     }),
   ]);
 
@@ -1231,7 +1240,7 @@ async function createSavedEnvironmentConnection(
   if (getSavedEnvironmentRecord(record.environmentId)?.enabled === false) return null;
   const currentConnection = environmentConnections.get(record.environmentId);
   if (currentConnection) return currentConnection;
-  if (!bearerToken) {
+  if (!bearerToken && !record.accountId) {
     useSavedEnvironmentRuntimeStore.getState().patch(record.environmentId, {
       authState: "requires-auth",
       role: null,
@@ -1246,7 +1255,7 @@ async function createSavedEnvironmentConnection(
   const knownEnvironment = createKnownEnvironment({
     id: record.environmentId,
     label: record.label,
-    source: "manual",
+    source: record.accountId ? "desktop-managed" : "manual",
     target: {
       httpBaseUrl: record.httpBaseUrl,
       wsBaseUrl: record.wsBaseUrl,
@@ -1264,7 +1273,7 @@ async function createSavedEnvironmentConnection(
         (
           await issueRemoteWebSocketTicket({
             httpBaseUrl: record.httpBaseUrl,
-            bearerToken,
+            bearerToken: bearerToken ?? undefined,
           })
         ).ticket;
       const [video, input, prime, mjpeg] = await Promise.all([
@@ -1276,7 +1285,9 @@ async function createSavedEnvironmentConnection(
       const httpBase = new URL(hubBasePath, record.httpBaseUrl);
       return {
         httpBase: httpBase.toString().replace(/\/$/, ""),
-        wsBase: httpBase.toString().replace(/^http/, "ws").replace(/\/$/, ""),
+        wsBase: record.accountId
+          ? `${record.wsBaseUrl.replace(/\/ws$/, "")}${hubBasePath}`.replace(/\/$/, "")
+          : httpBase.toString().replace(/^http/, "ws").replace(/\/$/, ""),
         query: { hostId },
         credentials: false,
         tickets: { video, input, prime, mjpeg },
@@ -1341,7 +1352,21 @@ async function syncSavedEnvironmentConnections(
     .filter((environmentId) => !expectedEnvironmentIds.has(environmentId));
 
   await Promise.all(
-    staleEnvironmentIds.map((environmentId) => disconnectSavedEnvironment(environmentId)),
+    staleEnvironmentIds.map(async (environmentId) => {
+      const accountOwned =
+        environmentConnections.get(environmentId)?.knownEnvironment.source === "desktop-managed";
+      await disconnectSavedEnvironment(environmentId);
+      if (accountOwned) {
+        useStore.setState((state) => {
+          const { [environmentId]: _removed, ...environmentStateById } = state.environmentStateById;
+          return { environmentStateById };
+        });
+        useSavedEnvironmentRuntimeStore.getState().clear(environmentId);
+        activeService?.queryClient.removeQueries({
+          predicate: (query) => JSON.stringify(query.queryKey).includes(environmentId),
+        });
+      }
+    }),
   );
   await Promise.all(
     enabledRecords.map((record) => ensureSavedEnvironmentConnection(record).catch(() => undefined)),
@@ -1535,6 +1560,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
   );
 
   createPrimaryEnvironmentConnection();
+  const stopAccountDiscovery = startDesktopConnectDiscovery();
 
   const unsubscribeSavedEnvironments = useSavedEnvironmentRegistryStore.subscribe(() => {
     if (!hasSavedEnvironmentRegistryHydrated()) {
@@ -1556,6 +1582,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
     queryInvalidationThrottler,
     refCount: 1,
     stop: () => {
+      stopAccountDiscovery();
       unsubscribeSavedEnvironments();
       queryInvalidationThrottler.cancel();
     },
