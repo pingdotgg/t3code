@@ -8,7 +8,7 @@ export {
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
   label: string;
   isPrimary: boolean;
 }

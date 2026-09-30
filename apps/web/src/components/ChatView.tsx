@@ -1231,12 +1231,17 @@ function ChatViewBody(
     const seen = new Set<string>();
     const envs: Array<{
       environmentId: EnvironmentId;
-      projectId: ProjectId;
+      projectId: ProjectId | null;
       label: string;
       isPrimary: boolean;
     }> = [];
     for (const p of memberProjects) {
       if (seen.has(p.environmentId)) continue;
+      if (
+        p.environmentId !== primaryEnvironmentId &&
+        savedEnvironmentRuntimeById[p.environmentId]?.connectionState !== "connected"
+      )
+        continue;
       seen.add(p.environmentId);
       const isPrimary = p.environmentId === primaryEnvironmentId;
       const savedRecord = savedEnvironmentRegistry[p.environmentId];
@@ -1252,6 +1257,27 @@ function ChatViewBody(
         projectId: p.id,
         label,
         isPrimary,
+      });
+    }
+    for (const record of Object.values(savedEnvironmentRegistry)) {
+      if (
+        seen.has(record.environmentId) ||
+        savedEnvironmentRuntimeById[record.environmentId]?.connectionState !== "connected"
+      )
+        continue;
+      envs.push({
+        environmentId: record.environmentId,
+        projectId: null,
+        label: `${record.label} · Choose folder…`,
+        isPrimary: false,
+      });
+    }
+    if (primaryEnvironmentId && !seen.has(primaryEnvironmentId)) {
+      envs.push({
+        environmentId: primaryEnvironmentId,
+        projectId: null,
+        label: "This machine · Choose folder…",
+        isPrimary: true,
       });
     }
     // Sort: primary first, then alphabetical
@@ -1843,6 +1869,12 @@ function ChatViewBody(
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
+      if (target.projectId === null) {
+        useCommandPaletteStore.getState().openAddProject(nextEnvironmentId, (projectRef) => {
+          setDraftThreadContext(draftId, { projectRef });
+        });
+        return;
+      }
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
       });

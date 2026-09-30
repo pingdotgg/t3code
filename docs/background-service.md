@@ -110,6 +110,27 @@ not need to start `t3 serve` first or configure a domain, VPN, or a second conne
 `t3 connect status` says **linked and online**, sign into the same account on each client and
 select the host in its T3 Connect environments.
 
+### Use all your hosts from the desktop app
+
+In the fork desktop app, open **Settings > Connections > Your T3 Connect devices** and
+choose **Sign in**. Complete sign-in in the browser. The app discovers your account's
+linked machines automatically and refreshes discovery while it is running; manual
+pairing links are not required.
+
+- **Add Project** lets you select a machine and browse that machine's folders.
+- The composer's **Run on** selector lists connected machines. If the current logical
+  project does not exist on the selected machine, choose its target folder explicitly.
+  Your draft is retained; the previous machine's worktree path is not reused.
+- Commands, terminals, files, and Device panels use the selected environment.
+- **Sign out** disconnects account environments in this desktop app. It does not unlink
+  hosts, stop their services, or sign the host CLI out.
+
+Desktop account credentials live separately under the app's user-data directory.
+Refresh credentials and private DPoP keys stay in the native process. Discovered account
+environments are ephemeral and are never saved as manually paired environments. HTTP
+requests and renewable WebSocket connections use the native account broker. Standalone
+web clients retain their existing manual-pairing flow.
+
 If a foreground server already uses the intended base directory, stop it before installing.
 The installer reports its PID rather than silently running two servers against the same data.
 Keep `--base-dir` consistent across `connect`, `service`, and `serve` commands; account
@@ -181,7 +202,7 @@ that another device connected based solely on a local health probe.
 Desktop and web expose **Settings > Connections > Manage / Deregister environments**, which
 opens the hosted account page. Mobile has **Deregister** on T3 Connect environment rows.
 The hosted account page needs Clerk and secure relay configuration, not a CLI OAuth client ID;
-that ID remains required only for terminal sign-in.
+that ID is required for terminal and native desktop sign-in.
 These actions use the account relay, so the host can be offline. CLI equivalents are:
 
 ```sh

@@ -216,6 +216,7 @@ function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const openIntent = useCommandPaletteStore((store) => store.openIntent);
+  const projectSelection = useRef(openIntent?.onProjectSelected);
   const clearOpenIntent = useCommandPaletteStore((store) => store.clearOpenIntent);
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
@@ -700,9 +701,14 @@ function OpenCommandPaletteDialog() {
     if (openIntent?.kind !== "add-project") {
       return;
     }
+    projectSelection.current = openIntent.onProjectSelected;
     clearOpenIntent();
-    openAddProjectFlow();
-  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+    if (openIntent.environmentId) {
+      startAddProjectBrowse(openIntent.environmentId);
+    } else {
+      openAddProjectFlow();
+    }
+  }, [clearOpenIntent, openAddProjectFlow, openIntent, startAddProjectBrowse]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -869,6 +875,11 @@ function OpenCommandPaletteDialog() {
         cwd,
       );
       if (existing) {
+        if (projectSelection.current) {
+          projectSelection.current(scopeProjectRef(existing.environmentId, existing.id));
+          setOpen(false);
+          return;
+        }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -905,9 +916,13 @@ function OpenCommandPaletteDialog() {
           },
           createdAt: new Date().toISOString(),
         });
-        await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
-          ...DEFAULT_NEW_THREAD_WORKSPACE,
-        }).catch(() => undefined);
+        if (projectSelection.current) {
+          projectSelection.current(scopeProjectRef(browseEnvironmentId, projectId));
+        } else {
+          await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
+            ...DEFAULT_NEW_THREAD_WORKSPACE,
+          }).catch(() => undefined);
+        }
         setOpen(false);
       } catch (error) {
         toastManager.add(
