@@ -13,6 +13,7 @@ import {
   type GitResolvedPullRequest,
   type OrchestrationCommand,
   type OrchestrationMessage,
+  type OrchestrationThreadActivity,
   type PendingPullRequestAssociation,
 } from "@t3tools/contracts";
 import { Effect, Schema, Stream } from "effect";
@@ -40,6 +41,46 @@ const message = (text = `Draft PR: [#42](${url})`): OrchestrationMessage => ({
   turnId: null,
   createdAt: now,
   updatedAt: now,
+});
+// Mirrors the persisted payload shapes providers emit for a completed shell command.
+const copilotCommand = (
+  command: string,
+  output: string,
+  status: "completed" | "failed" = "completed",
+): OrchestrationThreadActivity => ({
+  id: EventId.make(`activity:${crypto.randomUUID()}`),
+  tone: "tool",
+  kind: "tool.completed",
+  summary: "Run shell command",
+  payload: {
+    itemType: "command_execution",
+    provider: "copilot",
+    status,
+    detail: command,
+    data: {
+      kind: "execute",
+      command,
+      rawInput: { command },
+      rawOutput: { content: `${output}\n<shellId: 1 completed with exit code 0>` },
+    },
+  },
+  turnId: null,
+  createdAt: now,
+});
+const openCodeCommand = (command: string, output: string): OrchestrationThreadActivity => ({
+  id: EventId.make(`activity:${crypto.randomUUID()}`),
+  tone: "tool",
+  kind: "tool.completed",
+  summary: "bash",
+  payload: {
+    itemType: "command_execution",
+    provider: "opencode",
+    status: "completed",
+    detail: `${output}\n`,
+    data: { tool: "bash", state: { status: "completed", input: { command } } },
+  },
+  turnId: null,
+  createdAt: now,
 });
 const status: GitStatusResult = {
   isRepo: true,
@@ -335,10 +376,11 @@ describe("pull request association recovery", () => {
     expect(h.lookups()).toBe(1);
   });
 
-  it("marks a verified assistant-created PR eligible for automatic review", async () => {
+  it("marks a PR created by the thread's own gh command eligible for automatic review, regardless of wording", async () => {
     const h = await harness();
     h.updateThread({
-      messages: [message(`Implemented and opened a new [PR #42](${url}).`)],
+      messages: [message(`Done. [PR #42](${url})`)],
+      activities: [copilotCommand("git push -u origin feature && gh pr create --fill", url)],
     });
     await Effect.runPromise(h.recovery.sweep);
 
@@ -353,12 +395,33 @@ describe("pull request association recovery", () => {
     ]);
   });
 
-  it("upgrades a verified creation report recovered before this fix", async () => {
+  it("recovers a created PR from command output when the final message omits the URL", async () => {
+    const h = await harness();
+    h.updateThread({
+      messages: [message("Done.")],
+      activities: [
+        openCodeCommand(
+          `cd /isolated/worktree && gh pr create --body "Follows up https://github.com/acme/app/pull/7"`,
+          url,
+        ),
+      ],
+    });
+    await Effect.runPromise(h.recovery.sweep);
+
+    expect(h.commands[0]).toMatchObject({
+      type: "thread.meta.update",
+      pullRequest: status.pr,
+      pullRequestSource: "agent",
+    });
+  });
+
+  it("upgrades a created PR that was previously linked as recovered, then stops checking", async () => {
     const h = await harness();
     const pullRequest = status.pr;
     if (!pullRequest) throw new Error("Expected a PR in the test fixture.");
     h.updateThread({
-      messages: [message(`Created: [acme/app#42](${url}) — ready for review.`)],
+      messages: [message(`[acme/app#42](${url})`), message("Follow-up complete.")],
+      activities: [copilotCommand("gh pr create --fill", url)],
       pullRequest,
       pullRequests: [{ pullRequest, source: "recovered", linkedAt: now }],
     });
@@ -377,30 +440,12 @@ describe("pull request association recovery", () => {
     expect(h.lookups()).toBe(1);
   });
 
-  it("recovers an older creation report after the chat has continued", async () => {
-    const h = await harness();
-    const pullRequest = status.pr;
-    if (!pullRequest) throw new Error("Expected a PR in the test fixture.");
-    h.updateThread({
-      messages: [message(`Created: [acme/app#42](${url})`), message("Follow-up complete.")],
-      pullRequest,
-      pullRequests: [{ pullRequest, source: "recovered", linkedAt: now }],
-    });
-
-    await Effect.runPromise(h.recovery.sweep);
-
-    expect(h.commands[0]).toMatchObject({
-      type: "thread.meta.update",
-      pullRequestSource: "agent",
-    });
-  });
-
   it("does not promote generic recovered or explicitly manual associations", async () => {
     const h = await harness();
     const pullRequest = status.pr;
     if (!pullRequest) throw new Error("Expected a PR in the test fixture.");
     h.updateThread({
-      messages: [message(`PR: [acme/app#42](${url})`)],
+      messages: [message(`Created: [acme/app#42](${url})`)],
       pullRequest,
       pullRequests: [{ pullRequest, source: "recovered", linkedAt: now }],
     });
@@ -411,7 +456,7 @@ describe("pull request association recovery", () => {
     expect(createdPullRequestLinks(recoveredThread)).toEqual([]);
 
     h.updateThread({
-      messages: [message(`Created: [acme/app#42](${url})`)],
+      activities: [copilotCommand("gh pr create --fill", url)],
       pullRequests: [{ pullRequest, source: "manual", linkedAt: now }],
     });
     await Effect.runPromise(h.recovery.sweep);
@@ -419,10 +464,18 @@ describe("pull request association recovery", () => {
     expect(h.commands).toEqual([]);
   });
 
-  it("does not treat a reference to somebody else's created PR as creation intent", async () => {
+  it("does not treat creation wording, failed creation, or URLs in the command as creation evidence", async () => {
     const h = await harness();
     h.updateThread({
-      messages: [message(`Reviewed the PR created by another contributor: [#42](${url}).`)],
+      messages: [message(`Created and opened a new [PR #42](${url}).`)],
+      activities: [
+        copilotCommand("gh pr create --fill", url, "failed"),
+        copilotCommand(
+          `gh pr create --body "Supersedes ${url}"`,
+          "https://github.com/acme/app/pull/43",
+        ),
+        copilotCommand("gh pr view 42", url),
+      ],
     });
 
     await Effect.runPromise(h.recovery.sweep);
@@ -522,7 +575,13 @@ describe("pull request association recovery", () => {
         ],
       },
       { pullRequest: null, archivedAt: now },
-      { archivedAt: null, messages: [message("Done")] },
+      {
+        archivedAt: null,
+        pullRequest: { ...status.pr!, number: 43, url: "https://github.com/acme/app/pull/43" },
+        pullRequests: [],
+        activities: [copilotCommand("gh pr create --fill", url)],
+      },
+      { pullRequest: null, activities: [], messages: [message("Done")] },
     ]) {
       h.updateThread(update);
       await Effect.runPromise(h.recovery.sweep);
