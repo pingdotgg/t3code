@@ -685,6 +685,7 @@ it.effect("pins a provider session to its initial host despite later focus chang
         environmentId: scope.environmentId,
         connectionId: "connection-stale",
         focused: true,
+        liveTabs: [{ threadId: scope.threadId, tabId: PreviewTabId.make("stale-tab") }],
       });
       expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
         "second",
@@ -721,6 +722,130 @@ it.effect("pins a provider session to its initial host despite later focus chang
           input: {},
         }),
       ).toBe("second");
+    }),
+  ),
+);
+
+it.effect("prefers the live tab owner for new sessions without moving existing leases", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connections = new Map<string, string>();
+      for (const clientId of ["owner", "other"]) {
+        const requests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId })),
+          (connectionId) => connections.set(clientId, connectionId),
+        );
+        yield* Stream.runForEach(requests, (request) =>
+          broker.respond({
+            clientId,
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: clientId,
+          }),
+        ).pipe(Effect.forkScoped);
+      }
+      yield* Effect.yieldNow;
+      yield* broker.focusHost({
+        clientId: "owner",
+        environmentId: scope.environmentId,
+        connectionId: connections.get("owner")!,
+        focused: false,
+        liveTabs: [
+          { threadId: scope.threadId, tabId: PreviewTabId.make("signed-in"), visible: true },
+        ],
+      });
+      yield* broker.focusHost({
+        clientId: "other",
+        environmentId: scope.environmentId,
+        connectionId: connections.get("other")!,
+        focused: true,
+        liveTabs: [
+          { threadId: scope.threadId, tabId: PreviewTabId.make("signed-in"), visible: false },
+          {
+            threadId: ThreadId.make("another-thread"),
+            tabId: PreviewTabId.make("different-tab"),
+            visible: true,
+          },
+        ],
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "evaluate", input: {} })).toBe(
+        "owner",
+      );
+      expect(
+        yield* broker.invoke<string>({
+          scope: { ...scope, providerSessionId: "explicit-owner" },
+          tabId: PreviewTabId.make("signed-in"),
+          operation: "snapshot",
+          input: {},
+        }),
+      ).toBe("owner");
+      expect(
+        yield* broker.invoke<string>({
+          scope: { ...scope, providerSessionId: "other-tab" },
+          tabId: PreviewTabId.make("different-tab"),
+          operation: "evaluate",
+          input: {},
+        }),
+      ).toBe("other");
+
+      yield* broker.focusHost({
+        clientId: "owner",
+        environmentId: scope.environmentId,
+        connectionId: connections.get("owner")!,
+        focused: false,
+        liveTabs: [],
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "evaluate", input: {} })).toBe(
+        "owner",
+      );
+      expect(
+        yield* broker.invoke<string>({
+          scope: { ...scope, providerSessionId: "after-tab-closed" },
+          operation: "evaluate",
+          input: {},
+        }),
+      ).toBe("other");
+    }),
+  ),
+);
+
+it.effect("prefers a focused host over unrelated extra capabilities for a new session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      let focusedConnectionId = "";
+      for (const [clientId, supportedOperations] of [
+        ["focused", ["status"]],
+        ["background", ["status", "resize"]],
+      ] as const) {
+        const requests = requestsFrom(
+          yield* broker.connect(makeHost({ clientId, supportedOperations })),
+          (connectionId) => {
+            if (clientId === "focused") focusedConnectionId = connectionId;
+          },
+        );
+        yield* Stream.runForEach(requests, (request) =>
+          broker.respond({
+            clientId,
+            connectionId: request.connectionId,
+            requestId: request.requestId,
+            ok: true,
+            result: clientId,
+          }),
+        ).pipe(Effect.forkScoped);
+      }
+      yield* Effect.yieldNow;
+      yield* broker.focusHost({
+        clientId: "focused",
+        environmentId: scope.environmentId,
+        connectionId: focusedConnectionId,
+        focused: true,
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe(
+        "focused",
+      );
     }),
   ),
 );
@@ -921,6 +1046,7 @@ it.effect("fails over a pinned provider session only after its host disconnects"
         environmentId: scope.environmentId,
         connectionId: firstConnectionId,
         focused: true,
+        liveTabs: [{ threadId: scope.threadId, tabId: firstTabId }],
       });
       expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toEqual({
         host: "first",

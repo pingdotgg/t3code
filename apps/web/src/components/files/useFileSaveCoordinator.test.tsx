@@ -4,13 +4,22 @@ import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { writeFile, confirmFile } = vi.hoisted(() => ({
+const { writeFile, confirmFile, readFile, readState, waitForRead } = vi.hoisted(() => ({
   writeFile: vi.fn(),
   confirmFile: vi.fn(),
+  readFile: vi.fn(),
+  readState: vi.fn(),
+  waitForRead: vi.fn(),
 }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({ executeAtomQuery: waitForRead }));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: readState } }));
 vi.mock("~/state/projects", () => ({ projectEnvironment: { writeFile: {} } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => writeFile }));
-vi.mock("./projectFilesQueryState", () => ({ confirmProjectFileQueryData: confirmFile }));
+vi.mock("./projectFilesQueryState", () => ({
+  confirmProjectFileQueryData: confirmFile,
+  getProjectFileQueryData: readFile,
+  getProjectFileQueryAtom: () => ({}),
+}));
 
 import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
@@ -54,6 +63,9 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   confirmFile.mockReset();
+  readFile.mockReset().mockReturnValue({ truncated: false });
+  readState.mockReset().mockReturnValue({ waiting: false });
+  waitForRead.mockReset();
   onPendingChange.mockReset();
 });
 
@@ -64,6 +76,54 @@ afterEach(async () => {
 });
 
 describe("file-save React lifecycle", () => {
+  it("waits for a pending read before flushing an edit on close", async () => {
+    let complete!: () => void;
+    waitForRead.mockReturnValue(
+      new Promise<void>((resolve) => {
+        complete = resolve;
+      }),
+    );
+    mount();
+    changeHandler()("pending edit");
+    readState.mockReturnValue({ waiting: true });
+    await act(async () => renderer!.unmount());
+    renderer = null;
+    expect(writeFile).not.toHaveBeenCalled();
+    readState.mockReturnValue({ waiting: false });
+    await act(async () => complete());
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(writeFile.mock.calls[0]![0].input.contents).toBe("pending edit");
+  });
+
+  it.each([null, { truncated: true }])(
+    "does not flush after read authority is lost: %j",
+    async (read) => {
+      mount();
+      changeHandler()("pending edit");
+      readFile.mockReturnValue(read);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(confirmFile).not.toHaveBeenCalled();
+      expect(onPendingChange).not.toHaveBeenCalledWith("file.txt", false);
+      await act(async () => renderer!.unmount());
+      renderer = null;
+      expect(writeFile).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechecks authority when a failed save is retried on close", async () => {
+    writeFile.mockResolvedValueOnce(AsyncResult.fail(new Error("write failed")));
+    mount();
+    changeHandler()("pending edit");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    readFile.mockReturnValue({ truncated: true });
+    await act(async () => renderer!.unmount());
+    renderer = null;
+    expect(writeFile).toHaveBeenCalledTimes(1);
+    expect(confirmFile).not.toHaveBeenCalled();
+  });
+
   it("persists editor model changes after StrictMode setup replay", async () => {
     mount();
     changeHandler()("AUDIT7907NATIVE\n");

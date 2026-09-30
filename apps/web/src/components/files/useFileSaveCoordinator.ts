@@ -1,11 +1,18 @@
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { createRef, useEffect, useMemo } from "react";
 
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
-import { confirmProjectFileQueryData } from "./projectFilesQueryState";
+import {
+  confirmProjectFileQueryData,
+  getProjectFileQueryAtom,
+  getProjectFileQueryData,
+} from "./projectFilesQueryState";
 
 const FILE_SAVE_DEBOUNCE_MS = 500;
 
@@ -31,11 +38,24 @@ export function useFileSaveCoordinator({
         const coordinator = new FileSaveCoordinator({
           debounceMs: FILE_SAVE_DEBOUNCE_MS,
           onPendingChange: (pending) => onPendingChange(relativePath, pending),
-          persist: (nextContents) =>
-            writeFile({
+          persist: async (nextContents) => {
+            // Debouncing and disposal can outlive the read that authorized the edit.
+            const atom = getProjectFileQueryAtom(environmentId, cwd, relativePath);
+            if (appAtomRegistry.get(atom).waiting) {
+              await executeAtomQuery(appAtomRegistry, atom, {
+                reportFailure: false,
+                reportDefect: false,
+              });
+            }
+            const file = getProjectFileQueryData(environmentId, cwd, relativePath);
+            if (!file || file.truncated) {
+              return AsyncResult.fail(new Error("Cannot save an incomplete file preview."));
+            }
+            return writeFile({
               environmentId,
               input: { cwd, relativePath, contents: nextContents },
-            }),
+            });
+          },
           onConfirmed: (confirmedContents) => {
             confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
           },

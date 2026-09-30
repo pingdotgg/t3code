@@ -1,10 +1,11 @@
+import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
 import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
 import { randomUUID } from "../../lib/utils";
 import { useState } from "react";
-import { useDeviceState } from "../../state/device";
+import { deviceEnvironment, useDeviceState } from "../../state/device";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
@@ -109,6 +110,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                   </p>
                 ) : null}
                 <DeviceHostList
+                  environmentLabel={environment.label}
                   environmentId={environment.environmentId}
                   hosts={environment.serverConfig?.settings.deviceHosts ?? []}
                   busy={projectScope || busy}
@@ -157,6 +159,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
 }
 
 function DeviceHostList({
+  environmentLabel,
   environmentId,
   hosts,
   busy,
@@ -165,6 +168,7 @@ function DeviceHostList({
   checks,
   testConnection,
 }: {
+  environmentLabel: string;
   environmentId: EnvironmentId;
   hosts: ReadonlyArray<SshDeviceHostConfig>;
   busy: boolean;
@@ -174,6 +178,8 @@ function DeviceHostList({
   testConnection: ReturnType<typeof useHostConnectionChecks>["testConnection"];
 }) {
   const { state } = useDeviceState(environmentId);
+  const retry = useAtomCommand(deviceEnvironment.list);
+  const [retrying, setRetrying] = useState<string | null>(null);
   return (
     <>
       {hosts.length === 0 ? (
@@ -236,6 +242,14 @@ function DeviceHostList({
                   ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              <DeviceToolVersions
+                owner={environmentLabel}
+                error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
+                tools={
+                  state.hosts.find((value) => value.id === host.id)?.tools ??
+                  (check?.status === "connected" ? check.tools : undefined)
+                }
+              />
               {check?.status === "local" ? (
                 <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
               ) : null}
@@ -253,7 +267,7 @@ function DeviceHostList({
                 role="status"
                 className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
               >
-                <Spinner className="size-3" />
+                <Spinner size="xs" />
                 {progress}
               </span>
             ) : null}
@@ -283,14 +297,32 @@ function DeviceHostList({
                 </MenuItem>
               </MenuPopup>
             </Menu>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy || progress !== null}
-              onClick={() => void testConnection(host)}
-            >
-              Test connection
-            </Button>
+            {status?.status === "failed" &&
+            state.supportsHostRetry &&
+            state.hostStatus !== "disabled" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || retrying !== null}
+                onClick={() => {
+                  setRetrying(host.id);
+                  void retry({ environmentId, input: { retryHostId: host.id } }).finally(() =>
+                    setRetrying(null),
+                  );
+                }}
+              >
+                {retrying === host.id ? "Retrying…" : "Retry"}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || progress !== null}
+                onClick={() => void testConnection(host)}
+              >
+                Test connection
+              </Button>
+            )}
           </div>
         );
       })}

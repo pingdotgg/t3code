@@ -147,7 +147,7 @@ export function ThreadFileNavigatorPane(props: {
       }
     >
       <View
-        className={Platform.OS === "android" ? "bg-header" : "border-b border-border"}
+        className="ios:border-b ios:border-border android:bg-header"
         style={{ paddingTop: Platform.OS === "android" ? 0 : props.headerInset }}
       >
         {Platform.OS === "android" ? (

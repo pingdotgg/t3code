@@ -60,6 +60,7 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
+  readonly sensitiveInput?: boolean;
   readonly label: string;
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly idleTtlMs?: number;
@@ -581,7 +582,11 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
       .atom(followStreamInEnvironment(target.environmentId, options.subscribe(target.input)))
       .pipe(
         Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(`${options.label}:${key}`),
+        Atom.withLabel(
+          options.sensitiveInput
+            ? `${options.label}:${target.environmentId}`
+            : `${options.label}:${key}`,
+        ),
       );
   });
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>

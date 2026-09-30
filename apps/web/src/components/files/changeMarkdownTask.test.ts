@@ -1,5 +1,7 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -42,6 +44,7 @@ function read(contents: string, truncated = false) {
 
 function fixture(contents: string, readOnly = false) {
   let persisted = contents;
+  let displayed = contents;
   const persist = vi.fn(async (next: string) => {
     persisted = next;
     return AsyncResult.success(undefined);
@@ -53,10 +56,14 @@ function fixture(contents: string, readOnly = false) {
     onConfirmed: vi.fn(),
   });
   return {
+    render: (next: string) => {
+      displayed = next;
+    },
     toggle: (markerOffset = 2, checked = true) =>
       changeMarkdownTask({
         ...identity,
         readOnly,
+        contents: displayed,
         markerOffset,
         checked,
         change: (next) => coordinator.change(next),
@@ -111,11 +118,12 @@ describe("rendered Markdown write authority", () => {
     expect(appAtomRegistry.get(optimisticAtom)).toBeNull();
   });
 
-  it("preserves all other bytes and accumulates edits from the latest complete draft", async () => {
+  it("preserves other characters and accumulates edits from the latest displayed draft", async () => {
     const original = "- [ ] first\r\n- [X] second\r\n尾\r\n";
     read(original);
     const file = fixture(original);
     file.toggle();
+    file.render("- [x] first\r\n- [X] second\r\n尾\r\n");
     file.toggle(original.indexOf("[X]"), false);
     await vi.runAllTimersAsync();
     expect(file.persist).toHaveBeenCalledExactlyOnceWith("- [x] first\r\n- [ ] second\r\n尾\r\n");
@@ -139,6 +147,57 @@ describe("rendered Markdown write authority", () => {
     expect(file.persist).not.toHaveBeenCalled();
     expect(file.persisted()).toBe(original);
     expect(appAtomRegistry.get(optimisticAtom)?.data.contents).toBe(original);
+  });
+
+  it("does not write a retained success after a failed refresh", async () => {
+    const original = "- [ ] task\n";
+    read(original);
+    const previous = appAtomRegistry.get(readAtom);
+    appAtomRegistry.set(
+      readAtom,
+      AsyncResult.failureWithPrevious(Cause.die(new Error("read failed")), {
+        previous: Option.some(previous),
+      }),
+    );
+    const file = fixture(original);
+    file.toggle();
+    await vi.runAllTimersAsync();
+    expect(file.persist).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(optimisticAtom)).toBeNull();
+  });
+
+  it("waits for a pending refresh before authorizing another edit", async () => {
+    const original = "- [ ] task\n";
+    appAtomRegistry.set(
+      readAtom,
+      AsyncResult.success(
+        { ...identity, contents: original, truncated: false, byteLength: original.length },
+        { waiting: true },
+      ),
+    );
+    const file = fixture(original);
+    file.toggle();
+    await vi.runAllTimersAsync();
+    expect(file.persist).not.toHaveBeenCalled();
+    read(original);
+    file.toggle();
+    await vi.runAllTimersAsync();
+    expect(file.persist).toHaveBeenCalledExactlyOnceWith("- [x] task\n");
+  });
+
+  it("does not apply a displayed task offset to a different complete snapshot", async () => {
+    const original = "- [ ] intended task\n";
+    read(original);
+    const file = fixture(original);
+    read("- [ ] replacement task\n");
+    file.toggle();
+    await vi.runAllTimersAsync();
+    expect(file.persist).not.toHaveBeenCalled();
+    expect(appAtomRegistry.get(optimisticAtom)).toBeNull();
+    file.render("- [ ] replacement task\n");
+    file.toggle();
+    await vi.runAllTimersAsync();
+    expect(file.persist).toHaveBeenCalledExactlyOnceWith("- [x] replacement task\n");
   });
 
   it("does not save an invalid marker offset", async () => {

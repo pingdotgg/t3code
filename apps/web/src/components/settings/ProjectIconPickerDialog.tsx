@@ -105,7 +105,7 @@ export function ProjectIconPickerDialog({
           <DialogTitle>Choose project icon</DialogTitle>
           <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
         </DialogHeader>
-        <DialogPanel className="flex min-h-0 flex-col gap-4">
+        <DialogPanel className="flex min-h-0 flex-col">
           <ToggleGroup
             aria-label="Icon type"
             variant="segmented"
