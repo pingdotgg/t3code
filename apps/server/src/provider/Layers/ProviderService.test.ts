@@ -2171,10 +2171,10 @@ validation.layer("ProviderServiceLive validation", (it) => {
   );
 });
 
-describe("agent browser access", () => {
+describe("agent MCP access", () => {
   const startSessionWithBrowserAccess = (enableAgentBrowserAccess: boolean, threadId: ThreadId) =>
     Effect.gen(function* () {
-      const issued: Array<ThreadId> = [];
+      const issued: Array<{ threadId: ThreadId; capabilities: ReadonlyArray<string> }> = [];
       const revoked: Array<readonly [ThreadId, ProviderInstanceId]> = [];
       const codex = makeFakeCodexAdapter();
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -2186,7 +2186,10 @@ describe("agent browser access", () => {
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
           Effect.sync(() => {
-            issued.push(request.threadId);
+            issued.push({
+              threadId: request.threadId,
+              capabilities: [...(request.capabilities ?? [])],
+            });
             return undefined;
           }),
         revokeMcpCredential: (revokedThreadId, providerInstanceId) =>
@@ -2219,13 +2222,13 @@ describe("agent browser access", () => {
       return { issued, revoked };
     });
 
-  it.effect("withholds and revokes the MCP credential when browser access is off", () =>
+  it.effect("keeps managed terminals available without granting disabled browser access", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-browser-off");
       const result = yield* startSessionWithBrowserAccess(false, threadId);
 
-      assert.deepEqual(result.issued, []);
-      assert.deepEqual(result.revoked, [[threadId, codexInstanceId]]);
+      assert.deepEqual(result.issued, [{ threadId, capabilities: ["terminal"] }]);
+      assert.deepEqual(result.revoked, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -2234,7 +2237,7 @@ describe("agent browser access", () => {
       const threadId = asThreadId("thread-browser-on");
       const result = yield* startSessionWithBrowserAccess(true, threadId);
 
-      assert.deepEqual(result.issued, [threadId]);
+      assert.deepEqual(result.issued, [{ threadId, capabilities: ["terminal", "preview"] }]);
       assert.deepEqual(result.revoked, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

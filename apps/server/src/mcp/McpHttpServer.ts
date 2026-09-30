@@ -31,6 +31,8 @@ import { PullRequestMonitorToolkitHandlersLive } from "./toolkits/pullRequestMon
 import { PullRequestMonitorToolkit } from "./toolkits/pullRequestMonitor/tools.ts";
 import { CollaborativeAcceptanceToolkitHandlersLive } from "./toolkits/collaborativeAcceptance/handlers.ts";
 import { CollaborativeAcceptanceToolkit } from "./toolkits/collaborativeAcceptance/tools.ts";
+import { TerminalToolkitHandlersLive } from "./toolkits/terminal/handlers.ts";
+import { TerminalToolkit } from "./toolkits/terminal/tools.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import {
   DeviceScreenshotToolkitHandlersLive,
@@ -106,6 +108,7 @@ const filterAdvertisedTools = (
           tools: payload.result.tools.filter(
             (tool) =>
               (capabilities.has("device") || !tool.name?.startsWith("device_")) &&
+              (capabilities.has("terminal") || !tool.name?.startsWith("terminal_")) &&
               (capabilities.has("preview") || !tool.name?.startsWith("preview_")),
           ),
         },
@@ -546,6 +549,10 @@ export const CollaborativeAcceptanceToolkitRegistrationLive = McpServer.toolkit(
   CollaborativeAcceptanceToolkit,
 ).pipe(Layer.provide(CollaborativeAcceptanceToolkitHandlersLive));
 
+const TerminalToolkitRegistrationLive = McpServer.toolkit(TerminalToolkit).pipe(
+  Layer.provide(TerminalToolkitHandlersLive),
+);
+
 const DeviceStandardToolkitRegistrationLive = McpServer.toolkit(DeviceStandardToolkit).pipe(
   Layer.provide(DeviceStandardToolkitHandlersLive),
 );
@@ -570,11 +577,13 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestMonitorToolkitRegistrationLive,
   CollaborativeAcceptanceToolkitRegistrationLive,
+  TerminalToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(mcpTransport("/mcp")));
 
 export const layerWithDevice = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestMonitorToolkitRegistrationLive,
   CollaborativeAcceptanceToolkitRegistrationLive,
+  TerminalToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(mcpTransport("/mcp-device")));
