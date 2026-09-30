@@ -121,6 +121,135 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  for (const explicitDefault of [true, false]) {
+    it.live(
+      `reads shared managed ${explicitDefault ? "explicit" : "legacy"} default and disabled extra account history once`,
+      () =>
+        Effect.gen(function* () {
+          const { home, settings } = yield* setup;
+          const summary = yield* Effect.gen(function* () {
+            for (const [id, output] of [
+              ["codex", 17],
+              ["codex-personal", 23],
+            ] as const) {
+              const sessions = NodePath.join(home, "shared-codex", "sessions");
+              yield* Effect.promise(async () => {
+                await NodeFSP.mkdir(sessions, { recursive: true });
+                await NodeFSP.writeFile(
+                  NodePath.join(sessions, `${id}-rollout.jsonl`),
+                  [
+                    { type: "session_meta", payload: { id } },
+                    { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
+                    {
+                      type: "event_msg",
+                      timestamp: "2026-08-01T10:00:00Z",
+                      payload: {
+                        type: "token_count",
+                        info: { last_token_usage: { input_tokens: 10, output_tokens: output } },
+                      },
+                    },
+                  ]
+                    .map((line) => encodeUnknownJsonString(line))
+                    .join("\n") + "\n",
+                );
+              });
+            }
+            const service = yield* UsageService.make;
+            return yield* service.readSummary(WINDOW);
+          }).pipe(
+            Effect.provide(
+              serviceLayers({
+                prefix: "usage-managed-accounts",
+                home,
+                settings: {
+                  ...settings,
+                  providers: {
+                    ...settings.providers,
+                    codex: { setupMode: "managed", homePath: NodePath.join(home, "shared-codex") },
+                  },
+                  providerInstances: {
+                    ...(explicitDefault
+                      ? {
+                          [ProviderInstanceId.make("codex")]: {
+                            driver: ProviderDriverKind.make("codex"),
+                            config: {
+                              setupMode: "managed",
+                              homePath: NodePath.join(home, "shared-codex"),
+                            },
+                          },
+                        }
+                      : {}),
+                    [ProviderInstanceId.make("codex-personal")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: false,
+                      config: {
+                        setupMode: "managed",
+                        homePath: NodePath.join(home, "shared-codex"),
+                        shadowHomePath: NodePath.join(home, "personal-shadow"),
+                      },
+                      environment: [
+                        {
+                          name: "CODEX_HOME",
+                          value: NodePath.join(home, "ignored-environment"),
+                          sensitive: false,
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+            ),
+          );
+          assert.strictEqual(totalOutputTokens(summary), 40);
+          assert.strictEqual(
+            summary.sources.filter(
+              (source) => source.fingerprint.provider === "codex" && source.status === "ok",
+            ).length,
+            1,
+          );
+        }).pipe(Effect.scoped),
+    );
+  }
+  it.live("omits Cursor account usage when no file login is saved", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      for (const platform of ["linux", "win32", "darwin"] as const) {
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: `usage-service-cursor-no-login-${platform}`,
+              home,
+              settings,
+              platform,
+              environment: { AGENT_CLI_CREDENTIAL_STORE: "file" },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps Cursor credential errors visible when a saved login cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const authPath = NodePath.join(home, "config", "cursor", "auth.json");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(authPath), { recursive: true });
+        await NodeFSP.writeFile(authPath, "invalid json");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-cursor-invalid-login", home, settings }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const cursor = summary.sources.find((source) => source.fingerprint.provider === "cursor");
+      assert.strictEqual(cursor?.message, "Cursor credentials could not be read.");
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not read the macOS Cursor Keychain before account usage is enabled", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
@@ -233,10 +362,7 @@ describe("UsageService", () => {
         const summary = yield* service.readSummary(WINDOW);
         assert.strictEqual(summary.buckets[0]?.provider, "opencode");
         assert.isFalse(summary.buckets.some((bucket) => bucket.provider === "cursor"));
-        assert.strictEqual(
-          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.status,
-          "missing",
-        );
+        assert.isFalse(summary.sources.some((source) => source.fingerprint.provider === "cursor"));
         assert.strictEqual(
           summary.buckets[0]?.sourcePath,
           yield* Effect.promise(() => NodeFSP.realpath(root)),
@@ -246,10 +372,6 @@ describe("UsageService", () => {
           summary.sources.find((source) => source.fingerprint.provider === "opencode")
             ?.distinctSessions,
           1,
-        );
-        assert.include(
-          summary.sources.find((source) => source.fingerprint.provider === "cursor")?.message ?? "",
-          "Cursor account history needs a Cursor CLI login",
         );
       }).pipe(Effect.scoped),
   );
@@ -610,6 +732,59 @@ describe("UsageService", () => {
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
     }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const large = claudeLine(1, 9900).replace(
+          '"message":',
+          '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
+        );
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, large));
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const first = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(first), 9900);
+          assert.closeTo(
+            first.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            0.4951,
+            1e-12,
+          );
+          const warm = yield* service.readSummary(WINDOW);
+          assert.deepStrictEqual(warm.buckets, first.buckets);
+          // The repeated content block has the same message/request identity.
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, large + claudeLine(2, 100)));
+          const appended = yield* service.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(appended), 10000);
+          assert.strictEqual(
+            appended.buckets.reduce((sum, bucket) => sum + bucket.totals.uncachedInputTokens, 0),
+            20,
+          );
+          const restarted = yield* UsageService.make;
+          const restored = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(restored.buckets, appended.buckets);
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          const afterCleanup = yield* UsageService.make;
+          assert.deepStrictEqual(
+            (yield* afterCleanup.readSummary(WINDOW)).buckets,
+            appended.buckets,
+          );
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-large-record-test",
+              home,
+              settings,
+              ratesDocument: {
+                "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
