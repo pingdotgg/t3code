@@ -16,12 +16,13 @@ export function isEditableFocused(target: EventTarget | null = document.activeEl
   return target instanceof Element && target.closest(EDITABLE_SELECTOR) !== null;
 }
 
-let lastEditableInputAt = 0;
+const lastEditableInputAt = new WeakMap<Element, number>();
 if (typeof window !== "undefined") {
   window.addEventListener(
     "input",
     (event) => {
-      if (isEditableFocused(event.target)) lastEditableInputAt = Date.now();
+      const element = (event.target as Element | null)?.closest?.(EDITABLE_SELECTOR);
+      if (element) lastEditableInputAt.set(element, Date.now());
     },
     true,
   );
@@ -38,8 +39,8 @@ export function editableOwnsUndo(
   since = 0,
 ): boolean {
   if (!isEditableFocused(target)) return false;
-  if (lastEditableInputAt > since) return true;
   const element = (target as Element).closest(EDITABLE_SELECTOR);
+  if (element && (lastEditableInputAt.get(element) ?? 0) > since) return true;
   if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
     return element.value.length > 0;
   }

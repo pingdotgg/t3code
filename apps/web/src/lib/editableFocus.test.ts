@@ -51,6 +51,7 @@ describe("editableOwnsUndo", () => {
     vi.advanceTimersByTime(10);
     onInput?.({ target: field } as unknown as Event);
     expect(fresh.editableOwnsUndo(field, since)).toBe(true);
+    expect(fresh.editableOwnsUndo(new FakeElement(true, ""), since)).toBe(false);
     expect(fresh.editableOwnsUndo(field, Date.now() + 1)).toBe(false);
     vi.useRealTimers();
   });
