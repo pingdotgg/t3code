@@ -186,4 +186,81 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
       assert.deepEqual(failure.cause, refusal);
     }).pipe(Effect.scoped),
   );
+
+  it.effect("ends at once on an execution end this build cannot decode", () =>
+    Effect.gen(function* () {
+      const [subscribe, connected, create, created] = OPENCODE2_TITLE_GENERATION;
+      const sessionId = "ses_f0ec85cf6ffebfalpvV2E9nocu";
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
+        provider: "opencode",
+        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+        version: "2.0.18",
+        scenario: "opencode2_title_generation_unreadable_end",
+        entries: [
+          subscribe!,
+          connected!,
+          create!,
+          created!,
+          {
+            type: "expect_outbound",
+            frame: { type: "session.prompt", input: { sessionID: sessionId, text: "<any>" } },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.response",
+              operation: "session.prompt",
+              data: {
+                data: {
+                  id: "msg_1",
+                  sessionID: sessionId,
+                  time: { created: 1 },
+                  type: "user",
+                  payload: { text: "t" },
+                  delivery: "steer",
+                },
+              },
+            },
+          },
+          // A reason added after 2.0.18: the full schema rejects the frame.
+          {
+            type: "emit_inbound",
+            frame: {
+              type: "sdk.event",
+              event: {
+                id: "evt_0eb7f9ae0001VCNDHVLnqTfoPG",
+                created: 1790657403616,
+                type: "session.execution.interrupted",
+                data: { sessionID: sessionId, reason: "budget" },
+                durable: { aggregateID: sessionId, seq: 7, version: 1 },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { type: "session.remove", input: { sessionID: sessionId } },
+          },
+          {
+            type: "emit_inbound",
+            frame: { type: "sdk.response", operation: "session.remove", data: null },
+          },
+          { type: "runtime_exit", status: "success" },
+        ],
+      });
+      const textGeneration = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const failure = yield* textGeneration
+        .generateThreadTitle({
+          cwd: process.cwd(),
+          message: "fix the login redirect loop after oauth",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode"),
+            model: "opencode/big-pickle",
+          },
+        })
+        .pipe(Effect.flip, Effect.timeout("10 seconds"));
+      assert.equal(failure._tag, "TextGenerationError");
+    }).pipe(Effect.scoped),
+  );
 });

@@ -62,6 +62,21 @@ const runOnServer = (
     const events = yield* connection.events;
     yield* events.pipe(
       Stream.runForEach((event) => {
+        // An execution end a newer server sent in a shape this build cannot
+        // read still ends the generation, as it ends a turn in the adapter.
+        if (event.type === "unreadable.execution.ended") {
+          if (event.sessionID !== sessionId) return Effect.void;
+          return Deferred.succeed(
+            outcome,
+            event.executionType === "session.execution.succeeded"
+              ? { _tag: "text", text: [...texts.values()].join("\n").trim() }
+              : {
+                  _tag: "failed",
+                  detail: "OpenCode ended the generation in a way this version cannot read.",
+                  cause: event,
+                },
+          );
+        }
         if (
           sessionId === undefined ||
           !("data" in event) ||
