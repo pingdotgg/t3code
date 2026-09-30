@@ -190,3 +190,90 @@ it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       );
     }),
 );
+
+// The update the driver offers follows the version the binary reports now.
+const versionOutput: { current: string | undefined } = { current: undefined };
+const versionProbes: Array<string> = [];
+const changingRuntime = {
+  runOpenCodeCommand: ({ binaryPath }: { readonly binaryPath: string }) =>
+    Effect.sync(() => versionProbes.push(binaryPath)).pipe(
+      Effect.andThen(
+        versionOutput.current === undefined
+          ? Effect.fail(
+              new OpenCodeRuntime.OpenCodeRuntimeError({
+                operation: "version",
+                detail: "no version",
+              }),
+            )
+          : Effect.succeed({ stdout: versionOutput.current, stderr: "", code: 0 }),
+      ),
+    ),
+  startOpenCodeServerProcess: () => reachedServer("start"),
+  connectToOpenCodeServer: () => reachedServer("connect"),
+} as unknown as OpenCodeRuntime.OpenCodeRuntimeShape;
+const updateLayer = Layer.mergeAll(
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-opencode-driver-update-" }),
+  IdAllocator.layer,
+  ServerSettings.layerTest(),
+  Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
+  Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, changingRuntime),
+).pipe(Layer.provideMerge(NodeServices.layer));
+
+it.layer(updateLayer)("OpenCodeDriver updates", (it) => {
+  it.effect("never runs the binary for a disabled instance's update check", () =>
+    Effect.gen(function* () {
+      versionProbes.length = 0;
+      versionOutput.current = "opencode v2.0.18\n";
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-disabled"),
+        displayName: undefined,
+        environment: [],
+        enabled: false,
+        config: { ...OpenCodeDriver.defaultConfig(), binaryPath: "opencode" },
+      }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
+      const maintenance = yield* instance.snapshot.resolveMaintenance();
+      yield* instance.snapshot.resolveMaintenance({ fresh: true });
+      assert.isNull(maintenance.update);
+      assert.deepStrictEqual(versionProbes, []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "offers no package update for an unknown version and follows a changed one on a fresh read",
+    () =>
+      Effect.gen(function* () {
+        const root = NodeFS.realpathSync(
+          NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-driver-update-")),
+        );
+        const binaryPath = npmGlobalInstall(NodePath.join(root, "v1"), ["opencode-ai"], "opencode");
+        const instance = yield* OpenCodeDriver.create({
+          instanceId: ProviderInstanceId.make("opencode-update"),
+          displayName: undefined,
+          environment: [],
+          enabled: true,
+          config: { ...OpenCodeDriver.defaultConfig(), binaryPath },
+        }).pipe(Effect.provideService(HttpClient.HttpClient, noHttp));
+
+        // The version could not be read: which package owns the binary is unknown.
+        versionOutput.current = undefined;
+        const unknown = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.isNull(unknown.update);
+        assert.isNull(unknown.packageName);
+
+        versionOutput.current = "1.18.32\n";
+        const v1 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(v1.packageName, "opencode-ai");
+
+        // The same path now reports 2.x (reinstalled in place): a fresh read re-probes
+        // and never offers 1.x's package for it.
+        versionOutput.current = "opencode v2.0.18\n";
+        const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+        assert.strictEqual(v2.packageName, "@opencode/cli");
+        assert.isNull(v2.update);
+      }).pipe(Effect.scoped),
+  );
+});

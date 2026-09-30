@@ -65,6 +65,7 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
+  makeManualOnlyProviderMaintenanceCapabilities,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -91,7 +92,7 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
  * only ever updated within its own package: T3 never moves a 1.x install onto
  * 2.x or back, since 2.x converts the shared database in place.
  */
-export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"] | undefined) =>
+export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
   makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: generation === "v2" ? "@opencode/cli" : "opencode-ai",
@@ -218,22 +219,44 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
         ),
       );
-      // Updates follow the installed package, which the version probe names.
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        runtimeProbe.get.pipe(
-          Effect.map((probed) => probed.generation),
-          Effect.orElseSucceed(() => undefined),
+      // Updates follow the installed package, which the version probe names. An
+      // unknown version offers no package update, since a guess could move a
+      // 2.x install onto 1.x's package or the reverse. A disabled instance never
+      // runs its binary, so it has no version and offers no update.
+      const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: null,
+      });
+      const maintenanceFor = (probed: typeof runtimeProbe.get) =>
+        probed.pipe(
+          Effect.map((result) => result.generation),
+          Effect.option,
           Effect.flatMap((generation) =>
-            resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation), {
-              binaryPath: effectiveConfig.binaryPath,
-              env: processEnv,
-            }),
+            Option.isNone(generation)
+              ? Effect.succeed(noUpdate)
+              : resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation.value), {
+                  binaryPath: effectiveConfig.binaryPath,
+                  env: processEnv,
+                }),
           ),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, pathService),
-        ),
+        );
+      const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        maintenanceFor(runtimeProbe.get),
       );
+      // A fresh read (an update about to run, or a manual refresh) re-probes, so
+      // a binary replaced by the other major version gets its own package.
+      const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
+        !effectiveConfig.enabled
+          ? Effect.succeed(noUpdate)
+          : options?.fresh === true
+            ? runtimeProbe.refresh.pipe(
+                Effect.ignore,
+                Effect.andThen(cachedMaintenance({ fresh: true })),
+              )
+            : cachedMaintenance();
       const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
         instanceId,
         displayName,
