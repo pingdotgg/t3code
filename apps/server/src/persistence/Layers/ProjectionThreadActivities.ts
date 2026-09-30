@@ -94,7 +94,12 @@ const makeProjectionThreadActivityRepository = Effect.gen(function* () {
         ${input.createdAt},
         ${input.createdAt}
       )
-      ON CONFLICT (activity_id) DO NOTHING
+      ON CONFLICT (activity_id) DO UPDATE SET
+        data_json = excluded.data_json,
+        size_bytes = excluded.size_bytes,
+        updated_at = excluded.updated_at
+      WHERE activity_payload_blobs.data_json IS NOT excluded.data_json
+        OR activity_payload_blobs.size_bytes IS NOT excluded.size_bytes
     `;
 
   const listProjectionThreadActivityRows = SqlSchema.findAll({

@@ -265,6 +265,22 @@ layer("OrchestrationEventStore", (it) => {
         (projected[0]!.payload as { readonly data?: unknown }).data,
         largeOutput,
       );
+
+      yield* activities.deleteByThreadId({ threadId });
+      assert.deepStrictEqual(yield* activities.listByThreadId({ threadId }), []);
+      const replayedAfterProjectionDelete = yield* Stream.runCollect(
+        eventStore.readFromSequence(appended.sequence - 1, 1),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      const retainedEventPayload = replayedAfterProjectionDelete[0]!.payload;
+      assert.deepStrictEqual(
+        retainedEventPayload && "activity" in retainedEventPayload
+          ? (retainedEventPayload.activity.payload as { readonly data?: unknown }).data
+          : undefined,
+        largeOutput,
+      );
+      assert.deepStrictEqual(yield* sql`SELECT COUNT(*) AS count FROM activity_payload_blobs`, [
+        { count: 1 },
+      ]);
     }),
   );
 

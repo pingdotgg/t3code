@@ -51,6 +51,7 @@ it.effect("executes file-backed queries without blocking the Node event loop", (
               }),
             ),
           );
+
           assert.equal(transactionExit._tag, "Failure");
           assert.deepStrictEqual(
             yield* sql<{ readonly name: string }>`SELECT name FROM entries ORDER BY id`,
@@ -87,6 +88,7 @@ it.effect("executes file-backed queries without blocking the Node event loop", (
               ),
             ),
           );
+
           yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
           yield* sql`INSERT INTO entries(name) VALUES (${"concurrent-write"})`;
           clearTimeout(timer);
@@ -102,6 +104,32 @@ it.effect("executes file-backed queries without blocking the Node event loop", (
           ),
         ),
       ),
+    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
+  ),
+);
+
+it.effect("configures a busy timeout on every file-backed connection", () =>
+  Effect.acquireUseRelease(
+    Effect.promise(() => mkdtemp(join(tmpdir(), "t3-node-sqlite-busy-"))),
+    (directory) => {
+      const filename = join(directory, "busy.sqlite");
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const writer = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
+          const readerOne = yield* sql<{ readonly timeout: number }>`
+            SELECT timeout FROM pragma_busy_timeout
+          `;
+          const readerTwo = yield* sql<{ readonly timeout: number }>`
+            SELECT timeout FROM pragma_busy_timeout
+          `;
+
+          assert.deepStrictEqual(writer, [{ timeout: 5_000 }]);
+          assert.deepStrictEqual(readerOne, [{ timeout: 5_000 }]);
+          assert.deepStrictEqual(readerTwo, [{ timeout: 5_000 }]);
+        }).pipe(Effect.provide(SqliteClient.layer({ filename, readPoolSize: 2 }))),
+      );
+    },
     (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
   ),
 );

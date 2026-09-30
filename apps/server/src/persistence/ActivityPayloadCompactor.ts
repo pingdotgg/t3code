@@ -1,5 +1,5 @@
 import { NonNegativeInt } from "@t3tools/contracts";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -121,6 +121,8 @@ export const compactLegacyActivityPayloads = Effect.gen(function* () {
   }
 }).pipe(
   Effect.catchCause((cause) =>
-    Effect.logWarning("Activity payload compaction paused", { cause: String(cause) }),
+    Cause.hasInterruptsOnly(cause)
+      ? Effect.failCause(cause)
+      : Effect.logWarning("Activity payload compaction paused", { cause: String(cause) }),
   ),
 );

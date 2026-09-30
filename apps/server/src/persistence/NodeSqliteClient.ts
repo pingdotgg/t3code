@@ -25,6 +25,7 @@ import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
+const DEFAULT_BUSY_TIMEOUT_MILLIS = 5_000;
 const DEFAULT_READ_POOL_SIZE = 4;
 
 const WORKER_SOURCE = String.raw`
@@ -36,6 +37,7 @@ const database = new DatabaseSync(workerData.filename, {
   readOnly: workerData.readOnly,
   allowExtension: workerData.allowExtension,
 });
+database.exec("PRAGMA busy_timeout = ${DEFAULT_BUSY_TIMEOUT_MILLIS}");
 if (!workerData.readOnly && !workerData.disableWAL) {
   database.exec("PRAGMA journal_mode = WAL");
 }

@@ -874,24 +874,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           activities.tone,
           activities.kind,
           activities.summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                activities.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = activities.activity_id
-            ),
-            activities.payload_json
-          ) AS "payload",
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
           activities.sequence,
           activities.created_at AS "createdAt"
         FROM ranked_tasks
         INNER JOIN projection_thread_activities AS activities
           ON activities.thread_id = ranked_tasks.thread_id
           AND activities.task_id = ranked_tasks.task_id
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
         WHERE ranked_tasks.task_rank <= ${MAX_BACKGROUND_AGENT_RUNS_PER_THREAD}
           AND activities.kind IN ('task.started', 'task.completed')
         ORDER BY
@@ -1356,29 +1350,23 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: ({ threadId, limit }) =>
       sql`
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                projection_thread_activities.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = projection_thread_activities.activity_id
-            ),
-            projection_thread_activities.payload_json
-          ) AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-        ORDER BY created_at DESC, activity_id DESC
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
+        WHERE activities.thread_id = ${threadId}
+        ORDER BY activities.created_at DESC, activities.activity_id DESC
         LIMIT ${limit}
       `,
   });
@@ -1389,38 +1377,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: ({ threadId, beforeCreatedAt, beforeActivityId, limit }) =>
       sql`
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                projection_thread_activities.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = projection_thread_activities.activity_id
-            ),
-            projection_thread_activities.payload_json
-          ) AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
+        WHERE activities.thread_id = ${threadId}
           AND (
-            created_at < ${beforeCreatedAt}
+            activities.created_at < ${beforeCreatedAt}
             OR (
-              created_at = ${beforeCreatedAt}
-              AND activity_id < ${beforeActivityId}
+              activities.created_at = ${beforeCreatedAt}
+              AND activities.activity_id < ${beforeActivityId}
             )
           )
         ORDER BY
-          created_at DESC,
-          activity_id DESC
+          activities.created_at DESC,
+          activities.activity_id DESC
         LIMIT ${limit}
       `,
   });
@@ -1431,39 +1413,33 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     execute: ({ threadId, turnId, beforeCreatedAt, beforeActivityId, limit }) =>
       sql`
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                projection_thread_activities.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = projection_thread_activities.activity_id
-            ),
-            projection_thread_activities.payload_json
-          ) AS "payload",
-          sequence,
-          created_at AS "createdAt"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND turn_id = ${turnId}
+          activities.activity_id AS "activityId",
+          activities.thread_id AS "threadId",
+          activities.turn_id AS "turnId",
+          activities.tone,
+          activities.kind,
+          activities.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN activities.payload_json
+            ELSE json_set(activities.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          activities.sequence,
+          activities.created_at AS "createdAt"
+        FROM projection_thread_activities AS activities
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = activities.activity_id
+        WHERE activities.thread_id = ${threadId}
+          AND activities.turn_id = ${turnId}
           AND (
-            created_at < ${beforeCreatedAt}
+            activities.created_at < ${beforeCreatedAt}
             OR (
-              created_at = ${beforeCreatedAt}
-              AND activity_id < ${beforeActivityId}
+              activities.created_at = ${beforeCreatedAt}
+              AND activities.activity_id < ${beforeActivityId}
             )
           )
         ORDER BY
-          created_at DESC,
-          activity_id DESC
+          activities.created_at DESC,
+          activities.activity_id DESC
         LIMIT ${limit}
       `,
   });
@@ -1624,28 +1600,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           )
         )
         SELECT
-          activity_id AS "activityId",
-          thread_id AS "threadId",
-          turn_id AS "turnId",
-          tone,
-          kind,
-          summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                selected.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = selected.activity_id
-            ),
-            selected.payload_json
-          ) AS "payload",
-          sequence,
-          created_at AS "createdAt"
+          selected.activity_id AS "activityId",
+          selected.thread_id AS "threadId",
+          selected.turn_id AS "turnId",
+          selected.tone,
+          selected.kind,
+          selected.summary,
+          CASE
+            WHEN blobs.data_json IS NULL THEN selected.payload_json
+            ELSE json_set(selected.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
+          selected.sequence,
+          selected.created_at AS "createdAt"
         FROM selected
-        ORDER BY created_at ASC, activity_id ASC
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = selected.activity_id
+        ORDER BY selected.created_at ASC, selected.activity_id ASC
       `,
   });
 
@@ -1661,18 +1631,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           recent.tone,
           recent.kind,
           recent.summary,
-          COALESCE(
-            (
-              SELECT json_set(
-                recent.payload_json,
-                '$.data',
-                json(blobs.data_json)
-              )
-              FROM activity_payload_blobs AS blobs
-              WHERE blobs.activity_id = recent.activity_id
-            ),
-            recent.payload_json
-          ) AS "payload",
+          CASE
+            WHEN blobs.data_json IS NULL THEN recent.payload_json
+            ELSE json_set(recent.payload_json, '$.data', json(blobs.data_json))
+          END AS "payload",
           recent.sequence,
           recent.created_at AS "createdAt"
         FROM projection_thread_activities AS recent
@@ -1696,6 +1658,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           LIMIT ${MAX_BACKGROUND_AGENT_RUNS_PER_THREAD}
         ) AS selected_tasks
           ON recent.task_id = selected_tasks.task_id
+        LEFT JOIN activity_payload_blobs AS blobs
+          ON blobs.activity_id = recent.activity_id
         WHERE recent.thread_id = ${threadId}
           AND recent.kind IN ('task.started', 'task.completed')
         ORDER BY recent.created_at ASC, recent.activity_id ASC
