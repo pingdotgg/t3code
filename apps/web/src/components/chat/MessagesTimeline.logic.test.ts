@@ -1444,10 +1444,6 @@ describe("workspace handoff rows", () => {
   });
 
   it("shows neither a divider nor boilerplate when a repeated handoff emits only a continuation", () => {
-    // The server suppresses the marker for a handoff that re-targets the
-    // worktree the thread is already bound to, but still queues the
-    // continuation. A marker-less continuation must leave the transcript
-    // untouched rather than surfacing as a second divider or a user bubble.
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
