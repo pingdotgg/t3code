@@ -2739,6 +2739,34 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Archive review chats on merge"
+          description="Move a review chat and the work it delegated to the archive once its pull request merges."
+          resetAction={
+            settings.autoArchiveReviewThreadsOnMerge !==
+            DEFAULT_UNIFIED_SETTINGS.autoArchiveReviewThreadsOnMerge ? (
+              <SettingResetButton
+                label="automatic review chat archiving"
+                onClick={() =>
+                  updateSettings({
+                    autoArchiveReviewThreadsOnMerge:
+                      DEFAULT_UNIFIED_SETTINGS.autoArchiveReviewThreadsOnMerge,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.autoArchiveReviewThreadsOnMerge}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoArchiveReviewThreadsOnMerge: Boolean(checked) })
+              }
+              aria-label="Automatically archive review chats when their pull request merges"
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection title="Pull requests">

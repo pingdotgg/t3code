@@ -1,0 +1,268 @@
+import type { OrchestrationReadModel, OrchestrationThread, ProjectId } from "@t3tools/contracts";
+import { describe, expect, it } from "vitest";
+
+import {
+  pendingReviewThreadPullRequests,
+  planReviewThreadAutoArchive,
+  reviewThreadMergeArchiveCommandId,
+  type PendingReviewThreadPullRequest,
+} from "./reviewThreadMergeArchive.ts";
+
+const REPO = "owner/name";
+const projectId = (id: string) => id as ProjectId;
+
+const reviewThread = (
+  overrides: {
+    readonly id: string;
+  } & Record<string, unknown>,
+): OrchestrationThread =>
+  ({
+    projectId: projectId("project-1"),
+    title: overrides.id,
+    parentThreadId: null,
+    reviewSnapshot: { scope: "pull-request" },
+    reviewResult: null,
+    pullRequests: [
+      {
+        pullRequest: {
+          url: `https://github.com/${REPO}/pull/7`,
+          number: 7,
+          title: "Add thing",
+          state: "open",
+          baseBranch: "main",
+          headBranch: "feature",
+        },
+        source: "agent",
+        linkedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ],
+    pullRequest: null,
+    archivedAt: null,
+    deletedAt: null,
+    settledOverride: null,
+    ...overrides,
+  }) as unknown as OrchestrationThread;
+
+const readModel = (threads: ReadonlyArray<OrchestrationThread>): OrchestrationReadModel =>
+  ({ projects: [], threads, workflowRuns: [] }) as unknown as OrchestrationReadModel;
+
+const mergedPullRequest7 = new Set([`github.com/${REPO}#7`]);
+
+describe("planReviewThreadAutoArchive", () => {
+  it("archives a review thread once its pull request is merged", () => {
+    const threads = [reviewThread({ id: "root" })];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      { threadId: "root", pullRequestKey: `github.com/${REPO}#7` },
+    ]);
+  });
+
+  it("leaves a review thread alone while its pull request is open", () => {
+    const threads = [reviewThread({ id: "root" })];
+    expect(planReviewThreadAutoArchive(readModel(threads), new Set())).toEqual([]);
+  });
+
+  it("leaves a non-review thread with a merged pull request alone", () => {
+    const threads = [reviewThread({ id: "root", reviewSnapshot: null })];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("treats a review thread with a recorded result as no longer a review thread", () => {
+    const threads = [
+      reviewThread({
+        id: "root",
+        reviewResult: { verdict: "approved" } as unknown as OrchestrationThread["reviewResult"],
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("skips already archived and deleted review threads", () => {
+    const threads = [
+      reviewThread({ id: "archived", archivedAt: "2026-01-02T00:00:00.000Z" }),
+      reviewThread({ id: "deleted", deletedAt: "2026-01-02T00:00:00.000Z" }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("skips a review thread the user settled", () => {
+    const threads = [reviewThread({ id: "root", settledOverride: "settled" })];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("archives a pinned review thread, whose children the archive command carries with it", () => {
+    const threads = [
+      reviewThread({ id: "root", pinnedAt: "2026-01-02T00:00:00.000Z" }),
+      reviewThread({ id: "child", parentThreadId: "root", reviewSnapshot: null }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      { threadId: "root", pullRequestKey: `github.com/${REPO}#7` },
+    ]);
+  });
+
+  it("leaves out a nested review thread the same sweep already archives through its parent", () => {
+    const threads = [
+      reviewThread({ id: "root" }),
+      reviewThread({ id: "nested", parentThreadId: "root" }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      { threadId: "root", pullRequestKey: `github.com/${REPO}#7` },
+    ]);
+  });
+
+  it("archives each unrelated merged review thread once", () => {
+    const threads = [
+      reviewThread({ id: "root-a" }),
+      reviewThread({ id: "child", parentThreadId: "root-a", reviewSnapshot: null }),
+      reviewThread({ id: "root-b" }),
+    ];
+    expect(
+      planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7).map(
+        (candidate) => candidate.threadId,
+      ),
+    ).toEqual(["root-a", "root-b"]);
+  });
+
+  it("reads the legacy single pull request projection", () => {
+    const threads = [
+      reviewThread({
+        id: "root",
+        pullRequests: [],
+        pullRequest: {
+          url: `https://github.com/${REPO}/pull/7`,
+          number: 7,
+          title: "Add thing",
+          state: "open",
+          baseBranch: "main",
+          headBranch: "feature",
+        },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toHaveLength(1);
+  });
+
+  it("uses the thread's own merged pull request when it links more than one", () => {
+    const threads = [
+      reviewThread({
+        id: "root",
+        pullRequests: [
+          {
+            pullRequest: {
+              url: `https://github.com/${REPO}/pull/7`,
+              number: 7,
+              title: "Add thing",
+              state: "open",
+              baseBranch: "main",
+              headBranch: "feature",
+            },
+            source: "agent",
+            linkedAt: "2026-01-01T00:00:00.000Z",
+          },
+          {
+            pullRequest: {
+              url: `https://github.com/${REPO}/pull/9`,
+              number: 9,
+              title: "Add another thing",
+              state: "open",
+              baseBranch: "main",
+              headBranch: "feature",
+            },
+            source: "manual",
+            linkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    ];
+    expect(
+      planReviewThreadAutoArchive(readModel(threads), new Set([`github.com/${REPO}#9`])),
+    ).toEqual([{ threadId: "root", pullRequestKey: `github.com/${REPO}#9` }]);
+  });
+
+  it("builds a stable command id so a re-sweep deduplicates instead of erroring", () => {
+    const threads = [reviewThread({ id: "root" })];
+    const [first] = planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7);
+    const [second] = planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7);
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(reviewThreadMergeArchiveCommandId(first!)).toBe(
+      reviewThreadMergeArchiveCommandId(second!),
+    );
+  });
+});
+
+describe("pendingReviewThreadPullRequests", () => {
+  it("asks about each distinct open pull request once, in project and repository order", () => {
+    const threads = [
+      reviewThread({ id: "root-b" }),
+      reviewThread({
+        id: "root-a",
+        projectId: projectId("project-0"),
+        pullRequests: [
+          {
+            pullRequest: {
+              url: `https://github.com/other/repo/pull/3`,
+              number: 3,
+              title: "Fix thing",
+              state: "open",
+              baseBranch: "main",
+              headBranch: "feature",
+            },
+            source: "agent",
+            linkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    ];
+    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([
+      {
+        ref: { projectId: projectId("project-0"), repository: "other/repo", number: 3 },
+        pullRequestKeys: ["github.com/other/repo#3"],
+      },
+      {
+        ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
+        pullRequestKeys: [`github.com/${REPO}#7`],
+      },
+    ] satisfies ReadonlyArray<PendingReviewThreadPullRequest>);
+  });
+
+  it("asks once about a pull request two review threads both watch, keeping both keys", () => {
+    const threads = [reviewThread({ id: "root-a" }), reviewThread({ id: "root-b" })];
+    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([
+      {
+        ref: { projectId: projectId("project-1"), repository: REPO, number: 7 },
+        pullRequestKeys: [`github.com/${REPO}#7`],
+      },
+    ]);
+  });
+
+  it("does not ask about a pull request already recorded as merged", () => {
+    const threads = [
+      reviewThread({
+        id: "root",
+        pullRequests: [
+          {
+            pullRequest: {
+              url: `https://github.com/${REPO}/pull/7`,
+              number: 7,
+              title: "Add thing",
+              state: "merged",
+              baseBranch: "main",
+              headBranch: "feature",
+            },
+            source: "agent",
+            linkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    ];
+    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([]);
+  });
+
+  it("does not ask about an archived or settled review thread", () => {
+    const threads = [
+      reviewThread({ id: "archived", archivedAt: "2026-01-02T00:00:00.000Z" }),
+      reviewThread({ id: "deleted", deletedAt: "2026-01-02T00:00:00.000Z" }),
+      reviewThread({ id: "settled", settledOverride: "settled" }),
+    ];
+    expect(pendingReviewThreadPullRequests(readModel(threads))).toEqual([]);
+  });
+});

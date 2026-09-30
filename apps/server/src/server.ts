@@ -137,6 +137,7 @@ import { layer as pullRequestAssociationRecoveryLayer } from "./pullRequestMonit
 import { PullRequestCreationAutomationLive } from "./pullRequestMonitor/PullRequestCreationAutomation.ts";
 import { layer as pullRequestMonitorReviewHandoffReactorLayer } from "./pullRequestMonitor/PullRequestReviewHandoffReactor.ts";
 import { layer as createdPullRequestReviewReactorLayer } from "./pullRequestMonitor/CreatedPullRequestReviewReactor.ts";
+import { layer as reviewThreadMergeArchiveReactorLayer } from "./pullRequestMonitor/ReviewThreadMergeArchiveReactor.ts";
 import { ProjectionStateRepositoryLive } from "./persistence/Layers/ProjectionState.ts";
 import { PullRequestCreationIntentRepositoryLive } from "./persistence/Layers/PullRequestCreationIntents.ts";
 import { CollaborativeAcceptanceRepositoryLive } from "./persistence/Layers/CollaborativeAcceptance.ts";
@@ -305,10 +306,18 @@ const PullRequestAssociationRecoveryLayerLive = pullRequestAssociationRecoveryLa
   Layer.provideMerge(PullRequestCreationAutomationLive),
 );
 
+// Archiving a merged review is a poll-driven fact, not an event: the sweep asks the monitors
+// that observe merges and dispatches the archive itself. Layer memoization keeps this the same
+// pull request service instance the rest of the runtime uses.
+const reviewThreadMergeArchiveLayerLive = reviewThreadMergeArchiveReactorLayer.pipe(
+  Layer.provide(PullRequestLayerLive),
+);
+
 // Associating a pull request with a chat is the ownership signal, so monitoring follows it.
 // provideMerge keeps one monitor service instance shared with the reactor.
 const PullRequestMonitorLayerLive = pullRequestMonitorAssociationReactorLayer.pipe(
   Layer.provideMerge(PullRequestAssociationRecoveryLayerLive),
+  Layer.provideMerge(reviewThreadMergeArchiveLayerLive),
   Layer.provideMerge(pullRequestMonitorReviewHandoffReactorLayer),
   Layer.provideMerge(ProjectionStateRepositoryLive),
   Layer.provideMerge(PullRequestMonitorServiceLive),

@@ -547,6 +547,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoArchiveReviewThreadsOnMerge: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -784,6 +787,7 @@ export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
 export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  autoArchiveReviewThreadsOnMerge: Schema.optionalKey(Schema.Boolean),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(Schema.String),
   // Server settings
