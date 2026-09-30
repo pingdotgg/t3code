@@ -32,7 +32,7 @@ const activityEvent = (kind: string, payload: unknown = {}) =>
 
 describe("projectionImpactForEvent", () => {
   it.each([
-    ["thread.message-sent", event("thread.message-sent", { threadId, role: "user" }), true, false],
+    ["thread.message-sent", event("thread.message-sent", { threadId, role: "user" }), false, false],
     ["thread.review-result-set", event("thread.review-result-set"), true, false],
     ["thread.proposed-plan-upserted", event("thread.proposed-plan-upserted"), true, false],
     [
