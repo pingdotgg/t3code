@@ -54,7 +54,6 @@ function MarkdownTextPrimitiveChild({
 }: MarkdownTextPrimitiveProps) {
   const [isAncestor, rootStyle] = useTextAncestorContext();
 
-  // Flatten the styles, and apply the root styles when needed
   const flattenedStyle = React.useMemo(() => flattenStyles(rootStyle, style), [rootStyle, style]);
   const contextValue = React.useMemo<[boolean, ViewStyle]>(
     () => [true, flattenedStyle],

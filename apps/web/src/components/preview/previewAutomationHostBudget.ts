@@ -3,6 +3,15 @@ export const PREVIEW_HOST_RESPONSE_MARGIN_MS = 1_500;
 
 const HOST_RESPONSE_MARGIN_FRACTION = 0.2;
 
+/**
+ * Absolute `Date.now()` deadline in milliseconds. Branded so a request
+ * timeout *duration* can never be passed where a deadline is required: that
+ * mistake makes readiness waits fail instantly with a 0ms budget because the
+ * duration is always far in the past as an epoch timestamp.
+ */
+declare const hostDeadlineBrand: unique symbol;
+export type HostDeadlineMs = number & { readonly [hostDeadlineBrand]: true };
+
 export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
   if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
     return 0;
@@ -12,6 +21,11 @@ export function resolveHostWaitBudgetMs(requestTimeoutMs: number): number {
     Math.ceil(requestTimeoutMs * HOST_RESPONSE_MARGIN_FRACTION),
   );
   return Math.max(0, requestTimeoutMs - reservedMs);
+}
+
+/** The single place a request duration becomes an absolute host deadline. */
+export function resolveHostDeadlineMs(requestTimeoutMs: number): HostDeadlineMs {
+  return (Date.now() + resolveHostWaitBudgetMs(requestTimeoutMs)) as HostDeadlineMs;
 }
 
 /** Both readiness probes and polling delays share the request's host deadline. */

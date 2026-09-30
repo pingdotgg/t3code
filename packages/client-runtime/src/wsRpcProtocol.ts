@@ -52,7 +52,6 @@ export interface WsRpcProtocolRequestTelemetry {
 }
 
 export interface WsRpcProtocolOptions {
-  /** Backoff configuration for reconnect retries. */
   readonly backoff?: ReconnectBackoffConfig;
   /**
    * Invoked before user {@link WsProtocolLifecycleHandlers} for each socket lifecycle event.

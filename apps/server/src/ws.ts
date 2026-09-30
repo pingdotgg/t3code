@@ -1325,6 +1325,7 @@ const makeWsRpcLayer = (
                           : [
                               {
                                 threadId: match.threadId,
+                                messageId: match.messageId,
                                 projectId,
                                 source: match.role,
                                 snippet: match.excerpt.slice(0, 240),

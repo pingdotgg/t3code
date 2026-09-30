@@ -46,7 +46,6 @@ export function parseCliArgs(
       const rest = token.slice(2);
       if (!rest) continue;
 
-      // Handle --key=value syntax
       const eqIndex = rest.indexOf("=");
       if (eqIndex !== -1) {
         flags[rest.slice(0, eqIndex)] = rest.slice(eqIndex + 1);
@@ -59,7 +58,6 @@ export function parseCliArgs(
         continue;
       }
 
-      // Handle --key value or --flag (boolean)
       const next = tokens[i + 1];
       if (next !== undefined && !next.startsWith("--")) {
         flags[rest] = next;

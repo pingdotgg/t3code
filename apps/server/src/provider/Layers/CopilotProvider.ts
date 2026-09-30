@@ -132,6 +132,7 @@ const COPILOT_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   makeCopilotBuiltInModel("claude-opus-4.6", "Claude Opus 4.6"),
   makeCopilotBuiltInModel("claude-opus-4.5", "Claude Opus 4.5"),
   makeCopilotBuiltInModel("claude-opus-41", "Claude Opus 4.1"),
+  makeCopilotBuiltInModel("claude-sonnet-5.5", "Claude Sonnet 5.5"),
   makeCopilotBuiltInModel("claude-sonnet-5", "Claude Sonnet 5"),
   makeCopilotBuiltInModel("claude-sonnet-4.6", "Claude Sonnet 4.6"),
   makeCopilotBuiltInModel("claude-sonnet-4.5", "Claude Sonnet 4.5"),

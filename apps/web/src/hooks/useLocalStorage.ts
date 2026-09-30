@@ -60,7 +60,6 @@ export function useLocalStorage<T, E>(
   initialValue: T,
   schema: Schema.Codec<T, E>,
 ): [T, (value: T | ((val: T) => T)) => void] {
-  // Get the initial value from localStorage or use the provided initialValue
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
       const item = getLocalStorageItem(key, schema);
@@ -71,7 +70,6 @@ export function useLocalStorage<T, E>(
     }
   });
 
-  // Return a wrapped version of useState's setter function that persists the new value to localStorage
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
@@ -94,7 +92,6 @@ export function useLocalStorage<T, E>(
 
   const prevKeyRef = useRef(key);
 
-  // Re-sync from localStorage when key changes
   useEffect(() => {
     if (prevKeyRef.current !== key) {
       prevKeyRef.current = key;

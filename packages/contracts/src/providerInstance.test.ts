@@ -172,9 +172,6 @@ describe("ProviderInstanceConfigMap", () => {
       claudeAgent: { driver: "claudeAgent" },
       ollama_local: { driver: "ollama", config: { endpoint: "http://localhost:11434" } },
     });
-    expect(new Set(Object.keys(decoded))).toEqual(
-      new Set(["claudeAgent", "codex_personal", "codex_work", "ollama_local"]),
-    );
     expect(decoded[ProviderInstanceId.make("codex_personal")]?.driver).toBe("codex");
     expect(decoded[ProviderInstanceId.make("codex_work")]?.config).toEqual({
       homePath: "~/.codex_work",

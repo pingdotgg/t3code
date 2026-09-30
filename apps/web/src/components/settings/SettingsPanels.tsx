@@ -89,6 +89,7 @@ import {
   DEFAULT_WORKFLOW_RUNS_SHOW_BADGE,
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
+  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
@@ -1142,6 +1143,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
         : []),
+      ...(settings.sidebarIconSize !== DEFAULT_UNIFIED_SETTINGS.sidebarIconSize
+        ? ["Sidebar icon size"]
+        : []),
       ...(settings.sidebarMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarMetaFontSize
         ? ["Sidebar metadata font size"]
         : []),
@@ -2031,54 +2035,56 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          title="Sidebar translucency"
-          description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available; browsers fall back to CSS blur."
-          resetAction={
-            settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
-              <SettingResetButton
-                label="sidebar translucency"
-                onClick={() =>
-                  updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarTranslucency}
-              onValueChange={(value) => {
-                if (
-                  value === "off" ||
-                  value === "subtle" ||
-                  value === "medium" ||
-                  value === "strong" ||
-                  value === "liquid-glass"
-                ) {
-                  updateSettings({ sidebarTranslucency: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
-                <SelectValue>
-                  {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
-                    (option) => option.value === settings.sidebarTranslucency,
-                  )?.label ?? "Off"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    <div>
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+        {isElectron && (
+          <SettingsRow
+            title="Sidebar translucency"
+            description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available, with CSS blur as a fallback."
+            resetAction={
+              settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
+                <SettingResetButton
+                  label="sidebar translucency"
+                  onClick={() =>
+                    updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.sidebarTranslucency}
+                onValueChange={(value) => {
+                  if (
+                    value === "off" ||
+                    value === "subtle" ||
+                    value === "medium" ||
+                    value === "strong" ||
+                    value === "liquid-glass"
+                  ) {
+                    updateSettings({ sidebarTranslucency: value });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
+                  <SelectValue>
+                    {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
+                      (option) => option.value === settings.sidebarTranslucency,
+                    )?.label ?? "Off"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
+                    <SelectItem hideIndicator key={option.value} value={option.value}>
+                      <div>
+                        <span className="font-medium">{option.label}</span>
+                        <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        )}
       </SettingsSection>
 
       <SettingsSection title="Sidebar">
@@ -2469,6 +2475,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
                     ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar icon size"
+          description="Icon size for action and row icons across the sidebar. Status glyphs stay on their own smaller tier."
+          resetAction={
+            settings.sidebarIconSize !== recommendedFontSizes.sidebarIconSize ? (
+              <SettingResetButton
+                label="sidebar icon size"
+                onClick={() =>
+                  updateSettings({
+                    sidebarIconSize: recommendedFontSizes.sidebarIconSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarIconSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ sidebarIconSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar icon size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarIconSize)
+                    ?.label ?? `${DEFAULT_SIDEBAR_ICON_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
