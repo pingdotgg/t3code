@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  ContextTransferId,
   EventId,
   MessageId,
   type ModelSelection,
@@ -10,8 +11,10 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -41,6 +44,7 @@ import {
   ProjectServiceLayerLive,
 } from "./runtimeLayer.ts";
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
+import { makeSubagentChildThread } from "./SubagentProjection.ts";
 
 const PlatformTestLayer = Layer.merge(
   NodeServices.layer,
@@ -140,7 +144,8 @@ const seedParentWithTerminalTask = (input: {
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly taskId: NodeId;
-  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
+  /** Omit for a task that is still running. */
+  readonly deliveryState?: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
   readonly now: DateTime.Utc;
@@ -270,14 +275,18 @@ const seedParentWithTerminalTask = (input: {
             title: null,
             model: null,
             completionWake: input.completionWake ?? "settled_only",
-            completionDelivery: {
-              state: input.deliveryState,
-              observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
-            },
-            status: "completed",
-            result: "child finished",
+            ...(input.deliveryState === undefined
+              ? { status: "running" as const, result: null, completedAt: null }
+              : {
+                  completionDelivery: {
+                    state: input.deliveryState,
+                    observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
+                  },
+                  status: "completed" as const,
+                  result: "child finished",
+                  completedAt: input.now,
+                }),
             startedAt: input.now,
-            completedAt: input.now,
             updatedAt: input.now,
           },
         },
@@ -645,5 +654,373 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
           },
         );
       }),
+  );
+});
+
+it.layer(TestLayer)("paused delegated task wakes", (it) => {
+  /** Gives a seeded running task the child thread its wake is traced back through. */
+  const attachChildThread = (input: {
+    readonly parentThreadId: ThreadId;
+    readonly taskId: NodeId;
+    readonly childThreadId: ThreadId;
+    readonly completionWake: "always" | "settled_only";
+    readonly now: DateTime.Utc;
+  }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const parent = yield* orchestrator.getThreadProjection(input.parentThreadId);
+      const seeded = parent.subagents[0]!;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:paused-child:${input.childThreadId}`),
+            type: "thread.created",
+            threadId: input.childThreadId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: input.now,
+            payload: makeSubagentChildThread({
+              parentThread: parent.thread,
+              childThreadId: input.childThreadId,
+              parentNodeId: input.taskId,
+              activeProviderThreadId: null,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              title: "Paused child",
+              now: input.now,
+              createdBy: "agent",
+              creationSource: "mcp",
+            }),
+          },
+          {
+            id: EventId.make(`event:paused-task:${input.taskId}`),
+            type: "subagent.updated",
+            threadId: input.parentThreadId,
+            runId: seeded.runId ?? undefined,
+            nodeId: input.taskId,
+            occurredAt: input.now,
+            payload: {
+              ...seeded,
+              id: input.taskId,
+              childThreadId: input.childThreadId,
+              completionWake: input.completionWake,
+            },
+          },
+        ],
+      });
+    });
+
+  const pendingRequest = (input: {
+    readonly childThreadId: ThreadId;
+    readonly requestId: RuntimeRequestId;
+    readonly kind: "command" | "user_input";
+    readonly status?: "pending" | "resolved";
+    readonly now: DateTime.Utc;
+  }) => ({
+    id: EventId.make(`event:${input.requestId}:${input.status ?? "pending"}`),
+    type: "runtime-request.updated" as const,
+    threadId: input.childThreadId,
+    occurredAt: input.now,
+    payload: {
+      id: input.requestId,
+      nodeId: NodeId.make(`node:${input.requestId}`),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: input.kind,
+      status: input.status ?? ("pending" as const),
+      responseCapability: {
+        type: "live" as const,
+        providerSessionId: ProviderSessionId.make("provider-session:paused-child"),
+      },
+      createdAt: input.now,
+      resolvedAt: input.status === "resolved" ? input.now : null,
+    },
+  });
+
+  /** A parent with a live run and one async task whose child thread can pause. */
+  const seedParentWithAsyncChild = (name: string, now: DateTime.Utc) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make(`thread:${name}-parent`);
+      const childThreadId = ThreadId.make(`thread:${name}-child`);
+      const taskId = NodeId.make(`node:${name}-task`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`project:${name}`),
+        runId: RunId.make(`run:${name}-parent`),
+        rootNodeId: NodeId.make(`node:${name}-root`),
+        taskId,
+        now,
+      });
+      yield* attachChildThread({
+        parentThreadId: threadId,
+        taskId,
+        childThreadId,
+        completionWake: "always",
+        now,
+      });
+      return { threadId, childThreadId, taskId };
+    });
+
+  /**
+   * Requests are handled in order, so once the wake for a later request has
+   * landed, every earlier request has already been decided.
+   */
+  const awaitWake = (parentThreadId: ThreadId, afterSequence: number, summaryPart: string) =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      yield* sink.stream({ afterSequence, eventType: "message.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "message.updated" &&
+            stored.event.threadId === parentThreadId &&
+            (stored.event.payload.notification?.summary.includes(summaryPart) ?? false),
+        ),
+        Stream.runHead,
+      );
+      const orchestrator = yield* OrchestratorV2;
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      return parent.messages.filter((message) => message.notification !== undefined);
+    });
+
+  it.effect("wakes the parent once for approvals and again for each question", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const questionId = RuntimeRequestId.make("runtime-request:paused-task-question");
+      const { threadId, childThreadId, taskId } = yield* seedParentWithAsyncChild(
+        "paused-task",
+        now,
+      );
+      const afterSequence = yield* sink.latestSequence();
+
+      yield* sink.write({
+        events: [
+          pendingRequest({
+            childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-task-approval-1"),
+            kind: "command",
+            now,
+          }),
+          pendingRequest({
+            childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-task-approval-2"),
+            kind: "command",
+            now,
+          }),
+          pendingRequest({ childThreadId, requestId: questionId, kind: "user_input", now }),
+        ],
+      });
+
+      const [approval, question, ...rest] = yield* awaitWake(threadId, afterSequence, "an answer");
+      assert.deepEqual(rest, []);
+      assert.deepEqual(approval?.notification, {
+        source: { kind: "delegated_task", taskIds: [taskId], childThreadId },
+        outcome: "updated",
+        summary: 'Delegated task "Inspect the delivered ownership edge." is waiting for approval',
+      });
+      assert.include(approval?.text ?? "", String(taskId));
+      assert.include(approval?.text ?? "", "task_cancel");
+      assert.equal(
+        question?.notification?.summary,
+        'Delegated task "Inspect the delivered ownership edge." is waiting for an answer',
+      );
+      assert.include(question?.text ?? "", String(questionId));
+      assert.include(question?.text ?? "", "t3_pending_request_respond");
+    }),
+  );
+
+  it.effect("leaves a blocking wait to report its own paused child", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:paused-wait-parent");
+      const waitedChildThreadId = ThreadId.make("thread:paused-wait-child");
+      const asyncChildThreadId = ThreadId.make("thread:paused-wait-async-child");
+      const waitedTaskId = NodeId.make("node:paused-wait-task");
+      const asyncTaskId = NodeId.make("node:paused-wait-async-task");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make("project:paused-wait"),
+        runId: RunId.make("run:paused-wait-parent"),
+        rootNodeId: NodeId.make("node:paused-wait-root"),
+        taskId: waitedTaskId,
+        now,
+      });
+      // The parent's run is live, so its mode=wait call is still polling the first task.
+      yield* attachChildThread({
+        parentThreadId: threadId,
+        taskId: waitedTaskId,
+        childThreadId: waitedChildThreadId,
+        completionWake: "settled_only",
+        now,
+      });
+      yield* attachChildThread({
+        parentThreadId: threadId,
+        taskId: asyncTaskId,
+        childThreadId: asyncChildThreadId,
+        completionWake: "always",
+        now,
+      });
+      const afterSequence = yield* sink.latestSequence();
+
+      yield* sink.write({
+        events: [
+          pendingRequest({
+            childThreadId: waitedChildThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-wait-approval"),
+            kind: "command",
+            now,
+          }),
+          pendingRequest({
+            childThreadId: asyncChildThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-wait-async-approval"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+
+      const wakes = yield* awaitWake(threadId, afterSequence, "approval");
+      assert.deepEqual(
+        wakes.map((message) => message.notification?.source),
+        [{ kind: "delegated_task", taskIds: [asyncTaskId], childThreadId: asyncChildThreadId }],
+      );
+    }),
+  );
+
+  it.effect("does not wake the parent for a request that was answered first", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const answered = yield* seedParentWithAsyncChild("paused-answered", now);
+      const pending = yield* seedParentWithAsyncChild("paused-pending", now);
+      const answeredId = RuntimeRequestId.make("runtime-request:paused-answered-approval");
+      const afterSequence = yield* sink.latestSequence();
+
+      // One write, so the request is already resolved when its event is handled.
+      yield* sink.write({
+        events: [
+          pendingRequest({
+            childThreadId: answered.childThreadId,
+            requestId: answeredId,
+            kind: "command",
+            now,
+          }),
+          pendingRequest({
+            childThreadId: answered.childThreadId,
+            requestId: answeredId,
+            kind: "command",
+            status: "resolved",
+            now,
+          }),
+          pendingRequest({
+            childThreadId: pending.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-pending-approval"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+
+      yield* awaitWake(pending.threadId, afterSequence, "approval");
+      const orchestrator = yield* OrchestratorV2;
+      const parent = yield* orchestrator.getThreadProjection(answered.threadId);
+      assert.deepEqual(
+        parent.messages.filter((message) => message.notification !== undefined),
+        [],
+      );
+    }),
+  );
+
+  it.effect("wakes the parent on a later approval when the first wake could not be sent", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const blocked = yield* seedParentWithAsyncChild("paused-retry", now);
+      const witness = yield* seedParentWithAsyncChild("paused-retry-witness", now);
+      const afterSequence = yield* sink.latestSequence();
+      // A pending merge-back makes this parent reject queued messages.
+      const mergeBack = {
+        id: ContextTransferId.make("context-transfer:paused-retry-merge-back"),
+        type: "merge_back" as const,
+        sourceThreadId: witness.threadId,
+        targetThreadId: blocked.threadId,
+        sourcePoint: { threadId: witness.threadId },
+        basePoint: null,
+        sourceProviderInstanceId: null,
+        targetProviderInstanceId: null,
+        targetRunId: null,
+        status: "pending" as const,
+        resolution: null,
+        createdBy: "user" as const,
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      };
+
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:paused-retry-merge-back"),
+            type: "context-transfer.created",
+            threadId: blocked.threadId,
+            occurredAt: now,
+            payload: mergeBack,
+          },
+          pendingRequest({
+            childThreadId: blocked.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-retry-approval-1"),
+            kind: "command",
+            now,
+          }),
+          pendingRequest({
+            childThreadId: witness.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-retry-witness-approval"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+      // The witness wake lands after the first approval was handled and rejected.
+      yield* awaitWake(witness.threadId, afterSequence, "approval");
+      const orchestrator = yield* OrchestratorV2;
+      const rejected = yield* orchestrator.getThreadProjection(blocked.threadId);
+      assert.deepEqual(
+        rejected.messages.filter((message) => message.notification !== undefined),
+        [],
+      );
+
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:paused-retry-merge-back-consumed"),
+            type: "context-transfer.updated",
+            threadId: blocked.threadId,
+            occurredAt: now,
+            payload: { ...mergeBack, status: "consumed" as const, consumedAt: now },
+          },
+          pendingRequest({
+            childThreadId: blocked.childThreadId,
+            requestId: RuntimeRequestId.make("runtime-request:paused-retry-approval-2"),
+            kind: "command",
+            now,
+          }),
+        ],
+      });
+
+      const wakes = yield* awaitWake(blocked.threadId, afterSequence, "approval");
+      assert.deepEqual(
+        wakes.map((message) => message.notification?.source),
+        [
+          {
+            kind: "delegated_task",
+            taskIds: [blocked.taskId],
+            childThreadId: blocked.childThreadId,
+          },
+        ],
+      );
+    }),
   );
 });

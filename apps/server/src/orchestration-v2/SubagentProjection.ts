@@ -8,6 +8,7 @@ import type {
   OrchestrationV2CreationSource,
   OrchestrationV2ProviderRef,
   OrchestrationV2Run,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
@@ -201,6 +202,19 @@ export function subagentResultForRun(
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
+}
+
+/**
+ * A pending request holds its run until someone responds. A question answered
+ * by a follow-up message is the exception: its run has already ended.
+ */
+export function isBlockingRuntimeRequest(
+  request: Pick<OrchestrationV2RuntimeRequest, "status" | "kind" | "responseCapability">,
+): boolean {
+  return (
+    request.status === "pending" &&
+    (request.kind !== "user_input" || request.responseCapability.type !== "message")
+  );
 }
 
 /** A finished turn can still own live children or queued completion follow-ups. */

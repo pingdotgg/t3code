@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
@@ -60,6 +61,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
       const dependencies = Layer.mergeAll(
@@ -164,6 +166,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -230,6 +233,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -299,6 +303,7 @@ describe("OrchestratorMcpService", () => {
         messages: [],
         subagents: [],
         providerThreads: [],
+        runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -436,6 +441,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     messages: [],
     subagents: [],
     providerThreads: [],
+    runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
 
@@ -671,6 +677,112 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.model, "ant-model");
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),
+  );
+
+  it.effect("a blocking wait returns as soon as the child pauses on an approval", () =>
+    Effect.gen(function* () {
+      let delegated = false;
+      const requestId = RuntimeRequestId.make("runtime-request:mcp-providers-approval");
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the diff.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const pausedChild = {
+        ...childProjection,
+        runs: [{ id: RunId.make("run:mcp-providers-child"), ordinal: 1, status: "running" }],
+        runtimeRequests: [
+          {
+            id: requestId,
+            kind: "command",
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId: "provider-session:child" },
+          },
+          // Answered by a follow-up message, so it holds no run.
+          {
+            id: RuntimeRequestId.make("runtime-request:mcp-providers-question"),
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const dispatched = yield* Ref.make<ReadonlyArray<string>>([]);
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId ? parentProjection(delegated ? [task] : []) : pausedChild,
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (types) => [...types, command.type]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        Layer.mock(ProviderRegistry)({
+          getProviders: Effect.succeed([
+            providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+          ]),
+        }),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        // The test clock never advances, so this only returns if the wait
+        // stops polling once the child is paused.
+        const result = yield* service.delegateTask(scope, {
+          task: "Review the diff.",
+          mode: "wait",
+          timeoutMs: 60_000,
+          clientRequestId: "delegate-paused-1",
+        });
+        assert.equal(result.status, "running");
+        assert.equal(result.workState, "blocked_on_request");
+        assert.deepEqual(result.pendingRequests, [{ requestId, kind: "command" }]);
+        assert.isFalse(result.waitTimedOut);
+        // The wait no longer owns delivery, so the later result must wake the parent.
+        assert.deepEqual(yield* Ref.get(dispatched), [
+          "delegated_task.request",
+          "delegated_task.wake-policy",
+        ]);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+    }),
   );
 
   it.effect("resolves a driverKind target to a capable Antigravity instance", () =>

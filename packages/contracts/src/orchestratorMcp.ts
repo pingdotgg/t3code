@@ -11,6 +11,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -28,6 +29,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import {
@@ -195,7 +197,21 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,
   status: OrchestratorMcpDelegatedTaskStatus,
-  workState: Schema.Literals(["working", "waiting_for_children", "result_available"]),
+  workState: Schema.Literals([
+    "working",
+    "blocked_on_request",
+    "waiting_for_children",
+    "result_available",
+  ]),
+  pendingRequests: Schema.Array(
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      kind: OrchestrationV2RuntimeRequest.fields.kind,
+    }),
+  ).annotate({
+    description:
+      "Requests the child is paused on while workState is blocked_on_request. A user_input request is a question: read and answer it with t3_pending_request_read and t3_pending_request_respond on childThreadId. Every other kind needs a person to approve it in the child's thread; this thread cannot.",
+  }),
   hasPendingChildRuns: Schema.Boolean,
   latestTerminalRunId: Schema.NullOr(RunId),
   latestTerminalStatus: Schema.NullOr(OrchestratorMcpTerminalDelegatedTaskStatus),

@@ -235,7 +235,9 @@ provider session. The request becomes the V2 command
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
-`waitTimedOut: true`, and the caller can continue with `task_status`.
+`waitTimedOut: true`, and the caller can continue with `task_status`. A wait
+also returns as soon as the child pauses on a request, since the child cannot
+finish until someone responds.
 
 ```ts
 type DelegateTaskResult = {
@@ -244,7 +246,8 @@ type DelegateTaskResult = {
   childRunId: string | null;
   childNodeId: string;
   status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
-  workState: "working" | "waiting_for_children" | "result_available";
+  workState: "working" | "blocked_on_request" | "waiting_for_children" | "result_available";
+  pendingRequests: Array<{ requestId: string; kind: string }>;
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
@@ -262,12 +265,20 @@ type DelegateTaskResult = {
 
 Reads a delegated task from the parent thread's durable projection. A task ID
 from another parent thread is rejected. `childRunId` identifies the original
-run. `workState` distinguishes active work, a finished turn waiting for children,
-and an available result. The task remains nonterminal until its known work
-finishes. Its published `summary` and result transfer then remain stable across
+run. `workState` distinguishes active work, work paused on a request, a finished
+turn waiting for children, and an available result. The task remains nonterminal
+until its known work finishes. Its published `summary` and result transfer then remain stable across
 later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
 `latestTerminal*` exposes later executed, non-monitor results without replacing
 the published task result.
+
+A child paused on an approval or a question keeps its run `running`, so no
+completion ever reaches the parent on its own. `workState` is then
+`blocked_on_request` and `pendingRequests` lists what it is paused on. The
+parent is also woken by a notification: once per task for approvals, which only
+a person can answer in the child's thread, and once per question, which the
+parent can answer with `t3_pending_request_respond`. A parent still blocked in
+`mode: "wait"` is not woken; its call returns the paused task instead.
 
 ### `task_cancel`
 

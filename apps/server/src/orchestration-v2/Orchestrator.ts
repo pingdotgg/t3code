@@ -13,6 +13,7 @@ import {
 import {
   type ChatAttachment,
   CommandId,
+  isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -66,7 +67,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
-import { notificationTurnItem } from "./Notification.ts";
+import { delegatedTaskBlockedWake, notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -97,6 +98,7 @@ import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
+  isBlockingRuntimeRequest,
   makeSubagentChildThread,
   subagentResultForRun,
   delegatedTaskProgress,
@@ -2334,9 +2336,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      const blockingRequestExists = pendingRequests.some(
-        (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
-      );
+      const blockingRequestExists = pendingRequests.some(isBlockingRuntimeRequest);
       if (activeRunExists || blockingRequestExists) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -9270,6 +9270,99 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             stored.event.payload.status === "rolled_back"),
       ),
       Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
+
+  /**
+   * Tells the parent of an app-owned delegated child that the child is paused
+   * on a request. A paused run never goes terminal, so the completion wake
+   * alone leaves the parent waiting on a result that cannot arrive. Approvals
+   * wake the parent once per task, since it cannot answer them and a
+   * supervised child asks again for every action. Questions wake it each time,
+   * because the parent can answer those.
+   */
+  const notifyParentOfBlockedSubagent = (stored: OrchestrationV2StoredEvent) =>
+    Effect.gen(function* () {
+      if (stored.event.type !== "runtime-request.updated") return;
+      const request = stored.event.payload;
+      const childThreadId = stored.event.threadId;
+      const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+      if (parentThreadId === undefined) return;
+      yield* threadDispatch.withLock(
+        parentThreadId,
+        Effect.gen(function* () {
+          const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
+            "runs",
+            "subagents",
+          ]);
+          const task = parent.subagents.find(
+            (candidate) =>
+              candidate.origin === "app_owned" && candidate.childThreadId === childThreadId,
+          );
+          if (
+            task === undefined ||
+            !isOrchestrationV2WorkActive(task.status) ||
+            parent.thread.archivedAt !== null ||
+            parent.thread.deletedAt !== null ||
+            // A blocking wait still owns delivery and returns the paused task itself.
+            ((task.completionWake ?? "settled_only") === "settled_only" && hasLiveRun(parent))
+          ) {
+            return;
+          }
+          // The wake's message id is what limits approvals to one per task. A
+          // dispatch that failed left no message, so a later request retries.
+          const messageId = MessageId.make(
+            `message:delegated-task-blocked:${request.kind === "user_input" ? request.id : task.id}`,
+          );
+          const delivered = yield* projectionStore.getThreadRecords(parentThreadId, ["messages"], {
+            messageIds: [messageId],
+          });
+          // This event may be handled late; the request can be answered by then.
+          const current = yield* projectionStore.getRuntimeRequest(childThreadId, request.id);
+          if (
+            delivered.messages.length > 0 ||
+            current === undefined ||
+            !isBlockingRuntimeRequest(current)
+          ) {
+            return;
+          }
+          const wake = delegatedTaskBlockedWake(task, childThreadId, request);
+          yield* dispatchWithReceiptEffect({
+            type: "message.dispatch",
+            commandId: yield* idAllocator.allocate.command({
+              fixtureName: "delegated-task-blocked",
+              commandName: "dispatch",
+            }),
+            threadId: parentThreadId,
+            messageId,
+            text: wake.text,
+            notification: wake.notification,
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+        }),
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to tell a parent its delegated task is paused", {
+          childThreadId: stored.event.threadId,
+          sequence: stored.sequence,
+          cause,
+        }),
+      ),
+    );
+
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "runtime-request.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "runtime-request.updated" &&
+          isBlockingRuntimeRequest(stored.event.payload),
+      ),
+      Stream.runForEach(notifyParentOfBlockedSubagent),
       Effect.forkDetach,
     );
 

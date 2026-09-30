@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2Notification,
   OrchestrationV2NotificationSource,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ThreadId,
@@ -205,6 +206,30 @@ function delegatedCompletionNotification(
     source: { kind: "delegated_task", taskIds },
     outcome,
     summary: `${count} delegated tasks ${verb}${labels.length === 0 ? "" : `: ${labels.join(", ")}`}`,
+  };
+}
+
+/**
+ * What a parent is told when its delegated child pauses on a request: the wake
+ * text its agent reads, and the timeline row that opens the child thread.
+ */
+export function delegatedTaskBlockedWake(
+  task: Pick<OrchestrationV2Subagent, "id" | "title" | "prompt">,
+  childThreadId: ThreadId,
+  request: Pick<OrchestrationV2RuntimeRequest, "id" | "kind">,
+): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+  const label = reportLabel(task.title?.trim() || task.prompt);
+  const named = `Delegated task${label === undefined ? "" : ` "${label}"`}`;
+  const source = { kind: "delegated_task" as const, taskIds: [task.id], childThreadId };
+  if (request.kind === "user_input") {
+    return {
+      text: `Delegated task ${task.id} is paused on a question. Read it with t3_pending_request_read and answer it with t3_pending_request_respond, using threadId ${childThreadId} and requestId ${request.id}.`,
+      notification: { source, outcome: "updated", summary: `${named} is waiting for an answer` },
+    };
+  }
+  return {
+    text: `Delegated task ${task.id} is paused: its thread ${childThreadId} is waiting for a person to respond to a ${request.kind} request, and this thread cannot respond to it. Tell the user it needs their approval in that thread, or call task_cancel and delegate again without a narrower runtimeMode. Later approval requests from this task will not wake this thread; its result still will.`,
+    notification: { source, outcome: "updated", summary: `${named} is waiting for approval` },
   };
 }
 

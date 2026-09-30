@@ -63,6 +63,7 @@ import * as Schema from "effect/Schema";
 
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
+  isBlockingRuntimeRequest,
   subagentResultForRun,
   delegatedTaskProgress,
 } from "../orchestration-v2/SubagentProjection.ts";
@@ -1037,8 +1038,15 @@ const make = Effect.gen(function* () {
       const childControls = yield* threadManagement
         .getThreadRecords(
           task.childThreadId,
-          ["runs", "messages", "contextTransfers", "subagents", "providerThreads"],
-          { messageRoles: ["user"] },
+          [
+            "runs",
+            "messages",
+            "contextTransfers",
+            "subagents",
+            "providerThreads",
+            "runtimeRequests",
+          ],
+          { messageRoles: ["user"], runtimeRequestStatuses: ["pending"] },
         )
         .pipe(Effect.mapError(threadManagementFailure));
       const childRun = delegatedTaskRun(childControls, task);
@@ -1062,7 +1070,19 @@ const make = Effect.gen(function* () {
         messages: [...childControls.messages, ...resultRecords.messages],
         turnItems: resultRecords.turnItems,
       };
-      const workState = task.result !== null ? "result_available" : progress.state;
+      // Only a live run can be held by a request; a settled one left none behind.
+      const pendingRequests =
+        task.result === null && progress.state === "working"
+          ? childControls.runtimeRequests
+              .filter(isBlockingRuntimeRequest)
+              .map((request) => ({ requestId: request.id, kind: request.kind }))
+          : [];
+      const workState =
+        task.result !== null
+          ? "result_available"
+          : pendingRequests.length > 0
+            ? "blocked_on_request"
+            : progress.state;
       const status =
         task.result !== null
           ? taskStatusForRun(
@@ -1107,6 +1127,7 @@ const make = Effect.gen(function* () {
         childNodeId: task.id,
         status,
         workState,
+        pendingRequests,
         hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
         providerInstanceId: task.providerInstanceId,
         model: task.model,
@@ -1162,7 +1183,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       while (true) {
         const result = yield* readTask(scope, taskId, false, true);
-        if (isTerminalTaskStatus(result.status)) return result;
+        // A paused child cannot finish until someone responds, so waiting on
+        // only spends the caller's timeout.
+        if (isTerminalTaskStatus(result.status) || result.workState === "blocked_on_request") {
+          return result;
+        }
         yield* Effect.sleep(Duration.millis(TASK_POLL_INTERVAL_MS));
       }
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)));
@@ -1441,11 +1466,12 @@ const make = Effect.gen(function* () {
           Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
+        if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
           return waited.value;
         }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
+        // The blocking wait ended without a result (it timed out, or the child
+        // paused on a request), so it no longer owns delivery: upgrade the
+        // task so a later terminal wakes the parent even mid-turn. Best
         // effort; on failure the settled_only policy still wakes a settled
         // parent.
         yield* threadManagement
@@ -1483,7 +1509,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return yield* readTask(scope, taskId, Option.isNone(waited), true);
       }),
     taskStatus: (scope, taskId) => readTask(scope, taskId, false, true),
     cancelTask: (scope, input) =>

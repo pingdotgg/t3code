@@ -278,6 +278,9 @@ export interface ProjectionRecordFilter {
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly runIds?: ReadonlyArray<RunId>;
   readonly turnItemTypes?: ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+  readonly runtimeRequestStatuses?: ReadonlyArray<
+    OrchestrationV2ThreadProjection["runtimeRequests"][number]["status"]
+  >;
 }
 export type ProjectionRecordField = Exclude<
   keyof OrchestrationV2ThreadProjection,
@@ -2920,6 +2923,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_runtime_requests
             WHERE thread_id = ${threadId}
+              ${filter?.runtimeRequestStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runtimeRequestStatuses)}))`}
             ORDER BY created_at ASC, runtime_request_id ASC
           `
               : sql<PayloadRow>`
@@ -5765,6 +5769,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 (filter?.turnItemTypes === undefined || filter.turnItemTypes.includes(row.type)) &&
                 (filter?.turnItemRunId === undefined || filter.turnItemRunId === row.runId),
             ),
+            runtimeRequests:
+              filter?.runtimeRequestStatuses === undefined
+                ? projection.runtimeRequests
+                : projection.runtimeRequests.filter((row) =>
+                    filter.runtimeRequestStatuses!.includes(row.status),
+                  ),
           };
           return Object.fromEntries([
             ["thread", projection.thread],
