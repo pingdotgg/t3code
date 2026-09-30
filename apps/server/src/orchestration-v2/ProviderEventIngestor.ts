@@ -37,7 +37,8 @@ export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEven
   {
     providerSessionId: ProviderSessionId,
     threadId: ThreadId,
-    providerEvent: ProviderAdapterV2Event,
+    // Diagnostics must accept the payload that normalization rejected.
+    providerEvent: Schema.Struct({ type: Schema.String }),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

@@ -76,6 +76,18 @@ export interface InheritedBackgroundTurnItemRoute {
 
 type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
 
+// Snapshot replacements can reconstruct these entities. Control events must
+// fail ingestion if rejected: their terminal state, thread, or prompt is required.
+const recoverableSnapshotEventTypes: ReadonlySet<ProviderAdapterV2Event["type"]> = new Set([
+  "message.updated",
+  "turn_item.updated",
+  "node.updated",
+  "subagent.updated",
+  "plan.updated",
+  "provider_thread.updated",
+  "provider_turn.updated",
+]);
+
 function isTerminalProviderTurnStatus(status: OrchestrationV2ProviderTurn["status"]): boolean {
   return (
     status === "completed" ||
@@ -1176,37 +1188,60 @@ export const layer: Layer.Layer<
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&
                     event.providerThread.id === input.providerThread.id;
-                  const storedEvents = yield* providerEventIngestor.ingestNormalized({
-                    analyticsContext: {
-                      modelSelection: input.modelSelection,
-                      runtimeMode: input.runtimePolicy.runtimeMode,
-                      interactionMode: input.runtimePolicy.interactionMode,
-                    },
-                    providerSessionId: input.providerSessionId,
-                    providerInstanceId: input.run.providerInstanceId,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    event: deliveredEvent,
-                    ...(isRootProviderThreadUpdate
-                      ? rootTerminalAlreadySeen
-                        ? {
-                            writeIfProviderThreadOwner: {
-                              providerThreadId: input.providerThread.id,
+                  // Skip schema-rejected snapshots. Control events, storage
+                  // failures, and defects still fail the stream.
+                  const storedEvents = yield* providerEventIngestor
+                    .ingestNormalized({
+                      analyticsContext: {
+                        modelSelection: input.modelSelection,
+                        runtimeMode: input.runtimePolicy.runtimeMode,
+                        interactionMode: input.runtimePolicy.interactionMode,
+                      },
+                      providerSessionId: input.providerSessionId,
+                      providerInstanceId: input.run.providerInstanceId,
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      nodeId: input.rootNode.id,
+                      event: deliveredEvent,
+                      ...(isRootProviderThreadUpdate
+                        ? rootTerminalAlreadySeen
+                          ? {
+                              writeIfProviderThreadOwner: {
+                                providerThreadId: input.providerThread.id,
+                                runId: input.run.id,
+                                activeAttemptId: input.attempt.id,
+                                expectedLastRunOrdinal: input.run.ordinal,
+                              },
+                            }
+                          : {
+                              writeIfRunCurrent: {
+                                runId: input.run.id,
+                                activeAttemptId: input.attempt.id,
+                                expectedStatus: "running" as const,
+                              },
+                            }
+                        : {}),
+                    })
+                    .pipe(
+                      Effect.catchIf(
+                        (error) =>
+                          recoverableSnapshotEventTypes.has(event.type) &&
+                          error._tag === "ProviderEventNormalizeError" &&
+                          Schema.isSchemaError(error.cause),
+                        (error) =>
+                          Effect.logWarning(
+                            "orchestration V2 provider event ingestion skipped a malformed event",
+                            {
                               runId: input.run.id,
-                              activeAttemptId: input.attempt.id,
-                              expectedLastRunOrdinal: input.run.ordinal,
+                              eventType: event.type,
+                              cause: Cause.pretty(Cause.fail(error.cause)),
                             },
-                          }
-                        : {
-                            writeIfRunCurrent: {
-                              runId: input.run.id,
-                              activeAttemptId: input.attempt.id,
-                              expectedStatus: "running" as const,
-                            },
-                          }
-                      : {}),
-                  });
+                          ).pipe(Effect.as(null)),
+                      ),
+                    );
+                  if (storedEvents === null) {
+                    return;
+                  }
                   storedEventCount = storedEvents.length;
                   if (
                     isRootProviderThreadUpdate &&

@@ -16,6 +16,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -23,6 +24,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ServerSettingsError,
   ThreadId,
   TurnItemId,
@@ -35,13 +37,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { CheckpointBaselineCaptureError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
-import { EventSinkV2 } from "./EventSink.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
+import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
+import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import {
   ProviderAdapterEventStreamError,
@@ -50,7 +57,12 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
-import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
+import {
+  ProviderEventIngestorV2,
+  ProviderEventNormalizeError,
+  ProviderEventPublishError,
+  layer as providerEventIngestorLayer,
+} from "./ProviderEventIngestor.ts";
 import {
   canRouteRelatedSubagent,
   cascadeTerminalizeRunOwnedSubagents,
@@ -3160,6 +3172,327 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+const IngestionStoresLayer = Layer.merge(eventStoreLayer, projectionStoreLayer).pipe(
+  Layer.provide(SqlitePersistenceMemory),
+);
+const IngestionSinkLayer = eventSinkLayer.pipe(
+  Layer.provide(Layer.mergeAll(IngestionStoresLayer, SqlitePersistenceMemory)),
+);
+const RealIngestionTestLayer = Layer.mergeAll(
+  SqlitePersistenceMemory,
+  IngestionStoresLayer,
+  providerEventIngestorLayer.pipe(
+    Layer.provide(Layer.mergeAll(IngestionStoresLayer, IngestionSinkLayer, idAllocatorLayer)),
+  ),
+);
+
+it.effect.each([
+  { kind: "node", replacementBeforeTerminal: true },
+  { kind: "turn_item", replacementBeforeTerminal: true },
+  { kind: "node", replacementBeforeTerminal: false },
+  { kind: "turn_item", replacementBeforeTerminal: false },
+] as const)(
+  "recovers $kind snapshots before completion without retaining rejected lifecycle events ($replacementBeforeTerminal)",
+  ({ kind, replacementBeforeTerminal }) =>
+    Effect.gen(function* () {
+      const ingestor = yield* ProviderEventIngestorV2;
+      const eventStore = yield* EventStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const key = `ingest-failure:malformed-${kind}`;
+      const ids = backgroundScenarioIds(key);
+      let rejected = false;
+      const { observed } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () => {
+          const running: ProviderAdapterV2Event =
+            kind === "node"
+              ? {
+                  type: "node.updated",
+                  driver,
+                  node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                }
+              : {
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: makeRunOwnedSubagentTurnItemFixture({
+                    ids,
+                    driver,
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    childThreadId: ids.childThreadId,
+                    status: "running",
+                  }),
+                };
+          const malformed =
+            running.type === "node.updated"
+              ? ({
+                  ...running,
+                  node: { ...running.node, status: "invalid-status" },
+                } as unknown as ProviderAdapterV2Event)
+              : running.type === "turn_item.updated"
+                ? { ...running, turnItem: { ...running.turnItem, ordinal: Number.NaN } }
+                : running;
+          const settled: ProviderAdapterV2Event =
+            running.type === "node.updated"
+              ? { ...running, node: { ...running.node, status: "interrupted" } }
+              : running.type === "turn_item.updated"
+                ? { ...running, turnItem: { ...running.turnItem, status: "interrupted" } }
+                : running;
+          return replacementBeforeTerminal
+            ? Stream.make(malformed, settled, rootTerminalEvent(ids, "completed"), running)
+            : Stream.make(malformed, rootTerminalEvent(ids, "completed"), settled, running);
+        },
+        ingestNormalized: (input) =>
+          ingestor.ingestNormalized(input).pipe(
+            Effect.tapCause(() =>
+              Effect.sync(() => {
+                rejected = true;
+              }),
+            ),
+          ),
+      });
+      assert.isTrue(rejected);
+      assert.notInclude(observed, "run:failed");
+      const stored = yield* eventStore.read({ threadId: ids.threadId }).pipe(Stream.runCollect);
+      assert.deepEqual(
+        stored.map((entry) => entry.event.type),
+        replacementBeforeTerminal ? [kind === "node" ? "node.updated" : "turn-item.updated"] : [],
+      );
+      const projected =
+        kind === "node"
+          ? yield* sql<{ readonly id: string; readonly status: string }>`
+          SELECT node_id AS id, status FROM orchestration_v2_projection_nodes WHERE thread_id = ${ids.threadId}
+        `
+          : yield* sql<{ readonly id: string; readonly status: string }>`
+          SELECT turn_item_id AS id, status FROM orchestration_v2_projection_turn_items WHERE thread_id = ${ids.threadId}
+        `;
+      assert.deepEqual(
+        projected.map((entity) => [entity.id, entity.status]),
+        replacementBeforeTerminal
+          ? [[kind === "node" ? ids.subagentNodeId : ids.itemId, "interrupted"]]
+          : [],
+      );
+    }).pipe(Effect.provide(RealIngestionTestLayer)),
+);
+
+it.effect("does not use a rejected item's ordinal to build the stream failure item", () =>
+  Effect.gen(function* () {
+    const ingestor = yield* ProviderEventIngestorV2;
+    const eventStore = yield* EventStoreV2;
+    const key = "ingest-failure:malformed-ordinal";
+    const ids = backgroundScenarioIds(key);
+    const { observed, written } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () =>
+        Stream.concat(
+          Stream.make({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              ...makeRunOwnedSubagentTurnItemFixture({
+                ids,
+                driver,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                childThreadId: ids.childThreadId,
+                status: "running",
+              }),
+              ordinal: Number.NaN,
+            },
+          } as const),
+          Stream.fail(
+            new ProviderAdapterEventStreamError({
+              driver,
+              providerSessionId: ProviderSessionId.make(`session:${key}`),
+              cause: new Error("stream broke"),
+            }),
+          ),
+        ),
+      ingestNormalized: ingestor.ingestNormalized,
+    });
+    assert.include(observed, "run:failed");
+    const failure = written.find((item) => item.type === "error");
+    assert.equal(failure?.ordinal, 101);
+    assert.isEmpty(yield* eventStore.read({}).pipe(Stream.runCollect));
+  }).pipe(Effect.provide(RealIngestionTestLayer)),
+);
+
+it.effect("fails a run when its only terminal is malformed", () =>
+  Effect.gen(function* () {
+    const ingestor = yield* ProviderEventIngestorV2;
+    const eventStore = yield* EventStoreV2;
+    const { observed, written } = yield* captureRootRunTermination({
+      key: "ingest-failure:malformed-terminal",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make({
+          ...rootTerminalEvent(ids, "failed"),
+          failureItemOrdinal: Number.NaN,
+        } as ProviderAdapterV2Event),
+      ingestNormalized: ingestor.ingestNormalized,
+    });
+    assert.include(observed, "run:failed");
+    assert.notInclude(observed, "run:waiting");
+    assert.equal(written.find((item) => item.type === "error")?.ordinal, 101);
+    assert.isEmpty(yield* eventStore.read({}).pipe(Stream.runCollect));
+  }).pipe(Effect.provide(RealIngestionTestLayer)),
+);
+
+it.effect.each(["app_thread.created", "runtime_request.updated"] as const)(
+  "fails visibly when a control event is schema-rejected: %s",
+  (kind) =>
+    Effect.gen(function* () {
+      const ingestor = yield* ProviderEventIngestorV2;
+      const eventStore = yield* EventStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const key = `ingest-failure:control-${kind}`;
+      const attempted: string[] = [];
+      let schemaRejected = false;
+      const { observed, written } = yield* captureRootRunTermination({
+        key,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) => {
+          if (kind === "app_thread.created") {
+            return Stream.make(
+              {
+                type: "app_thread.created",
+                driver,
+                appThread: {
+                  id: ids.childThreadId,
+                  projectId: ProjectId.make(`project:${key}`),
+                  title: "",
+                  createdBy: "agent",
+                  creationSource: "provider",
+                  providerInstanceId: ProviderInstanceId.make("codex"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex"),
+                    model: "gpt-5.4",
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: null,
+                  worktreePath: null,
+                  activeProviderThreadId: null,
+                  lineage: {
+                    parentThreadId: ids.threadId,
+                    relationshipToParent: "subagent",
+                    rootThreadId: ids.threadId,
+                  },
+                  forkedFrom: null,
+                  createdAt: now,
+                  updatedAt: now,
+                  archivedAt: null,
+                  settledOverride: null,
+                  settledAt: null,
+                  lastVisitedAt: null,
+                  deletedAt: null,
+                },
+              },
+              {
+                type: "node.updated",
+                driver,
+                node: {
+                  ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                  threadId: ids.childThreadId,
+                  runId: null,
+                },
+              },
+              rootTerminalEvent(ids, "completed"),
+            );
+          }
+          return Stream.make({
+            type: "runtime_request.updated",
+            driver,
+            runtimeRequest: {
+              id: RuntimeRequestId.make(`request:${key}`),
+              nodeId: ids.rootNodeId,
+              providerTurnId: ids.rootProviderTurnId,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId: "" as ProviderSessionId },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          });
+        },
+        ingestNormalized: (input) => {
+          attempted.push(input.event.type);
+          return ingestor.ingestNormalized(input).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                schemaRejected =
+                  error._tag === "ProviderEventNormalizeError" && Schema.isSchemaError(error.cause);
+              }),
+            ),
+          );
+        },
+      });
+      assert.isTrue(schemaRejected);
+      const stored = yield* eventStore.read({}).pipe(Stream.runCollect);
+      assert.isEmpty(stored.map((entry) => entry.event.type));
+      assert.isEmpty(yield* sql`SELECT * FROM orchestration_v2_projection_nodes`);
+      assert.isEmpty(yield* sql`SELECT * FROM orchestration_v2_projection_runtime_requests`);
+      assert.include(observed, "run:failed");
+      assert.notInclude(observed, "run:waiting");
+      assert.equal(written.find((item) => item.type === "error")?.ordinal, 101);
+      assert.deepEqual(attempted, [kind]);
+    }).pipe(Effect.provide(RealIngestionTestLayer)),
+);
+
+it.effect.each(["publish", "normalize", "defect", "interruption"] as const)(
+  "does not recover from an ingestion %s failure",
+  (errorType) =>
+    Effect.gen(function* () {
+      const attempted: string[] = [];
+      const { observed, written } = yield* captureRootRunTermination({
+        key: `ingest-failure:storage-${errorType}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.make(
+            {
+              type: "node.updated",
+              driver,
+              node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            } as const,
+            rootTerminalEvent(ids, "completed"),
+          ),
+        ingestNormalized: (input) => {
+          attempted.push(input.event.type);
+          const cause = new Error("SQLITE_BUSY: database is locked");
+          if (errorType === "publish") {
+            return Effect.fail(
+              new ProviderEventPublishError({
+                providerSessionId: input.providerSessionId,
+                eventCount: 1,
+                cause,
+              }),
+            );
+          }
+          if (errorType === "normalize") {
+            return Effect.fail(
+              new ProviderEventNormalizeError({
+                providerSessionId: input.providerSessionId,
+                threadId: input.threadId,
+                providerEvent: input.event,
+                cause,
+              }),
+            );
+          }
+          return errorType === "interruption" ? Effect.interrupt : Effect.die(cause);
+        },
+      });
+      assert.include(observed, "run:failed", errorType);
+      assert.notInclude(observed, "run:waiting", errorType);
+      assert.isDefined(
+        written.find((item) => item.type === "error"),
+        errorType,
+      );
+      assert.deepEqual(attempted, ["node.updated"], errorType);
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
@@ -3170,6 +3503,7 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly ingestNormalized?: ProviderEventIngestorV2["Service"]["ingestNormalized"];
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3219,7 +3553,7 @@ function captureRootRunTermination(input: {
           }),
           idAllocatorLayer,
           Layer.mock(ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: (ingest) => input.ingestNormalized?.(ingest) ?? Effect.succeed([]),
           }),
           ServerSettingsService.layerTest(),
           Layer.succeed(RunFinalizationObserver, {
