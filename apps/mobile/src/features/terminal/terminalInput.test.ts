@@ -15,6 +15,9 @@ const CTRL_C = byte(0x03);
 const CTRL_V = byte(0x16);
 
 describe("applyCtrlModifier", () => {
+  it("encodes ctrl+backspace as the terminal's delete-word key", () => {
+    expect(applyCtrlModifier(byte(0x7f))).toBe(byte(0x17));
+  });
   it("maps letters to control bytes regardless of case", () => {
     expect(applyCtrlModifier("c")).toBe(CTRL_C);
     expect(applyCtrlModifier("C")).toBe(CTRL_C);

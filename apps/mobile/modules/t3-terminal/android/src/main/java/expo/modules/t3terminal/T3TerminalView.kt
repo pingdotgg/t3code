@@ -2,15 +2,8 @@ package expo.modules.t3terminal
 
 import android.content.Context
 import android.graphics.Color
-import android.graphics.Typeface
-import android.text.Editable
-import android.text.InputType
-import android.text.TextWatcher
-import android.view.KeyEvent
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
@@ -20,8 +13,8 @@ import kotlin.math.max
 class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
-  private val inputView = EditText(context)
   private val onInput by EventDispatcher()
+  private val inputView = TerminalInputView(context) { data -> onInput(mapOf("data" to data)) }
   private val onResize by EventDispatcher()
   private val onCapture by EventDispatcher()
   var captureRequest: Double = 0.0
@@ -51,7 +44,6 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private var fedBuffer = ""
   private var cols = 0
   private var rows = 0
-  private var clearingInput = false
   private var isCleanedUp = false
   private var backgroundColorValue = Color.parseColor("#24292E")
   private var foregroundColorValue = Color.parseColor("#D1D5DA")
@@ -176,7 +168,6 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
         }
     }
 
-    configureInputView()
     container.addView(
       terminalCanvas,
       FrameLayout.LayoutParams(
@@ -218,78 +209,6 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     terminalCanvas.onCellMetricsChanged = null
     terminalCanvas.selectionDelegate = null
     destroyTerminal()
-  }
-
-  private fun configureInputView() {
-    inputView.setSingleLine(true)
-    inputView.setTextColor(Color.TRANSPARENT)
-    inputView.setHintTextColor(Color.TRANSPARENT)
-    inputView.setBackgroundColor(Color.TRANSPARENT)
-    inputView.typeface = Typeface.MONOSPACE
-    inputView.textSize = max(fontSize, 13f)
-    inputView.alpha = 0.01f
-    inputView.isFocusableInTouchMode = true
-    inputView.imeOptions = EditorInfo.IME_ACTION_SEND or
-      EditorInfo.IME_FLAG_NO_EXTRACT_UI or
-      EditorInfo.IME_FLAG_NO_FULLSCREEN or
-      EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
-    inputView.inputType = InputType.TYPE_CLASS_TEXT or
-      InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
-      InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-    inputView.setPadding(0, 0, 0, 0)
-    inputView.setOnEditorActionListener { _, actionId, event ->
-      val isKeyUp = event?.action == KeyEvent.ACTION_UP
-      val isImeSend = actionId == EditorInfo.IME_ACTION_SEND && !isKeyUp
-      val isHardwareEnter = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
-        event.action == KeyEvent.ACTION_DOWN
-      val isEnter = isImeSend || isHardwareEnter
-      if (isEnter) {
-        // Enter must send CR: raw-mode TUIs treat LF as Ctrl+J (insert newline).
-        onInput(mapOf("data" to "\r"))
-        true
-      } else {
-        false
-      }
-    }
-    inputView.setOnKeyListener { _, keyCode, event ->
-      if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
-      when {
-        keyCode == KeyEvent.KEYCODE_DEL -> {
-          onInput(mapOf("data" to "\u007F"))
-          true
-        }
-        // Hardware keyboard Ctrl+A..Z -> control bytes 0x01..0x1A (Ctrl+C, Ctrl+Z, ...).
-        event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
-          onInput(
-            mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
-          )
-          true
-        }
-        else -> false
-      }
-    }
-    inputView.addTextChangedListener(
-      object : TextWatcher {
-        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-          if (clearingInput || s == null || count <= 0) return
-          val end = (start + count).coerceAtMost(s.length)
-          if (start >= end) return
-          val insertedText = s.subSequence(start, end).toString()
-          if (insertedText.isNotEmpty()) {
-            onInput(mapOf("data" to insertedText))
-          }
-        }
-
-        override fun afterTextChanged(editable: Editable?) {
-          if (clearingInput || editable.isNullOrEmpty()) return
-          clearingInput = true
-          editable.clear()
-          clearingInput = false
-        }
-      },
-    )
   }
 
   @Suppress("ComplexCondition")

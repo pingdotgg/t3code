@@ -10,7 +10,7 @@ class T3TerminalModule : Module() {
     // Bumped when native hardware-keyboard handling changes; surfaced in the JS debug
     // logs so a stale native binary is distinguishable from a broken key pipeline.
     Constants(
-      "hardwareKeyRevision" to 2,
+      "hardwareKeyRevision" to 3,
     )
 
     View(T3TerminalView::class) {

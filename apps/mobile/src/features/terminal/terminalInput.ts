@@ -24,6 +24,8 @@ export function applyCtrlModifier(input: string): string {
     return input;
   }
 
+  if (firstCharacter === "\u007f") return "\u0017";
+
   const lowerCharacter = firstCharacter.toLowerCase();
   if (lowerCharacter >= "a" && lowerCharacter <= "z") {
     return String.fromCharCode(lowerCharacter.charCodeAt(0) - 96);
