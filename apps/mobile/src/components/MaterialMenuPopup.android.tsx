@@ -7,9 +7,11 @@ import {
   RNHostView,
   Text,
 } from "@expo/ui/jetpack-compose";
-import { padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
+import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
+import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { MaterialMenuPopupProps } from "./MaterialMenuPopup";
 import { isAppSymbolName, SymbolView, type AppSymbolName } from "./AppSymbol";
@@ -19,12 +21,16 @@ function MenuIcon(props: {
   readonly destructive?: boolean;
   readonly disabled?: boolean;
 }) {
+  const { iconSize } = useAndroidControlSizing();
   return (
-    <RNHostView matchContents modifiers={[size(24, 24)]}>
-      <View style={{ width: 24, height: 24 }} importantForAccessibility="no-hide-descendants">
+    <RNHostView matchContents modifiers={[size(iconSize, iconSize)]}>
+      <View
+        style={{ width: iconSize, height: iconSize }}
+        importantForAccessibility="no-hide-descendants"
+      >
         <SymbolView
           name={props.name}
-          size={24}
+          size={iconSize}
           type="monochrome"
           tintColorClassName={
             props.disabled
@@ -41,24 +47,33 @@ function MenuIcon(props: {
 
 /** Native popup positioned at the original trigger, outside virtualized rows. */
 export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
-  const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
+  const { scale, menuItemHeight } = useAndroidControlSizing();
+  const body = resolveScaledTextRole("body", appearance.baseFontSize);
+  const caption = resolveScaledTextRole("caption", appearance.baseFontSize);
   const foreground = colors["--color-foreground"];
   const muted = colors["--color-foreground-muted"];
+  // A fixed native item height clips wrapped labels; a minimum lets each row grow.
+  const itemModifiers = [width(props.menuWidth), defaultMinSize({ minHeight: menuItemHeight })];
   const items = (
     <>
       {props.parent ? (
-        <DropdownMenuItem onClick={props.onBack} modifiers={[width(250)]}>
+        <DropdownMenuItem onClick={props.onBack} modifiers={itemModifiers}>
           <DropdownMenuItem.LeadingIcon>
             <MenuIcon name="arrow.left" />
           </DropdownMenuItem.LeadingIcon>
           <DropdownMenuItem.Text>
-            <Text color={foreground} style={{ typography: "bodyLarge" }}>
+            <Text color={foreground} style={{ typography: "bodyLarge", ...body }}>
               {props.parent.title}
             </Text>
           </DropdownMenuItem.Text>
         </DropdownMenuItem>
       ) : props.title ? (
-        <Text color={muted} style={{ typography: "bodySmall" }} modifiers={[padding(16, 8, 16, 8)]}>
+        <Text
+          color={muted}
+          style={{ typography: "bodySmall", ...caption }}
+          modifiers={[padding(16 * scale, 8 * scale, 16 * scale, 8 * scale)]}
+        >
           {props.title}
         </Text>
       ) : null}
@@ -66,19 +81,22 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
         <DropdownMenuItem
           key={action.id ?? `${index}-${action.title}`}
           enabled={!action.attributes?.disabled}
-          modifiers={[width(250)]}
-          elementColors={{
-            textColor: action.attributes?.destructive
-              ? colors["--color-danger-foreground"]
-              : foreground,
-            disabledTextColor: muted,
-          }}
+          modifiers={itemModifiers}
           onClick={() => props.onPress(action)}
         >
+          {action.image && isAppSymbolName(action.image) ? (
+            <DropdownMenuItem.LeadingIcon>
+              <MenuIcon
+                name={action.image}
+                destructive={action.attributes?.destructive}
+                disabled={action.attributes?.disabled}
+              />
+            </DropdownMenuItem.LeadingIcon>
+          ) : null}
           <DropdownMenuItem.Text>
             <Column>
               <Text
-                style={{ typography: "bodyLarge" }}
+                style={{ typography: "bodyLarge", ...body }}
                 color={
                   action.attributes?.disabled
                     ? muted
@@ -90,21 +108,12 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
                 {action.title}
               </Text>
               {action.subtitle ? (
-                <Text color={muted} style={{ typography: "bodySmall" }}>
+                <Text color={muted} style={{ typography: "bodySmall", ...caption }}>
                   {action.subtitle}
                 </Text>
               ) : null}
             </Column>
           </DropdownMenuItem.Text>
-          {action.image && isAppSymbolName(action.image) ? (
-            <DropdownMenuItem.LeadingIcon>
-              <MenuIcon
-                name={action.image}
-                destructive={action.attributes?.destructive}
-                disabled={action.attributes?.disabled}
-              />
-            </DropdownMenuItem.LeadingIcon>
-          ) : null}
           {(action.subactions?.length ?? 0) > 0 ? (
             <DropdownMenuItem.TrailingIcon>
               <MenuIcon name="chevron.right" disabled={action.attributes?.disabled} />
@@ -124,7 +133,7 @@ export function MaterialMenuPopup(props: MaterialMenuPopupProps) {
         colorScheme={themeAppearance}
         ignoreSafeAreaKeyboardInsets
         matchContents
-        style={{ width: 250 }}
+        style={{ width: props.menuWidth }}
       >
         <Column>{items}</Column>
       </Host>
