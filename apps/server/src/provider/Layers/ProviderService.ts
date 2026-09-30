@@ -371,7 +371,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         increment(providerRuntimeEventsTotal, {
           provider: canonicalEvent.provider,
           eventType: canonicalEvent.type,
-        }).pipe(Effect.andThen(publishRuntimeEvent(canonicalEvent))),
+        }).pipe(
+          Effect.andThen(publishRuntimeEvent(canonicalEvent)),
+          Effect.andThen(() => persistPiTurnResumeCursor(source, canonicalEvent)),
+        ),
+      ),
+    );
+
+  /**
+   * Pi records a turn's rollback boundary (its first user entry id) only once
+   * the turn settles, so the cursor persisted at sendTurn time still names the
+   * previous turn. Save the fresh cursor when the terminal event arrives: if
+   * the reaper stops the session or the server crashes before the next turn,
+   * recovery would otherwise lose the boundary and rollback would fail.
+   * Best-effort and Pi-only; failures must never break the event flow.
+   */
+  const persistPiTurnResumeCursor = (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: ProviderRuntimeEvent,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      if (source.provider !== "pi") return;
+      if (event.type !== "turn.completed" && event.type !== "turn.aborted") return;
+      const adapter = yield* getAdapter(source.instanceId);
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === event.threadId,
+      );
+      if (session?.resumeCursor === undefined) return;
+      const binding = yield* directory.getBinding(event.threadId);
+      if (Option.isNone(binding)) return;
+      yield* directory.upsert({ ...binding.value, resumeCursor: session.resumeCursor });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to persist turn resume state", {
+          provider: source.provider,
+          cause,
+        }),
       ),
     );
 
@@ -1239,6 +1277,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.rollback_turns": input.numTurns,
       });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      // A Pi rollback forks the native session into a new session file. The
+      // adapter only holds that cursor in memory, so persist it before
+      // reporting success: if the session is stopped or reaped first,
+      // recovery would otherwise reopen the pre-rollback file and restore
+      // the discarded conversation.
+      const rolledBackSession = (yield* routed.adapter.listSessions()).find(
+        (session) => session.threadId === routed.threadId,
+      );
+      if (rolledBackSession !== undefined) {
+        yield* upsertSessionBinding(
+          { ...rolledBackSession, providerInstanceId: routed.instanceId },
+          input.threadId,
+        );
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
         turns: input.numTurns,

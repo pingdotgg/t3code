@@ -2366,3 +2366,119 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+const piDriver = ProviderDriverKind.make("pi");
+const piInstanceId = ProviderInstanceId.make("pi");
+
+function makePiProviderServiceLayer() {
+  const pi = makeFakeCodexAdapter(piDriver);
+  const registry = makeInstanceRegistryMock({
+    [piDriver]: pi.adapter,
+  });
+  const providerInstanceLayer = Layer.succeed(ProviderInstanceRegistry, registry);
+  const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+    Layer.provide(SqlitePersistenceMemory),
+  );
+  const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+  const providerLayer = Layer.mergeAll(
+    makeProviderServiceLive().pipe(
+      Layer.provide(providerInstanceLayer),
+      Layer.provide(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provideMerge(AnalyticsService.layerTest),
+      Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    ),
+    directoryLayer,
+    runtimeRepositoryLayer,
+    NodeServices.layer,
+  );
+  return { pi, providerLayer };
+}
+
+it.effect("ProviderServiceLive persists the Pi resume cursor when a turn settles", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-pi-turn-boundary");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-turn-boundary",
+        runtimeMode: "full-access",
+      });
+      // The adapter records the turn's first user entry only once the turn
+      // settles, so the live session holds a cursor the binding does not.
+      const settledCursor = {
+        schemaVersion: 1,
+        sessionFile: "/pi/sessions/thread.jsonl",
+        turnEntryIds: ["user-1"],
+      };
+      pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: settledCursor }));
+      const collector = yield* Stream.runForEach(provider.streamEvents, () => Effect.void).pipe(
+        Effect.forkScoped,
+      );
+      // Let the service subscription attach before publishing: an unbounded
+      // PubSub drops messages published with zero subscribers.
+      yield* sleep(50);
+      pi.emit({
+        eventId: asEventId("evt-pi-turn-settled"),
+        provider: piDriver,
+        threadId,
+        createdAt: new Date().toISOString(),
+        type: "turn.completed",
+        turnId: asTurnId("pi-turn"),
+        payload: { state: "completed" },
+      });
+      yield* sleep(50);
+      yield* Fiber.interrupt(collector);
+      const binding = yield* directory.getBinding(threadId);
+      assert.isTrue(Option.isSome(binding));
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, settledCursor);
+      }
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("ProviderServiceLive persists the forked Pi session file on rollback", () =>
+  Effect.gen(function* () {
+    const { pi, providerLayer } = makePiProviderServiceLayer();
+    const scope = yield* Scope.make();
+    const runtimeServices = yield* Layer.build(providerLayer).pipe(Scope.provide(scope));
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-pi-rollback-persist");
+      yield* provider.startSession(threadId, {
+        provider: piDriver,
+        providerInstanceId: piInstanceId,
+        threadId,
+        cwd: "/tmp/pi-rollback-persist",
+        runtimeMode: "full-access",
+      });
+      // Simulate the adapter's in-memory fork: rollback swaps the session
+      // file, and the service must persist it before reporting success.
+      const forkedCursor = {
+        schemaVersion: 1,
+        sessionFile: "/pi/sessions/fork.jsonl",
+        turnEntryIds: [],
+      };
+      pi.updateSession(threadId, (session) => ({ ...session, resumeCursor: forkedCursor }));
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      const binding = yield* directory.getBinding(threadId);
+      assert.isTrue(Option.isSome(binding));
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.resumeCursor, forkedCursor);
+      }
+    }).pipe(Effect.provide(runtimeServices));
+    yield* Scope.close(scope, Exit.void);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

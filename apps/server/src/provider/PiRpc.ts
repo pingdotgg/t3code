@@ -27,6 +27,7 @@ import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 
 export class PiRpcError extends Schema.TaggedErrorClass<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -210,18 +211,21 @@ const terminatePiProcess = (kill: (signal: NodeJS.Signals) => boolean, hasExited
 
 export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSpawnOptions) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // Local fork spawns provider CLIs directly (Cursor/Copilot pattern) without
-  // upstream's Windows shell-resolution helper.
+  // Windows npm shims (pi.cmd) cannot execute with shell: false; resolve the
+  // same way the other CLI providers do so a normal global install works.
+  const { command: spawnTarget, shell } = resolveWindowsSpawn(options.command, {
+    env: options.env,
+  });
   const platform: NodeJS.Platform = process.platform;
   const scope = yield* Effect.scope;
 
   const child = yield* spawner
     .spawn(
-      ChildProcess.make(options.command, [...options.args], {
+      ChildProcess.make(spawnTarget, [...options.args], {
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         env: options.env,
         extendEnv: false,
-        shell: false,
+        shell,
         detached: platform !== "win32",
       }),
     )

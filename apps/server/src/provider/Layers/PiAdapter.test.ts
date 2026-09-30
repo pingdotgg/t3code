@@ -5,11 +5,13 @@ import {
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -658,6 +660,81 @@ describe("PiAdapter", () => {
       const completed = yield* takeEvent("turn.completed");
       assert.equal(completed.turnId, turn.turnId);
       assert.equal(completed.payload.state, "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("steers the active turn without starting a new one", () =>
+    Effect.gen(function* () {
+      const { fake, adapter, takeEvent } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({ threadId: THREAD_ID, input: "do the thing" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      const steered = yield* adapter.steerTurn({
+        threadId: THREAD_ID,
+        turnId: turn.turnId,
+        input: "actually do the other thing",
+      });
+      assert.equal(steered.turnId, turn.turnId);
+      const steerRecord = yield* fake.takeRequest("prompt");
+      assert.equal(steerRecord["streamingBehavior"], "steer");
+      assert.include(String(steerRecord["message"] ?? ""), "actually do the other thing");
+      assert.lengthOf((yield* adapter.readThread(THREAD_ID)).turns, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects steering a turn that is not active", () =>
+    Effect.gen(function* () {
+      const { adapter } = yield* makeHarness();
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const error = yield* adapter
+        .steerTurn({
+          threadId: THREAD_ID,
+          turnId: TurnId.make("turn-missing"),
+          input: "hello?",
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterValidationError");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("appends on-disk paths for non-image attachments", () =>
+    Effect.gen(function* () {
+      const { fake, adapter } = yield* makeHarness();
+      const serverConfig = yield* ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachment = {
+        type: "file",
+        id: "attach-12345678-1234-1234-1234-123456789012",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+      } as const;
+      yield* fs.makeDirectory(serverConfig.attachmentsDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(serverConfig.attachmentsDir, `${attachment.id}.bin`),
+        "hello",
+      );
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "read it", attachments: [attachment] });
+      const prompt = yield* fake.takeRequest("prompt");
+      const message = String(prompt["message"] ?? "");
+      assert.include(message, "read it");
+      assert.include(message, "notes.txt");
+      assert.include(message, `${attachment.id}.bin`);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

@@ -34,6 +34,8 @@ import {
   type CanonicalRequestType,
   type ChatAttachment,
   EventId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ProviderTurnStartResult,
   type ModelSelection,
   type PiSettings,
   type ProviderApprovalDecision,
@@ -1394,10 +1396,38 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
             Effect.orElseSucceed((): ReadonlySet<string> => new Set()),
           );
         }
-        const message =
+        // Pi ingests images natively. Non-image files cannot ride the prompt
+        // as content, so resolve each to its on-disk path and append a path
+        // line the agent's tools can dereference — without this the file
+        // would be silently dropped from the turn.
+        let enrichedMessage =
           ctx.skillNames === null ? text : expandPiSkillReference(text, ctx.skillNames);
-        // Pi ingests images natively. Other files reach the agent through the
-        // path line ProviderService puts in the prompt.
+        for (const attachment of attachments) {
+          if (attachment.type === "image") continue;
+          const attachmentPath = resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment,
+          });
+          if (attachmentPath === null) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "prompt",
+              detail: `Invalid attachment id '${attachment.id}'.`,
+            });
+          }
+          const candidate =
+            enrichedMessage.length === 0
+              ? `[Attached file "${attachment.name}" is saved at: ${attachmentPath}]`
+              : `${enrichedMessage}\n\n[Attached file "${attachment.name}" is saved at: ${attachmentPath}]`;
+          if (candidate.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "sendTurn",
+              issue: `Input plus attachment context exceeds the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS} character limit`,
+            });
+          }
+          enrichedMessage = candidate;
+        }
         const images = yield* Effect.forEach(
           attachments.filter((attachment) => attachment.type === "image"),
           (attachment) =>
@@ -1423,7 +1453,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
               };
             }),
         );
-        return { message, images };
+        return { message: enrichedMessage, images };
       });
 
     const compactRecord = (command: PiCompactCommand): PiRpcRecord =>
@@ -1761,6 +1791,62 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
         }),
       );
 
+    // Steer the active turn through the fork's steerTurn entry point rather
+    // than sendTurn: ProviderService routes client steer requests here, and
+    // without this method every Pi steer fails as unsupported. Mirrors the
+    // active-turn branch of sendTurn — a prompt with streamingBehavior steer
+    // is atomic on Pi's side, while /compact takes the compact RPC.
+    const steerTurn: NonNullable<PiAdapterShape["steerTurn"]> = (input) =>
+      withThreadLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const ctx = yield* requireSession(input.threadId);
+          const text = input.input ?? "";
+          const attachments = input.attachments ?? [];
+          if (text.trim().length === 0 && attachments.length === 0) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "steerTurn",
+              issue: "Turn requires non-empty text or attachments.",
+            });
+          }
+          const active = ctx.activeTurn;
+          if (active === null || (input.turnId !== undefined && active.turnId !== input.turnId)) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "steerTurn",
+              issue: "There is no matching active Pi turn to steer.",
+            });
+          }
+          const compactCommand = parsePiCompactCommand(text);
+          const payload =
+            compactCommand === null ? yield* resolvePromptPayload(ctx, text, attachments) : null;
+          if (compactCommand !== null) {
+            active.manualCompactInFlight = true;
+            yield* ctx.connection
+              .send(compactRecord(compactCommand))
+              .pipe(Effect.mapError(requestError("compact")));
+            ctx.pendingCompactResponses.push({ turnId: active.turnId, kind: "steer" });
+          } else if (payload !== null) {
+            yield* ctx.connection
+              .send({
+                type: "prompt",
+                message: payload.message,
+                streamingBehavior: "steer",
+                ...(payload.images.length === 0 ? {} : { images: payload.images }),
+              })
+              .pipe(Effect.mapError(requestError("prompt")));
+            ctx.pendingPromptResponses.push({ turnId: active.turnId, kind: "steer" });
+          }
+          active.settleProbeGeneration += 1;
+          return {
+            threadId: input.threadId,
+            turnId: active.turnId,
+            resumeCursor: ctx.session.resumeCursor,
+          } satisfies ProviderTurnStartResult;
+        }),
+      );
+
     // Holds the thread lock so a concurrent sendTurn cannot settle the marked
     // turn and start a new Pi run before `abort`, which would stop that run.
     const interruptTurn: PiAdapterShape["interruptTurn"] = (threadId, turnId) =>
@@ -1988,6 +2074,7 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       forkSession,
       sendTurn,
       sessionCommand,
+      steerTurn,
       interruptTurn,
       respondToRequest,
       respondToUserInput,

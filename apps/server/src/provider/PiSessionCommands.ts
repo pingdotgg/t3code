@@ -1,4 +1,5 @@
 import type { ProviderSessionCommandInput, ProviderSessionCommandResult } from "@t3tools/contracts";
+import { resolveWindowsSpawn } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -51,11 +52,12 @@ export const runPiSessionCommand = Effect.fn("runPiSessionCommand")(function* (
 
   // Pi's RPC has no share operation. Match its unlisted-gist sharing path,
   // using the server's gh authentication rather than the client's credentials.
+  const { command: ghCommand, shell: ghShell } = resolveWindowsSpawn("gh", { env: environment });
   const result = yield* spawnAndCollect(
     "gh",
-    ChildProcess.make("gh", ["gist", "create", "--public=false", outputPath], {
+    ChildProcess.make(ghCommand, ["gist", "create", "--public=false", outputPath], {
       env: environment,
-      shell: false,
+      shell: ghShell,
       cwd,
     }),
   ).pipe(Effect.timeout("60 seconds"));
