@@ -12,7 +12,7 @@
  *
  * @module provider/Drivers/OpenCodeDriver
  */
-import { OpenCodeSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { makeOpenCode2TextGeneration } from "../../textGeneration/OpenCode2TextGeneration.ts";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
@@ -85,17 +86,20 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-const UPDATE = makePackageManagedProviderMaintenanceResolver({
-  provider: DRIVER_KIND,
-  npmPackageName: "opencode-ai",
-  nativeUpdate: {
-    args: ["upgrade"],
-    isCommandPath: isOpenCodeNativeCommandPath,
-  },
-});
-
-export const OPENCODE_2_TEXT_GENERATION_UNSUPPORTED =
-  "T3 Code cannot generate text with OpenCode 2 yet.";
+/**
+ * OpenCode 1.x ships as `opencode-ai` and 2.x as `@opencode/cli`. An install is
+ * only ever updated within its own package: T3 never moves a 1.x install onto
+ * 2.x or back, since 2.x converts the shared database in place.
+ */
+export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"] | undefined) =>
+  makePackageManagedProviderMaintenanceResolver({
+    provider: DRIVER_KIND,
+    npmPackageName: generation === "v2" ? "@opencode/cli" : "opencode-ai",
+    nativeUpdate: {
+      args: ["upgrade"],
+      isCommandPath: isOpenCodeNativeCommandPath,
+    },
+  });
 
 type OpenCodeRuntimeProbe = Effect.Success<
   ReturnType<typeof makeOpenCodeRuntimeProbe<OpenCodeRuntime.OpenCodeRuntimeError>>
@@ -136,35 +140,32 @@ function selectOpenCodeRuntimeAdapter(input: {
   };
 }
 
-/** Text generation starts or connects to a 1.x server per call, so a 2.x is refused first. */
+/** Text generation runs on the server the instance's probe detected, each in its own protocol. */
 function selectOpenCodeRuntimeTextGeneration(
   probe: OpenCodeRuntimeProbe,
   v1: TextGeneration["Service"],
+  v2: TextGeneration["Service"],
 ): TextGeneration["Service"] {
-  const refuse = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({ operation, detail: OPENCODE_2_TEXT_GENERATION_UNSUPPORTED }),
-    );
   return {
     generateCommitMessage: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generateCommitMessage(input),
-        v2: refuse("generateCommitMessage"),
+        v2: v2.generateCommitMessage(input),
       }),
     generatePrContent: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generatePrContent(input),
-        v2: refuse("generatePrContent"),
+        v2: v2.generatePrContent(input),
       }),
     generateBranchName: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generateBranchName(input),
-        v2: refuse("generateBranchName"),
+        v2: v2.generateBranchName(input),
       }),
     generateThreadTitle: (input) =>
       byOpenCodeRuntime(probe.get, {
         v1: v1.generateThreadTitle(input),
-        v2: refuse("generateThreadTitle"),
+        v2: v2.generateThreadTitle(input),
       }),
   };
 }
@@ -211,21 +212,26 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
-          binaryPath: effectiveConfig.binaryPath,
-          env: processEnv,
-        }).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, pathService),
-        ),
-      );
-
       const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
         probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+        ),
+      );
+      // Updates follow the installed package, which the version probe names.
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        runtimeProbe.get.pipe(
+          Effect.map((probed) => probed.generation),
+          Effect.orElseSucceed(() => undefined),
+          Effect.flatMap((generation) =>
+            resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation), {
+              binaryPath: effectiveConfig.binaryPath,
+              env: processEnv,
+            }),
+          ),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
         ),
       );
       const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
@@ -332,6 +338,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         runtimeProbe,
         yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
           Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
+        ),
+        yield* makeOpenCode2TextGeneration().pipe(
+          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
         ),
       );
 

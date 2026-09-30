@@ -138,6 +138,13 @@ function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, s
  */
 export class OpenCodeReplayController {
   private cursor = 0;
+  /** Set once the event stream reached a successful `runtime_exit`: the server is gone. */
+  exited = false;
+
+  /** Whether every entry has been used, so a stopped server is not coming back. */
+  get finished(): boolean {
+    return this.cursor >= this.transcript.entries.length;
+  }
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;
   private readonly transcript: ProviderReplayTranscript;
@@ -279,7 +286,10 @@ export class OpenCodeReplayController {
       }
       if (entry?.type === "runtime_exit") {
         this.advance();
-        if (entry.status === "success") return;
+        if (entry.status === "success") {
+          this.exited = true;
+          return;
+        }
         const mismatch = new OpenCodeReplayMismatchError({
           scenario: this.transcript.scenario,
           cursor: this.cursor - 1,

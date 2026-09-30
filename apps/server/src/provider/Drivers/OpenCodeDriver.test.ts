@@ -1,24 +1,32 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId, type OpenCodeSettings } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderMaintenance from "../providerMaintenance.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import {
   OPENCODE_2_RESPONSES,
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
 } from "../testFixtures/opencodeProbeResponses.ts";
-import { OPENCODE_2_TEXT_GENERATION_UNSUPPORTED, OpenCodeDriver } from "./OpenCodeDriver.ts";
+import { OpenCodeDriver, openCodeUpdateFor } from "./OpenCodeDriver.ts";
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -67,15 +75,15 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     Effect.gen(function* () {
       serverStarts.length = 0;
       const instance = yield* create({}, noHttp);
-      const title = yield* Effect.flip(
+      // Text generation goes to the instance's 2.x server, which this test refuses to start.
+      yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
           message: "hello",
           modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
         }),
       );
-      assert.strictEqual(title.detail, OPENCODE_2_TEXT_GENERATION_UNSUPPORTED);
-      assert.deepStrictEqual(serverStarts, []);
+      assert.deepStrictEqual(serverStarts, ["start"]);
     }).pipe(Effect.scoped),
   );
 
@@ -122,3 +130,63 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });
+
+// npm links `<prefix>/bin/opencode` into the package that installed it:
+// `opencode-ai` for 1.x and `@opencode/cli` (whose bin is `bin/opencode.exe`) for 2.x.
+const npmGlobalInstall = (prefix: string, packagePath: ReadonlyArray<string>, bin: string) => {
+  const target = NodePath.join(prefix, "lib", "node_modules", ...packagePath, "bin", bin);
+  NodeFS.mkdirSync(NodePath.dirname(target), { recursive: true });
+  NodeFS.writeFileSync(target, "#!/bin/sh\n");
+  NodeFS.chmodSync(target, 0o755);
+  const link = NodePath.join(prefix, "bin", "opencode");
+  NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
+  NodeFS.symlinkSync(target, link);
+  return link;
+};
+const resolveUpdate = (generation: "v1" | "v2", binaryPath: string) =>
+  ProviderMaintenance.resolveProviderMaintenanceCapabilitiesEffect(openCodeUpdateFor(generation), {
+    binaryPath,
+    env: { PATH: "" },
+  }).pipe(
+    Effect.provideService(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.die("resolving an update must not spawn")),
+    ),
+    Effect.provide(NodeServices.layer),
+  );
+
+it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "updates an npm-global OpenCode 2 install as @opencode/cli and a 1.x one as opencode-ai",
+  () =>
+    Effect.gen(function* () {
+      const root = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-opencode-update-")),
+      );
+      const v2Prefix = NodePath.join(root, "v2");
+      const v1Prefix = NodePath.join(root, "v1");
+      const v2 = yield* resolveUpdate(
+        "v2",
+        npmGlobalInstall(v2Prefix, ["@opencode", "cli"], "opencode.exe"),
+      );
+      assert.deepStrictEqual(v2.update?.args, [
+        "install",
+        "-g",
+        "--prefix",
+        v2Prefix,
+        "--allow-scripts=@opencode/cli",
+        "@opencode/cli@latest",
+      ]);
+      const v1 = yield* resolveUpdate(
+        "v1",
+        npmGlobalInstall(v1Prefix, ["opencode-ai"], "opencode"),
+      );
+      assert.strictEqual(v1.update?.args.at(-1), "opencode-ai@latest");
+      // A 1.x install is never offered 2.x's package, or the reverse.
+      assert.isNull(
+        (yield* resolveUpdate("v2", NodePath.join(v1Prefix, "bin", "opencode"))).update,
+      );
+      assert.isNull(
+        (yield* resolveUpdate("v1", NodePath.join(v2Prefix, "bin", "opencode"))).update,
+      );
+    }),
+);

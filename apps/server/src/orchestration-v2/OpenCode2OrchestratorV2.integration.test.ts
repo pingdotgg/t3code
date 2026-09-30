@@ -62,7 +62,17 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 });
 const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntry =>
   entry.type === "runtime_exit" ? entry : { ...entry, label };
-const T3_RULES = [{ action: "*", resource: "*", effect: "allow" }];
+/**
+ * T3's own rules after a mode's: every thread's T3 MCP server is denied, and
+ * then this thread's own is allowed again (last match wins).
+ */
+const mcpRules = (name: string) => [
+  { action: "t3-code-*", resource: "*", effect: "deny" },
+  { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+];
+const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
+/** Full access for the thread named `name`. */
+const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
 /** Paths the build and plan agents allow for themselves, as 2.0.18 lists them. */
 const BUILD_PATHS = [
   {
@@ -110,26 +120,29 @@ const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
   out("session.form.list", { sessionID: SESSION }),
   reply("session.form.list", { data: [] }),
 ];
-const SUPERVISED_RULES = [
+const supervisedRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "ask" },
   { action: "external_directory", resource: "*", effect: "ask" },
   ...BUILD_PATHS,
+  ...mcpRules(name),
 ];
-const AUTO_EDIT_RULES = [
+const autoEditRules = (name: string) => [
   { action: "shell", resource: "*", effect: "ask" },
   { action: "edit", resource: "*", effect: "allow" },
   { action: "external_directory", resource: "*", effect: "ask" },
   ...BUILD_PATHS,
+  ...mcpRules(name),
 ];
 /** Plan mode on Full access: edits are denied except the plan agent's own plan files. */
-const PLAN_RULES = [
+const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "deny" },
   ...PLAN_PATHS,
+  ...mcpRules(name),
 ];
 
-const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown> = T3_RULES) => ({
+const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown>) => ({
   data: {
     id: SESSION,
     projectID: "global",
@@ -141,6 +154,11 @@ const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown> = T3
     permissions,
   },
 });
+/** T3's instructions entry, written before a thread's first prompt and whenever it changes. */
+const instructionsWritten: ReadonlyArray<ProviderReplayEntry> = [
+  out("session.instructions.entry.put", { sessionID: SESSION, key: "t3-code", value: "<any>" }),
+  reply("session.instructions.entry.put", null),
+];
 /** One prompt the server accepts and answers with `text`. */
 const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -193,7 +211,10 @@ const catalogModel = (id: string, name: string) => ({
 });
 const createdSession = (
   directory: string,
-  permissions: ReadonlyArray<unknown> = T3_RULES,
+  name: string,
+  permissions: ReadonlyArray<unknown> = t3Rules(name),
+  // Only a mode that narrows Full access reads the agents' own path rules.
+  narrows = false,
 ): ReadonlyArray<ProviderReplayEntry> => [
   out("event.subscribe"),
   out("model.list", "<any>"),
@@ -204,10 +225,7 @@ const createdSession = (
       catalogModel("mimo-v2.6-flash-free", "MiMo V2.6 Flash Free"),
     ],
   }),
-  // Only a mode that narrows Full access reads the agents' own path rules.
-  ...(permissions === T3_RULES
-    ? []
-    : [out("agent.list", "<any>"), reply("agent.list", agentList(directory))]),
+  ...(narrows ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))] : []),
   out("session.create", { location: { directory }, model: "<any>", permissions }),
   reply("session.create", sessionInfo(directory, permissions)),
 ];
@@ -317,16 +335,19 @@ describe("OpenCode 2 through the orchestrator", () => {
             name,
             threadId: thread.threadId,
             entries: [
-              ...createdSession(cwd),
+              ...createdSession(cwd, name),
+              ...instructionsWritten,
               ...answeredPrompt("FIRST"),
               // The next turn resumes the session at its new selection.
               out("session.get", { sessionID: SESSION }),
-              reply("session.get", sessionInfo(cwd)),
+              reply("session.get", sessionInfo(cwd, t3Rules(name))),
               out("session.switchModel", {
                 sessionID: SESSION,
                 model: { providerID: "opencode", id: "mimo-v2.6-flash-free" },
               }),
               reply("session.switchModel", null),
+              // The instructions name the model, so they are written again.
+              ...instructionsWritten,
               ...answeredPrompt("SECOND"),
             ],
             commands: [
@@ -368,15 +389,18 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(before),
+          ...createdSession(before, name),
+          ...instructionsWritten,
           ...answeredPrompt("FIRST"),
           ...directoryModels(after),
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(before)),
+          reply("session.get", sessionInfo(before, t3Rules(name))),
           // The worktree change detached the thread, so its session is loaded afresh.
           ...noOpenRequests,
           out("session.move", { sessionID: SESSION, directory: after }),
           reply("session.move", null),
+          // The moved thread reopens its session, which writes the entry again.
+          ...instructionsWritten,
           ...answeredPrompt("SECOND"),
         ],
         commands: [
@@ -409,7 +433,8 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(before),
+          ...createdSession(before, name),
+          ...instructionsWritten,
           ...answeredPrompt("FIRST"),
           ...directoryModels(after),
           // Reopened after a worktree change, the session reports the rules an
@@ -424,10 +449,11 @@ describe("OpenCode 2 through the orchestrator", () => {
             ]),
           ),
           ...noOpenRequests,
-          out("session.update", { sessionID: SESSION, permissions: T3_RULES }),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
           reply("session.update", null),
           out("session.move", { sessionID: SESSION, directory: after }),
           reply("session.move", null),
+          ...instructionsWritten,
           ...answeredPrompt("SECOND"),
         ],
         commands: [
@@ -463,7 +489,11 @@ describe("OpenCode 2 through the orchestrator", () => {
         const projection = yield* runScenario({
           name,
           threadId: thread.threadId,
-          entries: [...createdSession(cwd, SUPERVISED_RULES), ...answeredPrompt("FIRST")],
+          entries: [
+            ...createdSession(cwd, name, supervisedRules(name), true),
+            ...instructionsWritten,
+            ...answeredPrompt("FIRST"),
+          ],
           commands: [thread.create, thread.message("first")],
         });
         assert.deepEqual(
@@ -489,20 +519,21 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(cwd),
+          ...createdSession(cwd, name),
+          ...instructionsWritten,
           ...answeredPrompt("FIRST"),
           // A mode change detaches nothing: the same session is resumed with the new rules.
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd)),
+          reply("session.get", sessionInfo(cwd, t3Rules(name))),
           out("agent.list", "<any>"),
           reply("agent.list", agentList(cwd)),
-          out("session.update", { sessionID: SESSION, permissions: AUTO_EDIT_RULES }),
+          out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
           reply("session.update", null),
           ...answeredPrompt("SECOND"),
           // Back to Full access: the narrowing rules go.
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd, AUTO_EDIT_RULES)),
-          out("session.update", { sessionID: SESSION, permissions: T3_RULES }),
+          reply("session.get", sessionInfo(cwd, autoEditRules(name))),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
           reply("session.update", null),
           ...answeredPrompt("THIRD"),
         ],
@@ -532,14 +563,15 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(cwd, PLAN_RULES),
+          ...createdSession(cwd, name, planRules(name), true),
           // Plan mode is also OpenCode's plan agent, switched before the prompt.
           out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
           reply("session.switchAgent", null),
+          ...instructionsWritten,
           ...answeredPrompt("PLANNED"),
           out("session.get", { sessionID: SESSION }),
-          reply("session.get", sessionInfo(cwd, PLAN_RULES)),
-          out("session.update", { sessionID: SESSION, permissions: T3_RULES }),
+          reply("session.get", sessionInfo(cwd, planRules(name))),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),
@@ -661,7 +693,8 @@ describe("OpenCode 2 through the orchestrator", () => {
         version: "2.0.18",
         scenario: name,
         entries: [
-          ...createdSession(cwd),
+          ...createdSession(cwd, name),
+          ...instructionsWritten,
           out("session.prompt", { sessionID: SESSION, id: "<any>", text: "<any>" }),
           reply("session.prompt", {
             data: {

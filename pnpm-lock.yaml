@@ -537,6 +537,9 @@ importers:
       '@opencode/protocol':
         specifier: 2.0.18
         version: 2.0.18
+      '@opencode/schema':
+        specifier: 2.0.18
+        version: 2.0.18
       diff:
         specifier: 8.0.3
         version: 8.0.3
