@@ -68,6 +68,7 @@ import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/us
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+import { useComposerEditorHeight } from "./useComposerEditorHeight";
 import {
   ComposerDictationCancelAction,
   ComposerDictationPrimaryAction,
@@ -625,6 +626,7 @@ export function NewTaskDraftScreen(props: {
   const foregroundColor = theme["--color-foreground"];
   const regularFontFamily = useFontFamily("regular");
   const bodyText = useScaledTextRole("body");
+  const editorHeight = useComposerEditorHeight(bodyText.lineHeight);
 
   // A new navigation to this mounted screen delivers a fresh initialProjectRef
   // reference — treat it as a new request and let it apply again.
@@ -1419,11 +1421,16 @@ export function NewTaskDraftScreen(props: {
         placeholder="Ask anything…"
         singleLineCentered={false}
         contentInsetVertical={0}
-        style={{
-          minHeight: 72,
-          maxHeight: 160,
-          paddingVertical: 4,
-        }}
+        onContentSizeChange={editorHeight.onContentSizeChange}
+        style={
+          Platform.OS === "ios"
+            ? { height: editorHeight.height }
+            : {
+                minHeight: 72,
+                maxHeight: 160,
+                paddingVertical: 4,
+              }
+        }
         textStyle={{ ...bodyText, color: foregroundColor, fontFamily: regularFontFamily }}
       />
     </>
@@ -1614,7 +1621,8 @@ export function NewTaskDraftScreen(props: {
       <ComposerSurface
         style={{
           borderRadius: 26,
-          minHeight: 140,
+          // iOS sizes the card to the prompt; Android keeps its fixed-height card.
+          minHeight: isAndroid ? 140 : undefined,
           overflow: "hidden",
           paddingBottom: 6,
           paddingTop: 14,

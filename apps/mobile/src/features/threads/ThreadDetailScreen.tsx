@@ -327,6 +327,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerFullScreen, setComposerFullScreen] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const handleComposerFocusChange = useCallback(
     (focused: boolean) => {
@@ -441,6 +442,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
+  // Only a visible composer can fill the screen; a questionnaire or failure card owns the slot.
+  // While it does, the status and cards above it stay mounted but hidden.
+  const composerFillsScreen =
+    composerFullScreen &&
+    activeUserInputRequestId === null &&
+    props.creationState?.kind !== "failed";
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -520,10 +527,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       setLastKnownKeyboardHeight(liveKeyboardHeight);
     }
   }, [lastKnownKeyboardHeight, liveKeyboardHeight]);
+  const keyboardHeightEstimate =
+    lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT;
   const pendingUserInputMaxHeight = derivePendingUserInputMaxHeight({
     windowHeight,
-    keyboardHeight:
-      lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT,
+    keyboardHeight: keyboardHeightEstimate,
     navigationHeaderHeight,
     // The questionnaire owns the composer slot, so only the composer's
     // bottom inset still overlaps.
@@ -972,18 +980,26 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
             <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
-              <FloatingWorkingControl
-                colorScheme={isDarkMode ? "dark" : "light"}
-                status={floatingStatus}
-                devicePreview={
-                  devicePreviews.length > 0
-                    ? { count: devicePreviews.length, onPress: openDevicePreview }
-                    : null
-                }
-                showScrollToEnd={showScrollToEndButton}
-                onScrollToEnd={handleScrollToEnd}
-              />
-              <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+              <View style={composerFillsScreen ? { display: "none" } : undefined}>
+                <FloatingWorkingControl
+                  colorScheme={isDarkMode ? "dark" : "light"}
+                  status={floatingStatus}
+                  devicePreview={
+                    devicePreviews.length > 0
+                      ? { count: devicePreviews.length, onPress: openDevicePreview }
+                      : null
+                  }
+                  showScrollToEnd={showScrollToEndButton}
+                  onScrollToEnd={handleScrollToEnd}
+                />
+              </View>
+              <View
+                className="w-full self-center"
+                style={{
+                  maxWidth: contentMaxWidth,
+                  display: composerFillsScreen ? "none" : "flex",
+                }}
+              >
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
                     key={submission.id}
@@ -1105,6 +1121,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                   onExpandedChange={setComposerExpanded}
+                  fullScreenHeight={
+                    Platform.OS === "ios"
+                      ? windowHeight - keyboardHeightEstimate - navigationHeaderHeight
+                      : undefined
+                  }
+                  onFullScreenChange={setComposerFullScreen}
                   onEditorFocusChange={handleComposerFocusChange}
                 />
               </View>

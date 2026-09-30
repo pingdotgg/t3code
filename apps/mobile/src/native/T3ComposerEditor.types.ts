@@ -65,6 +65,11 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
+  /** iOS: the laid-out text height, including vertical insets, so hosts can size the editor to it. */
+  readonly onContentSizeChange?: (size: {
+    readonly width: number;
+    readonly height: number;
+  }) => void;
   /**
    * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
    * hardware Return handling.

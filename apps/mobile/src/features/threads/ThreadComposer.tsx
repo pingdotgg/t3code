@@ -77,6 +77,7 @@ import {
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { SymbolView } from "../../components/AppSymbol";
 import {
   composerStripAttachments,
   type DraftComposerAttachment,
@@ -92,6 +93,7 @@ import type { RemoteClientConnectionState } from "../../lib/connection";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+import { useComposerEditorHeight } from "./useComposerEditorHeight";
 import {
   ComposerDictationCancelAction,
   ComposerDictationDraftContent,
@@ -118,10 +120,10 @@ import {
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
 /**
- * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
- * Used by the parent to compute the larger feed bottom inset when the composer is focused.
+ * Height of the empty expanded composer (one-line card + toolbar + vertical padding, excluding
+ * safe-area inset). The parent's feed inset estimate until the real composer is measured.
  */
-export const COMPOSER_EXPANDED_CHROME = 156;
+export const COMPOSER_EXPANDED_CHROME = Platform.OS === "android" ? 156 : 107;
 
 export interface ThreadComposerProps {
   readonly draftMessage: string;
@@ -153,7 +155,15 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  /** Fires when editing starts or stops; hosts key the safe-area inset on it. */
   readonly onExpandedChange?: (expanded: boolean) => void;
+  /**
+   * Space the composer can fill in full-screen editing, from the header to the
+   * keyboard. Without it the composer never offers full screen (iOS only).
+   */
+  readonly fullScreenHeight?: number;
+  /** Hosts hide what they stack above the composer while it fills the screen. */
+  readonly onFullScreenChange?: (fullScreen: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
@@ -278,6 +288,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
@@ -288,7 +299,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const settingsRoutePresentedRef = useRef(false);
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
-  const { onExpandedChange } = props;
+  const { onExpandedChange, onFullScreenChange } = props;
 
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
@@ -403,10 +414,29 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
+  const isEditing = isFocused || settingsSheetPresentation.keepsComposerExpanded;
+  // A resting draft stays readable in the card; only an empty composer shrinks to the pill.
+  const isExpanded = isEditing || (Platform.OS === "ios" && hasContent);
+  // The full-screen card fills the host's space, less the composer's own padding.
+  const fullScreenCardHeight =
+    isFullScreen && props.fullScreenHeight !== undefined
+      ? props.fullScreenHeight - 16 - (props.bottomInset ?? 0)
+      : undefined;
+  const showsFullScreen = fullScreenCardHeight !== undefined;
+  const editorHeight = useComposerEditorHeight(
+    bodyText.lineHeight,
+    // Leave at least half the space to the feed until the user asks for full screen.
+    props.fullScreenHeight === undefined ? undefined : props.fullScreenHeight / 2,
+  );
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
+  const showsFullScreenToggle =
+    Platform.OS === "ios" &&
+    props.fullScreenHeight !== undefined &&
+    isExpanded &&
+    !showsCompactDictation &&
+    (showsFullScreen || editorHeight.overflows);
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
     attachments: props.draftAttachments,
@@ -428,8 +458,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
-    onExpandedChange?.(isExpanded);
-  }, [isExpanded, onExpandedChange]);
+    onExpandedChange?.(isEditing);
+  }, [isEditing, onExpandedChange]);
+
+  useEffect(() => {
+    onFullScreenChange?.(showsFullScreen);
+  }, [onFullScreenChange, showsFullScreen]);
+
+  const toggleFullScreen = () => {
+    if (!isFullScreen) inputRef.current?.focus();
+    setIsFullScreen(!isFullScreen);
+  };
 
   const onPressPreview = useCallback(
     (source: FilePreviewSource) => {
@@ -468,6 +507,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
+    // Full screen is for writing; putting the keyboard away returns the feed.
+    setIsFullScreen(false);
     if (!settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
@@ -493,6 +534,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (messageId === null) {
         return;
       }
+      setIsFullScreen(false);
       // Sending a prompt starts agent work: arm the lock-screen card while the
       // app is foregrounded and the activity token can be registered. Armed
       // after the send so its preference read and native Activity start don't
@@ -638,14 +680,23 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        <ChatGptUsageLimitNotice
-          environmentId={props.environmentId}
-          thread={props.selectedThread}
-        />
+        {/* Full screen leaves no room above the card; notices return when it closes. */}
+        {showsFullScreen ? null : (
+          <ChatGptUsageLimitNotice
+            environmentId={props.environmentId}
+            thread={props.selectedThread}
+          />
+        )}
         {!voiceInput.isBusy &&
         composerMenu.trigger &&
         (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
-          <View className="absolute inset-x-0 bottom-full z-10 mb-2">
+          <View
+            className={
+              showsFullScreen
+                ? "absolute inset-x-0 top-12 z-10"
+                : "absolute inset-x-0 bottom-full z-10 mb-2"
+            }
+          >
             <ComposerCommandPopover
               items={composerMenu.items}
               triggerKind={composerMenu.trigger.kind}
@@ -656,7 +707,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
-        {selectedProviderStatus?.compatibilityAdvisory?.message &&
+        {!showsFullScreen &&
+        selectedProviderStatus?.compatibilityAdvisory?.message &&
         (selectedProviderStatus.compatibilityAdvisory.status === "unsupported" ||
           selectedProviderStatus.compatibilityAdvisory.status === "broken") ? (
           <Text
@@ -677,7 +729,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             {selectedProviderStatus.compatibilityAdvisory.message}
           </Text>
         ) : null}
-        {modelUnavailable ? (
+        {modelUnavailable && !showsFullScreen ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
           </Pressable>
@@ -688,7 +740,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             isExpanded
               ? {
                   borderRadius: 26,
-                  minHeight: 140,
+                  // iOS sizes the card to the draft; Android keeps its fixed-height card.
+                  minHeight: Platform.OS === "android" ? 140 : undefined,
+                  height: fullScreenCardHeight,
                   overflow: "hidden" as const,
                   paddingBottom: 6,
                   paddingTop: 14,
@@ -703,7 +757,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           }
         >
           <ComposerDictationDraftContent
-            className={isExpanded ? undefined : "flex-row items-center"}
+            className={
+              showsFullScreen ? "flex-1" : isExpanded ? undefined : "flex-row items-center"
+            }
             compact={!isExpanded}
             hidden={showsCompactDictation}
           >
@@ -743,8 +799,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               </Animated.View>
             ) : null}
             <Animated.View
-              className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
+              className={
+                showsFullScreen
+                  ? "flex-1 px-[14px]"
+                  : isExpanded
+                    ? "px-[14px]"
+                    : "min-w-0 flex-1 px-[4px]"
+              }
               layout={COMPOSER_LAYOUT_TRANSITION}
+              // Keeps text clear of the full-screen toggle in the card's corner.
+              style={showsFullScreenToggle ? { paddingRight: 40 } : undefined}
             >
               <ComposerEditor
                 draftKey={composerOwnerKey}
@@ -759,8 +823,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }}
                 onOpenAttachment={openDraftDocument}
                 // A rested composer full of chips left almost nowhere to tap to start typing:
-                // every chip opened its file instead. Collapsed, they focus the editor.
-                chipsInert={!isExpanded}
+                // every chip opened its file instead. At rest, they focus the editor.
+                chipsInert={!isEditing}
                 onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
                 multiline
@@ -845,21 +909,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onFocus={handleFocus}
                 onBlur={handleBlur}
                 onSubmit={handleSend}
+                // The pill's single line reports its own insets; only the card sizes to its text.
+                onContentSizeChange={isExpanded ? editorHeight.onContentSizeChange : undefined}
                 scrollEnabled={isExpanded}
                 // Android: collapsed single line centers natively (gravity) in
                 // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={
-                  isExpanded
-                    ? {
-                        minHeight: 72,
-                        maxHeight: 160,
-                        paddingVertical: 4,
-                      }
-                    : {
-                        height: 36,
-                      }
+                  showsFullScreen
+                    ? { flex: 1 }
+                    : !isExpanded
+                      ? { height: 36 }
+                      : Platform.OS === "ios"
+                        ? { height: editorHeight.height }
+                        : {
+                            minHeight: 72,
+                            maxHeight: 160,
+                            paddingVertical: 4,
+                          }
                 }
                 textStyle={{
                   ...bodyText,
@@ -1009,6 +1077,25 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               </ComposerToolbarRow>
             </ComposerDictationToolbar>
           </Animated.View>
+          {showsFullScreenToggle ? (
+            <Pressable
+              accessibilityLabel={showsFullScreen ? "Exit full screen" : "Edit in full screen"}
+              accessibilityRole="button"
+              className="absolute right-1 top-1 size-11 items-center justify-center active:opacity-70"
+              onPress={toggleFullScreen}
+            >
+              <SymbolView
+                name={
+                  showsFullScreen
+                    ? "arrow.down.right.and.arrow.up.left"
+                    : "arrow.up.left.and.arrow.down.right"
+                }
+                size={16}
+                tintColorClassName="accent-icon-muted"
+                type="monochrome"
+              />
+            </Pressable>
+          ) : null}
         </ComposerSurface>
       </Animated.View>
 
