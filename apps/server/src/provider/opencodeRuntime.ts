@@ -90,12 +90,29 @@ export interface OpenCodeServerProcess {
   readonly exitCode: Effect.Effect<number, never>;
 }
 
+export interface UnverifiedOpenCodeServerProcess {
+  readonly url: string;
+  readonly serverPassword?: string;
+  readonly isRunning: Effect.Effect<boolean>;
+  readonly exitCode: Effect.Effect<number, never>;
+}
+
 export interface OpenCodeServerConnection {
   readonly url: string;
   readonly serverPassword?: string;
   readonly version: string;
   readonly exitCode: Effect.Effect<number, never> | null;
   readonly external: boolean;
+}
+
+export interface StartOpenCodeServerProcessInput {
+  readonly binaryPath: string;
+  readonly directory: string;
+  readonly serverPassword?: string;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly port?: number;
+  readonly hostname?: string;
+  readonly timeoutMs?: number;
 }
 
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
@@ -232,15 +249,19 @@ export interface OpenCodeRuntimeShape {
    * Consumers that want a long-lived server must create and hold a scope explicitly
    * (see {@link Scope.make}) and close it when done.
    */
-  readonly startOpenCodeServerProcess: (input: {
-    readonly binaryPath: string;
-    readonly directory: string;
-    readonly serverPassword?: string;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly port?: number;
-    readonly hostname?: string;
-    readonly timeoutMs?: number;
-  }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
+  readonly startOpenCodeServerProcess: (
+    input: StartOpenCodeServerProcessInput,
+  ) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
+  /**
+   * Spawns a local OpenCode server without the 1.x `global.health` gate. Used
+   * only by the OpenCode 2 path, whose caller applies its own `/api/info`
+   * verify (a real 2.x server answers `global.health` with SPA HTML, so the
+   * legacy gate would fail first). Optional so existing test doubles of this
+   * shape keep compiling; the owner falls back to the legacy start when absent.
+   */
+  readonly startUnverifiedOpenCodeServerProcess?: (
+    input: StartOpenCodeServerProcessInput,
+  ) => Effect.Effect<UnverifiedOpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
   /**
    * Returns a handle to either an externally-managed OpenCode server (when
    * `serverUrl` is provided — no lifetime is attached to the caller's scope) or a
@@ -660,7 +681,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       throwOnError: true,
     });
 
-  const startOpenCodeServerProcess: OpenCodeRuntimeShape["startOpenCodeServerProcess"] = (input) =>
+  // Spawns the server and waits for its ready line, without any version
+  // gate. `startOpenCodeServerProcess` adds the 1.x `global.health` check on
+  // top; the OpenCode 2 path uses this directly and applies its own `/api/info`
+  // verify instead (a real 2.x server answers the legacy endpoint with SPA
+  // HTML, so the 1.x gate would fail first).
+  const spawnOpenCodeServerProcess = (input: StartOpenCodeServerProcessInput) =>
     Effect.gen(function* () {
       // Bind this server's lifetime to the caller's scope. When the caller's
       // scope closes, the spawned child is killed and all associated fibers
@@ -837,24 +863,32 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       yield* Ref.set(stderrRef, null);
 
       const url = readyOption.value;
-      const version = yield* verifyOpenCodeServerVersion(
-        createOpenCodeSdkClient({
-          baseUrl: url,
-          directory: input.directory,
-          ...(serverPassword !== undefined ? { serverPassword } : {}),
-        }),
-      );
-
       return {
         url,
         ...(serverPassword !== undefined ? { serverPassword } : {}),
-        version,
         isRunning: child.isRunning.pipe(Effect.orElseSucceed(() => false)),
         exitCode: child.exitCode.pipe(
           Effect.map(Number),
           Effect.orElseSucceed(() => 0),
         ),
-      } satisfies OpenCodeServerProcess;
+      } satisfies UnverifiedOpenCodeServerProcess;
+    });
+
+  const startUnverifiedOpenCodeServerProcess: NonNullable<
+    OpenCodeRuntimeShape["startUnverifiedOpenCodeServerProcess"]
+  > = (input) => spawnOpenCodeServerProcess(input);
+
+  const startOpenCodeServerProcess: OpenCodeRuntimeShape["startOpenCodeServerProcess"] = (input) =>
+    Effect.gen(function* () {
+      const server = yield* spawnOpenCodeServerProcess(input);
+      const version = yield* verifyOpenCodeServerVersion(
+        createOpenCodeSdkClient({
+          baseUrl: server.url,
+          directory: input.directory,
+          ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
+        }),
+      );
+      return { ...server, version } satisfies OpenCodeServerProcess;
     });
 
   const connectToOpenCodeServer: OpenCodeRuntimeShape["connectToOpenCodeServer"] = (input) => {
@@ -1077,6 +1111,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 
   return {
     startOpenCodeServerProcess,
+    startUnverifiedOpenCodeServerProcess,
     connectToOpenCodeServer,
     runOpenCodeCommand,
     createOpenCodeSdkClient,

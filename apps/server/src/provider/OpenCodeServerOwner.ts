@@ -26,12 +26,20 @@ export class OpenCodeServerOwner extends Context.Service<
   }
 >()("t3/provider/OpenCodeServerOwner") {}
 
-/** Owns the lazy local OpenCode server shared by one provider instance. */
+/** Owns the lazy local OpenCode server shared by one provider instance.
+ *
+ * Lifetime for the opencode2 verify path is identical to v1: a spawned
+ * server is bound to its `serverScope`, shared between borrowers, and
+ * stopped after the idle TTL or when the owner's scope closes. The only
+ * difference is the readiness gate — `verify` replaces the 1.x
+ * `global.health` check (see `startAndVerify`).
+ */
 export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   readonly binaryPath: string;
   readonly directory: string;
   readonly serverPassword?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
 }) {
   const runtime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const ownerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
@@ -82,6 +90,43 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
     );
   });
 
+  const startAndVerify = (
+    serverScope: Scope.Scope,
+    verify:
+      | ((url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>)
+      | undefined,
+  ) =>
+    Effect.gen(function* () {
+      // A caller-supplied verify replaces the runtime's 1.x `global.health`
+      // gate: spawn without it when the runtime offers that entry point. A
+      // real 2.x server answers the legacy endpoint with SPA HTML, so the
+      // gate would fail before this hook runs. Without a verify (the v1 path)
+      // the legacy start is used untouched.
+      const startArgs = {
+        binaryPath: input.binaryPath,
+        directory: input.directory,
+        ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
+        ...(input.environment ? { environment: input.environment } : {}),
+      };
+      if (verify === undefined) {
+        return yield* runtime
+          .startOpenCodeServerProcess(startArgs)
+          .pipe(Effect.provideService(Scope.Scope, serverScope));
+      }
+      // Verify-path: a failed verify must not leak a spawned process. The
+      // scope below is closed by the caller's `Effect.exit` failure branch
+      // (see `acquireServer`), so an unverified server is stopped exactly
+      // like a verified one that later idles out — no separate cleanup.
+      const unverifiedStart = runtime.startUnverifiedOpenCodeServerProcess;
+      const server =
+        unverifiedStart !== undefined
+          ? yield* unverifiedStart(startArgs).pipe(Effect.provideService(Scope.Scope, serverScope))
+          : yield* runtime
+              .startOpenCodeServerProcess(startArgs)
+              .pipe(Effect.provideService(Scope.Scope, serverScope));
+      return { ...server, version: yield* verify(server.url) };
+    });
+
   const acquireServer = mutex.withPermit(
     Effect.gen(function* () {
       yield* cancelIdleClose();
@@ -96,20 +141,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const serverScope = yield* Scope.make();
-          const started = yield* Effect.exit(
-            restore(
-              runtime
-                .startOpenCodeServerProcess({
-                  binaryPath: input.binaryPath,
-                  directory: input.directory,
-                  ...(input.serverPassword !== undefined
-                    ? { serverPassword: input.serverPassword }
-                    : {}),
-                  ...(input.environment ? { environment: input.environment } : {}),
-                })
-                .pipe(Effect.provideService(Scope.Scope, serverScope)),
-            ),
-          );
+          const started = yield* Effect.exit(restore(startAndVerify(serverScope, input.verify)));
           if (Exit.isFailure(started)) {
             yield* Scope.close(serverScope, Exit.void).pipe(Effect.ignore);
             return yield* Effect.failCause(started.cause);
@@ -182,4 +214,5 @@ export const layer = (input: {
   readonly directory: string;
   readonly serverPassword?: string;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
 }) => Layer.effect(OpenCodeServerOwner, make(input));

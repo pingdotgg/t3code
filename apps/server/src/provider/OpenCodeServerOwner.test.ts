@@ -291,3 +291,122 @@ it.effect("releases an interrupted borrower and closes after the idle TTL", () =
     ).pipe(Effect.provideService(OpenCodeRuntime, testRuntime.runtime));
   }).pipe(Effect.provide(TestClock.layer())),
 );
+
+it.effect("verify path uses unverified spawn and closes the scope when verify fails", () =>
+  Effect.gen(function* () {
+    const starts = yield* Ref.make(0);
+    const closes = yield* Ref.make(0);
+    const legacyStarts = yield* Ref.make(0);
+    const runtime: OpenCodeRuntimeShape = {
+      startOpenCodeServerProcess: () =>
+        Ref.updateAndGet(legacyStarts, (count) => count + 1).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new OpenCodeRuntimeError({
+                operation: "startOpenCodeServerProcess",
+                detail: "legacy start must not run on the verify path",
+              }),
+            ),
+          ),
+        ),
+      startUnverifiedOpenCodeServerProcess: () =>
+        Effect.gen(function* () {
+          const index = yield* Ref.updateAndGet(starts, (count) => count + 1);
+          yield* Effect.addFinalizer(() => Ref.update(closes, (count) => count + 1));
+          return {
+            url: `http://127.0.0.1:${index}`,
+            isRunning: Effect.succeed(true),
+            exitCode: Effect.never,
+          };
+        }),
+      connectToOpenCodeServer: unusedRuntimeMethod,
+      runOpenCodeCommand: unusedRuntimeMethod,
+      createOpenCodeSdkClient: () => ({}) as never,
+      loadOpenCodeInventory: unusedRuntimeMethod,
+      loadOpenCodeSkills: unusedRuntimeMethod,
+      loadInventoryFromCli: unusedRuntimeMethod,
+      loadSkillsFromCli: unusedRuntimeMethod,
+    };
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Success: unverified spawn + verify version, legacy start untouched.
+        const owner = yield* OpenCodeServerOwner.make({
+          binaryPath: "opencode",
+          directory: "/project",
+          verify: () => Effect.succeed("2.0.18"),
+        });
+        const server = yield* owner.withServer((value) => Effect.succeed(value));
+        expect(server.version).toBe("2.0.18");
+        expect(yield* Ref.get(starts)).toBe(1);
+        expect(yield* Ref.get(legacyStarts)).toBe(0);
+
+        // Failure: the spawn scope the verify opened is closed — no leak.
+        const failing = yield* OpenCodeServerOwner.make({
+          binaryPath: "opencode",
+          directory: "/project",
+          verify: () =>
+            Effect.fail(
+              new OpenCodeRuntimeError({
+                operation: "server.info",
+                detail: "The server at http://127.0.0.1:2 is not an OpenCode 2 server.",
+              }),
+            ),
+        }).pipe(Effect.provideService(OpenCodeRuntime, runtime));
+        expect(
+          (yield* Effect.exit(failing.withServer((value) => Effect.succeed(value.url))))._tag,
+        ).toBe("Failure");
+        expect(yield* Ref.get(starts)).toBe(2);
+        expect(yield* Ref.get(closes)).toBe(1);
+        expect(yield* Ref.get(legacyStarts)).toBe(0);
+      }),
+    ).pipe(Effect.provideService(OpenCodeRuntime, runtime));
+    expect(yield* Ref.get(starts)).toBe(2);
+    // Both spawns closed exactly once: the failed verify at failure time,
+    // the successful one at owner scope shutdown. No double-stop.
+    expect(yield* Ref.get(closes)).toBe(2);
+    expect(yield* Ref.get(legacyStarts)).toBe(0);
+  }),
+);
+
+it.effect("verify path falls back to legacy start without the unverified entry point", () =>
+  Effect.gen(function* () {
+    const starts = yield* Ref.make(0);
+    const closes = yield* Ref.make(0);
+    const { startUnverifiedOpenCodeServerProcess: _absent, ...legacyOnly } = (yield* makeRuntime)
+      .runtime;
+    void _absent;
+    const runtime: OpenCodeRuntimeShape = {
+      ...legacyOnly,
+      startOpenCodeServerProcess: () =>
+        Effect.gen(function* () {
+          yield* Ref.update(starts, (count) => count + 1);
+          yield* Effect.addFinalizer(() => Ref.update(closes, (count) => count + 1));
+          return {
+            url: "http://127.0.0.1:9",
+            version: "1.14.19",
+            isRunning: Effect.succeed(true),
+            exitCode: Effect.never,
+          };
+        }),
+    };
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        // v1 behavior unchanged: without the unverified entry point the
+        // owner uses the legacy start even when a verify hook is present.
+        const owner = yield* OpenCodeServerOwner.make({
+          binaryPath: "opencode",
+          directory: "/project",
+          verify: () => Effect.succeed("2.0.18"),
+        });
+        const server = yield* owner.withServer((value) => Effect.succeed(value));
+        expect(server.url).toBe("http://127.0.0.1:9");
+        expect(server.version).toBe("2.0.18");
+        expect(yield* Ref.get(starts)).toBe(1);
+      }),
+    ).pipe(Effect.provideService(OpenCodeRuntime, runtime));
+    expect(yield* Ref.get(starts)).toBe(1);
+    expect(yield* Ref.get(closes)).toBe(1);
+  }),
+);

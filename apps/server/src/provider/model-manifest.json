@@ -62,6 +62,17 @@
       ]
     },
     {
+      "driver": "opencode2",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=2.0.18",
+      "recommendedVersion": "2.0.18",
+      "ranges": [
+        { "range": ">=2.0.18", "status": "supported" },
+        { "range": ">=2.0.0 <2.0.18", "status": "unsupported" },
+        { "range": "<2.0.0", "status": "broken" }
+      ]
+    },
+    {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": "=1.1.1",

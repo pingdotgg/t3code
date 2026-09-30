@@ -47,3 +47,29 @@ restart before T3 Code can see configuration changes.
 
 Existing threads keep their selected model and options even when it disappears
 from the catalog. If OpenCode rejects that model, select an available one and retry.
+
+## OpenCode 2 (`opencode2`)
+
+The **OpenCode 2** provider is a separate instance kind for the OpenCode 2.x
+line. It talks to the same `opencode` binary name, but requires
+**v2.0.18 or newer**; a 1.x binary or server on an `opencode2` instance
+reports an error pointing back at the 1.x provider above. The 1.x provider
+treats any `>=2.0.0` runtime as out of range, so each line stays on its own
+provider.
+
+Local and external server behavior matches the 1.x provider: leave **Server
+URL** empty to let T3 Code spawn the server, or set it to use an existing
+one. The password rules differ slightly:
+
+- For a spawned server, T3 Code always generates a fresh in-memory password
+  for that server. Both `OPENCODE_PASSWORD` and the 1.x
+  `OPENCODE_SERVER_PASSWORD` are stripped from the spawned server's
+  environment, so ambient credentials never leak into it. A password in
+  provider settings does not apply to spawned servers.
+- For an external server, T3 Code uses only the configured password.
+
+**1.x legacy note:** OpenCode 1.x stays on the **OpenCode** provider
+(`opencode`), which requires 1.14.19 or newer and stays below 2.0.0. Your
+existing threads, logins, and configuration keep working there; move an
+instance to **OpenCode 2** only after upgrading the binary or server to
+2.0.18+.

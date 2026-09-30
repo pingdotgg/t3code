@@ -156,6 +156,12 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
+  # OpenCode 2's protocol and schema packages hard-pin an older Effect rc as a
+  # dependency, and their schemas fail to decode under a second Effect copy.
+  # The `effect` override above already collapses them; these name the edge so it
+  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  "@opencode/protocol>effect": "catalog:"
+  "@opencode/schema>effect": "catalog:"
   expo-router: 57.0.17
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
