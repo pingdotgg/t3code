@@ -1421,22 +1421,18 @@ function xAiPromptFailure(
       code: -32603,
       errorMessage: "Grok ended the turn with an error.",
       operation: "receive-response",
-      ...(agentResult === undefined ? {} : { cause: new XAiPromptError({ agentResult }) }),
+      ...(agentResult === undefined ? {} : { cause: new XAiPromptFailureText(agentResult) }),
     });
   }
   return null;
 }
 
-/** Grok's own text for a failed prompt, carried only as a cause. */
-export class XAiPromptError extends Schema.TaggedError<XAiPromptError>()("XAiPromptError", {
-  agentResult: Schema.String,
-}) {
-  override get message() {
-    return "Grok reported a prompt failure.";
-  }
-}
-
-export const isXAiPromptError = Schema.is(XAiPromptError);
+/**
+ * Grok's own text for a failed prompt. A plain Error rather than a schema
+ * error so the unbounded provider text never becomes a structured attribute;
+ * it is read back only at the presentation boundary.
+ */
+export class XAiPromptFailureText extends Error {}
 
 const registerXAiPromptCompletionFallback = (
   pendingRef: Ref.Ref<ReadonlyArray<PendingXAiPromptCompletion>>,

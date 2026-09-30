@@ -1,6 +1,6 @@
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
-  isXAiPromptError,
+  XAiPromptFailureText,
   isXAiTaskCompletedWakeNotification,
   xAiRateLimitedErrorCode,
 } from "../../provider/acp/XAiAcpExtension.ts";
@@ -295,7 +295,10 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
           ? {
               // Grok's own failure text rides on the cause; makeProviderFailure
               // redacts and bounds it before it reaches the user.
-              message: isXAiPromptError(cause.cause) ? cause.cause.agentResult : cause.errorMessage,
+              message:
+                cause.cause instanceof XAiPromptFailureText
+                  ? cause.cause.message
+                  : cause.errorMessage,
               code: String(cause.code),
               class: cause.code === xAiRateLimitedErrorCode ? "usage_limit" : "provider_error",
             }
