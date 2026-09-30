@@ -416,6 +416,17 @@ function readPersistedModelSelection(
   return isModelSelection(raw) ? raw : undefined;
 }
 
+function readActiveTurnId(
+  runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
+): string | null {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return null;
+  }
+  if (!("activeTurnId" in runtimePayload)) return null;
+  const activeTurnId = runtimePayload.activeTurnId;
+  return typeof activeTurnId === "string" && activeTurnId.length > 0 ? activeTurnId : null;
+}
+
 function readPersistedCwd(
   runtimePayload: ProviderSessionDirectory.ProviderRuntimeBinding["runtimePayload"],
 ): string | undefined {
@@ -1102,6 +1113,38 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
     });
 
+  const clearSettledActiveTurn = (
+    source: {
+      readonly instanceId: ProviderInstanceId;
+      readonly provider: ProviderDriverKind;
+    },
+    event: Extract<ProviderRuntimeEvent, { readonly type: "turn.completed" | "turn.aborted" }>,
+  ) =>
+    Effect.gen(function* () {
+      const completedTurnId = event.turnId;
+      if (completedTurnId === undefined) return;
+      const binding = yield* directory.getBinding(event.threadId);
+      if (Option.isNone(binding) || binding.value.providerInstanceId !== source.instanceId) {
+        return;
+      }
+      // sendTurn stamps this id. A later resume-cursor write must not leave it set.
+      if (readActiveTurnId(binding.value.runtimePayload) !== completedTurnId) return;
+      yield* directory.upsert({
+        threadId: event.threadId,
+        provider: source.provider,
+        providerInstanceId: source.instanceId,
+        runtimePayload: {
+          activeTurnId: null,
+          lastRuntimeEvent: event.type,
+          lastRuntimeEventAt: yield* nowIso,
+        },
+      });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to clear settled provider active turn", { cause }),
+      ),
+    );
+
   const processRuntimeEvent = (
     source: {
       readonly instanceId: ProviderInstanceId;
@@ -1126,6 +1169,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         canonicalEvent.type === "turn.aborted"
       ) {
         yield* recordTurnCompletedAnalytics(source, canonicalEvent);
+        yield* clearSettledActiveTurn(source, canonicalEvent);
         if (source.provider === "claudeAgent") {
           // Background Claude turns have no sendTurn response to persist their
           // new native boundary. Save it before clients can checkpoint the turn.

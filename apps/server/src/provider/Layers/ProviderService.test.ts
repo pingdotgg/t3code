@@ -3046,6 +3046,113 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("clears the persisted active turn when that turn completes", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-clear-active-turn");
+      const session = yield* provider.startSession(threadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-clear-active-turn"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+        modelSelection: createModelSelection(claudeAgentInstanceId, "claude-sonnet-5"),
+      });
+      const cursor = {
+        resume: "550e8400-e29b-41d4-a716-446655440099",
+        turnCount: 1,
+        turnStartMessageIds: ["user-prompt"],
+      };
+      routing.claude.updateSession(threadId, (current) => ({ ...current, resumeCursor: cursor }));
+      const completed = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-clear-active-turn"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-clear-active-turn"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        turnId: turn.turnId,
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(completed);
+
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(persisted), true);
+      if (Option.isSome(persisted)) {
+        assert.deepEqual(persisted.value.resumeCursor, cursor);
+        const payload = persisted.value.runtimePayload;
+        assert.equal(
+          payload !== null && typeof payload === "object" && !Array.isArray(payload),
+          true,
+        );
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            cwd: string;
+            activeTurnId: string | null;
+            lastRuntimeEvent: string | null;
+            modelSelection?: { model?: string };
+          };
+          assert.equal(runtimePayload.activeTurnId, null);
+          assert.equal(runtimePayload.lastRuntimeEvent, "turn.completed");
+          assert.equal(runtimePayload.cwd, session.cwd);
+          assert.equal(runtimePayload.modelSelection?.model, "claude-sonnet-5");
+        }
+      }
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "next",
+        attachments: [],
+      });
+      const stale = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === "evt-stale-active-turn"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      routing.claude.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-stale-active-turn"),
+        provider: CLAUDE_AGENT_DRIVER,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        turnId: asTurnId("older-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(stale);
+      const newer = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(newer), true);
+      if (Option.isSome(newer)) {
+        const payload = newer.value.runtimePayload;
+        assert.equal(
+          payload !== null && typeof payload === "object" && !Array.isArray(payload),
+          true,
+        );
+        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+          const runtimePayload = payload as {
+            activeTurnId: string | null;
+            lastRuntimeEvent: string | null;
+          };
+          assert.equal(runtimePayload.activeTurnId, `turn-${String(threadId)}`);
+          assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+        }
+      }
+    }),
+  );
+
   it.effect("does not persist running after a concurrent send is interrupted", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
