@@ -25,6 +25,7 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
+import { multiplexProtocol } from "./multiplexProtocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -197,7 +198,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       RpcClient.makeProtocolSocket({
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
-      }),
+      }).pipe(Effect.map(multiplexProtocol)),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(

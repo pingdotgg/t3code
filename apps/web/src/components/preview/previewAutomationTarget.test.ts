@@ -5,6 +5,7 @@ import {
   needsPreviewAutomationSessionSync,
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
+  previewAutomationContextState,
 } from "./previewAutomationTarget";
 
 const snapshot = (tabId: string): PreviewSessionSnapshot => ({
@@ -17,6 +18,32 @@ const snapshot = (tabId: string): PreviewSessionSnapshot => ({
 });
 
 describe("preview automation target selection", () => {
+  it("keeps siblings and human selection out of an agent's implicit target", () => {
+    const human = snapshot("human");
+    const first = {
+      ...snapshot("a"),
+      automationOrigin: { contextId: "a", hostId: "host", hostLabel: "Windows" },
+    };
+    const second = {
+      ...snapshot("b"),
+      automationOrigin: { contextId: "b", hostId: "host", hostLabel: "Windows" },
+    };
+    const state = { snapshot: human, sessions: { human, a: first, b: second } };
+    expect(previewAutomationContextState(state, "new").snapshot).toBeNull();
+    expect(previewAutomationContextState(state, "a").snapshot).toBe(first);
+    expect(previewAutomationContextState({ ...state, snapshot: second }, "a").snapshot).toBe(first);
+    expect(
+      resolvePreviewAutomationOpenTab(previewAutomationContextState(state, "new"), undefined, true),
+    ).toBeNull();
+    expect(
+      resolvePreviewAutomationTarget(previewAutomationContextState(state, "a"), "b").snapshot,
+    ).toBe(second);
+    expect(Object.keys(previewAutomationContextState(state, "a").sessions)).toEqual([
+      "human",
+      "a",
+      "b",
+    ]);
+  });
   it("refreshes authoritative sessions whenever the caller relies on the active tab", () => {
     const active = snapshot("tab-active");
     expect(

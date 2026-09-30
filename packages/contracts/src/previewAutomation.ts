@@ -41,6 +41,7 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
 /** Advertised by current desktop hosts for mixed-version routing. */
 export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
+  "close",
   "resize",
   "setColorScheme",
 ] as const;
@@ -63,6 +64,17 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+/**
+ * Whether the host renderer's animation frames fire. `paused` means Chromium
+ * treats the desktop window as hidden (idle display, minimized or occluded
+ * window). An idle display also stalls native captures, presentation waits,
+ * and recordings until input resumes; a merely minimized window has still
+ * captured on Windows, so read `paused` together with the snapshot's own
+ * `screenshotUnavailable` stage.
+ */
+export const PreviewAutomationHostRendering = Schema.Literals(["active", "paused"]);
+export type PreviewAutomationHostRendering = typeof PreviewAutomationHostRendering.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -74,6 +86,14 @@ export const PreviewAutomationStatus = Schema.Struct({
   viewportSetting: Schema.optional(PreviewViewportSetting),
   /** Measured guest-page viewport in CSS pixels when a webview is ready. */
   viewport: Schema.optional(PreviewRenderedViewportSize),
+  /** Measured only by hosts that probe frame liveness and only when the request budget allows. */
+  hostRendering: Schema.optional(PreviewAutomationHostRendering),
+  /**
+   * Whether the desktop host currently holds its display-sleep block for live
+   * automation, so an idle display cannot starve compositor frames. Reported
+   * only by desktop hosts that keep the display awake.
+   */
+  displaySleepBlocked: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
@@ -110,7 +130,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   )
   .annotate({
     description:
-      "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
+      "Opens the collaborative browser for the current thread. Newly created tabs acknowledge server creation immediately while any requested presentation and initial page load continue; reopening an existing shown tab waits for stable panel presentation. Wait on the returned tab before interacting while its initial page loads.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
 
@@ -267,6 +287,7 @@ export const PreviewAutomationSetColorSchemeInput = Schema.Struct({
     description:
       "Emulated prefers-color-scheme for the page: light, dark, or system to follow the OS appearance.",
   }),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Emulates prefers-color-scheme in the active browser tab without changing the OS or app theme.",
@@ -377,6 +398,7 @@ export const PreviewAutomationPressInput = Schema.Struct({
       description: "Modifier keys held while pressing key.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({ description: "Presses one keyboard key in the active browser tab." });
 export type PreviewAutomationPressInput = typeof PreviewAutomationPressInput.Type;
 
@@ -398,6 +420,7 @@ export const PreviewAutomationScrollInput = Schema.Struct({
   locator: Schema.optional(Locator).annotate({
     description: "Playwright selector for a scrollable container. Omit to scroll the viewport.",
   }),
+  timeoutMs: OptionalTimeoutMs,
 })
   .check(
     Schema.makeFilter((input) => {
@@ -414,6 +437,12 @@ export const PreviewAutomationScrollInput = Schema.Struct({
       "Scrolls the viewport, or a locator/selector container. Provide deltaX, deltaY, or both.",
   });
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
+
+export const PreviewAutomationRecordingStartInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  timeoutMs: OptionalTimeoutMs,
+}).annotate({ description: "Starts recording the active browser tab." });
+export type PreviewAutomationRecordingStartInput = typeof PreviewAutomationRecordingStartInput.Type;
 
 export const PreviewAutomationEvaluateInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -438,6 +467,7 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
         "Serialize and return the value instead of a remote object reference. Defaults to true.",
     }),
   ),
+  timeoutMs: OptionalTimeoutMs,
 }).annotate({
   description:
     "Evaluates JavaScript in the page. Prefer snapshot and semantic actions; use evaluate for inspection or unsupported interactions.",
@@ -527,6 +557,31 @@ export const PreviewAutomationActionEvent = Schema.Struct({
 });
 export type PreviewAutomationActionEvent = typeof PreviewAutomationActionEvent.Type;
 
+/**
+ * Where a missing screenshot was lost: the native capture rejected, the image
+ * could not be encoded, the capture was interrupted at the screenshot budget,
+ * an earlier interrupted capture still blocks the host's capture gate, or the
+ * operation deadline left no budget to try.
+ */
+export const PreviewAutomationScreenshotUnavailableStage = Schema.Literals([
+  "capture",
+  "encode",
+  "interrupted",
+  "pending-capture",
+  "budget",
+]);
+export type PreviewAutomationScreenshotUnavailableStage =
+  typeof PreviewAutomationScreenshotUnavailableStage.Type;
+
+export const PreviewAutomationScreenshotUnavailable = Schema.Struct({
+  stage: PreviewAutomationScreenshotUnavailableStage,
+  /** The host's own failure message, bounded and free of page content. */
+  message: Schema.String.check(Schema.isMaxLength(512)),
+  hostRendering: Schema.optional(PreviewAutomationHostRendering),
+});
+export type PreviewAutomationScreenshotUnavailable =
+  typeof PreviewAutomationScreenshotUnavailable.Type;
+
 export const PreviewAutomationSnapshot = Schema.Struct({
   url: Schema.String,
   title: Schema.String,
@@ -537,12 +592,16 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
   actionTimeline: Schema.Array(PreviewAutomationActionEvent),
-  screenshot: Schema.Struct({
-    mimeType: Schema.Literal("image/png"),
-    data: Schema.String,
-    width: Schema.Int,
-    height: Schema.Int,
-  }),
+  screenshot: Schema.NullOr(
+    Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Int,
+      height: Schema.Int,
+    }),
+  ),
+  /** Present only when `screenshot` is null and the host could say why. */
+  screenshotUnavailable: Schema.optional(PreviewAutomationScreenshotUnavailable),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
@@ -570,6 +629,17 @@ export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
 export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
 
+export const PreviewAutomationHostPlatform = Schema.Literals([
+  "macos",
+  "windows",
+  "linux",
+  "unknown",
+]);
+export type PreviewAutomationHostPlatform = typeof PreviewAutomationHostPlatform.Type;
+
+export const PreviewAutomationHostLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type PreviewAutomationHostLabel = typeof PreviewAutomationHostLabel.Type;
+
 export const PreviewAutomationHostIdentity = Schema.Struct({
   clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
@@ -578,6 +648,12 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
+  /** Stable physical renderer identity. Missing legacy values fall back to clientId. */
+  hostId: Schema.optional(PreviewAutomationClientId),
+  /** Optional so current servers remain compatible with older desktop renderers. */
+  label: Schema.optional(PreviewAutomationHostLabel),
+  /** Optional so current servers remain compatible with older desktop renderers. */
+  platform: Schema.optional(PreviewAutomationHostPlatform),
   /**
    * Missing means the pre-capability-negotiation V1 operation set. This lets
    * a newer server safely coexist with an older desktop during rollout.
@@ -585,6 +661,46 @@ export const PreviewAutomationHost = Schema.Struct({
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
+
+export const PreviewAutomationAvailableHost = Schema.Struct({
+  hostId: PreviewAutomationClientId,
+  label: PreviewAutomationHostLabel,
+  platform: PreviewAutomationHostPlatform,
+  supportedOperations: Schema.Array(PreviewAutomationOperation),
+  focused: Schema.Boolean,
+});
+export type PreviewAutomationAvailableHost = typeof PreviewAutomationAvailableHost.Type;
+
+export const PreviewAutomationHostListInput = Schema.Struct({
+  platform: Schema.optional(
+    PreviewAutomationHostPlatform.annotate({
+      description: "Optional renderer platform filter. Omit to list every available host.",
+    }),
+  ),
+});
+export type PreviewAutomationHostListInput = typeof PreviewAutomationHostListInput.Type;
+
+export const PreviewAutomationHostList = Schema.Struct({
+  hosts: Schema.Array(PreviewAutomationAvailableHost),
+  assignedHostId: Schema.NullOr(PreviewAutomationClientId),
+});
+export type PreviewAutomationHostList = typeof PreviewAutomationHostList.Type;
+
+export const PreviewAutomationSelectHostInput = Schema.Struct({
+  hostId: Schema.String.check(Schema.isTrimmed())
+    .check(Schema.isNonEmpty())
+    .check(Schema.isMaxLength(128))
+    .annotateKey({
+      description:
+        "Stable host id returned by preview_list_hosts. The host must be available in this caller's environment.",
+    }),
+});
+export type PreviewAutomationSelectHostInput = typeof PreviewAutomationSelectHostInput.Type;
+
+export const PreviewAutomationHostSelection = Schema.Struct({
+  host: PreviewAutomationAvailableHost,
+});
+export type PreviewAutomationHostSelection = typeof PreviewAutomationHostSelection.Type;
 
 export const PreviewAutomationHostFocus = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
@@ -605,6 +721,8 @@ export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 export const PreviewAutomationRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   threadId: ThreadId,
+  /** Independent agent control within the bearer-owned conversation. */
+  contextId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
   tabId: Schema.optional(PreviewTabId),
   tabIdExplicit: Schema.optional(Schema.Boolean),
   operation: PreviewAutomationOperation,
@@ -675,12 +793,16 @@ export class McpCapabilityUnavailableError extends Schema.TaggedError<McpCapabil
   }
 }
 
-const PreviewAutomationScopeErrorFields = {
-  operation: PreviewAutomationOperation,
+const PreviewAutomationSessionScopeErrorFields = {
   environmentId: EnvironmentId,
   threadId: ThreadId,
   providerSessionId: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
+};
+
+const PreviewAutomationScopeErrorFields = {
+  operation: PreviewAutomationOperation,
+  ...PreviewAutomationSessionScopeErrorFields,
 };
 
 const PreviewAutomationRequestErrorFields = {
@@ -724,6 +846,34 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
 ) {
   override get message(): string {
     return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. Preview tools run in a T3 Code desktop app that is open and connected to this environment; a headless server has no browser of its own. Do not retry. To check a page, use a headless browser from the shell, such as Playwright, or curl, or ask the user to open this thread in the T3 Code desktop app.`;
+  }
+}
+
+export class PreviewAutomationHostUnavailableError extends Schema.TaggedError<PreviewAutomationHostUnavailableError>()(
+  "PreviewAutomationHostUnavailableError",
+  {
+    ...PreviewAutomationSessionScopeErrorFields,
+    hostId: PreviewAutomationClientId,
+    operation: Schema.optional(PreviewAutomationOperation),
+  },
+) {
+  override get message(): string {
+    return this.operation === undefined
+      ? `Preview automation host ${this.hostId} is not available in environment ${this.environmentId}.`
+      : `Preview automation host ${this.hostId} is not available for ${this.operation} in environment ${this.environmentId}.`;
+  }
+}
+
+export class PreviewAutomationHostAssignmentConflictError extends Schema.TaggedError<PreviewAutomationHostAssignmentConflictError>()(
+  "PreviewAutomationHostAssignmentConflictError",
+  {
+    ...PreviewAutomationSessionScopeErrorFields,
+    requestedHostId: PreviewAutomationClientId,
+    assignedHostId: PreviewAutomationClientId,
+  },
+) {
+  override get message(): string {
+    return `This agent's preview context is already assigned to host ${this.assignedHostId}; it was not moved to ${this.requestedHostId}. Existing tabs stay on their host across reconnection. A separate agent context can select another host.`;
   }
 }
 
@@ -929,6 +1079,8 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationRecordingDeadlineExpiredError,
   PreviewAutomationUnavailableError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationHostUnavailableError,
+  PreviewAutomationHostAssignmentConflictError,
   PreviewAutomationUnsupportedClientError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,

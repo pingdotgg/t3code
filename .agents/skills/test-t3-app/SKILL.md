@@ -39,3 +39,5 @@ using retained terminal sessions or captured PIDs.
 When sharing is requested, start with `vp run dev --share` and give the user
 a fresh complete pairing URL that you have not consumed. Keep other credentials
 out of screenshots, commits, and replies.
+
+Retain the `tabId` of each tab created for this test. At final teardown, close only those owned tabs with `preview_close`, passing each `tabId` explicitly, before stopping the test environment. Confirm each close returns `tabId: null`.

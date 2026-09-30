@@ -1,8 +1,10 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
+  type PreviewAutomationHostPlatform,
   PreviewAutomationPressInput,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
@@ -1015,6 +1017,17 @@ export const DesktopPreviewTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
 });
 
+/** Longest wait a desktop preview IPC method accepts; callers with a longer budget clamp to it. */
+export const DESKTOP_PREVIEW_OPERATION_TIMEOUT_MAX_MS = 60_000;
+
+export const DesktopPreviewAutomationSnapshotInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  background: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0))
+    .check(Schema.isLessThanOrEqualTo(DESKTOP_PREVIEW_OPERATION_TIMEOUT_MAX_MS))
+    .pipe(Schema.withDecodingDefault(Effect.succeed(15_000))),
+});
+
 /**
  * Tab creation carries the client's configured browser defaults so the guest
  * is born already zoomed and color-scheme-emulated. Applying them after
@@ -1063,7 +1076,23 @@ export const DesktopPreviewClearDataInputSchema = Schema.Struct({
 export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   colorScheme: DesktopPreviewColorSchemeSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(
+      Schema.isLessThanOrEqualTo(DESKTOP_PREVIEW_OPERATION_TIMEOUT_MAX_MS),
+    ),
+  ),
 });
+
+export const DesktopPreviewRecordingStartInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(
+      Schema.isLessThanOrEqualTo(DESKTOP_PREVIEW_OPERATION_TIMEOUT_MAX_MS),
+    ),
+  ),
+});
+
+export const DesktopPreviewRecordingStopInputSchema = DesktopPreviewRecordingStartInputSchema;
 
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
@@ -1082,6 +1111,17 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   mimeType: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
   data: Schema.Uint8Array,
+  idempotencyKey: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[a-z0-9-]+$/i),
+  ),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(
+      Schema.isLessThanOrEqualTo(DESKTOP_PREVIEW_OPERATION_TIMEOUT_MAX_MS),
+    ),
+  ),
 });
 
 export const DesktopPreviewAutomationClickInputSchema = Schema.Struct({
@@ -1120,6 +1160,10 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
  */
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
+export interface DesktopPreviewAutomationHostMetadata {
+  readonly label: string;
+  readonly platform: PreviewAutomationHostPlatform;
+}
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -1130,6 +1174,8 @@ export interface DesktopBridge {
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
+  /** Physical renderer metadata used only for non-disruptive preview host discovery. */
+  getPreviewAutomationHostMetadata?: () => DesktopPreviewAutomationHostMetadata;
   /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
@@ -1278,7 +1324,11 @@ export interface DesktopPreviewBridge {
    * Emulate `prefers-color-scheme` on the guest page ("system" clears the
    * override). Persists per tab and is re-applied across webview swaps.
    */
-  setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  setColorScheme: (
+    tabId: string,
+    colorScheme: DesktopPreviewColorScheme,
+    timeoutMs?: number,
+  ) => Promise<void>;
   /**
    * Silence the tab's audio output. Persists per tab and is re-applied across
    * webview swaps, but is dropped when the tab closes. Muting a silent tab is
@@ -1328,18 +1378,24 @@ export interface DesktopPreviewBridge {
   };
   recording: {
     onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;
-    startScreencast: (tabId: string) => Promise<void>;
-    stopScreencast: (tabId: string) => Promise<void>;
+    startScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
+    stopScreencast: (tabId: string, timeoutMs?: number) => Promise<void>;
     save: (
       tabId: string,
       mimeType: string,
       data: Uint8Array,
+      idempotencyKey: string,
+      timeoutMs?: number,
     ) => Promise<DesktopPreviewRecordingArtifact>;
     onFrame: (listener: (frame: DesktopPreviewRecordingFrame) => void) => () => void;
   };
   automation: {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
-    snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
+    snapshot: (
+      tabId: string,
+      background: boolean,
+      timeoutMs?: number,
+    ) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;

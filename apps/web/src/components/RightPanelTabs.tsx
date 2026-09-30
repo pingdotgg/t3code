@@ -1133,6 +1133,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
+              const origin = previewTabId
+                ? props.previewSessions[previewTabId]?.automationOrigin
+                : undefined;
+              const creator = origin
+                ? `Agent ${(origin.contextId.split(":").at(-1) || origin.contextId).slice(-8)} · ${origin.hostLabel}`
+                : null;
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
               const audio = tabAudioState(
@@ -1238,7 +1244,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             className="cursor-pointer flex min-w-0 items-center"
                             onClick={() => props.onActivate(surface)}
                           >
-                            <span className="truncate">{title}</span>
+                            <span className="truncate">
+                              {creator ? `${title} · ${creator}` : title}
+                            </span>
                           </button>
                         }
                       />
@@ -1249,6 +1257,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                             environmentId={props.environmentId}
                             title={title}
                           />
+                        ) : creator ? (
+                          `${title} · Created by ${creator}`
                         ) : (
                           title
                         )}

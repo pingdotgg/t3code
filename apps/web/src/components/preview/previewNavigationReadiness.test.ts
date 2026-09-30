@@ -1,8 +1,9 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   readThreadPreviewState: vi.fn(),
+  status: vi.fn(),
 }));
 
 vi.mock("~/previewStateStore", () => ({
@@ -16,17 +17,25 @@ vi.mock("./previewBridge", () => ({
   previewBridge: {
     automation: {
       evaluate: vi.fn(),
-      status: vi.fn(),
+      status: mocks.status,
     },
   },
 }));
 
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
-import { PreviewAutomationTargetUnavailableError } from "./previewAutomationErrors";
+import {
+  PreviewAutomationNavigationTimeoutError,
+  PreviewAutomationTargetUnavailableError,
+} from "./previewAutomationErrors";
 import { waitForNavigationReadiness } from "./previewNavigationReadiness";
 
 describe("waitForNavigationReadiness", () => {
+  beforeEach(() => {
+    mocks.readThreadPreviewState.mockReset();
+    mocks.status.mockReset();
+  });
+
   it("rejects a replaced runtime target even when readiness polling is disabled", async () => {
     const threadRef = {
       environmentId: EnvironmentId.make("environment-2"),
@@ -52,5 +61,45 @@ describe("waitForNavigationReadiness", () => {
         100,
       ),
     ).rejects.toBeInstanceOf(PreviewAutomationTargetUnavailableError);
+  });
+
+  it("clamps readiness polling to a short remaining operation budget", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout,
+    });
+    const threadRef = {
+      environmentId: EnvironmentId.make("environment-2"),
+      threadId: ThreadId.make("thread-1"),
+    };
+    const tabId = "tab_1";
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", tabId);
+    mocks.readThreadPreviewState.mockReturnValue({
+      serverEpoch: "epoch-1",
+      sessions: {
+        [tabId]: { tabId },
+      },
+    });
+    mocks.status.mockResolvedValue({ available: true, loading: true });
+    try {
+      const readiness = waitForNavigationReadiness(
+        threadRef,
+        "request-1",
+        tabId,
+        runtimeTabId,
+        "navigate",
+        "load",
+        40,
+      );
+      const rejection = expect(readiness).rejects.toBeInstanceOf(
+        PreviewAutomationNavigationTimeoutError,
+      );
+
+      await vi.advanceTimersByTimeAsync(40);
+      await rejection;
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
   });
 });

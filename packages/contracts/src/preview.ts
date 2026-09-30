@@ -162,6 +162,13 @@ export const PreviewNavStatus = Schema.Union([
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 
+export const PreviewAutomationOrigin = Schema.Struct({
+  contextId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  hostId: TrimmedNonEmptyString,
+  hostLabel: Schema.String,
+});
+export type PreviewAutomationOrigin = typeof PreviewAutomationOrigin.Type;
+
 export const PreviewSessionSnapshot = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   tabId: PreviewTabId,
@@ -176,6 +183,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
    * switching would require tearing the guest down and losing page state.
    */
   profileId: Schema.optional(BrowserProfileId),
+  /** Creator attribution; tabs remain in the main conversation. */
+  automationOrigin: Schema.optional(PreviewAutomationOrigin),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -193,6 +202,7 @@ export const PreviewOpenInput = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
+  automationOrigin: Schema.optional(PreviewAutomationOrigin),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 

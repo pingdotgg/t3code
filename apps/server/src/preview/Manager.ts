@@ -227,7 +227,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       // session is born at the right size; older clients omit it and keep the
       // historical fill-panel behaviour.
       const viewport = input.viewport ?? FILL_PREVIEW_VIEWPORT;
-      const snapshot = input.url
+      const initialSnapshot = input.url
         ? buildLoadingSnapshot({
             threadId: input.threadId,
             tabId,
@@ -244,6 +244,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             profileId: input.profileId,
             updatedAt,
           });
+      const snapshot = {
+        ...initialSnapshot,
+        ...(input.automationOrigin ? { automationOrigin: input.automationOrigin } : {}),
+      };
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
         Effect.gen(function* () {
           const revision = state.revision + 1;
@@ -281,6 +285,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
           const resolvedTitle = input.resolvedTitle ?? previousTitle;
           const snapshot: PreviewSessionSnapshot = {
+            ...session.snapshot,
             threadId: session.threadId,
             tabId: session.tabId,
             navStatus: { _tag: "Success", url, title: resolvedTitle },
@@ -317,6 +322,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       Effect.fn("PreviewManager.reportSessionStatus")(function* (session) {
         const updatedAt = yield* currentIsoTimestamp;
         const snapshot: PreviewSessionSnapshot = {
+          ...session.snapshot,
           threadId: session.threadId,
           tabId: session.tabId,
           navStatus: input.navStatus,

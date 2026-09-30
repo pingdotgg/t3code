@@ -5,6 +5,19 @@ interface PreviewAutomationSessionIndex {
   readonly sessions: Readonly<Record<string, PreviewSessionSnapshot>>;
 }
 
+/** UI selection belongs to the human; an agent's implicit target belongs to its context. */
+export function previewAutomationContextState<T extends PreviewAutomationSessionIndex>(
+  state: T,
+  contextId: string | undefined,
+): T {
+  if (contextId === undefined) return state;
+  const snapshot =
+    Object.values(state.sessions)
+      .filter((session) => session.automationOrigin?.contextId === contextId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
+  return { ...state, snapshot };
+}
+
 export function needsPreviewAutomationSessionSync(
   state: PreviewAutomationSessionIndex,
   requestedTabId: string | undefined,

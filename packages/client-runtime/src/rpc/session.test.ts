@@ -163,6 +163,7 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const isRpcRequest = Schema.is(RpcRequest);
 const isPing = Schema.is(Schema.TaggedStruct("Ping", {}));
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encodeVoid = Schema.encodeSync(Schema.toCodecJson(Schema.Void));
 const encodeServerConfig = Schema.encodeSync(ServerConfig);
 const encodeServerConfigStreamEvent = Schema.encodeSync(ServerConfigStreamEvent);
 const encodeDefect = Schema.encodeSync(Schema.Defect());
@@ -288,6 +289,72 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect("keeps unrelated RPC responses flowing while a stream consumer is backpressured", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* session.ready;
+
+      const consuming = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const received: string[] = [];
+      const subscription = yield* session.client[WS_METHODS.previewAutomationConnect](
+        { clientId: "slow-host", environmentId: TARGET.environmentId },
+        { streamBufferSize: 1 },
+      ).pipe(
+        Stream.runForEach((event) =>
+          Deferred.succeed(consuming, undefined).pipe(
+            Effect.andThen(Deferred.await(resume)),
+            Effect.andThen(() =>
+              Effect.sync(() => {
+                received.push(event.connectionId);
+              }),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const streamRequest = yield* awaitRequest(socket, 1);
+      const connected = { type: "connected", connectionId: "slow-connection" };
+      socket.serverMessage(
+        encodeJson({ _tag: "Chunk", requestId: streamRequest.id, values: [connected] }),
+      );
+      yield* Deferred.await(consuming);
+      // One batch larger than the bounded receive queue suspends delivery until
+      // this consumer resumes. A different request must still complete.
+      socket.serverMessage(
+        encodeJson({ _tag: "Chunk", requestId: streamRequest.id, values: [connected, connected] }),
+      );
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: streamRequest.id,
+          exit: {
+            _tag: "Success",
+            value: encodeVoid(undefined),
+          },
+        }),
+      );
+      const probe = yield* session.probe.pipe(Effect.forkScoped);
+      const probeRequest = yield* awaitRequest(socket, 2);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: probeRequest.id,
+          exit: { _tag: "Success", value: {} },
+        }),
+      );
+      yield* TestClock.adjust("1 second");
+      expect(probe.pollUnsafe()).toEqual(Exit.void);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(subscription);
+      expect(received).toEqual(Array(3).fill("slow-connection"));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

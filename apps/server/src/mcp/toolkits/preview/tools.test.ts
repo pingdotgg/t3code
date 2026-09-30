@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { PreviewToolkit } from "./tools.ts";
+import { PreviewToolkit, previewScreenshotUnavailableText } from "./tools.ts";
 
 const schemaHasDescription = (schema: unknown): boolean => {
   if (!schema || typeof schema !== "object") return false;
@@ -43,10 +43,12 @@ it("exports provider-compatible object schemas with described parameters", () =>
     if (tool.name === "preview_navigate") {
       expect(schemaHasMultipleAllOfDescriptions(schema)).toBe(false);
     }
-    expect(
-      schema.properties?.tabId,
-      `${tool.name} must allow an explicit collaborative browser tab target`,
-    ).toBeDefined();
+    if (tool.name !== "preview_list_hosts" && tool.name !== "preview_select_host") {
+      expect(
+        schema.properties?.tabId,
+        `${tool.name} must allow an explicit collaborative browser tab target`,
+      ).toBeDefined();
+    }
     for (const [field, fieldSchema] of Object.entries(schema.properties ?? {})) {
       expect(
         schemaHasDescription(fieldSchema),
@@ -74,4 +76,32 @@ it("exports exact object result schemas for preview actions", () => {
       description: "The preview action completed successfully.",
     });
   }
+});
+
+it("explains a missing screenshot by stage and host frame liveness", () => {
+  expect(previewScreenshotUnavailableText(undefined)).toBe(
+    "No screenshot: the preview host did not report why capture failed.",
+  );
+  expect(
+    previewScreenshotUnavailableText({
+      stage: "pending-capture",
+      message: "Preview capture is unavailable while a timed-out capture is pending",
+    }),
+  ).toBe(
+    "No screenshot (pending-capture): an earlier interrupted capture is still pending on the host (Preview capture is unavailable while a timed-out capture is pending).",
+  );
+  const paused = previewScreenshotUnavailableText({
+    stage: "interrupted",
+    message: "The native capture did not settle within 3000ms",
+    hostRendering: "paused",
+  });
+  expect(paused).toContain("No screenshot (interrupted)");
+  expect(paused).toContain("not painting frames");
+  expect(
+    previewScreenshotUnavailableText({
+      stage: "capture",
+      message: "UnknownVizError",
+      hostRendering: "active",
+    }),
+  ).toContain("The host window is painting frames.");
 });

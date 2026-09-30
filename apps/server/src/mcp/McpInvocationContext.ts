@@ -17,6 +17,8 @@ export interface McpInvocationScope {
   readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<McpCapability>;
   readonly issuedAt: number;
+  /** Caller namespace within this credential; never used to select a T3 thread. */
+  readonly previewContextId?: string;
 }
 
 export class McpInvocationContext extends Context.Service<

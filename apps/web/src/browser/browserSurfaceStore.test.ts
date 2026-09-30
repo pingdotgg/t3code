@@ -1,15 +1,83 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { shallow } from "zustand/shallow";
 
 import {
   acquireBrowserSurface,
+  acquireBrowserSurfaceBackgroundCapture,
+  resolveBrowserSurfaceBackgroundCaptureRect,
   acquireBrowserSurfaceActivity,
   resolveBrowserSurfacePanelRect,
+  selectBrowserSurfaceRenderState,
   useBrowserSurfaceStore,
 } from "./browserSurfaceStore";
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
-    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    useBrowserSurfaceStore.setState({
+      activityByTabId: {},
+      byTabId: {},
+      backgroundCaptureCountByTabId: {},
+    });
+  });
+
+  it("reference-counts background capture leases", () => {
+    const releaseFirst = acquireBrowserSurfaceBackgroundCapture("tab-background");
+    const releaseSecond = acquireBrowserSurfaceBackgroundCapture("tab-background");
+
+    expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"]).toBe(
+      2,
+    );
+
+    releaseFirst();
+    releaseFirst();
+    expect(useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"]).toBe(
+      1,
+    );
+
+    releaseSecond();
+    expect(
+      useBrowserSurfaceStore.getState().backgroundCaptureCountByTabId["tab-background"],
+    ).toBeUndefined();
+  });
+
+  it("selects only the current tab's stable render inputs", () => {
+    const release = acquireBrowserSurfaceBackgroundCapture("tab-background");
+    const state = useBrowserSurfaceStore.getState();
+    const first = selectBrowserSurfaceRenderState(state, "tab-background");
+    useBrowserSurfaceStore.setState({
+      byTabId: {
+        ...state.byTabId,
+        unrelated: {
+          rect: { x: 10, y: 20, width: 300, height: 200 },
+          visible: true,
+          content: null,
+          fittedSourceContent: null,
+          fitSourceContent: false,
+          cornerRadius: 0,
+          zIndex: 30,
+          updatedAt: 1,
+          owner: null,
+        },
+      },
+    });
+    const second = selectBrowserSurfaceRenderState(
+      useBrowserSurfaceStore.getState(),
+      "tab-background",
+    );
+
+    expect(shallow(first, second)).toBe(true);
+    expect(first).toEqual({
+      backgroundCapture: true,
+      content: null,
+      cornerRadius: 0,
+      fitSourceContent: false,
+      fittedSourceContent: null,
+      rect: null,
+      visible: false,
+      zIndex: 30,
+    });
+    expect(first).not.toHaveProperty("byTabId");
+    release();
   });
 
   it("keeps concurrent background work active until every lease is released", () => {
@@ -130,6 +198,48 @@ describe("browserSurfaceStore", () => {
         "hidden",
       ),
     ).toEqual(staleRect);
+  });
+
+  it("stages a never-presented background tab inside the renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect(null, {
+        width: 1440,
+        height: 900,
+      }),
+    ).toEqual({
+      x: 80,
+      y: 50,
+      width: 1280,
+      height: 800,
+    });
+  });
+
+  it("fits background capture staging to a smaller renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect(null, {
+        width: 800,
+        height: 600,
+      }),
+    ).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+    });
+  });
+
+  it("clamps a stale presented rectangle to the current renderer viewport", () => {
+    expect(
+      resolveBrowserSurfaceBackgroundCaptureRect(
+        { x: 1_000, y: 700, width: 900, height: 640 },
+        { width: 800, height: 600 },
+      ),
+    ).toEqual({
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 600,
+    });
   });
 
   it("ignores updates and releases from a stale surface lease", () => {

@@ -131,6 +131,51 @@ describe("detached recording compositor", () => {
     ).toBeNull();
   });
 
+  it("releases pending playback resources on abort and cannot revive after playback settles", async () => {
+    const controller = new AbortController();
+    const stop = vi.fn();
+    const unsubscribe = vi.fn();
+    const cancelFrame = vi.fn();
+    const ctx = context();
+    let finishPlayback!: () => void;
+    const playback = new Promise<void>((resolve) => {
+      finishPlayback = resolve;
+    });
+    const source = { getVideoTracks: () => [] } as unknown as MediaStream;
+    const stream = { getTracks: () => [{ stop }] } as unknown as MediaStream;
+    const canvas = { width: 0, height: 0, getContext: () => ctx, captureStream: () => stream };
+    const video = {
+      srcObject: null as MediaStream | null,
+      readyState: 0,
+      play: () => playback,
+      pause: vi.fn(),
+      requestVideoFrameCallback: () => 7,
+      cancelVideoFrameCallback: cancelFrame,
+    };
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => (tag === "canvas" ? canvas : video),
+    });
+    vi.stubGlobal("window", { clearTimeout: vi.fn(), setTimeout: vi.fn() });
+    const compositor = createRecordingCompositor(
+      source,
+      options,
+      () => unsubscribe,
+      controller.signal,
+    );
+    controller.abort();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(cancelFrame).toHaveBeenCalledWith(7);
+    expect(video.pause).toHaveBeenCalledOnce();
+    expect(video.srcObject).toBeNull();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+    finishPlayback();
+    await expect(compositor).rejects.toMatchObject({ name: "AbortError" });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(ctx.drawImage).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "releases the detached output on disposal or playback failure (%s)",
     async (failPlayback) => {

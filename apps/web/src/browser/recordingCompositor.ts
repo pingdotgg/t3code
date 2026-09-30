@@ -13,7 +13,9 @@ export async function createRecordingCompositor(
   source: MediaStream,
   options: RecordingDecorationOptions,
   subscribe: (listener: (input: DesktopPreviewRecordingInput) => void) => () => void,
+  signal?: AbortSignal,
 ) {
+  signal?.throwIfAborted();
   if (!options.showKeyPresses && !options.showMousePresses) return null;
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d", { alpha: false });
@@ -59,6 +61,7 @@ export async function createRecordingCompositor(
     video.srcObject = null;
     for (const track of output.getTracks()) track.stop();
   };
+  signal?.addEventListener("abort", dispose, { once: true });
   try {
     unsubscribe = subscribe((input) => {
       decorations.apply(input, performance.now());
@@ -66,11 +69,14 @@ export async function createRecordingCompositor(
     });
     frameId = video.requestVideoFrameCallback(frame);
     await video.play();
+    signal?.throwIfAborted();
     draw();
     return { stream: output, dispose };
   } catch (error) {
     dispose();
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", dispose);
   }
 }
 

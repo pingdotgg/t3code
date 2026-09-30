@@ -36,6 +36,29 @@ const collectEvents = Effect.gen(function* () {
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
 it.layer(PreviewManager.layer)("PreviewManager", (it) => {
+  it.effect("keeps agent attribution and all agents' tabs in the main conversation", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const origin = { contextId: "worker-a", hostId: "windows", hostLabel: "Windows" };
+      const first = yield* manager.open({ threadId, automationOrigin: origin });
+      const second = yield* manager.open({
+        threadId,
+        automationOrigin: { ...origin, contextId: "worker-b" },
+      });
+      yield* manager.navigate({ threadId, tabId: first.tabId, url: "https://example.test/" });
+      yield* manager.reportStatus({
+        threadId,
+        tabId: first.tabId,
+        navStatus: { _tag: "Success", url: "https://example.test/", title: "A" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      const listed = yield* manager.list({ threadId });
+      expect(listed.sessions.map((tab) => tab.tabId)).toEqual([first.tabId, second.tabId]);
+      expect(listed.sessions[0]?.automationOrigin).toEqual(origin);
+    }),
+  );
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
