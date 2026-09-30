@@ -10,6 +10,8 @@ import {
 import { changeRequestUrlFor, parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   normalizeThreadPullRequestKey,
+  legacyThreadPullRequestKey,
+  isThreadPullRequestDismissed,
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
@@ -129,13 +131,32 @@ function entryOf(
 
 /** What the tools report from a thread shell; exported so the shape is testable without a layer. */
 export function listThreadPullRequests(
-  thread: Pick<OrchestrationThreadShell, "pullRequests">,
+  thread: Pick<OrchestrationThreadShell, "pullRequests" | "branchPullRequest">,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests);
+  const pullRequests = visibleThreadPullRequests(thread.pullRequests).map((link) =>
+    entryOf(link, chains),
+  );
+  const branch = thread.branchPullRequest;
+  if (
+    pullRequests.length === 0 &&
+    branch != null &&
+    !isThreadPullRequestDismissed(thread.pullRequests, legacyThreadPullRequestKey(branch))
+  ) {
+    pullRequests.push({
+      ...legacyThreadPullRequestKey(branch),
+      url: branch.url,
+      source: "branch",
+      state: null,
+      title: null,
+      headBranch: null,
+      baseBranch: null,
+      isDraft: null,
+      stack: null,
+    });
+  }
   return {
-    pullRequests: visibleThreadPullRequests(thread.pullRequests).map((link) =>
-      entryOf(link, chains),
-    ),
+    pullRequests,
     chains: chains.map((chain) => ({
       kind: chain.kind,
       numbers: chain.layers.map((layer) => layer.number),

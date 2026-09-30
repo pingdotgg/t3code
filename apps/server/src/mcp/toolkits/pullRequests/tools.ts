@@ -156,7 +156,7 @@ export type UnlinkPullRequestResult = typeof UnlinkPullRequestResult.Type;
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
-  source: ThreadPullRequestLinkSource,
+  source: Schema.Union([ThreadPullRequestLinkSource, Schema.Literal("branch")]),
   state: Schema.NullOr(PullRequestState),
   title: Schema.NullOr(Schema.String),
   headBranch: Schema.NullOr(Schema.String),
@@ -200,7 +200,7 @@ const LinkPullRequestTool = Tool.make("link_pull_request", {
 
 const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   description:
-    "Remove a pull request link from this thread, for example after closing a pull request you opened by mistake. Pass the URL, or repository plus number. Unlinking a pull request that is not linked succeeds with wasLinked=false.",
+    "Remove a pull request link or dismiss the branch-discovered pull request shown on this thread. Pass the URL, or repository plus number. Unlinking a pull request that is not linked succeeds with wasLinked=false. Dismissed discoveries stay hidden until explicitly linked again.",
   parameters: PullRequestTargetInput,
   success: UnlinkPullRequestResult,
   failure: PullRequestToolError,
@@ -213,7 +213,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
   .annotate(Tool.OpenWorld, false);
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
-  description: `List the pull requests linked to this thread with their last known host state, and how they chain into stacks (bottom to top). ${REGISTER_EVERY_PR}`,
+  description: `List the pull requests linked to this thread with their last known host state, and how they chain into stacks (bottom to top). When no explicit link is visible, includes the branch-discovered PR shown on the thread with source=branch. ${REGISTER_EVERY_PR}`,
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,
   dependencies,

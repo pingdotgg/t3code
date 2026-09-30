@@ -273,6 +273,47 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
 });
 
 describe("ThreadPullRequestReactor", () => {
+  it.effect("does not reattach a dismissed branch PR during refresh", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeHarness({
+          threads: [
+            thread("dismissed", {
+              pullRequests: [
+                {
+                  host: "github.com",
+                  repository: REPOSITORY,
+                  number: 42,
+                  url: reference(42).url,
+                  source: "stack-dismissed",
+                  linkedAt: NOW,
+                  snapshot: null,
+                  stack: null,
+                },
+              ],
+            }),
+            thread("other"),
+          ],
+          branchPullRequest: () => Effect.succeed(branchPullRequest()),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* fixture.start();
+          expect((yield* Ref.get(fixture.snapshots)).threads[0]?.branchPullRequest).toBeUndefined();
+          expect((yield* Ref.get(fixture.snapshots)).threads[1]?.branchPullRequest).toEqual(
+            reference(42),
+          );
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+            "other",
+          ]);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.reads);
+          yield* reactor.drain;
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("discovers saved branch PRs without a client and shares branch lookups", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -430,6 +430,45 @@ describe("pull request toolkit handlers", () => {
 });
 
 describe("listThreadPullRequests", () => {
+  it("reports the branch badge when no explicit PR is visible", () => {
+    const branch = {
+      projectId: PROJECT_ID,
+      repository: "t3tools/t3code",
+      number: 273,
+      url: "https://github.com/t3tools/t3code/pull/273",
+    };
+    expect(listThreadPullRequests({ ...makeThread([]), branchPullRequest: branch })).toEqual({
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: branch.repository,
+          number: 273,
+          url: branch.url,
+          source: "branch",
+          state: null,
+          title: null,
+          headBranch: null,
+          baseBranch: null,
+          isDraft: null,
+          stack: null,
+        },
+      ],
+      chains: [],
+    });
+    expect(
+      listThreadPullRequests({
+        ...makeThread([makeLink(42)]),
+        branchPullRequest: branch,
+      }).pullRequests.map((pr) => pr.number),
+    ).toEqual([42]);
+    expect(
+      listThreadPullRequests({
+        ...makeThread([makeLink(273, { source: "stack-dismissed" })]),
+        branchPullRequest: branch,
+      }).pullRequests,
+    ).toEqual([]);
+  });
+
   it("reports a native stack position for each member", () => {
     const stack = {
       kind: "native" as const,

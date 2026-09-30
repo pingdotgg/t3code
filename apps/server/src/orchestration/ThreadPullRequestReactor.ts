@@ -11,6 +11,10 @@ import {
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import {
+  isThreadPullRequestDismissed,
+  legacyThreadPullRequestKey,
+} from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -234,6 +238,16 @@ export const make = Effect.gen(function* () {
                 if (previous.state === "merged" || previous.state === "closed") {
                   branchPullRequest = thread.branchPullRequest;
                 }
+              }
+
+              if (
+                branchPullRequest !== null &&
+                isThreadPullRequestDismissed(
+                  thread.pullRequests,
+                  legacyThreadPullRequestKey(branchPullRequest),
+                )
+              ) {
+                branchPullRequest = null;
               }
 
               let replacement: ThreadLinkedPullRequest | undefined;

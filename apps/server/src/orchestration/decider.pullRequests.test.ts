@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
 import { isThreadDetailEvent } from "../ws.ts";
+import { listThreadPullRequests } from "../mcp/toolkits/pullRequests/handlers.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
@@ -115,6 +116,99 @@ const snapshot: ThreadPullRequestSnapshot = {
 };
 
 it.layer(NodeServices.layer)("pull request link decider", (it) => {
+  it.effect("dismisses the branch badge, blocks rediscovery, and allows explicit relinking", () =>
+    Effect.gen(function* () {
+      const branch = {
+        projectId: ProjectId.make("project-1"),
+        repository: "t3tools/t3code",
+        number: 42,
+        url: "https://github.com/t3tools/t3code/pull/42",
+      };
+      let model = makeReadModel([]);
+      model = { ...model, threads: [{ ...model.threads[0]!, branchPullRequest: branch }] };
+      const unlink = yield* decodeCommand({
+        type: "thread.pull-request.unlink",
+        commandId: "unlink-branch",
+        threadId: THREAD_ID,
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 42,
+      });
+      if (unlink.type !== "thread.pull-request.unlink") throw new Error("unexpected command");
+      const wrong = yield* decideOrchestrationCommand({
+        readModel: model,
+        command: { ...unlink, host: "github.enterprise.test" },
+      }).pipe(Effect.flip);
+      expect(wrong._tag).toBe("OrchestrationCommandInvariantError");
+      const decided = yield* decideOrchestrationCommand({ readModel: model, command: unlink });
+      const events = Array.isArray(decided) ? decided : [decided];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.pull-request-linked",
+        "thread.meta-updated",
+      ]);
+      for (const event of events) {
+        model = yield* projectEvent(model, { ...event, sequence: model.snapshotSequence + 1 });
+      }
+      expect(model.threads[0]!.branchPullRequest).toBeNull();
+      expect(listThreadPullRequests(model.threads[0]!).pullRequests).toEqual([]);
+      const repeated = yield* decideOrchestrationCommand({
+        readModel: model,
+        command: unlink,
+      }).pipe(Effect.flip);
+      expect(repeated._tag).toBe("OrchestrationCommandInvariantError");
+
+      const sync = yield* decodeCommand({
+        type: "thread.pull-request.sync",
+        commandId: "rediscover-branch",
+        threadId: THREAD_ID,
+        projectId: branch.projectId,
+        snapshotSequence: model.snapshotSequence,
+        expected: {
+          workspaceRoot: "/repo",
+          branch: null,
+          worktreePath: null,
+          linkedPullRequest: null,
+          branchPullRequest: null,
+        },
+        branchPullRequest: branch,
+      });
+      if (sync.type !== "thread.pull-request.sync") throw new Error("unexpected command");
+      const rediscovered = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command: sync }),
+        "thread.meta-updated",
+      );
+      expect(rediscovered.payload.branchPullRequest).toBeNull();
+      const otherBranch = { ...branch, number: 99, url: branch.url.replace("42", "99") };
+      const other = expectSingleEvent(
+        yield* decideOrchestrationCommand({
+          readModel: model,
+          command: { ...sync, branchPullRequest: otherBranch },
+        }),
+        "thread.meta-updated",
+      );
+      expect(other.payload.branchPullRequest).toEqual(otherBranch);
+
+      const relink = yield* decodeCommand({
+        type: "thread.pull-request.link",
+        commandId: "relink-branch",
+        threadId: THREAD_ID,
+        host: "github.com",
+        repository: branch.repository,
+        number: branch.number,
+        url: branch.url,
+        source: "agent",
+      });
+      const linked = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command: relink }),
+        "thread.pull-request-linked",
+      );
+      model = yield* projectEvent(model, { ...linked, sequence: model.snapshotSequence + 1 });
+      expect(listThreadPullRequests(model.threads[0]!).pullRequests.map((pr) => pr.number)).toEqual(
+        [42],
+      );
+    }),
+  );
+
   it.effect("links the same Forgejo number on two ports and unlinks an older portless record", () =>
     Effect.gen(function* () {
       const existing = makeLink({

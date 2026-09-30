@@ -17,6 +17,7 @@ import {
 import {
   legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
+  isThreadPullRequestDismissed,
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
@@ -1110,7 +1111,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const key = normalizeThreadPullRequestKey(command);
       const existing = findPullRequestLink(thread, key);
-      if (existing === undefined) {
+      const branch = thread.branchPullRequest;
+      const matchesBranch =
+        branch != null && threadPullRequestKeysEqual(legacyThreadPullRequestKey(branch), key);
+      if (existing?.source === "stack-dismissed" || (existing === undefined && !matchesBranch)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `pull request ${key.host}/${key.repository}#${key.number} is not linked to thread ${command.threadId}`,
@@ -1126,15 +1130,46 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Any known native-stack member needs a tombstone, regardless of who linked it.
       // A sibling can rediscover it even before this link has its own stack snapshot.
       const belongsToStack =
-        existing.source === "stack" ||
-        existing.stack !== null ||
+        existing?.source === "stack" ||
+        (existing !== undefined && existing.stack !== null) ||
         thread.pullRequests.some(
           (link) =>
             link.host.toLowerCase() === key.host &&
             link.repository.toLowerCase() === key.repository &&
             link.stack?.layers.some((layer) => layer.number === key.number),
         );
-      if (belongsToStack) {
+      if (matchesBranch) {
+        return [
+          {
+            ...eventBase,
+            type: "thread.pull-request-linked",
+            payload: {
+              threadId: command.threadId,
+              link: {
+                ...key,
+                url: branch.url,
+                linkedAt: occurredAt,
+                snapshot: null,
+                stack: null,
+                ...existing,
+                source: "stack-dismissed",
+              },
+              updatedAt: occurredAt,
+            },
+          },
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.meta-updated",
+            payload: { threadId: command.threadId, branchPullRequest: null, updatedAt: occurredAt },
+          },
+        ];
+      }
+      if (belongsToStack && existing !== undefined) {
         return {
           ...eventBase,
           type: "thread.pull-request-linked",
@@ -1236,7 +1271,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
-          branchPullRequest: command.branchPullRequest,
+          branchPullRequest:
+            command.branchPullRequest !== null &&
+            isThreadPullRequestDismissed(
+              thread.pullRequests,
+              legacyThreadPullRequestKey(command.branchPullRequest),
+            )
+              ? null
+              : command.branchPullRequest,
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),

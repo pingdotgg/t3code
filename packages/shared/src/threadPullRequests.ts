@@ -76,8 +76,17 @@ export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string 
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
 
-/** Links a user should see. Tombstoned stack members stay in the array only so the
- * sync reactor does not re-add them. */
+/** Dismissed discoveries stay hidden until the user or agent explicitly links them again. */
+export function isThreadPullRequestDismissed(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+  key: ThreadPullRequestKey,
+): boolean {
+  return links.some(
+    (link) => link.source === "stack-dismissed" && threadPullRequestKeysEqual(link, key),
+  );
+}
+
+/** Links a user should see. Dismissed discoveries stay in the array to prevent reattachment. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestLink> {
