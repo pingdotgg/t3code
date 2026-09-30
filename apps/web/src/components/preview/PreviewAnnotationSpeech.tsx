@@ -61,7 +61,8 @@ export function PreviewAnnotationSpeech({
     ownsFocus: () => true,
     subscribeKeys,
   });
-  const { available, state, preview, freezesEditor, blocksSubmission, cancel } = speech;
+  const { available, state, preview, freezesEditor, blocksSubmission, cancel, level, progress } =
+    speech;
   const publish = useCallback(
     async (nextDraft: { text: string; cursor: number } | null = null) => {
       try {
@@ -71,8 +72,9 @@ export function PreviewAnnotationSpeech({
           available: available,
           phase: state.phase,
           errorAction: state.errorAction,
-          status: resolveSpeechPresentation(state, null).status,
+          status: resolveSpeechPresentation(state, progress).status,
           preview: preview ? preview.committed + preview.tentative : null,
+          level,
           freezesEditor: freezesEditor,
           blocksSubmission: blocksSubmission,
           draft: nextDraft,
@@ -86,7 +88,18 @@ export function PreviewAnnotationSpeech({
         });
       }
     },
-    [tabId, config.sessionId, available, state, preview, freezesEditor, blocksSubmission, cancel],
+    [
+      tabId,
+      config.sessionId,
+      available,
+      state,
+      preview,
+      freezesEditor,
+      blocksSubmission,
+      cancel,
+      level,
+      progress,
+    ],
   );
   useEffect(() => {
     void publish();

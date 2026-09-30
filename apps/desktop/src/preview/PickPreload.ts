@@ -612,17 +612,60 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
   const voiceButton = createButton("", "Start voice input");
   voiceButton.innerHTML = microphoneIcon;
+  voiceButton.className += " size-8 shrink-0 p-0 sm:size-7";
   voiceButton.hidden = true;
   voiceButton.setAttribute("aria-label", "Start voice input");
-  const voiceCancel = createButton("Cancel", "Cancel voice input");
-  voiceCancel.hidden = true;
+  const voiceRow = document.createElement("div");
+  voiceRow.className = "flex min-w-0 items-center justify-end gap-1 px-2 pb-2";
+  voiceRow.hidden = true;
+  const voicePill = document.createElement("div");
+  voicePill.className =
+    "flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64";
+  const voiceCancel = createButton("", "Cancel voice input");
+  voiceCancel.innerHTML =
+    '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m18 6-12 12M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  voiceCancel.className += " size-8 shrink-0 rounded-full p-0 sm:size-7";
+  const voiceFinish = createButton("", "Finish voice input");
+  voiceFinish.className +=
+    " size-8 shrink-0 rounded-full border-primary bg-primary p-0 text-primary-foreground shadow-xs hover:bg-primary/90 sm:size-7";
   const voiceSkip = createButton("Skip", "Skip post-processing");
-  voiceSkip.hidden = true;
-  composerRow.append(voiceButton, voiceCancel, voiceSkip);
-  const voiceStatus = document.createElement("p");
-  voiceStatus.className = "px-3 pb-2 text-xs text-muted-foreground";
+  voiceSkip.className += " h-8 shrink-0 rounded-full px-2.5 sm:h-7";
+  const voiceStatus = document.createElement("div");
+  voiceStatus.className = "flex h-7 min-w-0 flex-1 items-center gap-2";
   voiceStatus.setAttribute("role", "status");
-  voiceStatus.hidden = true;
+  const voiceStatusText = document.createElement("span");
+  voiceStatusText.className = "min-w-0 flex-1 truncate text-right text-sm text-muted-foreground";
+  const waveform = document.createElement("div");
+  waveform.className =
+    "flex h-5 min-w-0 flex-1 items-center justify-between gap-px overflow-hidden";
+  waveform.setAttribute("aria-hidden", "true");
+  const waveformBars = Array.from({ length: 28 }, () => {
+    const bar = document.createElement("span");
+    bar.className =
+      "h-full w-0.5 shrink-0 origin-center rounded-full bg-primary opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none";
+    bar.style.transform = "scaleY(0.08)";
+    waveform.appendChild(bar);
+    return bar;
+  });
+  const waveformLevels = Array<number>(28).fill(0);
+  const recordingDot = document.createElement("span");
+  recordingDot.className = "size-1.5 shrink-0 rounded-full bg-primary";
+  recordingDot.setAttribute("aria-hidden", "true");
+  const voiceElapsed = document.createElement("span");
+  voiceElapsed.className = "shrink-0 text-xs tabular-nums text-muted-foreground";
+  let recordingStartedAt = 0;
+  let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+  const updateElapsed = () => {
+    const seconds = Math.floor((Date.now() - recordingStartedAt) / 1_000);
+    voiceElapsed.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+  voiceStatus.append(voiceStatusText, waveform, recordingDot, voiceElapsed);
+  voicePill.append(voiceCancel, voiceStatus, voiceSkip, voiceFinish);
+  voiceRow.appendChild(voicePill);
+  const voicePreview = document.createElement("p");
+  voicePreview.className = "px-2 pb-2 text-sm text-muted-foreground";
+  voicePreview.setAttribute("role", "status");
+  voicePreview.hidden = true;
   const sendVoice = (
     action: DesktopPreviewAnnotationVoiceEvent["action"],
     keyboard?: KeyboardEvent,
@@ -662,6 +705,10 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     submit.disabled = true;
     sendVoice(action);
   });
+  voiceFinish.addEventListener("pointerdown", (event) => event.preventDefault());
+  voiceFinish.addEventListener("click", () => sendVoice("stop"));
+  voiceCancel.addEventListener("pointerdown", (event) => event.preventDefault());
+  voiceSkip.addEventListener("pointerdown", (event) => event.preventDefault());
   voiceCancel.addEventListener("click", () => sendVoice("cancel"));
   voiceSkip.addEventListener("click", () => sendVoice("skip"));
   const onVoiceState = (
@@ -669,6 +716,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     state: DesktopPreviewAnnotationVoiceState,
   ) => {
     if (state.sessionId !== voice?.sessionId || finished) return;
+    const phaseChanged = voicePhase !== state.phase;
     voicePhase = state.phase;
     voiceSettings = state.errorAction === "settings";
     voiceBusy = state.blocksSubmission;
@@ -679,23 +727,60 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
       comment.setSelectionRange(state.draft.cursor, state.draft.cursor);
       resizeComment();
     }
-    voiceButton.hidden = !state.available;
-    voiceButton.disabled = voiceBusy && state.phase !== "recording";
-    const label = voiceSettings
-      ? "Open voice settings"
-      : state.phase === "recording"
-        ? "Finish voice input"
-        : "Start voice input";
+    const recording = state.phase === "recording";
+    const active = state.phase !== "idle" && state.phase !== "error";
+    voiceButton.hidden = !state.available || active;
+    voiceButton.disabled = voiceBusy;
+    const label = voiceSettings ? "Open voice settings" : "Start voice input";
     voiceButton.title = label;
     voiceButton.setAttribute("aria-label", label);
-    voiceButton.innerHTML =
-      state.phase === "recording"
-        ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
-        : microphoneIcon;
-    voiceCancel.hidden = state.phase === "idle";
+    voiceRow.hidden = state.phase === "idle";
+    voicePill.className = active
+      ? "flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64"
+      : "flex min-w-0 items-center gap-1";
+    voiceCancel.title =
+      state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
+    voiceCancel.setAttribute("aria-label", voiceCancel.title);
+    voiceStatus.setAttribute("aria-label", state.status ?? "Voice input");
+    voiceStatus.setAttribute("aria-live", recording ? "off" : "polite");
+    voiceStatusText.textContent = state.status;
+    voiceStatusText.style.color = state.phase === "error" ? "var(--t3-destructive)" : "";
+    voiceStatusText.hidden = recording;
+    waveform.hidden = !recording;
+    recordingDot.hidden = !recording;
+    voiceElapsed.hidden = !recording;
+    if (recording && elapsedTimer === null) {
+      recordingStartedAt = Date.now();
+      waveformLevels.fill(0);
+      updateElapsed();
+      elapsedTimer = setInterval(updateElapsed, 250);
+    } else if (!recording && elapsedTimer !== null) {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
+    if (recording) {
+      waveformLevels.copyWithin(0, 1);
+      waveformLevels[waveformLevels.length - 1] = state.level;
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      waveformBars.forEach((bar, index) => {
+        const level = waveformLevels[index] ?? 0;
+        bar.style.opacity = String(0.22 + level * 0.78);
+        bar.style.transform = `scaleY(${reducedMotion ? 0.35 : Math.max(0.08, level)})`;
+      });
+    }
     voiceSkip.hidden = state.phase !== "post-processing";
-    voiceStatus.textContent = state.preview || state.status;
-    voiceStatus.hidden = !voiceStatus.textContent;
+    voiceFinish.hidden = !active || state.phase === "post-processing";
+    voiceFinish.disabled = !recording;
+    voiceFinish.title = recording ? "Finish voice input" : (state.status ?? "Voice input is busy");
+    voiceFinish.setAttribute("aria-label", voiceFinish.title);
+    if (phaseChanged)
+      voiceFinish.innerHTML = recording
+        ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        : '<svg class="motion-safe:animate-spin" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2a10 10 0 1 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    if (!active) voicePill.append(voiceStatus, voiceCancel);
+    else if (phaseChanged) voicePill.append(voiceCancel, voiceStatus, voiceSkip, voiceFinish);
+    voicePreview.textContent = state.preview;
+    voicePreview.hidden = !state.preview;
     updateStatus();
   };
 
@@ -718,7 +803,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
   editor.appendChild(composerRow);
-  editor.appendChild(voiceStatus);
+  editor.append(voicePreview, voiceRow);
 
   const stylePanel = document.createElement("div");
   stylePanel.className =
@@ -1464,6 +1549,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     if (editorLayoutFrame !== null) window.cancelAnimationFrame(editorLayoutFrame);
     ipcRenderer.off(CANCEL_PICK_CHANNEL, onCancel);
     ipcRenderer.off(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
+    if (elapsedTimer !== null) clearInterval(elapsedTimer);
     ipcRenderer.off(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
     window.removeEventListener("keyup", onVoiceKeyUp, true);
     document.documentElement.removeAttribute("data-t3code-annotation-tool");

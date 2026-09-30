@@ -1193,6 +1193,7 @@ export const DesktopPreviewAnnotationVoiceStateSchema = Schema.Struct({
   status: Schema.NullOr(Schema.String),
   errorAction: Schema.NullOr(Schema.Literals(["retry", "settings"])),
   preview: Schema.NullOr(Schema.String),
+  level: Schema.Number,
   freezesEditor: Schema.Boolean,
   blocksSubmission: Schema.Boolean,
   draft: Schema.NullOr(Schema.Struct({ text: Schema.String, cursor: Schema.Number })),
