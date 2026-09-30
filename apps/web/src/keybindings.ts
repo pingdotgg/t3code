@@ -71,21 +71,6 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
   };
 }
 
-function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContext): boolean {
-  switch (node.type) {
-    case "identifier":
-      if (node.name === "true") return true;
-      if (node.name === "false") return false;
-      return Boolean(context[node.name]);
-    case "not":
-      return !evaluateWhenNode(node.node, context);
-    case "and":
-      return evaluateWhenNode(node.left, context) && evaluateWhenNode(node.right, context);
-    case "or":
-      return evaluateWhenNode(node.left, context) || evaluateWhenNode(node.right, context);
-  }
-}
-
 function matchesWhenClause(
   whenAst: KeybindingWhenNode | undefined,
   context: ShortcutMatchContext,

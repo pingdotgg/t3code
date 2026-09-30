@@ -1387,6 +1387,7 @@ export default function DiffPanel({
                   }}
                 >
                   <AnnotatableCodeView
+                    {...(activeThread ? { environmentId: activeThread.environmentId } : {})}
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={codeViewReveal.attach}
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}

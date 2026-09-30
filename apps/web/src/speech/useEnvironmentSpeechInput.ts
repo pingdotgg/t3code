@@ -254,6 +254,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     startRequestRef.current += 1;
     setQueuedStart(null);
     controllerRef.current?.ownerChanged();
+    setSetupOpen(false);
   }, [input.ownerKey]);
 
   const start = useCallback(async () => {
@@ -265,6 +266,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request === startRequestRef.current &&
       controllerRef.current === expectedController &&
       latestInputRef.current.ownerKey === expectedOwner;
+    setQueuedStart({ prepared, request });
     let latestStatus: EnvironmentSpeechStatus;
     try {
       latestStatus = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));

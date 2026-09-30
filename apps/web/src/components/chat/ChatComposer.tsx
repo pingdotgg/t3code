@@ -1845,7 +1845,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectName: props.projectName,
-    ownerKey: JSON.stringify(composerDraftTarget),
+    ownerKey: JSON.stringify([composerDraftTarget, activePendingProgress?.activeQuestion?.id]),
     draftText: prompt,
     readDraft: () => {
       const snapshot = readComposerSnapshot();
@@ -1870,7 +1870,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const dictationShortcutLabel = useDictationShortcut({
     keybindings,
     speech: speechInput,
-    disabled: isConnecting || projectSelectionRequired || pendingUserInputs.length > 0,
+    disabled:
+      isConnecting ||
+      projectSelectionRequired ||
+      activePendingProgress?.activeQuestion?.allowCustomAnswer === false,
     terminalOpen,
     modelPickerOpen: isComposerModelPickerOpen,
   });

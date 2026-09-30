@@ -896,6 +896,13 @@ function EditableFileSurface({
               <div className="py-1">
                 {annotation.metadata.entries.map((entry) => (
                   <DiffCommentAnnotation
+                    environmentId={environmentId}
+                    ownerKey={JSON.stringify([
+                      environmentId,
+                      composerDraftTarget,
+                      relativePath,
+                      entry.id,
+                    ])}
                     key={entry.id}
                     kind={entry.kind}
                     rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
