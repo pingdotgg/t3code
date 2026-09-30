@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isImportedAgentSessionMessageId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationThreadShell,
@@ -38,7 +39,18 @@ export class ProviderBusyRetryReactor extends Context.Service<
   }
 >()("t3/orchestration/ProviderBusyRetryReactor") {}
 
-type ThreadSessionSetEvent = Extract<OrchestrationEvent, { type: "thread.session-set" }>;
+type RetryEvent = Extract<
+  OrchestrationEvent,
+  {
+    type:
+      | "thread.session-set"
+      | "thread.message-sent"
+      | "thread.turn-interrupt-requested"
+      | "thread.session-stop-requested"
+      | "thread.archived"
+      | "thread.deleted";
+  }
+>;
 
 /**
  * Delay before each automatic retry. The length is the retry budget; once it
@@ -77,6 +89,7 @@ interface RetryState {
 
 /** The failed turn a retry was scheduled for. */
 interface FailureIdentity {
+  readonly snapshotSequence: number;
   readonly turnId: TurnId | null;
   readonly latestUserMessageAt: string | null;
 }
@@ -96,6 +109,7 @@ function busyRetryStillWanted(
     thread.settledOverride !== "settled" &&
     (snoozedUntil === null || Date.parse(snoozedUntil) <= Date.parse(nowIso)) &&
     thread.session?.status === "error" &&
+    thread.session.activeTurnId === null &&
     isProviderBusyError(thread.session.lastError ?? "") &&
     thread.latestTurn?.state === "error" &&
     thread.latestTurn.turnId === expected.turnId &&
@@ -104,7 +118,7 @@ function busyRetryStillWanted(
 }
 
 /**
- * Builds the session-set handler. Kept apart from the stream wiring so tests
+ * Builds the retry event handler. Kept apart from the stream wiring so tests
  * can drive it directly and advance the clock instead of sleeping. Pending
  * retries are forked into the surrounding scope, so closing it cancels them.
  */
@@ -130,7 +144,8 @@ export const makeRetryHandler = Effect.gen(function* () {
   ) {
     const thread = yield* readThread(input.threadId);
     const createdAt = DateTime.formatIso(yield* DateTime.now);
-    if (!busyRetryStillWanted(thread, input, createdAt)) {
+    const busyError = thread?.session?.lastError;
+    if (!busyRetryStillWanted(thread, input, createdAt) || busyError == null) {
       forgetGoneThread(input.threadId, thread);
       return;
     }
@@ -154,24 +169,62 @@ export const makeRetryHandler = Effect.gen(function* () {
       // No modelSelection: the turn uses whatever the thread has when it is decided.
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
-      // The engine re-checks this atomically, closing the gap since the read above.
+      // Re-check the observed failure and lifecycle state inside the decider.
       onlyIfUnchanged: {
+        snapshotSequence: input.snapshotSequence,
         latestTurnId: input.turnId,
         latestUserMessageAt: input.latestUserMessageAt,
+        busyError,
       },
       createdAt,
     });
     retryStates.set(input.threadId, {
       attempt: input.attempt,
-      retryMessageAt: createdAt,
+      // The projection keeps a monotonic maximum, including client timestamps
+      // ahead of this server's clock. Our own message must not reset the budget.
+      retryMessageAt:
+        input.latestUserMessageAt !== null && input.latestUserMessageAt > createdAt
+          ? input.latestUserMessageAt
+          : createdAt,
       exhausted: false,
     });
   });
 
   const processSessionSet = Effect.fn("processProviderBusySessionSet")(function* (
-    event: ThreadSessionSetEvent,
+    event: RetryEvent,
   ) {
-    const { threadId, session } = event.payload;
+    const { threadId } = event.payload;
+    if (
+      event.type === "thread.message-sent" &&
+      (event.payload.role !== "user" ||
+        isImportedAgentSessionMessageId(event.payload.messageId) ||
+        event.commandId?.startsWith("server:provider-busy-retry:"))
+    )
+      return;
+    if (event.type !== "thread.session-set") {
+      const scheduled = pending.get(threadId);
+      pending.delete(threadId);
+      if (scheduled?.fiber !== undefined) yield* Fiber.interrupt(scheduled.fiber);
+      if (
+        event.type === "thread.archived" ||
+        event.type === "thread.deleted" ||
+        event.type === "thread.message-sent"
+      ) {
+        retryStates.delete(threadId);
+      } else {
+        // Stop can precede the first capacity failure, before any retry exists.
+        const thread = yield* readThread(threadId);
+        if (thread !== undefined && thread.archivedAt === null) {
+          retryStates.set(threadId, {
+            attempt: PROVIDER_BUSY_RETRY_DELAYS.length,
+            retryMessageAt: thread.latestUserMessageAt,
+            exhausted: true,
+          });
+        }
+      }
+      return;
+    }
+    const { session } = event.payload;
     if (session.status !== "error" || !isProviderBusyError(session.lastError ?? "")) return;
     const thread = yield* readThread(threadId);
     forgetGoneThread(threadId, thread);
@@ -183,6 +236,7 @@ export const makeRetryHandler = Effect.gen(function* () {
     )
       return;
     const failure: FailureIdentity = {
+      snapshotSequence: event.sequence,
       turnId: thread.latestTurn.turnId,
       latestUserMessageAt: thread.latestUserMessageAt,
     };
@@ -238,7 +292,7 @@ export const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const processSessionSet = yield* makeRetryHandler;
 
-  const processSessionSetSafely = (event: ThreadSessionSetEvent) =>
+  const processSessionSetSafely = (event: RetryEvent) =>
     processSessionSet(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -258,7 +312,17 @@ export const make = Effect.gen(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
       Stream.runForEach(domainEvents, (event) => {
-        if (event.type !== "thread.session-set") {
+        if (event.type === "thread.message-sent" && event.payload.role !== "user") {
+          return Effect.void;
+        }
+        if (
+          event.type !== "thread.session-set" &&
+          event.type !== "thread.message-sent" &&
+          event.type !== "thread.turn-interrupt-requested" &&
+          event.type !== "thread.session-stop-requested" &&
+          event.type !== "thread.archived" &&
+          event.type !== "thread.deleted"
+        ) {
           return Effect.void;
         }
         return worker.enqueue(event);

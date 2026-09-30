@@ -63,8 +63,13 @@ function opaqueNativeHexColor(color: string, background: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function createNativeReviewDiffStyle(codeSurface: ResolvedMobileCodeSurface) {
+/** `wordWrap` wraps line rows at the view width instead of panning them horizontally. */
+export function createNativeReviewDiffStyle(
+  codeSurface: ResolvedMobileCodeSurface,
+  wordWrap: boolean,
+) {
   return {
+    wordWrap,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
     changeBarWidth: 4,

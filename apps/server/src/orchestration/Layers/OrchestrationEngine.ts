@@ -5,7 +5,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { isImportedAgentSessionMessageId, OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -183,6 +183,43 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             commandType: envelope.command.type,
             detail: `thread ${envelope.command.threadId} changed before automatic settlement`,
           });
+        }
+
+        if (envelope.command.type === "thread.turn.start" && envelope.command.onlyIfUnchanged) {
+          // Stop requests need no provider acknowledgement to cancel a retry.
+          // The persisted sequence also orders messages from skewed client clocks;
+          // neither request events nor timestamp maxima suffice in the read model.
+          const interveningAction = yield* eventStore
+            .readAggregateRange({
+              aggregateKind: "thread",
+              aggregateId: envelope.command.threadId,
+              fromSequenceExclusive: envelope.command.onlyIfUnchanged.snapshotSequence,
+              toSequenceInclusive: dispatchStartSequence,
+              limit: Number.MAX_SAFE_INTEGER,
+            })
+            .pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "thread.turn-interrupt-requested" ||
+                  event.type === "thread.session-stop-requested" ||
+                  event.type === "thread.turn-start-requested" ||
+                  event.type === "thread.created" ||
+                  event.type === "thread.archived" ||
+                  event.type === "thread.deleted" ||
+                  event.type === "thread.settled" ||
+                  event.type === "thread.snoozed" ||
+                  (event.type === "thread.message-sent" &&
+                    event.payload.role === "user" &&
+                    !isImportedAgentSessionMessageId(event.payload.messageId)),
+              ),
+              Stream.runHead,
+            );
+          if (Option.isSome(interveningAction)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: `thread ${envelope.command.threadId} changed before automatic retry`,
+            });
+          }
         }
 
         // The decider compares the lookup inputs. Only recreation needs an
@@ -400,7 +437,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   status: "rejected",
                   error: error.message,
                 })
-                .pipe(Effect.catch(() => Effect.void));
+                .pipe(Effect.ignore);
             }
           }
 

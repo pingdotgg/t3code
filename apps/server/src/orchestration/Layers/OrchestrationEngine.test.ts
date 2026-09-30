@@ -20,6 +20,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -47,6 +49,7 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import { makeRetryHandler } from "../ProviderBusyRetryReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -63,7 +66,21 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 function makeOrchestrationLayer(
   databasePath?: string,
   repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+  beforeProject?: (event: OrchestrationEvent) => Effect.Effect<void>,
 ) {
+  const projection = beforeProject
+    ? Layer.effect(
+        OrchestrationProjectionPipeline,
+        Effect.gen(function* () {
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          return {
+            ...pipeline,
+            projectEventDeferred: (event: OrchestrationEvent) =>
+              beforeProject(event).pipe(Effect.andThen(pipeline.projectEventDeferred(event))),
+          };
+        }),
+      ).pipe(Layer.provide(OrchestrationProjectionPipelineLive))
+    : OrchestrationProjectionPipelineLive;
   const persistence = databasePath
     ? makeSqlitePersistenceLive(databasePath)
     : SqlitePersistenceMemory;
@@ -73,7 +90,7 @@ function makeOrchestrationLayer(
   return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(projection),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
@@ -130,6 +147,199 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  effectIt.effect.each([
+    { action: "interrupt", reject: true },
+    { action: "stop", reject: true },
+    { action: "equal timestamp", reject: true },
+    { action: "older timestamp", reject: true },
+    { action: "assistant message", reject: false },
+    { action: "other thread", reject: false },
+    { action: "model change", reject: false },
+  ] as const)("handles an already queued capacity retry after $action", ({ action, reject }) =>
+    Effect.gen(function* () {
+      const projecting = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const userCommandId = CommandId.make("user-wins");
+      yield* Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
+        const threadId = ThreadId.make("busy-thread");
+        const projectId = ProjectId.make("busy-project");
+        const turnId = TurnId.make("busy-turn");
+        const createdAt = now();
+        const busyError = "Selected model is at capacity.";
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("create-project"),
+          projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/busy-project",
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-thread"),
+          threadId,
+          projectId,
+          title: "Thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("original-prompt"),
+          threadId,
+          message: { messageId: MessageId.make("original-prompt"), text: "Work", attachments: [] },
+          createdAt,
+        });
+        const session = {
+          threadId,
+          providerName: "codex",
+          runtimeMode: "full-access" as const,
+          updatedAt: createdAt,
+        };
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("running"),
+          threadId,
+          createdAt,
+          session: { ...session, status: "running", activeTurnId: turnId, lastError: null },
+        });
+        const failure = yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("failed"),
+          threadId,
+          createdAt,
+          session: { ...session, status: "error", activeTurnId: null, lastError: busyError },
+        });
+        const retry = {
+          type: "thread.turn.start" as const,
+          commandId: CommandId.make("server:provider-busy-retry:queued"),
+          threadId,
+          message: {
+            messageId: MessageId.make("automatic-retry"),
+            role: "user" as const,
+            text: "Continue",
+            attachments: [],
+          },
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          createdAt,
+          onlyIfUnchanged: {
+            latestTurnId: turnId,
+            latestUserMessageAt: createdAt,
+            busyError,
+            snapshotSequence: failure.sequence,
+          },
+        };
+        const userCommand: OrchestrationCommand =
+          action === "interrupt" || action === "stop"
+            ? {
+                type: action === "interrupt" ? "thread.turn.interrupt" : "thread.session.stop",
+                commandId: userCommandId,
+                threadId,
+                createdAt,
+              }
+            : action === "assistant message"
+              ? {
+                  type: "thread.message.assistant.delta",
+                  commandId: userCommandId,
+                  threadId,
+                  messageId: MessageId.make("assistant"),
+                  delta: "Stopped at capacity",
+                  turnId,
+                  createdAt,
+                }
+              : action === "other thread"
+                ? {
+                    type: "thread.create",
+                    commandId: userCommandId,
+                    threadId: ThreadId.make("other-thread"),
+                    projectId,
+                    title: "Other",
+                    modelSelection: {
+                      instanceId: ProviderInstanceId.make("codex"),
+                      model: "gpt-5",
+                    },
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: null,
+                    createdAt,
+                  }
+                : action === "model change"
+                  ? {
+                      type: "thread.meta.update",
+                      commandId: userCommandId,
+                      threadId,
+                      modelSelection: {
+                        instanceId: ProviderInstanceId.make("codex"),
+                        model: "gpt-5-codex",
+                      },
+                    }
+                  : {
+                      type: "thread.message.user.append",
+                      commandId: userCommandId,
+                      threadId,
+                      message: {
+                        messageId: MessageId.make("new-user-message"),
+                        text: "Change course",
+                        attachments: [],
+                      },
+                      createdAt:
+                        action === "equal timestamp" ? createdAt : "2025-12-31T23:59:00.000Z",
+                    };
+        const userFiber = yield* engine
+          .dispatch(userCommand)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.raceFirst(Deferred.await(projecting), Fiber.join(userFiber));
+        // The worker is held inside the user's transaction. dispatch reaches its
+        // queue offer and then awaits its receipt before this fork returns.
+        const retryFiber = yield* engine.dispatch(retry).pipe(
+          Effect.match({
+            onFailure: (error) => ({ rejected: true as const, error }),
+            onSuccess: () => ({ rejected: false as const }),
+          }),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(release, undefined);
+        const userReceipt = yield* Fiber.join(userFiber);
+        const result = yield* Fiber.join(retryFiber);
+        expect(result.rejected).toBe(reject);
+        if (result.rejected) expect(result.error._tag).toBe("OrchestrationCommandInvariantError");
+        expect(
+          Option.getOrNull(yield* receipts.getByCommandId({ commandId: retry.commandId })),
+        ).toMatchObject({
+          status: reject ? "rejected" : "accepted",
+          ...(reject ? { resultSequence: userReceipt.sequence } : {}),
+        });
+        const events = yield* Stream.runCollect(engine.readEvents(failure.sequence));
+        expect(events.some((event) => event.type === "thread.turn-start-requested")).toBe(!reject);
+        expect(
+          events.some(
+            (event) =>
+              event.type === "thread.message-sent" &&
+              event.payload.messageId === retry.message.messageId,
+          ),
+        ).toBe(!reject);
+      }).pipe(
+        Effect.provide(
+          makeOrchestrationLayer(undefined, undefined, (event) =>
+            event.commandId === userCommandId
+              ? Deferred.succeed(projecting, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                )
+              : Effect.void,
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -435,6 +645,7 @@ describe("OrchestrationEngine", () => {
               updatedAt: projectionSnapshot.updatedAt,
             }),
           getDeletedWorktreeThreads: () => Effect.die("unused"),
+          listThreadsWithPullRequests: () => Effect.die("unused"),
           getArchivedShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
@@ -446,18 +657,18 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
           getEventReplayStats: () => Effect.die("unused"),
-          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-          getProjectShellById: () => Effect.succeed(Option.none()),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeedNone,
+          getProjectShellById: () => Effect.succeedNone,
           getProjectShells: () => Effect.succeed([]),
-          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeedNone,
           getImportedAgentSessionSources: () => Effect.die("unused"),
-          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-          getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeedNone,
+          getFullThreadDiffContext: () => Effect.succeedNone,
           getThreadRuntimeContext: () => Effect.die("unused"),
           getTurnStartMessage: () => Effect.die("unused"),
-          getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
-          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          getThreadShellById: () => Effect.succeedNone,
+          getThreadDetailById: () => Effect.succeedNone,
+          getThreadDetailSnapshot: () => Effect.succeedNone,
           searchThreads: () => Effect.succeed({ matches: [] }),
         }),
       ),
@@ -2127,3 +2338,127 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 });
+
+effectIt.effect.each([
+  { action: "thread.turn.interrupt", before: true, reengage: false, expected: 0 },
+  { action: "thread.session.stop", before: true, reengage: false, expected: 0 },
+  { action: "thread.turn.interrupt", before: false, reengage: false, expected: 0 },
+  { action: "thread.turn.interrupt", before: true, reengage: true, expected: 1 },
+] as const)(
+  "first late busy notification after $action (stopFirst=$before, reengage=$reengage)",
+  ({ action, before, reengage, expected }) =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
+      const handle = yield* makeRetryHandler;
+      const threadId = ThreadId.make("review-busy"),
+        projectId = ProjectId.make("review-project"),
+        turnId = TurnId.make("review-turn");
+      const createdAt = now(),
+        busyError = "Selected model is at capacity.";
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("review-project"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/review-busy",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("review-thread"),
+        threadId,
+        projectId,
+        title: "Thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.message.user.append",
+        commandId: CommandId.make("review-prompt"),
+        threadId,
+        message: { messageId: MessageId.make("review-prompt"), text: "Work", attachments: [] },
+        createdAt,
+      });
+      const session = {
+        threadId,
+        providerName: "codex",
+        runtimeMode: "full-access",
+        updatedAt: createdAt,
+      } as const;
+      const running = yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("review-running"),
+        threadId,
+        createdAt,
+        session: { ...session, status: "running", activeTurnId: turnId, lastError: null },
+      });
+      let cursor = running.sequence;
+      const dispatchAndObserve = (command: OrchestrationCommand) =>
+        Effect.gen(function* () {
+          const receipt = yield* engine.dispatch(command);
+          const events = yield* Stream.runCollect(engine.readEvents(cursor));
+          for (const event of events) {
+            if (
+              event.type === "thread.session-set" ||
+              event.type === "thread.turn-interrupt-requested" ||
+              event.type === "thread.session-stop-requested" ||
+              event.type === "thread.message-sent"
+            )
+              yield* handle(event);
+          }
+          cursor = receipt.sequence;
+          return receipt;
+        });
+      const stop = () =>
+        dispatchAndObserve({
+          type: action,
+          commandId: CommandId.make("review-stop"),
+          threadId,
+          createdAt,
+        });
+      const fail = () =>
+        dispatchAndObserve({
+          type: "thread.session.set",
+          commandId: CommandId.make("review-failure"),
+          threadId,
+          createdAt,
+          session: { ...session, status: "error", activeTurnId: null, lastError: busyError },
+        });
+      if (before) yield* stop();
+      if (reengage)
+        yield* dispatchAndObserve({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("review-reengage"),
+          threadId,
+          message: {
+            messageId: MessageId.make("review-reengage"),
+            text: "Please continue",
+            attachments: [],
+          },
+          createdAt,
+        });
+      yield* fail();
+      if (!before) yield* stop();
+      const failureCursor = cursor;
+      yield* TestClock.adjust("1 minute");
+      const events = yield* Stream.runCollect(engine.readEvents(failureCursor));
+      const automatic = events.filter(
+        (event) =>
+          event.type === "thread.message-sent" &&
+          event.commandId?.startsWith("server:provider-busy-retry:"),
+      );
+      for (const event of automatic) {
+        if (event.commandId === null) throw new Error("Automatic retry must have a command ID");
+        const receipt = Option.getOrThrow(
+          yield* receipts.getByCommandId({ commandId: event.commandId }),
+        );
+        expect(receipt.status).toBe("accepted");
+      }
+      expect(automatic.length).toBe(expected);
+    }).pipe(Effect.scoped, Effect.provide(makeOrchestrationLayer())),
+);

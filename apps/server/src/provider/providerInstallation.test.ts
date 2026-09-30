@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import { layerTest as settingsLayerTest } from "../serverSettings.ts";
+import { CodexInstallation } from "./CodexInstallation.ts";
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeProviderInstallation } from "./providerInstallation.ts";
@@ -33,9 +34,9 @@ const state: ProviderInstallState = {
   message: null,
 };
 
-function instance(kind = driver): ProviderInstance {
+function instance(kind = driver, id = instanceId): ProviderInstance {
   return {
-    instanceId,
+    instanceId: id,
     driverKind: kind,
     enabled: false,
     displayName: undefined,
@@ -75,6 +76,25 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
             Effect.sync(() => {
               calls.push("refresh");
               return [];
+            }),
+        }),
+        Layer.mock(CodexInstallation)({
+          managedDirectory: "/unused-managed-codex",
+          start: Effect.sync(() => {
+            calls.push("codex-start");
+            return { ...state, driver: ProviderDriverKind.make("codex") };
+          }),
+          cancel: () =>
+            Effect.sync(() => {
+              calls.push("codex-cancel");
+              return { ...state, driver: ProviderDriverKind.make("codex") };
+            }),
+          state: Effect.succeed({ ...state, driver: ProviderDriverKind.make("codex") }),
+          changes: Stream.succeed({ ...state, driver: ProviderDriverKind.make("codex") }),
+          remove: (paths) =>
+            Effect.sync(() => {
+              protectedPaths = paths ?? [];
+              calls.push("codex-remove");
             }),
         }),
         Layer.mock(AntigravityInstallation)({
@@ -135,6 +155,37 @@ describe("provider installation routing", () => {
       assert.include(remove.detail, "custom executable");
       const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId }));
       assert.deepEqual(Array.from(observed), [state]);
+      assert.deepEqual(harness.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("routes a managed Codex instance through its own installer and refreshes removal", () =>
+    Effect.gen(function* () {
+      const codexId = ProviderInstanceId.make("codex");
+      const harness = yield* makeHarness({
+        instance: instance(ProviderDriverKind.make("codex"), codexId),
+        settings: { providers: { codex: { setupMode: "managed" } } },
+      });
+      assert.equal((yield* harness.router.start({ instanceId: codexId })).driver, "codex");
+      yield* harness.router.cancel({ instanceId: codexId, operationId: "operation" });
+      const observed = yield* Stream.runCollect(harness.router.subscribe({ instanceId: codexId }));
+      assert.equal(Array.from(observed)[0]?.driver, "codex");
+      yield* harness.router.remove({ instanceId: codexId });
+      assert.deepEqual(harness.calls, ["codex-start", "codex-cancel", "codex-remove", "refresh"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps native Codex installation outside managed setup", () =>
+    Effect.gen(function* () {
+      const codexId = ProviderInstanceId.make("codex");
+      const harness = yield* makeHarness({
+        instance: instance(ProviderDriverKind.make("codex"), codexId),
+        settings: { providers: { codex: { setupMode: "existing" } } },
+      });
+      assert.include(
+        (yield* Effect.flip(harness.router.start({ instanceId: codexId }))).detail,
+        "Choose managed setup",
+      );
       assert.deepEqual(harness.calls, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

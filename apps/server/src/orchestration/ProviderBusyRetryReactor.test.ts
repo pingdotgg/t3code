@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
+  MessageId,
   ThreadId,
   TurnId,
   type OrchestrationCommand,
@@ -39,13 +41,14 @@ const makeThread = (
     interactionMode: "default",
     latestTurn: { turnId: TurnId.make(turn), state: "error" },
     latestUserMessageAt,
-    session: { status: "error", lastError: busyError },
+    session: { status: "error", activeTurnId: null, lastError: busyError },
     ...overrides,
   }) as unknown as OrchestrationThreadShell;
 
 const sessionSet = (lastError: string, status = "error") =>
   ({
     type: "thread.session-set",
+    sequence: 10,
     payload: { threadId, session: { status, lastError } },
   }) as unknown as Extract<OrchestrationEvent, { type: "thread.session-set" }>;
 
@@ -111,8 +114,10 @@ it.effect("continues the turn once after the delay, ignoring duplicate failure r
     assert.isUndefined(starts[0]!.modelSelection);
     // The engine re-checks the observed state, so a user message that lands first wins.
     assert.deepEqual(starts[0]!.onlyIfUnchanged, {
+      snapshotSequence: 10,
       latestTurnId: TurnId.make("turn-1"),
       latestUserMessageAt: "2026-01-01T00:00:00.000Z",
+      busyError,
     });
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
@@ -127,7 +132,7 @@ it.effect("yields to a user message sent while the retry waits", () =>
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
-it.effect("backs off across consecutive busy failures and stops when the budget is spent", () =>
+it.effect("bounds retries even when the user's timestamp is ahead of the server clock", () =>
   Effect.gen(function* () {
     const { state, starts, handle } = yield* setup;
     const delays = [Duration.minutes(1), Duration.minutes(5), Duration.minutes(15)];
@@ -135,8 +140,26 @@ it.effect("backs off across consecutive busy failures and stops when the budget 
       yield* handle(sessionSet(busyError));
       yield* TestClock.adjust(delay);
       assert.lengthOf(starts, index + 1);
-      // The retry turn itself fails busy: its message is now the latest user message.
-      state.thread = makeThread(`turn-${index + 2}`, starts[index]!.createdAt);
+      yield* handle({
+        type: "thread.message-sent",
+        sequence: 11 + index,
+        commandId: starts[index]!.commandId,
+        payload: {
+          threadId,
+          messageId: starts[index]!.message.messageId,
+          role: "user",
+          createdAt: starts[index]!.createdAt,
+        },
+      } as Extract<OrchestrationEvent, { type: "thread.message-sent" }>);
+      // Mirror the projection's monotonic maximum. The fixture's user timestamp
+      // is ahead of TestClock, so our server-authored message does not advance it.
+      const latestUserMessageAt = state.thread.latestUserMessageAt;
+      state.thread = makeThread(
+        `turn-${index + 2}`,
+        latestUserMessageAt !== null && latestUserMessageAt > starts[index]!.createdAt
+          ? latestUserMessageAt
+          : starts[index]!.createdAt,
+      );
     }
     // Spent stays spent: repeated busy reports cannot start a new cycle.
     for (let report = 0; report < 3; report++) {
@@ -221,4 +244,77 @@ it.effect("spends the attempt when the dispatch is rejected", () =>
     yield* TestClock.adjust(Duration.hours(1));
     assert.lengthOf(starts, 0);
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
+it.effect.each([
+  { type: "thread.turn-interrupt-requested", alreadyPending: false },
+  { type: "thread.session-stop-requested", alreadyPending: false },
+  { type: "thread.turn-interrupt-requested", alreadyPending: true },
+  { type: "thread.session-stop-requested", alreadyPending: true },
+] as const)(
+  "preserves $type cancellation before a late failure (pending=$alreadyPending)",
+  ({ type, alreadyPending }) =>
+    Effect.gen(function* () {
+      const { state, starts, handle } = yield* setup;
+      if (alreadyPending) yield* handle(sessionSet(busyError));
+      yield* handle({
+        type,
+        payload: { threadId, createdAt: "2026-01-01T00:00:10.000Z" },
+      } as Extract<OrchestrationEvent, { type: typeof type }>);
+      yield* handle(sessionSet(busyError));
+      yield* TestClock.adjust(Duration.hours(1));
+      assert.lengthOf(starts, 0);
+      state.thread = makeThread("turn-user", "2026-01-02T00:00:00.000Z");
+      yield* handle(sessionSet(busyError));
+      yield* TestClock.adjust(Duration.minutes(1));
+      assert.lengthOf(starts, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
+it.effect("does not retry while the provider still has an active turn", () =>
+  Effect.gen(function* () {
+    const { state, starts, handle } = yield* setup;
+    state.thread = makeThread("turn-1", "2026-01-01T00:00:00.000Z", {
+      session: { status: "error", lastError: busyError, activeTurnId: TurnId.make("turn-1") },
+    });
+    yield* handle(sessionSet(busyError));
+    yield* TestClock.adjust(Duration.minutes(1));
+    assert.lengthOf(starts, 0);
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
+it.effect("cancels on archive even if the thread is unarchived before the delay expires", () =>
+  Effect.gen(function* () {
+    const { starts, handle } = yield* setup;
+    yield* handle(sessionSet(busyError));
+    yield* handle({
+      type: "thread.archived",
+      payload: { threadId, archivedAt: "2026-01-01T00:00:10.000Z" },
+    } as Extract<OrchestrationEvent, { type: "thread.archived" }>);
+    // The snapshot is already unarchived again; observing the archive still cancels.
+    yield* TestClock.adjust(Duration.hours(1));
+    assert.lengthOf(starts, 0);
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
+it.effect.each(["2026-01-01T00:00:00.000Z", "2025-12-31T23:59:00.000Z"])(
+  "cancels on a real user message timestamped %s even if the projection cursor does not move",
+  (createdAt) =>
+    Effect.gen(function* () {
+      const { state, starts, handle } = yield* setup;
+      yield* handle(sessionSet(busyError));
+      yield* handle({
+        type: "thread.message-sent",
+        sequence: 11,
+        commandId: CommandId.make("real-user"),
+        payload: { threadId, messageId: MessageId.make("real-user"), role: "user", createdAt },
+      } as Extract<OrchestrationEvent, { type: "thread.message-sent" }>);
+      yield* TestClock.adjust(Duration.hours(1));
+      assert.lengthOf(starts, 0);
+      // A subsequent failure of that user's new turn gets a fresh retry allowance.
+      state.thread = makeThread("new-user-turn", state.thread.latestUserMessageAt);
+      yield* handle(sessionSet(busyError));
+      yield* TestClock.adjust(Duration.minutes(1));
+      assert.lengthOf(starts, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );

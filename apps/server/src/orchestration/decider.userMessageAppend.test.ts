@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -153,7 +154,7 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
       const planned = yield* decideOrchestrationCommand({
         command: {
           ...serverTurn,
-          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+          onlyIfUnchanged: { snapshotSequence: 0, latestTurnId: null, latestUserMessageAt: null },
         },
         readModel,
       });
@@ -172,7 +173,7 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
         decideOrchestrationCommand({
           command: {
             ...serverTurn,
-            onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+            onlyIfUnchanged: { snapshotSequence: 0, latestTurnId: null, latestUserMessageAt: null },
           },
           readModel: withUserMessage,
         }),
@@ -182,7 +183,11 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
       const planned = yield* decideOrchestrationCommand({
         command: {
           ...serverTurn,
-          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: createdAt },
+          onlyIfUnchanged: {
+            snapshotSequence: 0,
+            latestTurnId: null,
+            latestUserMessageAt: createdAt,
+          },
         },
         readModel: withUserMessage,
       });
@@ -257,7 +262,11 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
           decideOrchestrationCommand({
             command: {
               ...serverTurn,
-              onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+              onlyIfUnchanged: {
+                snapshotSequence: 0,
+                latestTurnId: null,
+                latestUserMessageAt: null,
+              },
             },
             readModel: parked,
           }),
@@ -292,12 +301,99 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
       const planned = yield* decideOrchestrationCommand({
         command: {
           ...serverTurn,
-          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+          onlyIfUnchanged: { snapshotSequence: 0, latestTurnId: null, latestUserMessageAt: null },
         },
         readModel: expiredSnooze,
       });
       const events = Array.isArray(planned) ? planned : [planned];
       expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("capacity retry atomic session guard", (it) => {
+  const busyError = "Selected model is at capacity.";
+  const turnId = TurnId.make("failed-turn");
+  const session = {
+    threadId,
+    status: "error" as const,
+    providerName: "codex",
+    runtimeMode: "full-access" as const,
+    activeTurnId: null,
+    lastError: busyError,
+    updatedAt: createdAt,
+  };
+  const latestTurn = {
+    turnId,
+    state: "error" as const,
+    requestedAt: createdAt,
+    startedAt: createdAt,
+    completedAt: createdAt,
+    assistantMessageId: null,
+  };
+  const command = {
+    ...turnStartCommand,
+    onlyIfUnchanged: {
+      snapshotSequence: 0,
+      latestTurnId: turnId,
+      latestUserMessageAt: null,
+      busyError,
+    },
+  };
+
+  it.effect("accepts the same terminal capacity failure", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const planned = yield* decideOrchestrationCommand({
+        command,
+        readModel: {
+          ...readModel,
+          threads: readModel.threads.map((thread) => ({ ...thread, session, latestTurn })),
+        },
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
+    }),
+  );
+
+  it.effect.each([
+    { name: "session recovered", session: { ...session, status: "ready" as const } },
+    { name: "session stopped", session: { ...session, status: "stopped" as const } },
+    { name: "error changed", session: { ...session, lastError: "Invalid credentials" } },
+    { name: "turn still active", session: { ...session, activeTurnId: turnId } },
+  ])("rejects when $name between the read and dispatch", ({ session }) =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command,
+          readModel: {
+            ...readModel,
+            threads: readModel.threads.map((thread) => ({ ...thread, session, latestTurn })),
+          },
+        }),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("rejects when the same turn completes between the read and dispatch", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command,
+          readModel: {
+            ...readModel,
+            threads: readModel.threads.map((thread) => ({
+              ...thread,
+              session,
+              latestTurn: { ...latestTurn, state: "completed" as const },
+            })),
+          },
+        }),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 });
