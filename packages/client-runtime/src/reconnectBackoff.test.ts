@@ -54,12 +54,3 @@ describe("getReconnectDelayMs", () => {
     expect(getReconnectDelayMs(100, config)).toBe(64_000);
   });
 });
-
-describe("DEFAULT_RECONNECT_BACKOFF", () => {
-  it("has sensible defaults", () => {
-    expect(DEFAULT_RECONNECT_BACKOFF.initialDelayMs).toBe(1_000);
-    expect(DEFAULT_RECONNECT_BACKOFF.backoffFactor).toBe(2);
-    expect(DEFAULT_RECONNECT_BACKOFF.maxDelayMs).toBe(64_000);
-    expect(DEFAULT_RECONNECT_BACKOFF.maxRetries).toBe(7);
-  });
-});

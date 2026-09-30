@@ -606,8 +606,10 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(press.isError).toBe(false);
-      expect(press.structuredContent).toBeNull();
-      expect(press.content).toEqual([{ type: "text", text: "null" }]);
+      // Void automation results stay a JSON object: strict MCP clients
+      // reject a null `structuredContent` even when the action succeeded.
+      expect(press.structuredContent).toEqual({ ok: true });
+      expect(press.content).toEqual([{ type: "text", text: '{"ok":true}' }]);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

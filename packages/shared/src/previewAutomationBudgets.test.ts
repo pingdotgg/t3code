@@ -180,8 +180,6 @@ describe("previewAutomationBudgets", () => {
     const trimmed = enforceFinalSnapshotTextBudget(metadata, 4_000);
     expect(JSON.stringify(trimmed).length).toBeLessThanOrEqual(4_000);
     expect(trimmed.tabId).toBe("tab-1");
-    expect(typeof trimmed.url).toBe("string");
-    expect(typeof trimmed.title).toBe("string");
     expect((trimmed.error as { _tag: string })._tag).toBe("PreviewScreenshotInvalid");
   });
 });

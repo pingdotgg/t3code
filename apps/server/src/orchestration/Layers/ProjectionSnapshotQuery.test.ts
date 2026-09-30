@@ -2074,6 +2074,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepStrictEqual(result.matches, [
         {
           threadId: ThreadId.make("thread-active"),
+          messageId: MessageId.make("active-newer"),
           title: "Active thread",
           projectTitle: "Search Project",
           branch: null,

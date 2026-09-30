@@ -56,6 +56,9 @@ export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 11 as FontSize;
 /** Sidebar metadata (project, worktree, branch, PR, timestamps) sits a deliberate step
     below the thread title so the title stays the row's anchor. */
 export const DEFAULT_SIDEBAR_META_FONT_SIZE: FontSize = 10 as FontSize;
+/** Sidebar action/row icon glyphs. 14px matches the size-3.5 convention the
+    sidebar used before this became a setting. */
+export const DEFAULT_SIDEBAR_ICON_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
 
 export const MessagePreviewLineCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
@@ -102,6 +105,7 @@ export interface DensityFontSizes {
   readonly inputFontSize: FontSize;
   readonly sidebarFontSize: FontSize;
   readonly sidebarMetaFontSize: FontSize;
+  readonly sidebarIconSize: FontSize;
   readonly statusLineFontSize: FontSize;
   readonly toolFontSize: FontSize;
 }
@@ -122,6 +126,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
     inputFontSize: 13 as FontSize,
     sidebarFontSize: 10 as FontSize,
     sidebarMetaFontSize: 9 as FontSize,
+    sidebarIconSize: 12 as FontSize,
     statusLineFontSize: 12 as FontSize,
     toolFontSize: 11 as FontSize,
   },
@@ -131,6 +136,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
     inputFontSize: DEFAULT_INPUT_FONT_SIZE,
     sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
     sidebarMetaFontSize: DEFAULT_SIDEBAR_META_FONT_SIZE,
+    sidebarIconSize: DEFAULT_SIDEBAR_ICON_SIZE,
     statusLineFontSize: DEFAULT_STATUS_LINE_FONT_SIZE,
     toolFontSize: DEFAULT_TOOL_FONT_SIZE,
   },
@@ -140,6 +146,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
     inputFontSize: 15 as FontSize,
     sidebarFontSize: 12 as FontSize,
     sidebarMetaFontSize: 11 as FontSize,
+    sidebarIconSize: 15 as FontSize,
     statusLineFontSize: 15 as FontSize,
     toolFontSize: 13 as FontSize,
   },
@@ -149,6 +156,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
     inputFontSize: 16 as FontSize,
     sidebarFontSize: 13 as FontSize,
     sidebarMetaFontSize: 12 as FontSize,
+    sidebarIconSize: 16 as FontSize,
     statusLineFontSize: 16 as FontSize,
     toolFontSize: 14 as FontSize,
   },
@@ -288,6 +296,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarMetaFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_META_FONT_SIZE)),
+  ),
+  sidebarIconSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_ICON_SIZE)),
   ),
   sidebarRowSpacing: SidebarRowSpacing.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_ROW_SPACING)),
@@ -844,6 +855,7 @@ export const ClientSettingsPatch = Schema.Struct({
   messagePreviewLineLimits: Schema.optionalKey(MessagePreviewLineLimits),
   sidebarFontSize: Schema.optionalKey(FontSize),
   sidebarMetaFontSize: Schema.optionalKey(FontSize),
+  sidebarIconSize: Schema.optionalKey(FontSize),
   sidebarRowSpacing: Schema.optionalKey(SidebarRowSpacing),
   sidebarTranslucency: Schema.optionalKey(SidebarTranslucency),
   toolFontSize: Schema.optionalKey(FontSize),

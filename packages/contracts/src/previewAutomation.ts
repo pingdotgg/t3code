@@ -985,6 +985,18 @@ export const PreviewAutomationHostFocus = Schema.Struct({
 });
 export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
+/**
+ * Success payload for preview automation operations that perform an action
+ * with nothing further to report (click, type, press, scroll, wait-for).
+ * Always a JSON object: strict MCP clients reject a null
+ * `structuredContent`, failing the tool call even though the action itself
+ * succeeded.
+ */
+export const PreviewAutomationActionResult = Schema.Struct({
+  ok: Schema.Literal(true),
+});
+export type PreviewAutomationActionResult = typeof PreviewAutomationActionResult.Type;
+
 const PreviewAutomationManagedBootstrapCredential = Schema.Struct({
   origin: TrimmedNonEmptyString,
   credential: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
