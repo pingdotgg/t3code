@@ -34,7 +34,7 @@ import type {
 } from "../ProviderAdapter.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
-import { OPENCODE_2_FULL_ACCESS_ONLY } from "./OpenCode2AdapterV2.ts";
+import { OPENCODE_2_FULL_ACCESS_ONLY, OPENCODE_2_STILL_STOPPING } from "./OpenCode2AdapterV2.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
@@ -331,6 +331,111 @@ describe("OpenCode2 adapter", () => {
       yield* TestClock.adjust("11 seconds");
       yield* Fiber.join(interrupt);
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  /** A prompt accepted, then a Stop the server never answers, advanced past its timeout. */
+  const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+    out("session.interrupt", { sessionID: SESSION }),
+    reply("session.interrupt", "<hang>"),
+  ];
+  const secondTurn = (thread: OrchestrationV2ProviderThread) => ({
+    ...turnInput(thread),
+    runId: RunId.make("run:opencode2-adapter:2"),
+    runOrdinal: 2,
+    providerTurnOrdinal: 2,
+    attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+  });
+  const stopFirstTurn = (
+    runtime: ProviderAdapterV2SessionRuntime,
+    thread: OrchestrationV2ProviderThread,
+  ) =>
+    Effect.gen(function* () {
+      yield* runtime.startTurn(turnInput(thread));
+      const interrupt = yield* runtime
+        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("11 seconds");
+      yield* Fiber.join(interrupt);
+    });
+  const terminals = (runtime: ProviderAdapterV2SessionRuntime, count: number) =>
+    runtime.events.pipe(
+      Stream.filter(
+        (event): event is Extract<ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+          event.type === "turn.terminal",
+      ),
+      Stream.take(count),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+
+  it.effect("never lets a timed-out Stop's late end finish the next turn", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...stopTimedOut,
+        // The server no longer runs the stopped execution, so the next turn goes ahead.
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        // The stopped execution's end arrives late, then the new turn's own.
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.failed", {
+          sessionID: SESSION,
+          error: { type: "provider", message: "second turn failed" },
+        }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* stopFirstTurn(runtime, thread);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.equal(first?.status, "interrupted");
+      // Only the second turn's own end finishes it.
+      assert.equal(second?.status, "failed");
+      assert.equal(second?.failure?.message, "second turn failed");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "starts the next turn once the server no longer runs a timed-out Stop's execution",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...stopTimedOut,
+          out("session.active"),
+          reply("session.active", { data: {} }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const ended = yield* terminals(runtime, 2);
+        yield* stopFirstTurn(runtime, thread);
+        yield* runtime.startTurn(secondTurn(thread));
+        const [, second] = yield* Fiber.join(ended);
+        assert.equal(second?.status, "completed");
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("stops a timed-out Stop's execution again and fails the turn while it runs", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...stopTimedOut,
+        out("session.active"),
+        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
+        // Stopped again, and the turn fails without a prompt.
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* stopFirstTurn(runtime, thread);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [, second] = yield* Fiber.join(ended);
+      assert.equal(second?.status, "failed");
+      assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 

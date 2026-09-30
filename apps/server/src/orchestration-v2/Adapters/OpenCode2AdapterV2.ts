@@ -182,6 +182,12 @@ interface ActiveTurn {
   readonly ordinals: Map<string, number>;
   nextOrdinal: number;
   interrupted: boolean;
+  /**
+   * Set on a turn started after a timed-out Stop's run left the server: that
+   * run's tail can still be on the stream, and everything before this turn's
+   * own `session.execution.started` belongs to it.
+   */
+  awaitingStart: boolean;
 }
 
 interface OpenBlock {
@@ -197,6 +203,12 @@ interface ThreadState {
   active: ActiveTurn | undefined;
   /** What the native session runs now, so a changed selection is switched before prompting. */
   model: ModelRef | undefined;
+  /**
+   * Set when a Stop timed out and the turn ended locally while OpenCode may
+   * still be running it. Execution events carry only the session id, so the
+   * next execution end belongs to that run; it clears this and ends no turn.
+   */
+  unsettled: boolean;
 }
 
 /** One wording for every capability later layers add. */
@@ -243,6 +255,10 @@ export const OPENCODE_2_FULL_ACCESS_ONLY =
 const QUESTION_REPLY = "Questions aren't supported by this OpenCode integration yet.";
 
 const INTERRUPT_TIMEOUT = "10 seconds";
+const ACTIVE_CHECK_TIMEOUT = "5 seconds";
+
+export const OPENCODE_2_STILL_STOPPING =
+  "OpenCode is still stopping the previous turn. Send the message again in a moment.";
 const REQUEST_REPLY_TIMEOUT = "10 seconds";
 
 /** Whether an answer to a paused request reached the server, trying twice. */
@@ -609,9 +625,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2StreamEvent) {
+      // The end of the run a timed-out Stop left behind; no turn is its own.
+      const endedSession =
+        event.type === "unreadable.execution.ended"
+          ? event.sessionID
+          : event.type === "session.execution.succeeded" ||
+              event.type === "session.execution.failed" ||
+              event.type === "session.execution.interrupted"
+            ? event.data.sessionID
+            : undefined;
+      const ended = endedSession === undefined ? undefined : threads.get(endedSession);
+      if (ended?.unsettled === true) {
+        ended.unsettled = false;
+        return;
+      }
       if (event.type === "unreadable.execution.ended") {
         const state = threads.get(event.sessionID);
-        if (state === undefined) return;
+        if (state === undefined || state.active?.awaitingStart === true) return;
         return yield* finishTurn(
           state,
           event.executionType === "session.execution.succeeded"
@@ -637,6 +667,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const state = threads.get(event.data.sessionID);
       const turn = state?.active;
       if (state === undefined || turn === undefined) return;
+      // A session runs one execution at a time, and each opens with `started`
+      // on this ordered stream, so what comes before it is the stopped run's.
+      if (turn.awaitingStart) {
+        if (event.type === "session.execution.started") turn.awaitingStart = false;
+        return;
+      }
       switch (event.type) {
         case "session.text.started":
         case "session.reasoning.started":
@@ -752,6 +788,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerTurns: new Map(),
         active: undefined,
         model,
+        unsettled: false,
       });
       return providerThread;
     };
@@ -884,6 +921,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: `OpenCode session ${sessionId} already has an active turn`,
             });
           }
+          // After a timed-out Stop the server says whether that run is gone. A
+          // run still going is stopped again and this turn fails so it can be
+          // sent again; a run that is gone may still have its end on the
+          // stream, which the turn skips.
+          const afterUnsettled = state.unsettled;
+          let stillStopping = false;
+          if (state.unsettled) {
+            const active = yield* client.session
+              .active()
+              .pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT));
+            stillStopping = sessionId in active;
+            if (stillStopping) {
+              yield* client.session
+                .interrupt({ sessionID: Session.ID.make(sessionId) })
+                .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
+            } else {
+              state.unsettled = false;
+            }
+          }
           // Installs the turn; every path after it ends the turn with a terminal.
           const begin = Effect.gen(function* () {
             const startedAt = yield* DateTime.now;
@@ -908,6 +964,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ordinals: new Map(),
               nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               interrupted: false,
+              awaitingStart: afterUnsettled,
             };
             // No stream is left to end this turn, so it must not start.
             if (streamFailure !== undefined) {
@@ -934,6 +991,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* setSessionStatus("running", null);
             return turn;
           });
+          if (stillStopping) {
+            yield* begin;
+            return yield* finishTurn(state, {
+              status: "failed",
+              failure: makeProviderFailure({
+                message: OPENCODE_2_STILL_STOPPING,
+                class: "provider_error",
+              }),
+            });
+          }
           // A turn T3 will not run still starts and fails, so the refusal is what
           // the user reads. Sessions allow every tool, so any other mode would
           // silently run as Full access.
@@ -1035,6 +1102,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               ),
             );
           if (reply._tag === "None") {
+            state.unsettled = true;
             return yield* finishTurn(state, { status: "interrupted" });
           }
           // Nothing was running. Unless the execution already ended (its event

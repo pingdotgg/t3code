@@ -63,6 +63,7 @@ const operationOf = (
   if (method === "GET" && path === "/api/event") return { type: "event.subscribe" };
   if (method === "GET" && path === "/api/model") return { type: "model.list", input: query };
   if (method === "POST" && path === "/api/session") return { type: "session.create", input: body };
+  if (method === "GET" && path === "/api/session/active") return { type: "session.active" };
   if (session !== null) {
     const [, sessionID, rest = ""] = session;
     const input = { sessionID, ...query, ...(body === undefined ? {} : (body as object)) };
