@@ -27,6 +27,16 @@ export function useComposerMenuProps() {
   };
 }
 
+/**
+ * Whether `target` belongs to the same chat view as `own`. A side chat renders
+ * a second chat view inside the host's, so window-level composer shortcuts
+ * check this to act on one composer only.
+ */
+export function isInSameChatView(target: EventTarget | null, own: Element | null): boolean {
+  const targetChat = target instanceof Element ? target.closest("[data-chat-embedded]") : null;
+  return targetChat === (own?.closest("[data-chat-embedded]") ?? null);
+}
+
 export function isInsideComposerFloatingLayer(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
 }

@@ -2563,15 +2563,19 @@ function AssistantForkButton({
       .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
       .finally(() => setBusy(false));
   };
+  // A side chat hangs off this thread, so only this thread's own responses can
+  // seed one. Inherited ones (from before a fork) keep the plain fork button.
+  const onAskAboutResponse =
+    projectedItem.sourceThreadId === ctx.threadRef?.threadId ? ctx.onAskAboutResponse : undefined;
   const ask = () => {
-    if (!ctx.onAskAboutResponse) return;
+    if (!onAskAboutResponse) return;
     setBusy(true);
-    void ctx
-      .onAskAboutResponse({ sourceThreadId: projectedItem.sourceThreadId, runId })
-      .finally(() => setBusy(false));
+    void onAskAboutResponse({ sourceThreadId: projectedItem.sourceThreadId, runId }).finally(() =>
+      setBusy(false),
+    );
   };
 
-  if (ctx.onAskAboutResponse) {
+  if (onAskAboutResponse) {
     return (
       <Menu>
         <MenuTrigger

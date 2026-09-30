@@ -523,7 +523,7 @@ import {
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { useComposerHandleContext } from "../composerHandleContext";
+import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
@@ -590,6 +590,12 @@ const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+/** Panel layout shortcuts the host thread still handles while a side chat has focus. */
+const SIDE_CHAT_PASSTHROUGH_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
+  "rightPanel.close",
+  "rightPanel.toggle",
+  "threadPanel.toggle",
+]);
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -7350,8 +7356,14 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (embedded) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      // Thread shortcuts act on this thread, not on a side chat the focus is in.
-      if (event.target instanceof Element && event.target.closest("[data-chat-embedded]")) return;
+      // With focus in a side chat, only the panel layout shortcuts act here;
+      // thread shortcuts belong to this thread, not the side chat.
+      if (event.target instanceof Element && event.target.closest("[data-chat-embedded]")) {
+        const command = resolveShortcutCommand(event, keybindings, {
+          context: getShortcutContext(event.target),
+        });
+        if (command === null || !SIDE_CHAT_PASSTHROUGH_COMMANDS.has(command)) return;
+      }
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -11384,6 +11396,9 @@ function SideChatPanel(props: { parentRef: ScopedThreadRef; threadId: ThreadId }
     [props.parentRef.environmentId, props.threadId],
   );
   const shell = useThreadShell(childRef);
+  // Its own composer handle, so the host thread's citations, sends and menus
+  // never reach the side chat's composer (or the reverse).
+  const composerRef = useRef<ChatComposerHandle | null>(null);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const gone = bootstrapped && (shell === null || shell.deletedAt !== null || !shell.sideChat);
   useEffect(() => {
@@ -11393,11 +11408,13 @@ function SideChatPanel(props: { parentRef: ScopedThreadRef; threadId: ThreadId }
   }, [gone, props.parentRef, props.threadId]);
   if (shell === null || gone) return null;
   return (
-    <ChatView
-      embedded
-      routeKind="server"
-      environmentId={props.parentRef.environmentId}
-      threadId={props.threadId}
-    />
+    <ComposerHandleContext value={composerRef}>
+      <ChatView
+        embedded
+        routeKind="server"
+        environmentId={props.parentRef.environmentId}
+        threadId={props.threadId}
+      />
+    </ComposerHandleContext>
   );
 }

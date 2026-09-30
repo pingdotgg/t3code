@@ -38,6 +38,11 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
       ),
     [props.environmentId, props.threadId, shells],
   );
+  // A side chat open in the panel stays listed as active even when idle, so the
+  // tab you are looking at is never hidden under a collapsed "Previous".
+  const openSurfaces = useRightPanelStore(
+    (state) => state.byThreadKey[scopedThreadKey(parentRef)]?.surfaces,
+  );
   if (!actions.supported) return null;
 
   const historyAvailable = actions.historyAvailability.available;
@@ -56,11 +61,6 @@ export function SideChatsSection(props: { environmentId: EnvironmentId; threadId
       setStarting(false);
     }
   };
-  // A side chat open in the panel stays listed as active even when idle, so the
-  // tab you are looking at is never hidden under a collapsed "Previous".
-  const openSurfaces = useRightPanelStore(
-    (state) => state.byThreadKey[scopedThreadKey(parentRef)]?.surfaces,
-  );
   const openIds = new Set(
     (openSurfaces ?? []).flatMap((surface) => (surface.kind === "aside" ? [surface.threadId] : [])),
   );
