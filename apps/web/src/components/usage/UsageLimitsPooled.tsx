@@ -493,7 +493,8 @@ function CreditsBadge({
           <span
             role="img"
             aria-label={summary}
-            className="inline-flex items-center gap-0.5 font-semibold text-foreground tabular-nums"
+            tabIndex={0}
+            className="inline-flex items-center gap-0.5 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background font-semibold text-foreground tabular-nums"
           />
         }
       >

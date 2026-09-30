@@ -73,7 +73,11 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
           <span
             role="img"
             aria-label={PACE[pace].label}
-            className={cn("inline-flex", PACE[pace].tone)}
+            tabIndex={0}
+            className={cn(
+              "inline-flex rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              PACE[pace].tone,
+            )}
           />
         }
       >
