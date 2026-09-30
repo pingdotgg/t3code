@@ -28,6 +28,15 @@ export interface OpenCode2UnreadableTerminal {
   readonly sessionID: string;
 }
 
+/**
+ * A session's execution started, but this build could not decode the event.
+ * It marks where a new execution begins and never ends a turn.
+ */
+export interface OpenCode2UnreadableStart {
+  readonly type: "unreadable.execution.started";
+  readonly sessionID: string;
+}
+
 /** The events that end an execution; any other undecodable event is skipped. */
 const EXECUTION_ENDS = [
   "session.execution.succeeded",
@@ -47,16 +56,19 @@ export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2Sile
   }
 }
 
-export type OpenCode2StreamEvent = OpenCodeEvent | OpenCode2UnreadableTerminal;
+export type OpenCode2StreamEvent =
+  | OpenCodeEvent
+  | OpenCode2UnreadableTerminal
+  | OpenCode2UnreadableStart;
 
 /**
  * An OpenCode 2 client plus a forward-compatible `/api/event` stream. The
  * client's own `event.subscribe` fails the whole stream on the first event a
  * newer server adds, so `events` decodes each frame on its own and skips the
- * ones this build does not know, except an execution's end, which it keeps as
- * an {@link OpenCode2UnreadableTerminal}. `events` succeeds once the server
- * accepted the subscription: the stream is volatile, so callers subscribe
- * before they start work whose events they need.
+ * ones this build does not know, except an execution's end or start, which it
+ * keeps as an {@link OpenCode2UnreadableTerminal} or {@link OpenCode2UnreadableStart}.
+ * `events` succeeds once the server accepted the subscription: the stream is
+ * volatile, so callers subscribe before they start work whose events they need.
  */
 export interface OpenCode2Api {
   readonly client: OpenCodeClient;
@@ -112,6 +124,13 @@ const undecodable = (data: string) =>
       return Result.succeed<OpenCode2StreamEvent>({
         type: "unreadable.execution.ended",
         executionType: type,
+        sessionID,
+      });
+    }
+    if (type === "session.execution.started" && sessionID !== undefined) {
+      yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
+      return Result.succeed<OpenCode2StreamEvent>({
+        type: "unreadable.execution.started",
         sessionID,
       });
     }

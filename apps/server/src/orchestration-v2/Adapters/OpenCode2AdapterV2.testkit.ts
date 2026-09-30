@@ -68,6 +68,7 @@ const operationOf = (
     const [, sessionID, rest = ""] = session;
     const input = { sessionID, ...query, ...(body === undefined ? {} : (body as object)) };
     if (method === "GET" && rest === "") return { type: "session.get", input };
+    if (method === "PATCH" && rest === "") return { type: "session.update", input };
     if (method === "POST" && rest === "/prompt") return { type: "session.prompt", input };
     if (method === "POST" && rest === "/interrupt") return { type: "session.interrupt", input };
     if (method === "POST" && rest === "/model") return { type: "session.switchModel", input };

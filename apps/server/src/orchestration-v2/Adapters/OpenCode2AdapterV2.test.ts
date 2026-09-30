@@ -61,8 +61,14 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 });
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
+/** The rules T3 gives every session it runs. */
+const t3Rules = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "subagent", resource: "*", effect: "deny" },
+];
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
+  permissions: t3Rules,
   projectID: "global",
   model: { id: "big-pickle", providerID: "opencode", variant: "default" },
   cost: 0,
@@ -279,10 +285,7 @@ describe("OpenCode2 adapter", () => {
         out("session.create", {
           location: { directory: WORK },
           model: { providerID: "opencode", id: "big-pickle" },
-          permissions: [
-            { action: "*", resource: "*", effect: "allow" },
-            { action: "subagent", resource: "*", effect: "deny" },
-          ],
+          permissions: t3Rules,
         }),
         replyData("session.create", sessionInfo()),
       ]);
@@ -420,6 +423,88 @@ describe("OpenCode2 adapter", () => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("reads a timed-out Stop's next turn from an execution start it cannot decode", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...stopTimedOut,
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        // A newer server's start: the full schema rejects it, but it still opens the turn.
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_executionstartednewer",
+              created: 1,
+              type: "session.execution.started",
+              data: { sessionID: SESSION },
+              durable: "not-an-envelope",
+            },
+          },
+        },
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+          ordinal: 0,
+          text: "DONE",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* stopFirstTurn(runtime, thread);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [, second] = yield* Fiber.join(ended);
+      assert.equal(second?.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("checks the server before prompting again after a prompt request failed", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        // The request failed, but the server may have taken the prompt.
+        reply("session.prompt", {
+          status: 502,
+          body: { _tag: "UnknownError", message: "bad gateway" },
+        }),
+        out("session.active"),
+        reply("session.active", { data: { [SESSION]: { type: "running" } } }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.equal(first?.status, "failed");
+      assert.equal(second?.failure?.message, OPENCODE_2_STILL_STOPPING);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("prompts again without a check after the server refused a prompt", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        reply("session.prompt", {
+          status: 400,
+          body: { _tag: "InvalidRequestError", message: "bad prompt" },
+        }),
+        // A clear refusal: nothing runs, so the next turn prompts directly.
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const ended = yield* terminals(runtime, 2);
+      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
+      yield* runtime.startTurn(secondTurn(thread));
+      const [first, second] = yield* Fiber.join(ended);
+      assert.deepEqual([first?.status, second?.status], ["failed", "completed"]);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("stops a timed-out Stop's execution again and fails the turn while it runs", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -477,6 +562,40 @@ describe("OpenCode2 adapter", () => {
         .pipe(Effect.flip);
       assert.equal(failed._tag, "ProviderAdapterInterruptError");
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses to resume a thread without an OpenCode session as a protocol error", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime([out("event.subscribe")]);
+      const failed = yield* runtime
+        .resumeThread({
+          providerThread: { ...providerThread(yield* DateTime.now), nativeThreadRef: null },
+        })
+        .pipe(Effect.flip);
+      assert.equal(failed._tag, "ProviderAdapterProtocolError");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives a resumed session T3's rules when it was made with others", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime([
+        out("event.subscribe"),
+        out("session.get", { sessionID: SESSION }),
+        // Made before the subagent rule: it still allows everything.
+        replyData(
+          "session.get",
+          sessionInfo({ permissions: [{ action: "*", resource: "*", effect: "allow" }] }),
+        ),
+        out("session.update", { sessionID: SESSION, permissions: t3Rules }),
+        reply("session.update", null),
+      ]);
+      yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
     }).pipe(Effect.scoped),
   );
 

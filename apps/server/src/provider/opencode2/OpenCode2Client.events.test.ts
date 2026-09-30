@@ -116,48 +116,51 @@ describe("OpenCode2Client events", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps an execution's end it cannot decode, and skips other unknown events", () =>
-    Effect.gen(function* () {
-      const { events } = yield* connect.pipe(
-        Effect.provide(
-          OpenCode2Client.layer.pipe(
-            Layer.provide(
-              serving([
-                {
-                  id: "evt_1",
-                  created: 1,
-                  type: "session.hologram.projected",
-                  data: { sessionID: "ses_x" },
-                },
-                // A start is not an end: an undecodable one is skipped like any other event.
-                {
-                  id: "evt_0",
-                  created: 1,
-                  type: "session.execution.started",
-                  data: { sessionID: "ses_x", lane: 7 },
-                  durable: "not-an-envelope",
-                },
-                {
-                  id: "evt_2",
-                  created: 1,
-                  type: "session.execution.interrupted",
-                  data: { sessionID: "ses_x", reason: "budget" },
-                  durable: { aggregateID: "ses_x", seq: 1, version: 1 },
-                },
-              ]),
+  it.effect(
+    "keeps an execution's end and start it cannot decode, and skips other unknown events",
+    () =>
+      Effect.gen(function* () {
+        const { events } = yield* connect.pipe(
+          Effect.provide(
+            OpenCode2Client.layer.pipe(
+              Layer.provide(
+                serving([
+                  {
+                    id: "evt_1",
+                    created: 1,
+                    type: "session.hologram.projected",
+                    data: { sessionID: "ses_x" },
+                  },
+                  // A start is kept as a marker; it never ends anything.
+                  {
+                    id: "evt_0",
+                    created: 1,
+                    type: "session.execution.started",
+                    data: { sessionID: "ses_x", lane: 7 },
+                    durable: "not-an-envelope",
+                  },
+                  {
+                    id: "evt_2",
+                    created: 1,
+                    type: "session.execution.interrupted",
+                    data: { sessionID: "ses_x", reason: "budget" },
+                    durable: { aggregateID: "ses_x", seq: 1, version: 1 },
+                  },
+                ]),
+              ),
             ),
           ),
-        ),
-      );
-      const received = yield* (yield* events).pipe(Stream.runCollect);
-      assert.deepStrictEqual(received, [
-        {
-          type: "unreadable.execution.ended",
-          executionType: "session.execution.interrupted",
-          sessionID: "ses_x",
-        },
-      ]);
-    }),
+        );
+        const received = yield* (yield* events).pipe(Stream.runCollect);
+        assert.deepStrictEqual(received, [
+          { type: "unreadable.execution.started", sessionID: "ses_x" },
+          {
+            type: "unreadable.execution.ended",
+            executionType: "session.execution.interrupted",
+            sessionID: "ses_x",
+          },
+        ]);
+      }),
   );
 
   it.effect("skips events a newer server adds and still sees the turn end", () =>

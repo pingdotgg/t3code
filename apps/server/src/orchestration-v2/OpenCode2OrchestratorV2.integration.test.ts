@@ -48,7 +48,11 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
     event: { id: `evt_${type.replaceAll(".", "")}`, created: 1, type, data },
   },
 });
-const sessionInfo = (directory: string) => ({
+const T3_RULES = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "subagent", resource: "*", effect: "deny" },
+];
+const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown> = T3_RULES) => ({
   data: {
     id: SESSION,
     projectID: "global",
@@ -57,6 +61,7 @@ const sessionInfo = (directory: string) => ({
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: 1790656601394, updated: 1790656601394 },
     location: { directory },
+    permissions,
   },
 });
 /** One prompt the server accepts and answers with `text`. */
@@ -246,6 +251,50 @@ describe("OpenCode 2 through the orchestrator", () => {
         ["completed", "completed"],
       );
       assert.lengthOf(projection.providerThreads, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives a session made with older rules T3's rules before its next prompt", () =>
+    Effect.gen(function* () {
+      const name = "opencode2-resume-rules";
+      const before = yield* checkpointWorkspace(`${name}-before`);
+      const after = yield* checkpointWorkspace(`${name}-after`);
+      const thread = threadCommands({ name, worktreePath: before });
+      const projection = yield* runScenario({
+        name,
+        threadId: thread.threadId,
+        entries: [
+          ...createdSession(before),
+          ...answeredPrompt("FIRST"),
+          // Reopened after a worktree change, the session reports the rules an
+          // older build gave it; they are replaced before anything runs.
+          out("session.get", { sessionID: SESSION }),
+          reply(
+            "session.get",
+            sessionInfo(before, [{ action: "*", resource: "*", effect: "allow" }]),
+          ),
+          out("session.update", { sessionID: SESSION, permissions: T3_RULES }),
+          reply("session.update", null),
+          out("session.move", { sessionID: SESSION, directory: after }),
+          reply("session.move", null),
+          ...answeredPrompt("SECOND"),
+        ],
+        commands: [
+          thread.create,
+          thread.message("first"),
+          {
+            type: "thread.metadata.update",
+            commandId: thread.command("worktree"),
+            threadId: thread.threadId,
+            worktreePath: after,
+          },
+          thread.message("second"),
+        ],
+      });
+      assert.deepEqual(
+        projection.runs.map((run) => run.status),
+        ["completed", "completed"],
+      );
     }).pipe(Effect.scoped),
   );
 

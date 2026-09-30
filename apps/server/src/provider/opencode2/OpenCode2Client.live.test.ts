@@ -104,6 +104,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
           Stream.filter(
             (event) =>
               event.type !== "unreadable.execution.ended" &&
+              event.type !== "unreadable.execution.started" &&
               (event.data as { readonly sessionID?: string }).sessionID === session.id &&
               event.type.startsWith("session.execution.") &&
               event.type !== "session.execution.started",

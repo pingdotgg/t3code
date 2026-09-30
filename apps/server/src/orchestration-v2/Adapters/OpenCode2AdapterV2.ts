@@ -204,9 +204,10 @@ interface ThreadState {
   /** What the native session runs now, so a changed selection is switched before prompting. */
   model: ModelRef | undefined;
   /**
-   * Set when a Stop timed out and the turn ended locally while OpenCode may
-   * still be running it. Execution events carry only the session id, so the
-   * next execution end belongs to that run; it clears this and ends no turn.
+   * Set when a turn ended here while OpenCode may still be running it: a Stop
+   * that timed out, or a prompt whose request failed without a clear answer.
+   * Execution events carry only the session id, so the next execution end
+   * belongs to that run; it clears this and ends no turn.
    */
   unsettled: boolean;
 }
@@ -248,6 +249,20 @@ const SESSION_PERMISSIONS = [
   { action: "subagent", resource: "*", effect: "deny" },
 ] as const;
 
+const sameRules = (
+  left:
+    | ReadonlyArray<{ readonly action: string; readonly resource: string; readonly effect: string }>
+    | undefined,
+  right: typeof SESSION_PERMISSIONS,
+) =>
+  left?.length === right.length &&
+  left.every(
+    (rule, index) =>
+      rule.action === right[index]?.action &&
+      rule.resource === right[index]?.resource &&
+      rule.effect === right[index]?.effect,
+  );
+
 export const OPENCODE_2_FULL_ACCESS_ONLY =
   "OpenCode 2 needs Full access for now; approvals come in a later update. Switch this thread's mode to continue.";
 
@@ -256,6 +271,12 @@ const QUESTION_REPLY = "Questions aren't supported by this OpenCode integration 
 
 const INTERRUPT_TIMEOUT = "10 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
+/** Answers that mean the server refused a prompt; any other failure may have been accepted. */
+const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
+  "InvalidRequestError",
+  "ConflictError",
+  "UnauthorizedError",
+]);
 
 export const OPENCODE_2_STILL_STOPPING =
   "OpenCode is still stopping the previous turn. Send the message again in a moment.";
@@ -639,6 +660,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ended.unsettled = false;
         return;
       }
+      // Only marks where a turn's own execution begins; it never ends one.
+      if (event.type === "unreadable.execution.started") {
+        const turn = threads.get(event.sessionID)?.active;
+        if (turn !== undefined) turn.awaitingStart = false;
+        return;
+      }
       if (event.type === "unreadable.execution.ended") {
         const state = threads.get(event.sessionID);
         if (state === undefined || state.active?.awaitingStart === true) return;
@@ -876,6 +903,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // 1.x session ids survive the upgrade; a server without this session
           // fails the resume, so T3 recreates the thread with a handoff.
           const native = yield* client.session.get({ sessionID: Session.ID.make(sessionId) });
+          // A session made by 1.x or an earlier build may still allow what
+          // T3 now denies, such as subagents.
+          if (!sameRules(native.permissions, SESSION_PERMISSIONS)) {
+            yield* client.session.update({
+              sessionID: Session.ID.make(sessionId),
+              permissions: SESSION_PERMISSIONS,
+            });
+          }
           // A thread moved to another worktree takes its session with it.
           const cwd = threadInput.runtimePolicy?.cwd;
           if (cwd != null && native.location.directory !== cwd) {
@@ -895,14 +930,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             native.model,
           );
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterResumeThreadError({
-                driver,
-                providerSessionId: input.providerSessionId,
-                providerThreadId: threadInput.providerThread.id,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isProviderAdapterError(cause)
+              ? cause
+              : new ProviderAdapterResumeThreadError({
+                  driver,
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: threadInput.providerThread.id,
+                  cause,
+                }),
           ),
         ),
       startTurn: (turnInput) =>
@@ -1047,9 +1083,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               }),
               Effect.tapError((cause) =>
                 state.active === turn
-                  ? finishTurn(state, {
-                      status: "failed",
-                      failure: makeProviderFailure({ cause, class: "provider_error" }),
+                  ? Effect.gen(function* () {
+                      // Without a clear rejection the server may have taken the
+                      // prompt, so the next turn checks before it prompts again.
+                      if (!CLEAR_PROMPT_REJECTIONS.has(cause._tag)) state.unsettled = true;
+                      yield* finishTurn(state, {
+                        status: "failed",
+                        failure: makeProviderFailure({ cause, class: "provider_error" }),
+                      });
                     })
                   : Effect.void,
               ),
