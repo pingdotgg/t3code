@@ -71,14 +71,15 @@ kept in the same column across windows. Accounts are ordered by their 5-hour res
 first, or by the first available window when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. On web and desktop, the tick on a bar marks
-where spending evenly would leave you, and a window spending faster says **Ahead of pace**. On
-mobile, the hatched part of a segment is what the next reset restores. Tap a segment or account
-row for the account's plan, where it is signed in, and its reset time. On web, you can hover too.
-Codex and Claude accounts with banked reset credits show a ticket count, and the **Use reset**
-action is in the account details. Claude resets are not available when the server runs on macOS,
-where Claude keeps its login in the Keychain. With several accounts, web and desktop name each segment under the bar,
-and mobile lists numbered rows with each account's quota, countdown, and credits. Tap a name or
-row to open its details.
+where spending evenly would leave you, and the icon beside the share left turns amber when you are
+ahead of pace and green when you have headroom; hover it for details. On mobile, the hatched part
+of a segment is what the next reset restores. Tap a segment or account row for the account's plan,
+where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
+with banked reset credits show a ticket count, and the **Use reset** action is in the account
+details. Claude resets are not available when the server runs on macOS, where Claude keeps its
+login in the Keychain. With several accounts, web and desktop name each segment under the bar, and
+mobile lists numbered rows with each account's quota, countdown, and credits. Tap a name or row to
+open its details.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

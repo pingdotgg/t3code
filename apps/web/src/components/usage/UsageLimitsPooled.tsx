@@ -30,7 +30,13 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { ResetCreditDialog, barColor, resetCreditsSummary, useResetCredit } from "./UsageLimits";
+import {
+  PaceIcon,
+  ResetCreditDialog,
+  barColor,
+  resetCreditsSummary,
+  useResetCredit,
+} from "./UsageLimits";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -420,8 +426,8 @@ function nextRefillText(pool: LimitPoolWindow, now: number): string | null {
 }
 
 /**
- * One window: label and pace, the pooled share left with when quota comes
- * back, and the meter. Accounts keep the same column across windows.
+ * One window: label and credits, the pooled share left with its pace and when
+ * quota comes back, and the meter. Accounts keep the same column across windows.
  */
 function PoolWindow({
   pool,
@@ -444,18 +450,14 @@ function PoolWindow({
     <div className="flex min-w-0 flex-col gap-1.5">
       <div className="flex items-center justify-between gap-3 text-xs">
         <span className="truncate text-muted-foreground">{label ?? pool.label}</span>
-        <span className="flex shrink-0 items-center gap-3">
-          {pool.pace === "ahead" ? (
-            <span className="text-warning-foreground">Ahead of pace</span>
-          ) : null}
-          {credits?.availableCount ? <CreditsBadge credits={credits} now={now} /> : null}
-        </span>
+        {credits?.availableCount ? <CreditsBadge credits={credits} now={now} /> : null}
       </div>
       <div className="flex items-baseline gap-1.5">
         <span className="text-2xl font-semibold text-foreground tabular-nums">
           {pool.remainingPercent}%
         </span>
         <span className="text-xs text-muted-foreground">left</span>
+        {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         {refill ? (
           <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums">
             {refill}

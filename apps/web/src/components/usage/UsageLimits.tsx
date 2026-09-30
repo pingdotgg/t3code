@@ -20,6 +20,7 @@ import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -38,10 +39,21 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
-const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
-  on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+const PACE: Record<
+  LimitPace,
+  { readonly label: string; readonly icon: typeof GaugeIcon; readonly tone: string }
+> = {
+  ahead: {
+    label: "Ahead of pace: spending faster than the window elapses",
+    icon: TrendingUpIcon,
+    tone: "text-warning-foreground",
+  },
+  on: { label: "On pace with the window", icon: GaugeIcon, tone: "text-muted-foreground" },
+  under: {
+    label: "Under pace: headroom left for the rest of the window",
+    icon: TrendingDownIcon,
+    tone: "text-success-foreground",
+  },
 };
 
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
@@ -51,7 +63,7 @@ export function barColor(driver: ServerProvider["driver"]): string {
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
 }
 
-/** Pace as a glyph with the words on hover. */
+/** Pace as a tinted glyph with the words on hover. */
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
@@ -61,7 +73,7 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
           <span
             role="img"
             aria-label={PACE[pace].label}
-            className="inline-flex text-muted-foreground"
+            className={cn("inline-flex", PACE[pace].tone)}
           />
         }
       >
