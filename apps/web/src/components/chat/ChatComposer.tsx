@@ -80,6 +80,7 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { ComposerTasksBadge } from "./ComposerTasksBadge";
 import {
   COPILOT_COMPLETION_TOAST_DESCRIPTION,
   COPILOT_COMPLETION_TOAST_TITLE,
@@ -125,6 +126,7 @@ import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelS
 import { automaticPrFeedbackBlockReason } from "@t3tools/shared/automaticPrFeedback";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
+import type { ActivePlanState } from "../../session-logic";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
@@ -407,7 +409,8 @@ export interface ChatComposerProps {
   // Plan
   showPlanFollowUpPrompt: boolean;
   activeProposedPlan: Thread["proposedPlans"][number] | null;
-  activePlan: { turnId?: TurnId } | null;
+  activePlan: ActivePlanState | null;
+  activeTaskSteps: ActivePlanState["steps"] | null;
   sidebarProposedPlan: { turnId?: TurnId } | null;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
@@ -504,6 +507,7 @@ export const ChatComposer = memo(
       showPlanFollowUpPrompt,
       activeProposedPlan,
       activePlan,
+      activeTaskSteps,
       sidebarProposedPlan,
       planSidebarLabel,
       planSidebarOpen,
@@ -2162,6 +2166,9 @@ export const ChatComposer = memo(
         className="mx-auto w-full min-w-0 max-w-3xl"
         data-chat-composer-form="true"
       >
+        {activeTaskSteps ? (
+          <ComposerTasksBadge key={activeThreadId} steps={activeTaskSteps} />
+        ) : null}
         <div
           className={cn(
             "group relative z-10 rounded-[22px] p-px transition-colors duration-200",

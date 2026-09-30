@@ -1643,6 +1643,10 @@ function ChatViewBody(
     () => deriveActivePlanState(threadStateActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadStateActivities],
   );
+  const activeTaskSteps =
+    !latestTurnSettled && activePlan && activePlan.turnId === activeLatestTurn?.turnId
+      ? activePlan.steps
+      : null;
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
@@ -5239,7 +5243,8 @@ function ChatViewBody(
                     respondingRequestIds={respondingRequestIds}
                     showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                     activeProposedPlan={activeProposedPlan}
-                    activePlan={activePlan as { turnId?: TurnId } | null}
+                    activePlan={activePlan}
+                    activeTaskSteps={activeTaskSteps}
                     sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
                     planSidebarLabel={planSidebarLabel}
                     planSidebarOpen={planSidebarOpen}
