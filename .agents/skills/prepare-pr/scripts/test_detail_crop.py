@@ -193,6 +193,21 @@ class DetailCropTests(unittest.TestCase):
         with self.assertRaisesRegex(crop.ProofMediaError, "Output exists"):
             self.render(source)
 
+    def test_overwrite_preserves_directories_at_packet_destinations(self):
+        before = self.screenshot("before.png")
+        after = self.screenshot("after.png", "700,600 779,639")
+        for filename in ("proof-after-detail.png", "proof-before-detail.png", "proof-detail-receipt.json"):
+            with self.subTest(filename=filename):
+                output_dir = self.root / filename
+                collision = output_dir / filename
+                collision.mkdir(parents=True)
+                unrelated = collision / "keep.txt"
+                unrelated.write_bytes(b"unrelated contents")
+                with self.assertRaisesRegex(crop.ProofMediaError, "regular file"):
+                    self.render(after, before=before, output_dir=output_dir, overwrite=True)
+                self.assertEqual(unrelated.read_bytes(), b"unrelated contents")
+                self.assertEqual(list(output_dir.iterdir()), [collision])
+
     def test_invalid_regions_fail_before_rendering(self):
         for value in ("nan,0,1,1", "0,0,0,1", "0.9,0,0.2,1", "0,0,1", "0,0,inf,1"):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):

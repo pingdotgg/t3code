@@ -54,6 +54,8 @@ def validate_packet_paths(inputs: Sequence[Path], destinations: Sequence[Path]) 
     for destination in destinations:
         if destination.is_symlink():
             raise ProofMediaError("Output path must not be a symlink: {0}".format(destination))
+        if destination.exists() and not destination.is_file():
+            raise ProofMediaError("Output path must be a regular file: {0}".format(destination))
         for source in inputs:
             if destination == source:
                 raise ProofMediaError("An output path would overwrite an input: {0}".format(source))
