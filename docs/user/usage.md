@@ -74,10 +74,9 @@ when the next reset lands and how much it hands back. On web and desktop, the ti
 where spending evenly would leave you, and a window spending faster says **Ahead of pace**. On
 mobile, the hatched part of a segment is what the next reset restores. Tap a segment or account
 row for the account's plan, where it is signed in, and its reset time. On web, you can hover too.
-Codex and Claude accounts with banked reset credits show a ticket count and the **Use reset**
-action in the account details; with a single account, web and desktop also show it next to the
-provider name. Claude resets are not available when the server runs on macOS, where Claude keeps
-its login in the Keychain. With several accounts, web and desktop name each segment under the bar,
+Codex and Claude accounts with banked reset credits show a ticket count, and the **Use reset**
+action is in the account details. Claude resets are not available when the server runs on macOS,
+where Claude keeps its login in the Keychain. With several accounts, web and desktop name each segment under the bar,
 and mobile lists numbered rows with each account's quota, countdown, and credits. Tap a name or
 row to open its details.
 

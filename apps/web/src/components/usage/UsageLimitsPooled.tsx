@@ -14,6 +14,7 @@ import {
   type LimitPoolWindow,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import type { ServerProviderResetCredits } from "@t3tools/contracts";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
@@ -28,13 +29,8 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import {
-  ResetCreditDialog,
-  ResetCredits,
-  barColor,
-  resetCreditsSummary,
-  useResetCredit,
-} from "./UsageLimits";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ResetCreditDialog, barColor, resetCreditsSummary, useResetCredit } from "./UsageLimits";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -441,13 +437,19 @@ function PoolWindow({
   readonly description?: string | undefined;
 }) {
   const refill = nextRefillText(pool, now);
+  // Several accounts show their credits under their own segments instead.
+  const credits =
+    pool.columns.length === 1 ? pool.columns[0]?.account.limits.resetCredits : undefined;
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <div className="flex items-baseline justify-between gap-3 text-xs">
+      <div className="flex items-center justify-between gap-3 text-xs">
         <span className="truncate text-muted-foreground">{label ?? pool.label}</span>
-        {pool.pace === "ahead" ? (
-          <span className="shrink-0 text-warning-foreground">Ahead of pace</span>
-        ) : null}
+        <span className="flex shrink-0 items-center gap-3">
+          {pool.pace === "ahead" ? (
+            <span className="text-warning-foreground">Ahead of pace</span>
+          ) : null}
+          {credits?.availableCount ? <CreditsBadge credits={credits} now={now} /> : null}
+        </span>
       </div>
       <div className="flex items-baseline gap-1.5">
         <span className="text-2xl font-semibold text-foreground tabular-nums">
@@ -466,29 +468,32 @@ function PoolWindow({
   );
 }
 
-/**
- * Banked credits for a single-account pool, once at the provider rather than
- * repeated on every window. Several accounts show theirs under each segment.
- */
-function PoolResetCredits({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
-  const [account] = pool.accounts;
-  const credits = account?.limits.resetCredits;
-  if (pool.accounts.length !== 1 || !account || !credits) return null;
-  if (account.redeem) {
-    return (
-      <ResetCredits
-        environmentId={account.redeem.environmentId}
-        input={account.redeem.input}
-        credits={credits}
-        now={now}
-      />
-    );
-  }
-  return credits.availableCount > 0 ? (
-    <span className="text-xs text-muted-foreground tabular-nums">
-      {resetCreditsSummary(credits, now)}
-    </span>
-  ) : null;
+/** Banked reset credits as a ticket and count, with the expiry on hover. */
+function CreditsBadge({
+  credits,
+  now,
+}: {
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const summary = resetCreditsSummary(credits, now);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={summary}
+            className="inline-flex items-center gap-0.5 font-semibold text-foreground tabular-nums"
+          />
+        }
+      >
+        <TicketIcon className="size-3" aria-hidden />
+        {credits.availableCount}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{summary}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /** One provider: its windows side by side in a card, wrapping as the page narrows. */
@@ -498,19 +503,16 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   const windows = displayLimitWindows(pool);
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-        <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <ProviderInstanceIcon
-            driverKind={pool.driver}
-            displayName={label}
-            indicatorBackground="var(--background)"
-            className="size-5"
-            iconClassName="size-4 text-foreground/80"
-          />
-          {label}
-        </h2>
-        <PoolResetCredits pool={pool} now={now} />
-      </div>
+      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <ProviderInstanceIcon
+          driverKind={pool.driver}
+          displayName={label}
+          indicatorBackground="var(--background)"
+          className="size-5"
+          iconClassName="size-4 text-foreground/80"
+        />
+        {label}
+      </h2>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(15rem,100%),1fr))] gap-x-10 gap-y-6 rounded-lg border border-border/60 p-4">
         {windows.map((window) => {
           const details =
