@@ -1,6 +1,7 @@
 import {
   clampPreviewMiniPlayerPosition,
   resolvePreviewMiniPlayerFrame,
+  resizePreviewMiniPlayer,
   type PreviewMiniPlayerFrame,
   type PreviewMiniPlayerObstacles,
 } from "../preview/previewMiniPlayerLayout";
@@ -9,7 +10,10 @@ import type {
   PreviewMiniPlayerSize,
   PreviewMiniPlayerState,
 } from "~/previewMiniPlayerStore";
-import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
+import {
+  resolveThreadDetailsCardLayout,
+  THREAD_DETAILS_CARD_MIN_HEIGHT,
+} from "./threadDetailsCardLayout";
 
 export interface ChatCanvasPreview {
   readonly key: string;
@@ -41,12 +45,24 @@ export function resolveChatCanvasLayout({
   detailsCard?: PreviewMiniPlayerObstacles["detailsCard"];
   detailsCardOpen?: boolean;
 }) {
-  const card = resolveThreadDetailsCardLayout({ container, frame: null, padding, minChatWidth });
-  const insetEnd = detailsCardOpen && card && !card.stacked ? card.width + GAP * 2 : 0;
-  const chatInsetTop = detailsCardOpen && card?.stacked ? card.height + GAP * 2 : 0;
-  const normalWidth = Math.max(0, Math.min(maxChatWidth, container.width - insetEnd - padding * 2));
-  const normalLeft = (container.width - insetEnd - normalWidth) / 2;
-  let chat = { left: normalLeft, width: normalWidth, insetStart: 0, insetEnd };
+  const card = resolveThreadDetailsCardLayout({
+    container,
+    frame: null,
+    padding,
+    minChatWidth,
+    maxChatWidth,
+  });
+  const insetEnd = detailsCardOpen && card ? card.width + GAP * 2 : 0;
+  const insetStart = Math.min(
+    insetEnd,
+    Math.max(0, container.width - insetEnd - padding * 2 - minChatWidth),
+  );
+  const normalWidth = Math.max(
+    0,
+    Math.min(maxChatWidth, container.width - insetStart - insetEnd - padding * 2),
+  );
+  const normalLeft = insetStart + (container.width - insetStart - insetEnd - normalWidth) / 2;
+  let chat = { left: normalLeft, width: normalWidth, insetStart, insetEnd };
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;
   if (preview && container.width > 0 && container.height > 0) {
@@ -161,6 +177,22 @@ export function resolveChatCanvasLayout({
         };
       }
     }
+    if (detailsCardOpen && detailsCard) {
+      frame = resizePreviewMiniPlayer({
+        start: frame,
+        direction: "west",
+        delta: { x: 0, y: 0 },
+        container,
+        source: preview.source,
+        obstacles: {
+          composer: { left: chat.left, right: chat.left + chat.width, height: composerHeight },
+          detailsCard: {
+            ...detailsCard,
+            bottom: Math.min(detailsCard.bottom, GAP + THREAD_DETAILS_CARD_MIN_HEIGHT),
+          },
+        },
+      });
+    }
   }
   const overlapsDetailsCard = Boolean(
     frame &&
@@ -175,6 +207,7 @@ export function resolveChatCanvasLayout({
     overlapsDetailsCard,
     padding,
     minChatWidth,
+    maxChatWidth,
   });
-  return { chat, frame, overlapsChat, overlapsDetailsCard, chatInsetTop, card, cardPlacement };
+  return { chat, frame, overlapsChat, overlapsDetailsCard, card, cardPlacement };
 }

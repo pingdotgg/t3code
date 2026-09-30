@@ -16,11 +16,8 @@ describe("floating details card", () => {
     [390, 844],
     [768, 600],
     [943, 800],
-  ])("stacks a scrollable card above chat at %i by %i", (width, height) => {
-    const card = resolve(width!, height!)!;
-    expect(card).toMatchObject({ x: 12, y: 12, width: width! - 24, stacked: true });
-    expect(card.height).toBeGreaterThan(0);
-    expect(card.height).toBeLessThanOrEqual(height! * 0.3);
+  ])("hides the card at %i by %i", (width, height) => {
+    expect(resolve(width!, height!)).toBeNull();
   });
   it("uses a stable right-hand lane", () => {
     expect(resolve(1600, 900)).toEqual({
@@ -28,12 +25,11 @@ describe("floating details card", () => {
       y: 12,
       width: 312,
       height: 876,
-      stacked: false,
     });
-    expect(resolve(1344, 900)?.width).toBe(312);
+    expect(resolve(1344, 900)?.width).toBe(244);
   });
   it("keeps the card visible on a laptop", () => {
-    expect(resolve(1200, 900)).toMatchObject({ x: 876, width: 312, stacked: false });
+    expect(resolve(1200, 900)).toMatchObject({ x: 948, width: 240 });
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {
@@ -42,12 +38,11 @@ describe("floating details card", () => {
         y: 12,
         width: 312,
         height: 876,
-        stacked: false,
       });
     }
   });
   it("keeps width and height independent", () => {
-    expect(resolve(1344, 900, 600)).toMatchObject({ width: 312, height: 876 });
+    expect(resolve(1344, 900, 600)).toMatchObject({ width: 244, height: 876 });
     expect(
       resolveThreadDetailsCardLayout({
         container: { width: 1600, height: 900 },
@@ -79,9 +74,9 @@ describe("card content fitting", () => {
     expect(resolveThreadDetailsCardDensity(place(350, 626, true)!.height, content)).toBe("compact");
     expect(resolveThreadDetailsCardDensity(place(12)!.height, content)).toBe("full");
   });
-  it("keeps essential controls visible when a preview consumes card height", () => {
+  it("hides the card when there is no room for essential controls", () => {
     expect(place(184, 792, true)).toMatchObject({ y: 12, height: 160 });
-    expect(place(183, 793, true)).toMatchObject({ y: 12, height: 160 });
+    expect(place(183, 793, true)).toBeNull();
   });
   it("keeps all content as a freely moved preview approaches without colliding", () => {
     const content = { full: 162, compact: 126 };

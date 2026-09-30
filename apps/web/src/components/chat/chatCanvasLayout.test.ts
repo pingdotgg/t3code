@@ -28,7 +28,38 @@ const expectClear = (result: ReturnType<typeof resolve>) => {
 };
 
 describe("chat canvas layout", () => {
-  it.each([390, 768, 944, 1000, 1200, 1344, 1600])(
+  it.each([preview.source, { width: 1000, height: 1523 }])(
+    "keeps resized previews off the centered composer and workspace controls",
+    (source) => {
+      const container = { width: 1256, height: 896 };
+      const closed = resolveChatCanvasLayout({ container, preview: null });
+      for (const width of [320, 480, 900]) {
+        const opened = resolveChatCanvasLayout({
+          container,
+          composerHeight: 180,
+          detailsCard: { left: closed.card!.x, right: 1244, bottom: 375 },
+          preview: {
+            ...preview,
+            width,
+            source,
+            position: { x: 1244 - width, y: 884 - (width * source.height) / source.width },
+            lastInteraction: "resize",
+          },
+        });
+        expect(opened.chat).toEqual(closed.chat);
+        const frame = opened.frame!;
+        if (frame.x < opened.chat.left + opened.chat.width) {
+          expect(frame.y + frame.height).toBeLessThanOrEqual(704);
+        }
+        const card = opened.cardPlacement!;
+        expect(card).not.toBeNull();
+        if (frame.x + frame.width > card.x && frame.x < card.x + card.width) {
+          expect(frame.y).toBeGreaterThanOrEqual(Math.min(375, card.y + card.height) + 12);
+        }
+      }
+    },
+  );
+  it.each([390, 768, 944, 1000, 1200, 1256, 1344, 1600])(
     "keeps chat and the workspace card stable as a preview opens at %i pixels",
     (width) => {
       const container = { width, height: 800 };
@@ -41,18 +72,22 @@ describe("chat canvas layout", () => {
             composerHeight: 180,
           });
           expect(opened.chat).toEqual(closed.chat);
-          expect(opened.chatInsetTop).toBe(closed.chatInsetTop);
           expect(opened.card).toEqual(closed.card);
         }
       }
-      const card = closed.card!;
-      expect(card.x).toBeGreaterThanOrEqual(12);
-      expect(card.x + card.width).toBeLessThanOrEqual(width - 12);
-      if (card.stacked) {
-        expect(card.y + card.height + 12).toBe(closed.chatInsetTop);
-      } else {
+      const card = closed.card;
+      if (card) {
+        expect(card.x).toBeGreaterThanOrEqual(12);
+        expect(card.x + card.width).toBeLessThanOrEqual(width - 12);
         expect(closed.chat.left + closed.chat.width + 12).toBeLessThanOrEqual(card.x);
-        expect(closed.chat.left).toBe((width - closed.chat.insetEnd - closed.chat.width) / 2);
+        expect(closed.chat.width).toBeGreaterThanOrEqual(640);
+      } else {
+        expect(width).toBeLessThan(944);
+        expect(closed.chat.insetStart).toBe(0);
+        expect(closed.chat.insetEnd).toBe(0);
+      }
+      if (!card || width >= 1208) {
+        expect(closed.chat.left + closed.chat.width / 2).toBe(width / 2);
       }
     },
   );
@@ -265,7 +300,7 @@ describe("chat canvas layout", () => {
       expectClear(compact);
       expect(density(layout(500))).toBe("compact");
       expect(density(layout(520))).toBe("essential");
-      expect(density(layout(540))).toBe("essential");
+      expect(density(layout(540))).toBe("hidden");
       expect(layout(600).frame!.width).toBe(600);
       expect(layout(460)).toEqual(compact);
       expect(density(layout(400))).toBe("full");

@@ -133,7 +133,6 @@ export function ChatCanvas({
             "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
             "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
             "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
-            "--chat-lane-inset-top": `${layout.chatInsetTop}px`,
           } as CSSProperties
         }
       >
@@ -142,7 +141,6 @@ export function ChatCanvas({
           aria-hidden
           className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-5"
         />
-        <div aria-hidden className="shrink-0" style={{ height: layout.chatInsetTop }} />
         {children}
       </div>
     </ChatCanvasContext>
