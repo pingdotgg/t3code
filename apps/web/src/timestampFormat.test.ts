@@ -98,16 +98,27 @@ describe("full timestamp details", () => {
       const date = new Date(2025, 3, 7, 15, 44, 9).toISOString();
       const normalize = (value: string) => value.replace(/[  ]/g, " ");
 
-      expect(normalize(full(date, "locale"))).toContain(localTime);
+      const localeFull = normalize(full(date, "locale"));
+      const localeFullMinutes = normalize(full(date, "locale", false));
+      const localeShort = normalize(short(date, "locale", true));
+      const localeShortMinutes = normalize(short(date, "locale"));
+      expect(localeFull).toContain(localTime);
+      expect(localeFull).toContain(fullDate);
       const twelveHour = normalize(full(date, "12-hour"));
       expect(twelveHour).toContain(fullDate);
       expect(twelveHour).toMatch(/3:44:09 [ap]m/i);
       expect(full(date, "24-hour")).toContain("15:44:09");
+      expect(full(date, "24-hour", false)).toContain(fullDate);
       expect(full(date, "24-hour", false)).toContain("15:44");
       expect(full(date, "24-hour", false)).not.toContain(":09");
       expect(short(date, "24-hour", true)).toBe("15:44:09");
+      expect(short(date, "24-hour")).toBe("15:44");
       // Switching back in the same module must not reuse another preference's cached formatter.
       expect(normalize(full(date, "12-hour"))).toBe(twelveHour);
+      expect(normalize(full(date, "locale"))).toBe(localeFull);
+      expect(normalize(full(date, "locale", false))).toBe(localeFullMinutes);
+      expect(normalize(short(date, "locale", true))).toBe(localeShort);
+      expect(normalize(short(date, "locale"))).toBe(localeShortMinutes);
     },
   );
 

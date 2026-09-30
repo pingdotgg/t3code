@@ -518,3 +518,42 @@ it.effect("rebuilding a controller leaves sessions it admitted to their owners",
     assert.isFalse(closed);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("profile import stops owned sessions and gates access until credentials are saved", () =>
+  Effect.gen(function* () {
+    const controller = yield* ProviderAuthFlow.make({
+      instanceId,
+      credentialBinding: { owner: "t3", key: "handoff-binding" },
+      methods: Effect.succeed([method]),
+      authenticate: () => Effect.void,
+      logout: Effect.void,
+    });
+    let closed = false;
+    yield* controller.withAccess!(
+      Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed = true;
+        }),
+      ),
+    );
+    const writing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const imported = yield* controller.adoptCredentials!(
+      Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      Effect.sync(() => {
+        assert.isTrue(closed);
+      }),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(writing);
+    const denied = yield* controller.withAccess!(Effect.succeed("old credential process")).pipe(
+      Effect.result,
+    );
+    assert.strictEqual(denied._tag, "Failure");
+    yield* Deferred.succeed(release, undefined);
+    assert.strictEqual((yield* Fiber.join(imported)).phase, "succeeded");
+    assert.strictEqual(
+      yield* controller.withAccess!(Effect.succeed("new credential process")),
+      "new credential process",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
