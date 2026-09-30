@@ -17,23 +17,17 @@ export function resolveThreadDetailsCardLayout({
   overlapsDetailsCard = false,
   padding = 20,
   minChatWidth = 640,
-  maxChatWidth = 768,
 }: {
   container: { width: number; height: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
   padding?: number;
   minChatWidth?: number;
-  maxChatWidth?: number;
 }) {
   const gap = 12;
   if (container.width <= gap * 2 || container.height <= gap * 2) return null;
-  const width = Math.min(
-    312,
-    Math.max(240, (container.width - maxChatWidth) / 2 - padding - gap * 2),
-    container.width - minChatWidth - padding * 2 - gap * 2,
-  );
-  if (width < 240) return null;
+  const width = 312;
+  if (container.width < minChatWidth + padding * 2 + width + gap * 2) return null;
   const x = container.width - width - gap;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.

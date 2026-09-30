@@ -50,7 +50,6 @@ export function resolveChatCanvasLayout({
     frame: null,
     padding,
     minChatWidth,
-    maxChatWidth,
   });
   const insetEnd = detailsCardOpen && card ? card.width + GAP * 2 : 0;
   const insetStart = Math.min(
@@ -207,7 +206,6 @@ export function resolveChatCanvasLayout({
     overlapsDetailsCard,
     padding,
     minChatWidth,
-    maxChatWidth,
   });
   return { chat, frame, overlapsChat, overlapsDetailsCard, card, cardPlacement };
 }

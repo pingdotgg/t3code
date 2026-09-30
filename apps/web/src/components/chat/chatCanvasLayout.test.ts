@@ -59,7 +59,7 @@ describe("chat canvas layout", () => {
       }
     },
   );
-  it.each([390, 768, 944, 1000, 1200, 1256, 1344, 1600])(
+  it.each([390, 768, 944, 1000, 1016, 1200, 1256, 1344, 1352, 1600])(
     "keeps chat and the workspace card stable as a preview opens at %i pixels",
     (width) => {
       const container = { width, height: 800 };
@@ -77,17 +77,21 @@ describe("chat canvas layout", () => {
       }
       const card = closed.card;
       if (card) {
+        expect(card.width).toBe(312);
         expect(card.x).toBeGreaterThanOrEqual(12);
         expect(card.x + card.width).toBeLessThanOrEqual(width - 12);
         expect(closed.chat.left + closed.chat.width + 12).toBeLessThanOrEqual(card.x);
         expect(closed.chat.width).toBeGreaterThanOrEqual(640);
       } else {
-        expect(width).toBeLessThan(944);
+        expect(width).toBeLessThan(1016);
         expect(closed.chat.insetStart).toBe(0);
         expect(closed.chat.insetEnd).toBe(0);
       }
-      if (!card || width >= 1208) {
+      if (!card || width >= 1352) {
         expect(closed.chat.left + closed.chat.width / 2).toBe(width / 2);
+      } else {
+        expect(closed.chat.width).toBe(640);
+        expect(closed.chat.left + closed.chat.width + 32).toBe(card!.x);
       }
     },
   );

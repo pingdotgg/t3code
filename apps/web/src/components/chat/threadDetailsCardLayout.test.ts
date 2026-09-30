@@ -16,6 +16,7 @@ describe("floating details card", () => {
     [390, 844],
     [768, 600],
     [943, 800],
+    [1015, 800],
   ])("hides the card at %i by %i", (width, height) => {
     expect(resolve(width!, height!)).toBeNull();
   });
@@ -26,10 +27,11 @@ describe("floating details card", () => {
       width: 312,
       height: 876,
     });
-    expect(resolve(1344, 900)?.width).toBe(244);
+    expect(resolve(1344, 900)?.width).toBe(312);
   });
   it("keeps the card visible on a laptop", () => {
-    expect(resolve(1200, 900)).toMatchObject({ x: 948, width: 240 });
+    expect(resolve(1200, 900)).toMatchObject({ x: 876, width: 312 });
+    expect(resolve(1256, 896)?.width).toBe(312);
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {
@@ -42,7 +44,7 @@ describe("floating details card", () => {
     }
   });
   it("keeps width and height independent", () => {
-    expect(resolve(1344, 900, 600)).toMatchObject({ width: 244, height: 876 });
+    expect(resolve(1344, 900, 600)).toMatchObject({ width: 312, height: 876 });
     expect(
       resolveThreadDetailsCardLayout({
         container: { width: 1600, height: 900 },
