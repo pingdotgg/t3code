@@ -23,7 +23,7 @@ import {
   RefreshCwIcon,
   XIcon,
 } from "lucide-react";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { Badge } from "../ui/badge";
@@ -487,6 +487,25 @@ export function PullRequestDetailPanel({
 }) {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<DetailTab>("summary");
+  const [chromeCondensed, setChromeCondensed] = useState(false);
+  // Each tab remembers its own scroll chrome; short tabs cannot scroll to reopen it.
+  const chromeStateByTab = useRef<Partial<Record<DetailTab, boolean>>>({});
+  useEffect(() => {
+    setChromeCondensed(chromeStateByTab.current[tab] ?? false);
+  }, [tab]);
+  const condensed = chromeCondensed;
+  const scrollerRef = useRef<HTMLElement | null>(null);
+  const foldRef = useRef<HTMLDivElement | null>(null);
+  const condensedRowRef = useRef<HTMLDivElement | null>(null);
+  // Refund after the fold commits so the content under the reader does not jump with its height.
+  const compensationRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (compensationRef.current === null) return;
+    const scroller = scrollerRef.current;
+    const delta = compensationRef.current;
+    compensationRef.current = null;
+    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
+  }, [condensed]);
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
@@ -960,130 +979,191 @@ export function PullRequestDetailPanel({
             <XIcon className="size-3.5" />
           </Button>
         </div>
-        <div className="min-w-0 px-6 pt-2">
-          <div className="flex min-w-0 items-start gap-2">
-            <h1
-              className="min-w-0 flex-1 text-xl leading-7 font-normal wrap-anywhere"
-              title={detail.title}
-            >
-              {detail.title}
-            </h1>
-          </div>
-          <div className="mt-2 flex min-w-0 items-center gap-2 text-sm">
-            <PullRequestActorLabel actor={detail.author} className="min-w-0 [&_img]:size-5" />
-          </div>
-          <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px]">
-              <span
-                className="min-w-0 max-w-[42%] truncate"
-                title={`Base branch: ${detail.baseBranch}`}
-              >
-                {detail.baseBranch}
-              </span>
-              <ArrowLeftIcon
-                aria-label="receives changes from"
-                className="size-3 shrink-0 opacity-60"
-              />
-              <span className="min-w-0 flex-1 truncate" title={`Head branch: ${detail.headBranch}`}>
-                {detail.headBranch}
-              </span>
-            </span>
-            <span className="inline-flex shrink-0 items-center gap-2 text-[11px] tabular-nums">
-              <span className="inline-flex items-center gap-1">
-                <FileDiffIcon className="size-3" />
-                {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
-              </span>
-              <PullRequestDiffStat
-                additions={detail.additions}
-                deletions={detail.deletions}
-                className="font-mono text-[11px]"
-              />
-            </span>
+        <div
+          className={cn(
+            "grid",
+            condensed
+              ? "grid-rows-[1fr]"
+              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <div
+            ref={condensedRowRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "translate-y-0 opacity-100 delay-50"
+                : "translate-y-1 opacity-0 duration-100",
+            )}
+            inert={!condensed}
+          >
+            <div className="min-w-0 px-6 pt-1 pb-2">
+              <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                  {detail.title}
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] tabular-nums">
+                  <FileDiffIcon className="size-3" />
+                  {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
+                </span>
+                <PullRequestDiffStat
+                  additions={detail.additions}
+                  deletions={detail.deletions}
+                  className="shrink-0 font-mono text-[11px]"
+                />
+              </div>
+            </div>
           </div>
         </div>
-        {availableActions.length > 0 ? (
-          <details className="mx-6 mt-3 text-xs">
-            <summary className="w-fit cursor-pointer text-muted-foreground">
-              Pull request actions
-            </summary>
-            <div className="flex flex-wrap items-center gap-1 py-2">
-              {availableActions
-                .filter((action) => action !== "close")
-                .map((action) => (
-                  <span className="inline-flex items-center gap-1" key={action}>
-                    {action === "merge" && showMergeMethodPicker && selectedMergeMethod ? (
-                      <select
-                        aria-label="Merge method"
-                        className="h-6 rounded border border-input bg-background px-1 text-xs"
-                        disabled={actionPending !== null}
-                        value={selectedMergeMethod}
-                        onChange={(event) =>
-                          setMergeMethodOverride(
-                            event.currentTarget.value as PullRequestMergeMethod,
-                          )
-                        }
-                      >
-                        {allowedMergeMethods.map((method) => (
-                          <option key={method} value={method}>
-                            {method === "merge"
-                              ? "Merge"
-                              : method === "squash"
-                                ? "Squash"
-                                : "Rebase"}
-                          </option>
-                        ))}
-                      </select>
-                    ) : null}
+        <div
+          className={cn(
+            "grid",
+            // Collapse before the scroll refund paints; only reopening eases back in. Animating
+            // both directions makes the shrinking track fight the scrollTop correction.
+            condensed
+              ? "grid-rows-[0fr]"
+              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          )}
+        >
+          <div
+            ref={foldRef}
+            className={cn(
+              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
+              condensed
+                ? "-translate-y-1 opacity-0 duration-100"
+                : "translate-y-0 opacity-100 delay-50",
+            )}
+            inert={condensed}
+          >
+            <div className="min-w-0 px-6 pt-2">
+              <div className="flex min-w-0 items-start gap-2">
+                <h1
+                  className="min-w-0 flex-1 text-xl leading-7 font-normal wrap-anywhere"
+                  title={detail.title}
+                >
+                  {detail.title}
+                </h1>
+              </div>
+              <div className="mt-2 flex min-w-0 items-center gap-2 text-sm">
+                <PullRequestActorLabel actor={detail.author} className="min-w-0 [&_img]:size-5" />
+              </div>
+              <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[11px]">
+                  <span
+                    className="min-w-0 max-w-[42%] truncate"
+                    title={`Base branch: ${detail.baseBranch}`}
+                  >
+                    {detail.baseBranch}
+                  </span>
+                  <ArrowLeftIcon
+                    aria-label="receives changes from"
+                    className="size-3 shrink-0 opacity-60"
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate"
+                    title={`Head branch: ${detail.headBranch}`}
+                  >
+                    {detail.headBranch}
+                  </span>
+                </span>
+                <span className="inline-flex shrink-0 items-center gap-2 text-[11px] tabular-nums">
+                  <span className="inline-flex items-center gap-1">
+                    <FileDiffIcon className="size-3" />
+                    {detail.changedFiles} {detail.changedFiles === 1 ? "file" : "files"}
+                  </span>
+                  <PullRequestDiffStat
+                    additions={detail.additions}
+                    deletions={detail.deletions}
+                    className="font-mono text-[11px]"
+                  />
+                </span>
+              </div>
+            </div>
+            {availableActions.length > 0 ? (
+              <details className="mx-6 mt-3 text-xs">
+                <summary className="w-fit cursor-pointer text-muted-foreground">
+                  Pull request actions
+                </summary>
+                <div className="flex flex-wrap items-center gap-1 py-2">
+                  {availableActions
+                    .filter((action) => action !== "close")
+                    .map((action) => (
+                      <span className="inline-flex items-center gap-1" key={action}>
+                        {action === "merge" && showMergeMethodPicker && selectedMergeMethod ? (
+                          <select
+                            aria-label="Merge method"
+                            className="h-6 rounded border border-input bg-background px-1 text-xs"
+                            disabled={actionPending !== null}
+                            value={selectedMergeMethod}
+                            onChange={(event) =>
+                              setMergeMethodOverride(
+                                event.currentTarget.value as PullRequestMergeMethod,
+                              )
+                            }
+                          >
+                            {allowedMergeMethods.map((method) => (
+                              <option key={method} value={method}>
+                                {method === "merge"
+                                  ? "Merge"
+                                  : method === "squash"
+                                    ? "Squash"
+                                    : "Rebase"}
+                              </option>
+                            ))}
+                          </select>
+                        ) : null}
+                        <Button
+                          aria-label={pullRequestActionLabel(action)}
+                          disabled={actionPending !== null}
+                          size="xs"
+                          title={
+                            action === "merge"
+                              ? `Merge ${detail.headBranch} into ${detail.baseBranch}${
+                                  selectedMergeMethod ? ` via ${selectedMergeMethod}` : ""
+                                }`
+                              : pullRequestActionLabel(action)
+                          }
+                          variant={action === "merge" ? "default" : "outline"}
+                          onClick={() =>
+                            void performAction(
+                              action,
+                              action === "merge" && selectedMergeMethod
+                                ? { mergeMethod: selectedMergeMethod }
+                                : undefined,
+                            )
+                          }
+                        >
+                          {actionPending === action ? (
+                            "Working…"
+                          ) : action === "merge" ? (
+                            <>
+                              <GitMergeIcon className="size-3" />
+                              Merge
+                            </>
+                          ) : (
+                            pullRequestActionLabel(action)
+                          )}
+                        </Button>
+                      </span>
+                    ))}
+                  {availableActions.includes("close") ? (
                     <Button
-                      aria-label={pullRequestActionLabel(action)}
+                      aria-label="Close pull request"
+                      className="ml-auto"
                       disabled={actionPending !== null}
                       size="xs"
-                      title={
-                        action === "merge"
-                          ? `Merge ${detail.headBranch} into ${detail.baseBranch}${
-                              selectedMergeMethod ? ` via ${selectedMergeMethod}` : ""
-                            }`
-                          : pullRequestActionLabel(action)
-                      }
-                      variant={action === "merge" ? "default" : "outline"}
-                      onClick={() =>
-                        void performAction(
-                          action,
-                          action === "merge" && selectedMergeMethod
-                            ? { mergeMethod: selectedMergeMethod }
-                            : undefined,
-                        )
-                      }
+                      title="Close this pull request without merging"
+                      variant="destructive"
+                      onClick={() => void performAction("close")}
                     >
-                      {actionPending === action ? (
-                        "Working…"
-                      ) : action === "merge" ? (
-                        <>
-                          <GitMergeIcon className="size-3" />
-                          Merge
-                        </>
-                      ) : (
-                        pullRequestActionLabel(action)
-                      )}
+                      {actionPending === "close" ? "Working…" : "Close"}
                     </Button>
-                  </span>
-                ))}
-              {availableActions.includes("close") ? (
-                <Button
-                  aria-label="Close pull request"
-                  className="ml-auto"
-                  disabled={actionPending !== null}
-                  size="xs"
-                  title="Close this pull request without merging"
-                  variant="destructive"
-                  onClick={() => void performAction("close")}
-                >
-                  {actionPending === "close" ? "Working…" : "Close"}
-                </Button>
-              ) : null}
-            </div>
-          </details>
-        ) : null}
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </div>
         <div
           aria-label="Pull request detail tabs"
           className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-6 pt-4 pb-6"
@@ -1154,6 +1234,30 @@ export function PullRequestDetailPanel({
         )}
         id="pr-panel"
         role="tabpanel"
+        onScrollCapture={(event) => {
+          const scroller = event.target as HTMLElement;
+          scrollerRef.current = scroller;
+          const top = scroller.scrollTop;
+          setChromeCondensed((previous) => {
+            let next = previous;
+            const foldHeight = foldRef.current?.scrollHeight ?? 0;
+            // The condensed row remains mounted, so refund only the height that actually leaves.
+            const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
+            if (previous) {
+              // The hard top reopens the chrome with no refund: the reader asked for the top,
+              // and moving them a fold's height back down would snatch it away — the fold
+              // slides in above while the content stays where they left it.
+              if (top < 4 && foldHeight > 0) {
+                next = false;
+              }
+            } else if (foldHeight > 0 && top > foldHeight + 32) {
+              compensationRef.current = -chromeDelta;
+              next = true;
+            }
+            chromeStateByTab.current[tab] = next;
+            return next;
+          });
+        }}
       >
         {activeTab === "collaboration" ? (
           monitorQuery.data ? (

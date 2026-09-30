@@ -239,9 +239,9 @@ function Shelf({
           onClick={() => setOpen((value) => !value)}
         >
           {open ? (
-            <ChevronDownIcon className="size-3.5 shrink-0" />
+            <ChevronDownIcon className="size-[length:var(--app-sidebar-icon-size)] shrink-0" />
           ) : (
-            <ChevronRightIcon className="size-3.5 shrink-0" />
+            <ChevronRightIcon className="size-[length:var(--app-sidebar-icon-size)] shrink-0" />
           )}
           {icon}
           <span className="truncate">{title}</span>
@@ -832,7 +832,7 @@ export default function SidebarV2() {
         {shelves.pinned.length > 0 ? (
           <Shelf
             count={shelves.pinned.length}
-            icon={<PinIcon className="size-3.5" />}
+            icon={<PinIcon className="size-[length:var(--app-sidebar-icon-size)]" />}
             title="Pinned"
           >
             <SidebarMenu className="gap-[var(--app-sidebar-row-gap)]">
@@ -856,7 +856,7 @@ export default function SidebarV2() {
         <Shelf
           count={shelves.snoozed.length}
           defaultOpen={false}
-          icon={<BellOffIcon className="size-3.5" />}
+          icon={<BellOffIcon className="size-[length:var(--app-sidebar-icon-size)]" />}
           title="Snoozed"
         >
           <SidebarMenu className="gap-[var(--app-sidebar-row-gap)]">
@@ -902,7 +902,7 @@ export default function SidebarV2() {
         <Shelf
           count={shelves.settled.length}
           defaultOpen={false}
-          icon={<ArchiveIcon className="size-3.5" />}
+          icon={<ArchiveIcon className="size-[length:var(--app-sidebar-icon-size)]" />}
           title="Settled"
         >
           <SidebarMenu className="gap-[var(--app-sidebar-row-gap)]">
