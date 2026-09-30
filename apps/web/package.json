@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.42",
+  "version": "0.0.44",
   "private": true,
   "type": "module",
   "scripts": {
@@ -75,6 +75,7 @@
     "@vitejs/plugin-react": "^6.0.0",
     "babel-plugin-react-compiler": "1.0.0",
     "compression": "^1.8.1",
+    "jsdom": "^30.0.1",
     "react-test-renderer": "19.2.6",
     "tailwindcss": "^4.0.0",
     "unified": "^11.0.5",

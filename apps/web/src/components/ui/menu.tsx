@@ -35,13 +35,6 @@ function MenuPopup({
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
   keepMounted?: boolean;
 }) {
-  const hasExplicitWidthClass =
-    typeof className === "string" &&
-    className.split(/\s+/).some((classToken) => {
-      const utility = classToken.split(":").at(-1) ?? classToken;
-      return /^(?:min-|max-)?w-/.test(utility);
-    });
-
   return (
     <MenuPrimitive.Portal keepMounted={keepMounted}>
       <MenuPrimitive.Positioner
@@ -60,7 +53,8 @@ function MenuPopup({
             // the Review panel header). Drag hit-testing ignores z-index, so
             // the topmost row would stay unhoverable without this opt-out.
             "[-webkit-app-region:no-drag]",
-            !hasExplicitWidthClass && "min-w-32",
+            // Menus size to their content from one minimum, never past the viewport.
+            "min-w-[min(10rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]",
             className,
           )}
           data-slot="menu-popup"
@@ -117,7 +111,7 @@ function MenuItemLabel({ className, ...props }: React.ComponentProps<"span">) {
     <span
       data-slot="menu-item-label"
       className={cn(
-        "min-w-0 in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
+        "min-w-0 truncate in-data-[density=touch]:[text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:in-data-[density=touch]:py-[0.5em]",
         className,
       )}
       {...props}
@@ -139,7 +133,9 @@ function MenuCheckboxItem({
       checked={checked}
       className={cn(
         "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-pointer items-center gap-2 rounded-sm py-1 ps-2 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        variant === "switch" ? "grid-cols-[1fr_auto] gap-4 pe-1.5" : "grid-cols-[1rem_1fr] pe-4",
+        variant === "switch"
+          ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
+          : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
         className,
       )}
       data-slot="menu-checkbox-item"

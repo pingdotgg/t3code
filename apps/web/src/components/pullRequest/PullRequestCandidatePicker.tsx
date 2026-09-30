@@ -147,8 +147,6 @@ export function PullRequestCandidatePicker<T>({
                 index={index}
                 value={keys[index]}
                 disabled={disabled}
-                className="min-h-0 py-1.5 text-xs sm:min-h-0 sm:text-xs"
-                contentClassName="flex min-w-0 items-center gap-2"
               >
                 {children(candidate)}
               </ComboboxItem>

@@ -9,7 +9,8 @@ import {
 } from "@t3tools/contracts";
 import { act, createElement, Profiler } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
@@ -37,6 +38,8 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  capture: null as ((record: boolean) => void) | null,
+  captureScreenshot: vi.fn(),
 }));
 
 const EMPTY_HISTORY: never[] = [];
@@ -198,13 +201,14 @@ vi.mock("~/rightPanelStore", () => ({
   },
 }));
 
-vi.mock("~/components/ui/toast", () => ({
-  stackedThreadToast: vi.fn(),
-  toastManager: { add: vi.fn() },
+vi.mock("~/components/ui/toast", async () => ({
+  ...(await import("~/components/ui/toastHelpers")),
+  toastManager: { add: vi.fn(() => "capture-toast"), update: vi.fn() },
 }));
 
 vi.mock("./previewBridge", () => ({
   previewBridge: {
+    captureScreenshot: mocks.captureScreenshot,
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
     pictureInPicture: {
@@ -217,6 +221,7 @@ vi.mock("./previewBridge", () => ({
 vi.mock("./PreviewChromeRow", () => ({
   PreviewChromeRow: (props: {
     onSubmit: (url: string) => void;
+    onCapture?: (record: boolean) => void;
     onPickElement?: () => void;
     onPictureInPicture?: () => void;
     pictureInPicture?: boolean;
@@ -225,6 +230,7 @@ vi.mock("./PreviewChromeRow", () => ({
     };
   }) => {
     mocks.submittedUrl = props.onSubmit;
+    mocks.capture = props.onCapture ?? null;
     mocks.toggleAnnotation = props.onPickElement ?? null;
     mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
     mocks.toggleNativePictureInPicture =
@@ -257,6 +263,7 @@ vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 import { PreviewView } from "./PreviewView";
 import { toastManager } from "~/components/ui/toast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { stopBrowserRecording } from "~/browser/browserRecording";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -650,5 +657,159 @@ describe("PreviewView navigation", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("PreviewView screenshot path copy", () => {
+  let root: Root;
+  let writeText: ReturnType<typeof vi.fn>;
+
+  function copyPath() {
+    const options =
+      vi.mocked(toastManager.update).mock.calls.at(-1)?.[1] ??
+      vi.mocked(toastManager.add).mock.calls.at(-1)?.[0];
+    const action = options?.data?.additionalActions?.find((item) => item.id === "copy-path");
+    if (!action) throw new Error("Missing screenshot copy-path action");
+    return action.props;
+  }
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    const document = installTestDom();
+    writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { writeText } });
+    mocks.recordingRuntimeTabId = null;
+    mocks.recordingTabIds = new Set();
+    mocks.showEmptyState = false;
+    mocks.loading = false;
+    mocks.serverEpoch = null;
+    mocks.captureScreenshot.mockResolvedValue({ path: "/tmp/capture.png" });
+    vi.mocked(toastManager.add).mockClear();
+    vi.mocked(toastManager.update).mockClear();
+    root = createRoot(document.createElement("div") as unknown as Element);
+    await act(() => root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />));
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  async function captureAndCopy() {
+    await act(() => mocks.capture?.(false));
+    await act(() => copyPath().onClick?.({} as never));
+  }
+
+  it("retains the recording path and reveal actions after rejection so copying can be retried", async () => {
+    mocks.recordingRuntimeTabId = TEST_RUNTIME_TAB_ID;
+    vi.mocked(stopBrowserRecording).mockResolvedValue({
+      id: "recording-1",
+      tabId: "tab-1",
+      path: "/tmp/recording.webm",
+      mimeType: "video/webm",
+      sizeBytes: 100,
+      createdAt: "2026-09-30T18:00:00.000Z",
+    });
+    writeText.mockRejectedValueOnce(new Error("denied"));
+    await act(() => root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />));
+    await act(() => mocks.capture?.(true));
+    const saved = vi.mocked(toastManager.add).mock.calls.at(-1)?.[0];
+    const copy = saved?.data?.secondaryActionProps?.onClick;
+    expect(copy).toBeTypeOf("function");
+    await act(() => copy?.({} as never));
+
+    // Toast updates replace data, so the failure payload must carry its retry action.
+    const failed = vi.mocked(toastManager.update).mock.calls.at(-1)?.[1];
+    expect(failed?.title).toBe("Unable to copy recording path");
+    expect(failed?.actionProps).toBe(saved?.actionProps);
+    expect(failed?.data?.secondaryActionProps?.onClick).toBe(copy);
+    expect(failed?.data?.secondaryActionProps?.disabled).toBe(false);
+    await act(() => failed?.data?.secondaryActionProps?.onClick?.({} as never));
+    expect(writeText).toHaveBeenNthCalledWith(2, "/tmp/recording.webm");
+    const copied = vi.mocked(toastManager.update).mock.calls.at(-1)?.[1];
+    expect(copied?.data?.secondaryActionProps?.children).toBe("Copied!");
+  });
+
+  it("reports an empty path as failure and preserves its retry action", async () => {
+    mocks.captureScreenshot.mockResolvedValue({ path: "" });
+    await captureAndCopy();
+    expect(writeText).not.toHaveBeenCalled();
+    expect(toastManager.update).toHaveBeenLastCalledWith(
+      "capture-toast",
+      expect.objectContaining({
+        type: "error",
+        title: "Unable to copy screenshot path",
+      }),
+    );
+    expect(copyPath().children).toBe("Copy path");
+    expect(copyPath().disabled).toBe(false);
+  });
+
+  it("keeps pending feedback truthful and retries the unchanged path after rejection", async () => {
+    let rejectWrite!: (error: Error) => void;
+    writeText.mockReturnValueOnce(
+      new Promise<void>((_, reject) => {
+        rejectWrite = reject;
+      }),
+    );
+    await captureAndCopy();
+    expect(copyPath().children).toBe("Copy path");
+    await act(() => rejectWrite(new Error("denied")));
+    expect(toastManager.update).toHaveBeenLastCalledWith(
+      "capture-toast",
+      expect.objectContaining({
+        type: "error",
+        title: "Unable to copy screenshot path",
+      }),
+    );
+    await act(() => copyPath().onClick?.({} as never));
+    expect(writeText).toHaveBeenNthCalledWith(2, "/tmp/capture.png");
+    expect(copyPath().children).toBe("Copied!");
+  });
+
+  it.each(["success", "failure"] as const)(
+    "ignores an older %s after a newer copy",
+    async (outcome) => {
+      let resolveWrite!: () => void;
+      let rejectWrite!: (error: Error) => void;
+      writeText.mockReturnValueOnce(
+        new Promise<void>((resolve, reject) => {
+          resolveWrite = resolve;
+          rejectWrite = reject;
+        }),
+      );
+      await captureAndCopy();
+      await act(() => copyPath().onClick?.({} as never));
+      await act(() => vi.advanceTimersByTime(2000));
+      vi.mocked(toastManager.update).mockClear();
+      await act(() => (outcome === "success" ? resolveWrite() : rejectWrite(new Error("denied"))));
+      expect(toastManager.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["success", "failure"] as const)("ignores a late %s after unmount", async (outcome) => {
+    let resolveWrite!: () => void;
+    let rejectWrite!: (error: Error) => void;
+    writeText.mockReturnValueOnce(
+      new Promise<void>((resolve, reject) => {
+        resolveWrite = resolve;
+        rejectWrite = reject;
+      }),
+    );
+    await captureAndCopy();
+    await act(() => root.render(null));
+    vi.mocked(toastManager.update).mockClear();
+    await act(() => (outcome === "success" ? resolveWrite() : rejectWrite(new Error("denied"))));
+    expect(toastManager.update).not.toHaveBeenCalled();
+  });
+
+  it("does not reset feedback after the preview unmounts", async () => {
+    await captureAndCopy();
+    expect(copyPath().children).toBe("Copied!");
+    await act(() => root.render(null));
+    vi.mocked(toastManager.update).mockClear();
+    await act(() => vi.advanceTimersByTime(2000));
+    expect(toastManager.update).not.toHaveBeenCalled();
   });
 });

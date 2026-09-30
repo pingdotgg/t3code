@@ -5,12 +5,14 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
+  ForwardCompatibleOptional,
+  OmittedWhenNull,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
-import { EnvironmentMachineKind, ThreadEnvMode } from "./environment.ts";
+import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
   CustomModelSetting,
@@ -56,7 +58,9 @@ export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "upda
 
 export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
-export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
+// Not exported: mobile was the last consumer of the value itself; the
+// wire field keeps its decoding default below.
+const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
@@ -287,6 +291,10 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+/** Maximum width of the chat timeline and composer on wide screens. */
+export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
+export type ChatWidth = typeof ChatWidth.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -295,6 +303,7 @@ export const ClientSettingsSchema = Schema.Struct({
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
+  chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   appearanceContrast: AppearanceContrast.pipe(
@@ -567,6 +576,9 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -892,6 +904,19 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
+/**
+ * Bitbucket API credentials for this environment, used before the
+ * `T3CODE_BITBUCKET_*` environment variables. The tokens live in the server's
+ * secret store; settings and clients only see a redaction marker when one is
+ * set. The access token wins when both kinds are configured.
+ */
+export const BitbucketSettings = Schema.Struct({
+  email: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  accessToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BitbucketSettings = typeof BitbucketSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -1000,6 +1025,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
+  "worktreeSubmodules",
   "defaultAutoPull",
   "defaultProjectScripts",
   "enableAgentBrowserAccess",
@@ -1026,6 +1052,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  worktreeSubmodules: ForwardCompatibleOptional(WorktreeSubmodules),
   defaultAutoPull: Schema.optionalKey(Schema.Boolean),
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
@@ -1040,6 +1067,26 @@ export const ProjectSettingsOverrides = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
+
+/**
+ * Whether `null` is a stored override value for this key rather than "unset".
+ * Clients writing a project override treat null for every other key as a
+ * request to remove the override, so a picker's "Inherit" item and the row's
+ * reset do the same thing.
+ */
+export function isNullableProjectSettingsOverride(key: ProjectScopedServerSettingKey): boolean {
+  return NULLABLE_PROJECT_SETTINGS_OVERRIDES.has(key);
+}
+const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettingKey> = new Set<
+  {
+    [K in ProjectScopedServerSettingKey]: null extends ProjectSettingsOverrides[K] ? K : never;
+  }[ProjectScopedServerSettingKey]
+>([
+  "defaultModelSelection",
+  "sourceControlWriterModelSelection",
+  "pullRequestMergeMethod",
+  "sidebarAutoSettleAfterDays",
+]);
 
 export const StorageCleanupSettings = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1056,9 +1103,7 @@ export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
-    Schema.withDecodingDefault(
-      Effect.succeed(Schema.decodeUnknownSync(StorageCleanupSettings)({})),
-    ),
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(StorageCleanupSettings)({}))),
   ),
   // How assistant text reaches clients during a turn. Deliberately a fresh
   // key (was `enableLegacyTokenStreaming`, before that
@@ -1176,11 +1221,24 @@ export const ServerSettings = Schema.Struct({
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  defaultThreadEnvMode: ThreadEnvMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
-  ),
+  /**
+   * Null means inherit: the repository's t3.json, then "local". The old
+   * default "local" was never persisted (defaults are stripped on write), so
+   * it now decodes as inherit, which resolves the same way because the old
+   * chain also let t3.json outrank the environment. Null stays off the wire
+   * so older clients, which require a literal here, keep decoding.
+   */
+  defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  /**
+   * Null defers to the repository's t3.json, then to recursive. A value
+   * picked on a newer server decodes as null here rather than failing the
+   * whole settings snapshot for an older client.
+   */
+  worktreeSubmodules: ForwardCompatibleNullable(WorktreeSubmodules).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -1235,10 +1293,15 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /** Allows this server to read the Cursor CLI's macOS Keychain login for account usage. */
+  cursorKeychainUsageEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   /** Exact model IDs, applied to past and future usage on this environment. */
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
@@ -1471,8 +1534,9 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
-  defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
@@ -1489,6 +1553,14 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  /** An empty token clears it; an omitted one keeps what the server has. */
+  bitbucket: Schema.optionalKey(
+    Schema.Struct({
+      email: Schema.optionalKey(TrimmedString),
+      accessToken: Schema.optionalKey(TrimmedString),
+      apiToken: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(
@@ -1512,6 +1584,7 @@ export const ServerSettingsPatch = Schema.Struct({
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
+  cursorKeychainUsageEnabled: Schema.optionalKey(Schema.Boolean),
   /** Each entry replaces one model's rates; `null` restores automatic pricing. */
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
@@ -1523,6 +1596,7 @@ export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
+  chatWidth: Schema.optionalKey(ChatWidth),
   loadBalancingEnabled: Schema.optionalKey(Schema.Boolean),
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),

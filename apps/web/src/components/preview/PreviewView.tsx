@@ -358,6 +358,14 @@ export function PreviewView({
                   title: "Unable to copy recording path",
                   description: error instanceof Error ? error.message : "An error occurred.",
                   actionProps: revealAction,
+                  data: {
+                    secondaryActionProps: {
+                      children: "Copy path",
+                      disabled: false,
+                      onClick: copyPath,
+                    },
+                    secondaryActionVariant: "outline",
+                  },
                 }),
               );
             };
@@ -457,6 +465,7 @@ export function PreviewView({
           };
           let pathCopied = false;
           let imageCopied = false;
+          let pathCopyAttempt = 0;
           let toastId: ReturnType<typeof toastManager.add>;
 
           const updateScreenshotToast = (
@@ -496,24 +505,31 @@ export function PreviewView({
           };
 
           const copyPath = () => {
-            void writeTextToClipboard(artifact.path, "screenshot path").then(
-              (didCopy) => {
-                if (!didCopy) return;
-                pathCopied = true;
+            const attempt = ++pathCopyAttempt;
+            pathCopied = false;
+            updateScreenshotToast();
+            const reportCopyFailure = (error: unknown) => {
+              if (attempt !== pathCopyAttempt || !isMountedRef.current) return;
+              updateScreenshotToast(
+                "error",
+                "Unable to copy screenshot path",
+                error instanceof Error ? error.message : "An error occurred.",
+              );
+            };
+            void writeTextToClipboard(artifact.path, "screenshot path").then((didCopy) => {
+              if (attempt !== pathCopyAttempt || !isMountedRef.current) return;
+              if (!didCopy) {
+                reportCopyFailure(new Error("Clipboard write produced no result."));
+                return;
+              }
+              pathCopied = true;
+              updateScreenshotToast();
+              window.setTimeout(() => {
+                if (attempt !== pathCopyAttempt || !isMountedRef.current) return;
+                pathCopied = false;
                 updateScreenshotToast();
-                window.setTimeout(() => {
-                  pathCopied = false;
-                  updateScreenshotToast();
-                }, 2_000);
-              },
-              (error) => {
-                updateScreenshotToast(
-                  "error",
-                  "Unable to copy screenshot path",
-                  error instanceof Error ? error.message : "An error occurred.",
-                );
-              },
-            );
+              }, 2_000);
+            }, reportCopyFailure);
           };
 
           const copyImage = () => {
