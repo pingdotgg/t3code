@@ -327,7 +327,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
-  const [composerFullScreen, setComposerFullScreen] = useState(false);
+  // The thread whose composer fills the screen, so a thread switch never inherits it.
+  const [composerFullScreenThreadKey, setComposerFullScreenThreadKey] = useState<string | null>(
+    null,
+  );
+  const handleComposerFullScreenChange = useCallback(
+    (fullScreen: boolean) => setComposerFullScreenThreadKey(fullScreen ? selectedThreadKey : null),
+    [selectedThreadKey],
+  );
   const [composerFocused, setComposerFocused] = useState(false);
   const handleComposerFocusChange = useCallback(
     (focused: boolean) => {
@@ -442,12 +449,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [collapsedUserInputRequestId, setCollapsedUserInputRequestId] =
     useState<ApprovalRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
-  // Only a visible composer can fill the screen; a questionnaire or failure card owns the slot.
-  // While it does, the status and cards above it stay mounted but hidden.
-  const composerFillsScreen =
-    composerFullScreen &&
+  // Only a visible composer can fill the screen; a questionnaire or failure card owns the slot,
+  // and a pending approval must stay in view. While it fills the screen, the status and cards
+  // above it stay mounted but hidden.
+  const composerMayFillScreen =
+    Platform.OS === "ios" &&
     activeUserInputRequestId === null &&
-    props.creationState?.kind !== "failed";
+    props.creationState?.kind !== "failed" &&
+    !props.activePendingApproval;
+  const composerFillsScreen =
+    composerMayFillScreen && composerFullScreenThreadKey === selectedThreadKey;
   // The open /usage-limits panel for this thread, model and turn. Only the open
   // moment is stored: the rows read live provider data, so a redeemed reset
   // credit or refreshed probe shows through. Anything that spends quota closes
@@ -1122,11 +1133,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                   onExpandedChange={setComposerExpanded}
                   fullScreenHeight={
-                    Platform.OS === "ios"
+                    composerMayFillScreen
                       ? windowHeight - keyboardHeightEstimate - navigationHeaderHeight
                       : undefined
                   }
-                  onFullScreenChange={setComposerFullScreen}
+                  onFullScreenChange={handleComposerFullScreenChange}
                   onEditorFocusChange={handleComposerFocusChange}
                 />
               </View>

@@ -288,7 +288,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
-  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [fullScreenOwnerKey, setFullScreenOwnerKey] = useState<string | null>(null);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
@@ -343,6 +343,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  // Full screen belongs to one thread's draft, and ends when the host takes its space back.
+  if (
+    fullScreenOwnerKey !== null &&
+    (fullScreenOwnerKey !== composerOwnerKey || props.fullScreenHeight === undefined)
+  ) {
+    setFullScreenOwnerKey(null);
+  }
+  const isFullScreen = fullScreenOwnerKey === composerOwnerKey;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -376,8 +384,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onShowUsageLimits(report);
     if (!report) {
       Alert.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      return false;
     }
-    return report !== null;
+    // The report shows above the composer, where full screen has no room.
+    setFullScreenOwnerKey(null);
+    return true;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
 
   const composerMenu = useComposerCommandMenu({
@@ -467,7 +478,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const toggleFullScreen = () => {
     if (!isFullScreen) inputRef.current?.focus();
-    setIsFullScreen(!isFullScreen);
+    setFullScreenOwnerKey(isFullScreen ? null : composerOwnerKey);
   };
 
   const onPressPreview = useCallback(
@@ -508,7 +519,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const handleBlur = useCallback(() => {
     setIsFocused(false);
     // Full screen is for writing; putting the keyboard away returns the feed.
-    setIsFullScreen(false);
+    setFullScreenOwnerKey(null);
     if (!settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
@@ -534,7 +545,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (messageId === null) {
         return;
       }
-      setIsFullScreen(false);
+      setFullScreenOwnerKey(null);
       // Sending a prompt starts agent work: arm the lock-screen card while the
       // app is foregrounded and the activity token can be registered. Armed
       // after the send so its preference read and native Activity start don't
