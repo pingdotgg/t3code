@@ -17,7 +17,7 @@ import { useScratchProject } from "../hooks/useScratchProject";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isEditableFocused } from "../lib/editableFocus";
+import { editableOwnsUndo, isEditableFocused } from "../lib/editableFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice";
 import { resolveShortcutCommand } from "../keybindings";
@@ -62,6 +62,32 @@ function ChatRouteGlobalShortcuts() {
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
       : false,
   );
+  // Capture phase: the composer's editor claims mod+z (and marks it handled)
+  // even when it is empty, which would otherwise starve the thread Undo notice.
+  useEffect(() => {
+    const onUndoKeyDown = (event: KeyboardEvent) => {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen,
+          editableFocus: editableOwnsUndo(event.target),
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "thread.undo") return;
+      if (event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) return;
+      if (undoLatestThreadAction()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    };
+
+    window.addEventListener("keydown", onUndoKeyDown, true);
+    return () => window.removeEventListener("keydown", onUndoKeyDown, true);
+  }, [keybindings, previewOpen, terminalOpen]);
+
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -77,15 +103,6 @@ function ChatRouteGlobalShortcuts() {
       });
 
       if (isCommandPaletteOpen()) {
-        return;
-      }
-
-      if (command === "thread.undo") {
-        if (event.repeat || isModelPickerOpen()) return;
-        if (undoLatestThreadAction()) {
-          event.preventDefault();
-          event.stopPropagation();
-        }
         return;
       }
 

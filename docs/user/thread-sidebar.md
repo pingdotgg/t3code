@@ -46,9 +46,9 @@ and worktree while you stay in the new thread composer. This requires a Git proj
 Pin a thread from its menu to keep it above your active work.
 
 On web and desktop, unpinning, settling, snoozing, and archiving a thread each show
-a notification with **Undo** for five seconds. Undo restores the thread's previous
+a notification with **Undo** for five seconds (it stays while the pointer is over it). Undo restores the thread's previous
 state, including its pinned position, and reopens an archived thread you were
-viewing. `mod+z` triggers the most recent Undo when no text field is focused; see
+viewing. `mod+z` triggers the most recent Undo unless the focused text field has text to undo; see
 [Keybindings](./keybindings.md#commands-with-special-behavior).
 
 On web and desktop, you can also drag files from your computer onto any thread row:
