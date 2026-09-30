@@ -250,7 +250,7 @@ const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
  */
 const SIDEBAR_MENU_ITEM_CLASS =
   "min-h-7 gap-2 text-[length:var(--app-sidebar-font-size)] sm:min-h-7 sm:text-[length:var(--app-sidebar-font-size)]";
-const SIDEBAR_MENU_ICON_CLASS = "size-3.5";
+const SIDEBAR_MENU_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 /** Root threads mounted per project before the tail sentinel grows the window. */
 const SIDEBAR_THREAD_WINDOW_SIZE = 30;
@@ -761,7 +761,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 outline-hidden transition-colors hover:bg-secondary hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         onClick={stopPropagationOnClick}
       >
-        <MoreHorizontalIcon className="size-3.5" />
+        <MoreHorizontalIcon className="size-[length:var(--app-sidebar-icon-size)]" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="min-w-40">
         {virtualAgentRun ? null : (
@@ -826,7 +826,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {effectiveThreadStatus ? (
             <ThreadStatusLabel status={effectiveThreadStatus} compact />
           ) : (
-            <span aria-hidden="true" className="size-3.5 shrink-0" />
+            <span
+              aria-hidden="true"
+              className="size-[length:var(--app-sidebar-icon-size)] shrink-0"
+            />
           )}
           {renamingThreadKey === threadKey ? (
             <input
@@ -2644,7 +2647,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <span
                 aria-hidden="true"
                 title={projectStatus.label}
-                className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
+                className={`-ml-0.5 relative inline-flex size-[length:var(--app-sidebar-icon-size)] shrink-0 items-center justify-center ${projectStatus.colorClass}`}
               >
                 <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
                   <span
@@ -2653,11 +2656,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                     }`}
                   />
                 </span>
-                <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
+                <ChevronRightIcon className="absolute inset-0 m-auto size-[length:var(--app-sidebar-icon-size)] text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
               </span>
             ) : (
               <ChevronRightIcon
-                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                className={`-ml-0.5 size-[length:var(--app-sidebar-icon-size)] shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
                   projectExpanded ? "rotate-90" : ""
                 }`}
               />
@@ -2718,7 +2721,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                       onClick={handleCreateThreadClick}
                     >
-                      <SquarePenIcon className="size-3.5" />
+                      <SquarePenIcon className="size-[length:var(--app-sidebar-icon-size)]" />
                     </button>
                   </div>
                 }
@@ -2854,7 +2857,7 @@ const ProjectFilterMenu = memo(function ProjectFilterMenu({
             value={ALL_PROJECTS_FILTER_VALUE}
           >
             <span className="flex min-w-0 items-center gap-1.5">
-              <FolderIcon className="size-3.5 shrink-0" />
+              <FolderIcon className="size-[length:var(--app-sidebar-icon-size)] shrink-0" />
               <span className="truncate">{ALL_PROJECTS_FILTER_LABEL}</span>
             </span>
           </MenuRadioItem>
@@ -2865,11 +2868,7 @@ const ProjectFilterMenu = memo(function ProjectFilterMenu({
               value={derivePhysicalProjectKey(project)}
             >
               <span className="flex min-w-0 items-center gap-1.5">
-                <ProjectFavicon
-                  className="size-3.5"
-                  cwd={project.cwd}
-                  environmentId={project.environmentId}
-                />
+                <ProjectFavicon cwd={project.cwd} environmentId={project.environmentId} />
                 <span className="truncate">{project.displayName}</span>
               </span>
             </MenuRadioItem>
@@ -2907,7 +2906,7 @@ function ProjectSortMenu({
             <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
           }
         >
-          <ArrowUpDownIcon className="size-3.5" />
+          <ArrowUpDownIcon className="size-[length:var(--app-sidebar-icon-size)]" />
         </TooltipTrigger>
         <TooltipPopup side="right">Sort projects</TooltipPopup>
       </Tooltip>
@@ -3239,7 +3238,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-[var(--app-sidebar-row-inline-gap)] p-0 text-left leading-tight outline-none"
           onClick={() => props.onNavigate(draftId)}
         >
-          <span aria-hidden="true" className="size-3.5 shrink-0" />
+          <span
+            aria-hidden="true"
+            className="size-[length:var(--app-sidebar-icon-size)] shrink-0"
+          />
           <span className="min-w-0 flex-1 truncate text-[length:var(--app-sidebar-font-size)] text-foreground/90">
             {preview}
           </span>
@@ -3461,7 +3463,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   />
                 }
               >
-                <FolderPlusIcon className="size-3.5" />
+                <FolderPlusIcon className="size-[length:var(--app-sidebar-icon-size)]" />
               </TooltipTrigger>
               <TooltipPopup side="right">Add project</TooltipPopup>
             </Tooltip>
@@ -3478,7 +3480,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     />
                   }
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  <SquarePenIcon className="size-[length:var(--app-sidebar-icon-size)]" />
                 </TooltipTrigger>
                 <TooltipPopup side="right">
                   {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}

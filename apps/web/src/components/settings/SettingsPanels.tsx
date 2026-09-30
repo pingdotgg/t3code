@@ -89,6 +89,7 @@ import {
   DEFAULT_WORKFLOW_RUNS_SHOW_BADGE,
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
+  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
@@ -1164,6 +1165,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
+        : []),
+      ...(settings.sidebarIconSize !== DEFAULT_UNIFIED_SETTINGS.sidebarIconSize
+        ? ["Sidebar icon size"]
         : []),
       ...(settings.sidebarMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarMetaFontSize
         ? ["Sidebar metadata font size"]
@@ -2492,6 +2496,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
                     ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar icon size"
+          description="Icon size for action and row icons across the sidebar. Status glyphs stay on their own smaller tier."
+          resetAction={
+            settings.sidebarIconSize !== recommendedFontSizes.sidebarIconSize ? (
+              <SettingResetButton
+                label="sidebar icon size"
+                onClick={() =>
+                  updateSettings({
+                    sidebarIconSize: recommendedFontSizes.sidebarIconSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarIconSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ sidebarIconSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar icon size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarIconSize)
+                    ?.label ?? `${DEFAULT_SIDEBAR_ICON_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

@@ -3625,6 +3625,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 50 },
       );
+      await expect.element(page.getByLabelText("Sidebar icon size")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

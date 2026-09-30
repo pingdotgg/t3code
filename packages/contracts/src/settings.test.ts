@@ -13,6 +13,7 @@ import {
   DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_DEFAULT_STATE,
   DEFAULT_SIDEBAR_FONT_SIZE,
+  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_SIDEBAR_META_FONT_SIZE,
   DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
@@ -236,6 +237,22 @@ describe("ClientSettings.sidebarFontSize", () => {
 
     it("rejects invalid sidebar metadata font size patches", () => {
       expect(() => decodeClientSettingsPatch({ sidebarMetaFontSize: 25 })).toThrow();
+    });
+  });
+
+  describe("ClientSettings.sidebarIconSize", () => {
+    it("defaults to the size-3.5 convention in pixels", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.sidebarIconSize).toBe(DEFAULT_SIDEBAR_ICON_SIZE);
+      expect(decodeClientSettings({}).sidebarIconSize).toBe(DEFAULT_SIDEBAR_ICON_SIZE);
+      expect(DEFAULT_SIDEBAR_ICON_SIZE).toBe(14);
+    });
+
+    it("accepts valid sidebar icon size patches", () => {
+      expect(decodeClientSettingsPatch({ sidebarIconSize: 18 }).sidebarIconSize).toBe(18);
+    });
+
+    it("rejects invalid sidebar icon size patches", () => {
+      expect(() => decodeClientSettingsPatch({ sidebarIconSize: 25 })).toThrow();
     });
   });
 

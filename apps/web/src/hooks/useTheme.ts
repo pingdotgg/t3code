@@ -189,7 +189,6 @@ export function useTheme() {
     emitChange();
   }, []);
 
-  // Keep DOM in sync on mount/change
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);

@@ -14,9 +14,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
 const FOOTER_ICON_BUTTON_CLASS =
-  "inline-flex size-7 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors outline-hidden hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  "inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/65 transition-colors outline-hidden hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
 const FOOTER_ICON_BUTTON_ACTIVE_CLASS = "bg-accent text-foreground";
-const FOOTER_ICON_CLASS = "size-4";
+const FOOTER_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 export function SidebarFooterActions() {
   const navigate = useNavigate();
@@ -170,7 +170,7 @@ export function SidebarFooterActions() {
                   <button
                     aria-label="Rebuild and restart"
                     className={cn(
-                      "inline-flex size-7 items-center justify-center rounded-md outline-hidden transition-colors focus-visible:ring-1 focus-visible:ring-ring",
+                      "inline-flex size-5 items-center justify-center rounded-md outline-hidden transition-colors focus-visible:ring-1 focus-visible:ring-ring",
                       canPullLatest
                         ? "cursor-pointer text-muted-foreground/65 hover:bg-accent hover:text-foreground"
                         : "cursor-default text-muted-foreground/40",
