@@ -447,6 +447,19 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps the Files tab and panel open after closing a file opened from the explorer", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/index.ts");
+    store.closeSurface(refA, "file:src/index.ts");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
   it("opens workspace-root links as the singleton files explorer", () => {
     const store = useRightPanelStore.getState();
     store.openFile(refA, "README.md");
@@ -465,7 +478,7 @@ describe("rightPanelStore", () => {
     ).toBe("files");
   });
 
-  it("replaces the standalone explorer with peer file surfaces", () => {
+  it("keeps the standalone explorer alongside peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
@@ -475,6 +488,7 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "file:README.md",
       surfaces: [
+        { id: "files", kind: "files" },
         {
           id: "file:src/index.ts",
           kind: "file",
@@ -490,6 +504,25 @@ describe("rightPanelStore", () => {
           revealRequestId: 1,
         },
       ],
+    });
+  });
+
+  it("allows closing the Files tab independently of an opened file", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "src/index.ts");
+    store.closeSurface(refA, "files");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("file:src/index.ts");
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["file:src/index.ts"]);
+
+    store.closeSurface(refA, "file:src/index.ts");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
     });
   });
 
@@ -523,7 +556,7 @@ describe("rightPanelStore", () => {
     ).toMatchObject([{ id: `file:${treePath}`, relativePath: treePath, revealRequestId: 2 }]);
   });
 
-  it("opens an attachment as a file surface without the standalone explorer", () => {
+  it("keeps the standalone explorer when opening and closing an attachment", () => {
     const attachment = {
       type: "file" as const,
       id: "thread-A-attachment-pdf",
@@ -538,6 +571,7 @@ describe("rightPanelStore", () => {
       isOpen: true,
       activeSurfaceId: "attachment:thread-A-attachment-pdf",
       surfaces: [
+        { id: "files", kind: "files" },
         {
           id: "attachment:thread-A-attachment-pdf",
           kind: "file",
@@ -547,6 +581,13 @@ describe("rightPanelStore", () => {
           attachment,
         },
       ],
+    });
+
+    useRightPanelStore.getState().closeSurface(refA, "attachment:thread-A-attachment-pdf");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
     });
   });
 
@@ -603,6 +644,7 @@ describe("rightPanelStore", () => {
   });
 
   it("removes persisted file surfaces when their workspace no longer exists", () => {
+    useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().open(refA, "agents");
     useRightPanelStore.getState().openFile(refA, "README.md");

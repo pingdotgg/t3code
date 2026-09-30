@@ -389,6 +389,15 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
+      treeSelectionPathRef.current = null;
+      // Returning to Files must let the same row open a new preview.
+      syncingSelectionRef.current = true;
+      for (const path of model.getSelectedPaths()) {
+        model.getItem(path)?.deselect();
+      }
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
       return;
     }
     const selectedKind = entryKinds.get(selectedPath);
