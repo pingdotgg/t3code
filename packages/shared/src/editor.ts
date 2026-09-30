@@ -12,6 +12,8 @@ type Editor = (typeof EDITORS)[number];
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
   "vscode-insiders": ["Visual Studio Code - Insiders"],
+  // `Antigravity.app` is the separate Hub, not the IDE.
+  antigravity: ["Antigravity IDE"],
   idea: ["IntelliJ IDEA", "IntelliJ IDEA CE", "IntelliJ IDEA Ultimate"],
   pycharm: ["PyCharm", "PyCharm CE"],
   rider: ["Rider", "JetBrains Rider"],
