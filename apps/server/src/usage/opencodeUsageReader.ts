@@ -55,10 +55,12 @@ function parseOpenCodeMessage(
   if (totalTokens(totals) === 0) return null;
   const id = fallback.id || text(message.id);
   const cost = message.cost;
+  const chatgpt =
+    message.providerID === "t3-chatgpt-web" || modelReference.providerID === "t3-chatgpt-web";
   return {
-    provider: "opencode",
+    provider: chatgpt ? "chatgpt" : "opencode",
     timestampMs,
-    model,
+    model: chatgpt ? "chatgpt-web (estimated tokens)" : model,
     sessionId: fallback.sessionId || text(message.sessionID),
     totals,
     // OpenCode writes zero for models without a known rate, including paid

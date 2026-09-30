@@ -1,5 +1,6 @@
 import {
   AntigravitySettings,
+  ChatGPTWebSettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -81,6 +82,13 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "Antigravity",
     icon: AntigravityIcon,
     settingsSchema: AntigravitySettings,
+  },
+  {
+    value: ProviderDriverKind.make("chatgptWeb"),
+    label: "ChatGPT Web",
+    icon: OpenAI,
+    badgeLabel: "Experimental",
+    settingsSchema: ChatGPTWebSettings,
   },
 ];
 

@@ -515,6 +515,39 @@ describe("SQLite usage readers", () => {
     }
   });
 
+  it("attributes ChatGPT bridge requests to their own usage provider and preserves sessions", async () => {
+    const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "opencode.db"));
+    try {
+      db.exec("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)");
+      const insert = db.prepare("INSERT INTO message VALUES (?, ?, ?)");
+      for (const providerID of ["t3-chatgpt-web", "openai"]) {
+        insert.run(
+          providerID,
+          "same-session",
+          JSON.stringify({
+            role: "assistant",
+            modelID: "auto",
+            providerID,
+            time: { created: 1780000000000 },
+            tokens: { input: 100, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
+          }),
+        );
+      }
+      const result = await readOpenCodeUsage(dir, 0);
+      const records = result.files.flatMap((file) => file.records);
+      assert.strictEqual(records.length, 2);
+      const chatgpt = records.find((record) => record.provider === "chatgpt");
+      assert.strictEqual(chatgpt?.sessionId, "same-session");
+      assert.strictEqual(chatgpt?.model, "chatgpt-web (estimated tokens)");
+      assert.strictEqual(chatgpt?.totals.uncachedInputTokens, 100);
+      assert.strictEqual(chatgpt?.totals.outputTokens, 20);
+      assert.strictEqual(chatgpt?.reportedCostUsd, null);
+      assert.strictEqual(records.filter((record) => record.provider === "opencode").length, 1);
+    } finally {
+      db.close();
+    }
+  });
+
   it("deduplicates Antigravity generation and step usage while preserving retry model and token buckets", async () => {
     const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "session-1.db"));
     const stamp = protoNumber(1, 1780000000);

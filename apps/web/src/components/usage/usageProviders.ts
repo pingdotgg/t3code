@@ -41,6 +41,7 @@ export const PROVIDER_PRESENTATION = {
   cursor: { label: "Cursor", color: "#8b8b8b", mark: CursorIcon },
   opencode: { label: "OpenCode", color: "#5b9bbd", mark: OpenCodeIcon },
   antigravity: { label: "Antigravity", color: "#8c7bd1", mark: AntigravityIcon },
+  chatgpt: { label: "ChatGPT Web (estimated)", color: "#10a37f", mark: OpenAI },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */

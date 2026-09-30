@@ -517,14 +517,29 @@ export const make = Effect.gen(function* () {
       ),
     ])) {
       const result = yield* Effect.promise(() => readOpenCodeUsage(dir, windowStartMs));
-      scanned.push({
-        provider: "opencode",
-        dir,
-        volumeId: yield* Effect.promise(() => readDirectoryVolumeId(dir)),
-        files: result.missing && !result.error ? null : result.files,
-        status: result.error ? "partial" : "ok",
-        ...(result.error ? { message: "Some OpenCode history could not be read." } : {}),
-      });
+      const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+      for (const provider of ["opencode", "chatgpt"] as const) {
+        const files = result.files.map((file) => ({
+          ...file,
+          records: file.records.filter((record) => record.provider === provider),
+        }));
+        if (provider === "chatgpt" && !files.some((file) => file.records.length > 0)) continue;
+        scanned.push({
+          provider,
+          dir,
+          volumeId,
+          files: result.missing && !result.error ? null : files,
+          status: result.error ? "partial" : "ok",
+          ...(result.error
+            ? { message: "Some OpenCode history could not be read." }
+            : provider === "chatgpt"
+              ? {
+                  message:
+                    "ChatGPT tokens are estimated from visible text. Reasoning and cache usage are unavailable.",
+                }
+              : {}),
+        });
+      }
     }
     const antigravityRoots = yield* envRoots("ANTIGRAVITY_DATA_DIR", [
       ...["antigravity", "antigravity-cli", "antigravity-ide", "antigravity-backup"].map((name) =>

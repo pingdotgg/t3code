@@ -117,7 +117,8 @@ export function UsageRouteScreen() {
             !source.action &&
             (source.status === "partial" ||
               source.status === "failed" ||
-              source.fingerprint.provider === "cursor")
+              source.fingerprint.provider === "cursor" ||
+              source.fingerprint.provider === "chatgpt")
               ? [source.message]
               : [],
           ) ?? [],

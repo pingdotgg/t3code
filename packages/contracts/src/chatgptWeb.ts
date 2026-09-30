@@ -1,0 +1,75 @@
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+import { TrimmedString } from "./baseSchemas.ts";
+
+// Settings forms currently store numeric input as text. Decode and validate it
+// here as well as in the server, so invalid limits cannot disable throttling.
+const limit = (value: string, maximum: number, title: string, description: string) =>
+  TrimmedString.check(
+    Schema.isPattern(/^[1-9]\d*$/),
+    Schema.makeFilter((s) => Number(s) <= maximum),
+  ).pipe(
+    Schema.withDecodingDefault(Effect.succeed(value)),
+    Schema.annotateKey({ title, description, providerSettingsForm: { placeholder: value } }),
+  );
+
+export const ChatGPTWebSettings = Schema.Struct({
+  firefoxProfile: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Firefox profile folder",
+      description:
+        "Firefox profile on this environment with ChatGPT signed in. Blank uses the default profile. Only ChatGPT cookies are copied; your browser stays open.",
+    }),
+  ),
+  firefoxBinary: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("firefox")),
+    Schema.annotateKey({
+      title: "Firefox executable",
+      providerSettingsForm: { placeholder: "firefox" },
+    }),
+  ),
+  headless: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({
+      title: "Run Firefox in background",
+      description:
+        "Uses standard Firefox automation. Turn off to see sign-in or browser challenges on the environment's desktop.",
+      providerSettingsForm: { control: "switch" },
+    }),
+  ),
+  minimumIntervalSeconds: limit(
+    "60",
+    3600,
+    "Minimum seconds between requests",
+    "Applies to every model request, including tool steps. Requests wait for this interval.",
+  ),
+  requestsPerHour: limit(
+    "20",
+    1000,
+    "Requests per hour",
+    "Rolling limit shared by this environment's ChatGPT provider. Reaching it stops the turn.",
+  ),
+  requestsPerDay: limit(
+    "100",
+    10000,
+    "Requests per day",
+    "Rolling 24-hour limit. Attempts count even when they fail. Limits reduce traffic but cannot guarantee account safety.",
+  ),
+  cooldownMinutes: limit(
+    "30",
+    1440,
+    "Cooldown after service errors (minutes)",
+    "Stops new requests after a challenge, rejected request, or service limit. Never automatically retries a blocked message.",
+  ),
+  binaryPath: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("opencode")),
+    Schema.annotateKey({
+      title: "OpenCode executable",
+      description: "Provides local file tools and approvals. Model requests use ChatGPT web.",
+      providerSettingsForm: { placeholder: "opencode" },
+    }),
+  ),
+});
+export type ChatGPTWebSettings = typeof ChatGPTWebSettings.Type;
