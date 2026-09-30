@@ -22,6 +22,7 @@ import {
 } from "@t3tools/contracts/settings";
 
 import { readBrowserClientSettings } from "../clientPersistenceStorage";
+import { isElectron } from "../env";
 import { reportClientError } from "../lib/clientLogger";
 import { useSettings } from "./useSettings";
 import { syncBrowserChromeTheme } from "./useTheme";
@@ -154,7 +155,10 @@ export function applySidebarTranslucency(translucency: SidebarTranslucency): voi
     return;
   }
 
-  document.documentElement.setAttribute(SIDEBAR_TRANSLUCENCY_ATTRIBUTE, translucency);
+  document.documentElement.setAttribute(
+    SIDEBAR_TRANSLUCENCY_ATTRIBUTE,
+    isElectron ? translucency : "off",
+  );
 }
 
 function setNativeVibrancyAttribute(enabled: boolean): void {

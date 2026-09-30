@@ -2031,54 +2031,56 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          title="Sidebar translucency"
-          description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available; browsers fall back to CSS blur."
-          resetAction={
-            settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
-              <SettingResetButton
-                label="sidebar translucency"
-                onClick={() =>
-                  updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarTranslucency}
-              onValueChange={(value) => {
-                if (
-                  value === "off" ||
-                  value === "subtle" ||
-                  value === "medium" ||
-                  value === "strong" ||
-                  value === "liquid-glass"
-                ) {
-                  updateSettings({ sidebarTranslucency: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
-                <SelectValue>
-                  {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
-                    (option) => option.value === settings.sidebarTranslucency,
-                  )?.label ?? "Off"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    <div>
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+        {isElectron && (
+          <SettingsRow
+            title="Sidebar translucency"
+            description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available, with CSS blur as a fallback."
+            resetAction={
+              settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
+                <SettingResetButton
+                  label="sidebar translucency"
+                  onClick={() =>
+                    updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.sidebarTranslucency}
+                onValueChange={(value) => {
+                  if (
+                    value === "off" ||
+                    value === "subtle" ||
+                    value === "medium" ||
+                    value === "strong" ||
+                    value === "liquid-glass"
+                  ) {
+                    updateSettings({ sidebarTranslucency: value });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
+                  <SelectValue>
+                    {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
+                      (option) => option.value === settings.sidebarTranslucency,
+                    )?.label ?? "Off"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
+                    <SelectItem hideIndicator key={option.value} value={option.value}>
+                      <div>
+                        <span className="font-medium">{option.label}</span>
+                        <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        )}
       </SettingsSection>
 
       <SettingsSection title="Sidebar">
