@@ -4153,6 +4153,91 @@ describe("linked timeline resources", () => {
     expect(rows[1]).toMatchObject({ subagents: [{ item: { id: "a" } }, { item: { id: "b" } }] });
   });
 
+  const subagent = (id: string, status: "running" | "completed") => ({
+    ...event(id, "subagent"),
+    projectedItem: {
+      item: { id, type: "subagent", runId, status },
+    } as OrchestrationV2ProjectedTurnItem,
+  });
+  const command = (id: string): TimelineEntry => ({
+    kind: "work",
+    id,
+    createdAt: "2026-09-08T10:00:01Z",
+    entry: {
+      id,
+      runId,
+      createdAt: "2026-09-08T10:00:01Z",
+      label: "Ran command",
+      tone: "tool",
+      itemType: "command_execution",
+      toolLifecycleStatus: "completed",
+    },
+  });
+
+  it("keeps a settled turn's subagents visible until the last one settles", () => {
+    const settledTurn = (lastSubagentStatus: "running" | "completed") =>
+      deriveMessagesTimelineRows({
+        ...common,
+        timelineEntries: [
+          command("before"),
+          subagent("a", "completed"),
+          command("between"),
+          subagent("b", lastSubagentStatus),
+          {
+            kind: "message",
+            id: "answer",
+            createdAt: "2026-09-08T10:00:03Z",
+            message: {
+              id: MessageId.make("answer"),
+              role: "assistant",
+              text: "Both are on it.",
+              runId,
+              streaming: false,
+              createdAt: "2026-09-08T10:00:03Z",
+              updatedAt: "2026-09-08T10:00:03Z",
+            },
+          },
+        ],
+      });
+
+    const working = settledTurn("running");
+    expect(working.map((row) => row.id)).toEqual(["turn-fold:resource-run", "a", "answer"]);
+    expect(working[1]).toMatchObject({
+      subagents: [{ item: { id: "a" } }, { item: { id: "b" } }],
+    });
+    expect(settledTurn("completed").map((row) => row.id)).toEqual([
+      "turn-fold:resource-run",
+      "answer",
+    ]);
+  });
+
+  it("keeps a working subagent visible after a steer supersedes its attempt", () => {
+    const attempt = {
+      id: RunAttemptId.make("attempt-1"),
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make("node-attempt-1"),
+      status: "superseded" as const,
+    };
+    const steeredRun = (subagentStatus: "running" | "completed") =>
+      deriveMessagesTimelineRows({
+        ...common,
+        latestRun: {
+          runId,
+          status: "running",
+          startedAt: "2026-09-08T10:00:00Z",
+          completedAt: null,
+        },
+        timelineEntries: [
+          { ...command("old-command"), attempt },
+          { ...subagent("child", subagentStatus), attempt },
+        ],
+      });
+
+    expect(steeredRun("running").map((row) => row.id)).toEqual(["attempt-fold:attempt-1", "child"]);
+    expect(steeredRun("completed").map((row) => row.id)).toEqual(["attempt-fold:attempt-1"]);
+  });
+
   it.each([
     { status: "completed", envelope: "direct", role: "general" },
     { status: "completed", envelope: "structured", role: "general" },

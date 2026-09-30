@@ -946,6 +946,54 @@ describe("buildThreadFeed", () => {
     ).toBe(true);
   });
 
+  it("keeps a settled run's subagents visible until the last one settles", () => {
+    const subagent = (id: string, ordinal: number, status: "running" | "completed") =>
+      ({
+        ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
+        status,
+        type: "subagent",
+        subagentId: NodeId.make(id),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: sourceThreadId,
+        prompt: "Inspect the deployment configuration",
+        result: null,
+      }) satisfies OrchestrationV2TurnItem;
+    const settledRun = (lastSubagentStatus: "running" | "completed") =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed([
+          projected(userMessage(), 0),
+          projected(command("2026-06-20T00:00:01.500Z"), 1),
+          projected(subagent("agent-a", 2, "completed"), 2),
+          projected(subagent("agent-b", 3, lastSubagentStatus), 3),
+          projected(assistantMessage("2026-06-20T00:00:05.000Z"), 4),
+        ]),
+        null,
+        new Set(),
+      );
+
+    const working = settledRun("running");
+    expect(working.map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "activity-group",
+      "message",
+    ]);
+    expect(
+      working.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? entry.activities.map((activity) => activity.projectedItem.item.id)
+          : [],
+      ),
+    ).toEqual(["agent-a", "agent-b"]);
+    expect(settledRun("completed").map((entry) => entry.type)).toEqual([
+      "message",
+      "run-fold",
+      "message",
+    ]);
+  });
+
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),

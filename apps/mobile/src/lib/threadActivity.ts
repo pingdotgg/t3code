@@ -44,7 +44,7 @@ import type {
   RunAttemptId,
   ScheduledTaskId,
 } from "@t3tools/contracts";
-import { RunId, ThreadId } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive, RunId, ThreadId } from "@t3tools/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -971,9 +971,16 @@ export function failedFeedRunIds(
   return failed;
 }
 
+/** Adjacent subagents share a group that holds nothing else. */
+function isSubagentActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return entry.activities[0]?.projectedItem.item.type === "subagent";
+}
+
 /**
- * A thread without runs (a provider-native subagent) folds each prompt's
- * response like a run; `isWorking` keeps its latest response open.
+ * Subagents can outlive the turn that launched them, so a turn's subagents
+ * stay visible until the last one settles. A thread without runs (a
+ * provider-native subagent) folds each prompt's response like a run;
+ * `isWorking` keeps its latest response open.
  */
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
@@ -1047,6 +1054,16 @@ function deriveThreadFeedRunFolds(
     }
     const firstAssistantId = firstAssistantMessageIdByRun.get(runId);
     const terminalAssistantId = terminalAssistantMessageIdByRun.get(runId);
+    // Kept as one batch rather than one by one, so the card and its counts
+    // stay put while its members finish.
+    const hasWorkingSubagent = group.entries.some(
+      (entry) =>
+        entry.type === "activity-group" &&
+        isSubagentActivityGroup(entry) &&
+        entry.activities.some((activity) =>
+          isOrchestrationV2WorkActive(activity.projectedItem.item.status),
+        ),
+    );
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
@@ -1055,12 +1072,13 @@ function deriveThreadFeedRunFolds(
             entry.id !== terminalAssistantId &&
             !(
               entry.type === "activity-group" &&
-              entry.activities.some(
-                (activity) =>
-                  activity.prominent ||
-                  activity.projectedItem.item.type === "notification" ||
-                  activity.projectedItem.item.type === "handoff",
-              )
+              ((hasWorkingSubagent && isSubagentActivityGroup(entry)) ||
+                entry.activities.some(
+                  (activity) =>
+                    activity.prominent ||
+                    activity.projectedItem.item.type === "notification" ||
+                    activity.projectedItem.item.type === "handoff",
+                ))
             ),
         )
         .map((entry) => entry.id),
@@ -1273,7 +1291,7 @@ function appendPresentedFeedEntry(
     isContextCompactionActivityGroup(entry) ||
     isContextHandoffActivityGroup(entry) ||
     isUserInputActivityGroup(entry) ||
-    entry.activities[0]?.projectedItem.item.type === "subagent"
+    isSubagentActivityGroup(entry)
   ) {
     result.push(entry);
     return;

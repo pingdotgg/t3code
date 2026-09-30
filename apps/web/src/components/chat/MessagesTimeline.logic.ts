@@ -35,6 +35,7 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import {
+  isOrchestrationV2WorkActive,
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
@@ -692,15 +693,34 @@ interface SupersededAttemptFold {
   readonly hiddenEntryIds: ReadonlySet<string>;
 }
 
+function timelineEntryIsSubagent(entry: TimelineEntry): boolean {
+  return entry.kind === "event" && entry.projectedItem.item.type === "subagent";
+}
+
+function timelineEntryIsWorkingSubagent(entry: TimelineEntry): boolean {
+  return (
+    entry.kind === "event" &&
+    entry.projectedItem.item.type === "subagent" &&
+    isOrchestrationV2WorkActive(entry.projectedItem.item.status)
+  );
+}
+
 /**
  * Groups only provider output owned by an explicitly superseded V2 attempt.
  * User messages remain visible because they are inputs to the logical run,
- * including the steer message that started the replacement attempt.
+ * including the steer message that started the replacement attempt. The run's
+ * subagents stay visible on the same terms as in `deriveTurnFolds`.
  */
 function deriveSupersededAttemptFolds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   unfoldedRunIds: ReadonlySet<RunId>,
 ): ReadonlyMap<string, SupersededAttemptFold> {
+  const runIdsWithWorkingSubagent = new Set<RunId | null>();
+  for (const entry of timelineEntries) {
+    if (entry.kind === "event" && timelineEntryIsWorkingSubagent(entry)) {
+      runIdsWithWorkingSubagent.add(entry.projectedItem.item.runId);
+    }
+  }
   const entriesByAttemptId = new Map<RunAttemptId, TimelineEntry[]>();
   for (const entry of timelineEntries) {
     if (
@@ -708,6 +728,7 @@ function deriveSupersededAttemptFolds(
       unfoldedRunIds.has(entry.attempt.runId) ||
       (entry.kind === "message" && entry.message.role === "user") ||
       timelineEntryIsPersistentResourceCard(entry) ||
+      (timelineEntryIsSubagent(entry) && runIdsWithWorkingSubagent.has(entry.attempt.runId)) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
     ) {
       continue;
@@ -852,8 +873,10 @@ function failedTimelineRunIds(
 /**
  * Settled turns fold activity before their terminal assistant message behind
  * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures
- * and work still in progress stay visible. A thread without runs (a
- * provider-native subagent) folds each prompt's response the same way.
+ * and work still in progress stay visible. Subagents can outlive the turn that
+ * launched them, so a turn's subagents stay visible until the last one
+ * settles. A thread without runs (a provider-native subagent) folds each
+ * prompt's response the same way.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -953,6 +976,9 @@ function deriveTurnFolds(input: {
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
+    // Kept as one batch rather than one by one, so the row and its counts
+    // stay put while its members finish.
+    const hasWorkingSubagent = group.entries.some(timelineEntryIsWorkingSubagent);
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
         continue;
@@ -971,6 +997,7 @@ function deriveTurnFolds(input: {
       if (timelineEntryIsPersistentResourceCard(entry)) {
         continue;
       }
+      if (hasWorkingSubagent && timelineEntryIsSubagent(entry)) continue;
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       hiddenEntryIds.add(entry.id);
     }
