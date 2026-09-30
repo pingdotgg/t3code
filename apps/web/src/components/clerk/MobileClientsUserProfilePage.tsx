@@ -94,9 +94,8 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Install T3 Code on your phone and sign in to T3 Connect with this account to register it
-          for push notifications and Live Activities. Registration follows that sign-in, whichever
-          connection the phone uses to reach your environments.
+          Install T3 Code on your phone and sign in to T3 Connect to get push notifications and Live
+          Activities.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -113,7 +112,7 @@ export function MobileClientsUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="Mobile clients"
-      description="Devices registered to receive T3 Connect activity from your environments."
+      description="Phones that get notifications from your environments."
       action={
         <ClerkUserProfileRefreshButton
           isPending={devicesState.isPending}
