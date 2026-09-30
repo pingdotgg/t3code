@@ -15,6 +15,26 @@ import {
 
 const AX_POLL_INTERVAL_MS = 2_000;
 
+function areAxElementsEqual(
+  left: ReadonlyArray<DeviceAxElement>,
+  right: ReadonlyArray<DeviceAxElement>,
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((element, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      element.id === other.id &&
+      element.label === other.label &&
+      element.role === other.role &&
+      element.x === other.x &&
+      element.y === other.y &&
+      element.width === other.width &&
+      element.height === other.height
+    );
+  });
+}
+
 export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
@@ -134,10 +154,6 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
-  // The frame is the largest box at `aspect` that fits the container, so a
-  // narrow panel shows a shorter phone rather than a squeezed one. CSS
-  // `aspect-ratio` alone cannot do this: with the height pinned to 100% the
-  // width clamp wins and distorts the drawn frame.
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [host, setHost] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -180,9 +196,6 @@ export function DeviceStreamView(props: {
     }
   }, [props.platform, screen]);
 
-  // A sideways rotation draws the raw portrait frame into a landscape box:
-  // the media element takes the transposed size and is rotated about the
-  // box's center.
   const sideways = rotation === 90 || rotation === -90;
   const mediaStyle: React.CSSProperties = sideways
     ? {
@@ -198,8 +211,6 @@ export function DeviceStreamView(props: {
         ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
       };
 
-  // The accessibility tree is polled while the overlay is on; each poll is
-  // one JSON fetch, so there is nothing to repaint between polls.
   const [axElements, setAxElements] = useState<ReadonlyArray<DeviceAxElement>>([]);
   useEffect(() => {
     if (!props.axOverlay || !access || !props.visible) return;
@@ -207,11 +218,15 @@ export function DeviceStreamView(props: {
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let previous: ReadonlyArray<DeviceAxElement> = [];
     const poll = async () => {
       controller = new AbortController();
       try {
         const tree = await fetchDeviceAxTree(target, controller.signal);
-        if (!stopped) setAxElements(tree.elements);
+        if (!stopped && !areAxElementsEqual(previous, tree.elements)) {
+          previous = tree.elements;
+          setAxElements(tree.elements);
+        }
       } catch {
         // Keep the last good tree; the next poll retries.
       }
