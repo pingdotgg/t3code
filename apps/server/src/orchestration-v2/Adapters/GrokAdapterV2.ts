@@ -1,5 +1,9 @@
 import { makeProviderFailure } from "../ProviderFailure.ts";
-import { isXAiPromptError, xAiRateLimitedErrorCode } from "../../provider/acp/XAiAcpExtension.ts";
+import {
+  isXAiPromptError,
+  isXAiTaskCompletedWakeNotification,
+  xAiRateLimitedErrorCode,
+} from "../../provider/acp/XAiAcpExtension.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import {
@@ -315,6 +319,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
       ...extractXAiKilledBackgroundTasks(toolCall),
     ],
     isPersistentBackgroundTool: isXAiPersistentMonitor,
+    isProviderWakeNotification: isXAiTaskCompletedWakeNotification,
     deferFinalizeForBackgroundWork: true,
     enablePostSettleContinuation: true,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

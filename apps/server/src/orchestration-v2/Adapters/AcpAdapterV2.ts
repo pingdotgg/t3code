@@ -370,6 +370,15 @@ export interface AcpAdapterV2Flavor {
    */
   readonly isPersistentBackgroundTool?: (toolCall: AcpToolCallState) => boolean;
   /**
+   * Whether a root-session frame belongs to a turn the agent started itself
+   * after background work ended (Grok `task-completed-*`), not to T3's prompt.
+   * Such frames never project into a root turn held open for that work; they
+   * take the post-settle wake path once the held turn finalizes.
+   */
+  readonly isProviderWakeNotification?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => boolean;
+  /**
    * When true, keep the active turn open after session/prompt returns while
    * background tools/subagents are still running so later monitor/wake traffic
    * can project (Grok monitors finish after the root prompt settles).
@@ -1280,6 +1289,14 @@ export function acpIsAppOwnedWakeTurn(message: {
   readonly creationSource: string;
 }): boolean {
   return message.createdBy === "agent" && message.creationSource === "server";
+}
+
+/** A continuation run attaches to wake traffic the agent produced on its own. */
+function acpIsProviderContinuationMessage(message: {
+  readonly createdBy: string;
+  readonly creationSource: string;
+}): boolean {
+  return message.createdBy === "agent" && message.creationSource === "provider";
 }
 
 export function acpCarryoverTerminalShouldClearContinuation(input: {
@@ -4319,6 +4336,26 @@ export function makeAcpAdapterV2(
           // Re-check after the activeSessionId yield: idle/prompt settle can
           // finalize the same context object while we waited.
           if (context.finalized) return;
+          // The agent started its own turn about finished background work while
+          // this settled root turn was still held for it. That turn is the
+          // agent's reply, not more of the root: settle the root first so the
+          // frame reaches the wake path and opens a continuation run.
+          if (
+            context.promptSettled &&
+            !acpIsProviderContinuationMessage(context.input.message) &&
+            flavor.isProviderWakeNotification?.(notification) === true
+          ) {
+            if (hasDeferredBackgroundWork(context)) {
+              yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+              return;
+            }
+            yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+            const wake = yield* bufferPostSettleWake(notification);
+            if (wake.offerContinuation) {
+              yield* offerContinuationRun(notification.sessionId);
+            }
+            return;
+          }
           // Only fresh model output proves a retry recovered; progress on
           // tools and plans that started earlier can arrive mid-retry.
           if (
@@ -6728,9 +6765,7 @@ export function makeAcpAdapterV2(
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
-              postSettleContinuationEnabled &&
-              turnInput.message.createdBy === "agent" &&
-              turnInput.message.creationSource === "provider";
+              postSettleContinuationEnabled && acpIsProviderContinuationMessage(turnInput.message);
             const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             // An app-owned wake reports on a sibling delegated child and owns
             // none of this session's background work, so it must not discard

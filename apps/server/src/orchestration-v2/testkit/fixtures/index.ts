@@ -26,6 +26,8 @@ import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.t
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
 import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
+import { grokBackgroundBashFastWakeInput } from "./grok_background_bash_fast_wake/input.ts";
+import { assertGrokBackgroundBashFastWakeOutput } from "./grok_background_bash_fast_wake/output.ts";
 import { grokBackgroundSubagentInput } from "./grok_background_subagent/input.ts";
 import { assertGrokBackgroundSubagentOutput } from "./grok_background_subagent/output.ts";
 import { grokMonitorInput } from "./grok_monitor/input.ts";
@@ -346,6 +348,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
         runContinuationWorker: true,
         assertOutput: assertGrokBackgroundBashOutput,
+      },
+    ],
+  },
+  {
+    name: "grok_background_bash_fast_wake",
+    buildInput: grokBackgroundBashFastWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("grok"),
+        transcriptFile: new URL(
+          "./grok_background_bash_fast_wake/grok_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
+        runContinuationWorker: true,
+        assertOutput: assertGrokBackgroundBashFastWakeOutput,
       },
     ],
   },

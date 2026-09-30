@@ -94,6 +94,17 @@ export function xAiPromptCompleteFromSessionUpdate(
   };
 }
 
+/**
+ * Grok answers a finished background command in its own turn, tagging every
+ * frame with a `task-completed-*` prompt id instead of the one T3 sent.
+ */
+export function isXAiTaskCompletedWakeNotification(
+  notification: EffectAcpSchema.SessionNotification,
+): boolean {
+  const promptId = notification._meta?.promptId;
+  return typeof promptId === "string" && promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX);
+}
+
 interface PendingXAiPromptCompletion {
   readonly sessionId: string;
   readonly promptId: string;
