@@ -32,7 +32,7 @@ import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { OPENCODE_2_FULL_ACCESS_ONLY, OPENCODE_2_STILL_STOPPING } from "./OpenCode2AdapterV2.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
@@ -824,9 +824,9 @@ describe("OpenCode2 adapter", () => {
 
 /** The provider turn the adapter derives for `turnInput`'s attempt. */
 const providerTurnId = Effect.gen(function* () {
-  const ids = yield* IdAllocatorV2;
+  const ids = yield* IdAllocator.IdAllocatorV2;
   return ids.derive.providerTurn({
     driver: OPENCODE_PROVIDER,
     nativeTurnId: `${SESSION}:attempt:attempt:opencode2-adapter`,
   });
-}).pipe(Effect.provide(idAllocatorLayer));
+}).pipe(Effect.provide(IdAllocator.layer));

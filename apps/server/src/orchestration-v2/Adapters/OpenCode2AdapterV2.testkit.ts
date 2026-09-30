@@ -20,11 +20,11 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as UrlParams from "effect/unstable/http/UrlParams";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as OpenCode2Client from "../../provider/opencode2/OpenCode2Client.ts";
 import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
 import * as IdAllocator from "../IdAllocator.ts";
-import { makeLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -169,14 +169,14 @@ const makeReplayAdapter = (
   });
 
 const replayServerConfig = (scenario: string) =>
-  Layer.effect(ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
+  Layer.effect(ServerConfig.ServerConfig, makeReplayServerConfig(scenario).pipe(Effect.orDie)).pipe(
     Layer.provide(NodeServices.layer),
   );
 
 function makeRegistryLayer(transcript: OpenCode2ReplayTranscript) {
   return Layer.unwrap(
     makeReplayAdapter(transcript, { external: true }).pipe(
-      Effect.map((adapter) => makeLayer([adapter])),
+      Effect.map((adapter) => ProviderAdapterRegistry.makeLayer([adapter])),
     ),
   ).pipe(Layer.provide(Layer.mergeAll(replayServerConfig(transcript.scenario), IdAllocator.layer)));
 }

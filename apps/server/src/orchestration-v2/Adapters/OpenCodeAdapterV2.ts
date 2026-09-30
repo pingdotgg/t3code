@@ -55,10 +55,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import {
   structuralProtocolMethod,
   summarizeNativeProtocolPayload,
@@ -66,43 +66,12 @@ import {
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
-import {
-  OpenCodeRuntime,
-  loadOpenCodeCommands,
-  OpenCodeRuntimeError,
-  openCodeQuestionId,
-  openCodeRuntimeErrorDetail,
-  parseOpenCodeModelSlug,
-  runOpenCodeSdk,
-  toOpenCodeFileParts,
-  toOpenCodePermissionReply,
-  toOpenCodeQuestionAnswers,
-  type OpenCodeRuntimeShape,
-} from "../../provider/opencodeRuntime.ts";
-import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
-import {
-  ProviderAdapterEnsureThreadError,
-  ProviderAdapterForkThreadError,
-  ProviderAdapterInterruptError,
-  ProviderAdapterOpenSessionError,
-  ProviderAdapterProtocolError,
-  ProviderAdapterReadThreadSnapshotError,
-  ProviderAdapterResumeThreadError,
-  ProviderAdapterRollbackThreadError,
-  ProviderAdapterRuntimeRequestResponseError,
-  ProviderAdapterSteerRunError,
-  ProviderAdapterTurnStartError,
-  ProviderAdapterV2,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2OpenSessionInput,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2RuntimePolicy,
-  type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -303,11 +272,11 @@ interface ActiveOpenCodeTurn {
   readonly usage: OpenCodeTurnTokenUsageAccumulator;
   readonly isRoot: boolean;
   readonly threadId: ThreadId;
-  readonly runId: ProviderAdapterV2TurnInput["runId"] | null;
-  readonly rootNodeId: ProviderAdapterV2TurnInput["rootNodeId"];
+  readonly runId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | null;
+  readonly rootNodeId: ProviderAdapter.ProviderAdapterV2TurnInput["rootNodeId"];
   readonly appThread: OrchestrationV2AppThread;
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly runOrdinal: number;
@@ -465,9 +434,9 @@ export interface OpenCodeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: OpenCodeSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly runtime: OpenCodeRuntimeShape;
-  readonly idAllocator: IdAllocatorV2Shape;
-  readonly serverConfig: ServerConfig["Service"];
+  readonly runtime: OpenCodeRuntime.OpenCodeRuntimeShape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
+  readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
@@ -489,7 +458,7 @@ function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
 
 export function makeOpenCodeProtocolLogger(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: ProviderSessionId;
   readonly threadId: ThreadId;
@@ -533,8 +502,11 @@ export function makeOpenCodeProtocolLogger(input: {
     );
 }
 
-function protocolError(detail: string, payload?: unknown): ProviderAdapterProtocolError {
-  return new ProviderAdapterProtocolError({
+function protocolError(
+  detail: string,
+  payload?: unknown,
+): ProviderAdapter.ProviderAdapterProtocolError {
+  return new ProviderAdapter.ProviderAdapterProtocolError({
     driver: OPENCODE_PROVIDER,
     detail,
     ...(payload === undefined ? {} : { payload }),
@@ -647,7 +619,7 @@ const OPENCODE_RESTRICTED_PERMISSIONS = [
  * allows it.
  */
 export function openCodePermissionRules(
-  runtimePolicy: ProviderAdapterV2RuntimePolicy,
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
 ): PermissionRuleset {
   const sandboxPolicy = recordValue(runtimePolicy, "sandboxPolicy");
   const sandboxType = recordString(sandboxPolicy, "type");
@@ -756,7 +728,7 @@ function permissionRuleEquals(
  * were added specifically for the selected child agent.
  */
 export function openCodeChildPermissionRules(
-  runtimePolicy: ProviderAdapterV2RuntimePolicy,
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   nativeChildRules: PermissionRuleset,
 ): PermissionRuleset {
   const parentRules = openCodePermissionRules(runtimePolicy);
@@ -857,7 +829,7 @@ function taskSessionId(part: ToolPart): string | null {
 }
 
 function makeProviderThread(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
@@ -960,7 +932,7 @@ function isOpenCodeNotFound(cause: unknown): boolean {
 
 function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNullable<A> {
   if (result.data === undefined) {
-    throw new OpenCodeRuntimeError({
+    throw new OpenCodeRuntime.OpenCodeRuntimeError({
       operation,
       detail: `OpenCode ${operation} returned no response payload.`,
     });
@@ -968,16 +940,18 @@ function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNul
   return result.data as NonNullable<A>;
 }
 
-export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): ProviderAdapterV2Shape {
+export function makeOpenCodeAdapterV2(
+  options: OpenCodeAdapterV2Options,
+): ProviderAdapter.ProviderAdapterV2Shape {
   const { idAllocator, runtime, serverConfig } = options;
 
-  return ProviderAdapterV2.of({
+  return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: OPENCODE_PROVIDER,
     getCapabilities: () => Effect.succeed(OpenCodeProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
-      function* (input: ProviderAdapterV2OpenSessionInput) {
+      function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const scope = yield* Effect.scope;
         const cwd = input.runtimePolicy.cwd ?? serverConfig.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({
@@ -998,7 +972,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
         if (hasT3Mcp) {
-          yield* runOpenCodeSdk("mcp.add", () =>
+          yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",
               config: {
@@ -1024,7 +998,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           updatedAt: now,
           lastError: null,
         };
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
         const threads = new Map<string, OpenCodeThreadState>();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
@@ -1055,7 +1029,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         let closing = false;
         let hasConnected = false;
 
-        const emitProviderEvent = (event: ProviderAdapterV2Event) =>
+        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
         const logProtocolEvent = makeOpenCodeProtocolLogger({
@@ -1070,14 +1044,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           method: string,
           payload: unknown,
           call: (signal: AbortSignal) => Promise<A>,
-        ): Effect.Effect<A, OpenCodeRuntimeError> =>
+        ): Effect.Effect<A, OpenCodeRuntime.OpenCodeRuntimeError> =>
           logProtocolEvent({
             direction: "outgoing",
             messageKind: "request",
             method,
             payload,
           }).pipe(
-            Effect.andThen(runOpenCodeSdk(method, call)),
+            Effect.andThen(OpenCodeRuntime.runOpenCodeSdk(method, call)),
             Effect.tap((response) =>
               logProtocolEvent({
                 direction: "incoming",
@@ -1095,7 +1069,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             const visit = (
               sessionId: string,
               abort: boolean,
-            ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+            ): Effect.Effect<OpenCodeRuntime.OpenCodeRuntimeError | undefined> =>
               Effect.gen(function* () {
                 const abortResult = abort
                   ? yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
@@ -1748,7 +1722,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
 
         const requestQuestions = (request: QuestionRequest) =>
           request.questions.map((question, index) => ({
-            id: openCodeQuestionId(index, question),
+            id: OpenCodeRuntime.openCodeQuestionId(index, question),
             header: question.header.trim() || `Question ${index + 1}`,
             question: question.question.trim() || question.header.trim() || `Question ${index + 1}`,
             options: question.options.map((option) => ({
@@ -2714,9 +2688,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         yield* Stream.fromAsyncIterable(
           subscription.stream,
           (cause) =>
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "event.subscribe",
-              detail: openCodeRuntimeErrorDetail(cause),
+              detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause),
               cause,
             }),
         ).pipe(
@@ -2729,7 +2703,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               if (closing || abortController.signal.aborted) return;
               const detail = Exit.isSuccess(exit)
                 ? "OpenCode event stream ended unexpectedly."
-                : openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
+                : OpenCodeRuntime.openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
               nativeStreamFailure = makeProviderFailure({
                 message: detail,
                 class: "transport_error",
@@ -2834,13 +2808,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           return state;
         };
 
-        const resolvePromptParts = (turnInput: ProviderAdapterV2TurnInput) => {
+        const resolvePromptParts = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) => {
           const text = providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
           }).trim();
-          const files = toOpenCodeFileParts({
+          const files = OpenCodeRuntime.toOpenCodeFileParts({
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: (attachment) =>
               resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
@@ -2942,7 +2916,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             .trim();
           const match = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
           const command = match
-            ? (yield* loadOpenCodeCommands(client).pipe(
+            ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
                 Effect.timeout("10 seconds"),
                 Effect.orElseSucceed(() => []),
               )).find((entry) => entry.name === match[1])
@@ -3000,7 +2974,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           yield* Effect.raceFirst(Fiber.join(request), Deferred.await(receipt)).pipe(
             Effect.timeout("10 seconds"),
             Effect.catchTag("TimeoutError", (cause) => {
-              const error = new OpenCodeRuntimeError({
+              const error = new OpenCodeRuntime.OpenCodeRuntimeError({
                 operation: "session.command",
                 detail: "OpenCode command admission did not complete within 10 seconds.",
                 cause,
@@ -3013,7 +2987,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           );
         });
 
-        const runtimeSession: ProviderAdapterV2SessionRuntime = {
+        const runtimeSession: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver: OPENCODE_PROVIDER,
           providerSessionId: input.providerSessionId,
@@ -3069,7 +3043,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterEnsureThreadError({
+                  new ProviderAdapter.ProviderAdapterEnsureThreadError({
                     driver: OPENCODE_PROVIDER,
                     threadId: threadInput.threadId,
                     cause,
@@ -3095,7 +3069,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterResumeThreadError({
+                  new ProviderAdapter.ProviderAdapterResumeThreadError({
                     driver: OPENCODE_PROVIDER,
                     providerSessionId: input.providerSessionId,
                     providerThreadId: threadInput.providerThread.id,
@@ -3125,7 +3099,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
                 );
               }
-              const parsedModel = parseOpenCodeModelSlug(turnInput.modelSelection.model);
+              const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(
+                turnInput.modelSelection.model,
+              );
               if (parsedModel === null) {
                 return yield* protocolError(
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
@@ -3302,7 +3278,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterTurnStartError({
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
                     driver: OPENCODE_PROVIDER,
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
@@ -3327,7 +3303,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode turn ${steerInput.providerTurnId} is not active`,
                 );
               }
-              const parsedModel = parseOpenCodeModelSlug(turn.modelSelection.model);
+              const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(turn.modelSelection.model);
               if (parsedModel === null) {
                 return yield* protocolError(
                   `OpenCode model '${turn.modelSelection.model}' must use provider/model format`,
@@ -3338,7 +3314,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 attachments: steerInput.message.attachments,
                 attachmentsDir: serverConfig.attachmentsDir,
               }).trim();
-              const files = toOpenCodeFileParts({
+              const files = OpenCodeRuntime.toOpenCodeFileParts({
                 attachments: steerInput.message.attachments,
                 resolveAttachmentPath: (attachment) =>
                   resolveAttachmentPath({
@@ -3396,7 +3372,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterSteerRunError({
+                  new ProviderAdapter.ProviderAdapterSteerRunError({
                     driver: OPENCODE_PROVIDER,
                     providerThreadId: steerInput.providerThread.id,
                     providerTurnId: steerInput.providerTurnId,
@@ -3455,7 +3431,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterInterruptError({
+                  new ProviderAdapter.ProviderAdapterInterruptError({
                     driver: OPENCODE_PROVIDER,
                     providerThreadId: interruptInput.providerThread.id,
                     providerTurnId: interruptInput.providerTurnId,
@@ -3477,7 +3453,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     `OpenCode question request ${requestInput.requestId} requires answers`,
                   );
                 }
-                const answers = toOpenCodeQuestionAnswers(pending.question, requestInput.answers);
+                const answers = OpenCodeRuntime.toOpenCodeQuestionAnswers(
+                  pending.question,
+                  requestInput.answers,
+                );
                 yield* sdkCall(
                   "question.reply",
                   { requestID: pending.nativeRequestId, answers },
@@ -3497,7 +3476,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   `OpenCode approval request ${requestInput.requestId} requires a decision`,
                 );
               }
-              const reply = toOpenCodePermissionReply(requestInput.decision);
+              const reply = OpenCodeRuntime.toOpenCodePermissionReply(requestInput.decision);
               yield* sdkCall(
                 "permission.reply",
                 { requestID: pending.nativeRequestId, reply },
@@ -3513,7 +3492,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterRuntimeRequestResponseError({
+                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
                     driver: OPENCODE_PROVIDER,
                     requestId: requestInput.requestId,
                     cause,
@@ -3524,7 +3503,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             readSnapshot(snapshotInput.providerThread).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterReadThreadSnapshotError({
+                  new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
                     driver: OPENCODE_PROVIDER,
                     providerThreadId: snapshotInput.providerThread.id,
                     cause,
@@ -3607,7 +3586,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterRollbackThreadError({
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
                     driver: OPENCODE_PROVIDER,
                     providerThreadId: rollbackInput.providerThread.id,
                     checkpointId: rollbackInput.target.checkpointId,
@@ -3671,7 +3650,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }).pipe(
               Effect.mapError(
                 (cause) =>
-                  new ProviderAdapterForkThreadError({
+                  new ProviderAdapter.ProviderAdapterForkThreadError({
                     driver: OPENCODE_PROVIDER,
                     providerThreadId: forkInput.sourceProviderThread.id,
                     cause,
@@ -3686,7 +3665,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         effect.pipe(
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterOpenSessionError({
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver: OPENCODE_PROVIDER,
                 providerSessionId: input.providerSessionId,
                 cause,
@@ -3698,10 +3677,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
 }
 
 export type OpenCodeAdapterV2DriverEnv =
-  | OpenCodeRuntime
-  | IdAllocatorV2
-  | ProviderEventLoggers
-  | ServerConfig;
+  | OpenCodeRuntime.OpenCodeRuntime
+  | IdAllocator.IdAllocatorV2
+  | ProviderEventLoggers.ProviderEventLoggers
+  | ServerConfig.ServerConfig;
 
 export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   OpenCodeSettings,
@@ -3713,10 +3692,10 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   create: Effect.fn("OpenCodeAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<OpenCodeSettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
-      const openCodeRuntime = yield* OpenCodeRuntime;
-      const idAllocator = yield* IdAllocatorV2;
-      const providerEventLoggers = yield* ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig;
+      const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       return makeOpenCodeAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -3744,24 +3723,25 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   ),
 };
 
-const layer: Layer.Layer<ProviderAdapterV2, never, OpenCodeAdapterV2DriverEnv> = Layer.effect(
-  ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcessEnvironment;
-    const openCodeRuntime = yield* OpenCodeRuntime;
-    const idAllocator = yield* IdAllocatorV2;
-    const providerEventLoggers = yield* ProviderEventLoggers;
-    const serverConfig = yield* ServerConfig;
-    return makeOpenCodeAdapterV2({
-      instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_OPENCODE_SETTINGS,
-      environment: hostEnvironment,
-      runtime: openCodeRuntime,
-      idAllocator,
-      serverConfig,
-      ...(providerEventLoggers.native === undefined
-        ? {}
-        : { nativeEventLogger: providerEventLoggers.native }),
-    });
-  }),
-);
+const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, OpenCodeAdapterV2DriverEnv> =
+  Layer.effect(
+    ProviderAdapter.ProviderAdapterV2,
+    Effect.gen(function* () {
+      const hostEnvironment = yield* HostProcessEnvironment;
+      const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      return makeOpenCodeAdapterV2({
+        instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_OPENCODE_SETTINGS,
+        environment: hostEnvironment,
+        runtime: openCodeRuntime,
+        idAllocator,
+        serverConfig,
+        ...(providerEventLoggers.native === undefined
+          ? {}
+          : { nativeEventLogger: providerEventLoggers.native }),
+      });
+    }),
+  );

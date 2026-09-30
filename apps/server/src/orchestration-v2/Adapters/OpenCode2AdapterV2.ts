@@ -39,7 +39,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import type { OpenCode2StreamEvent } from "../../provider/opencode2/OpenCode2Client.ts";
 import * as OpenCode2Server from "../../provider/opencode2/OpenCode2Server.ts";
 import {
@@ -52,26 +52,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
-import {
-  ProviderAdapterEnsureThreadError,
-  ProviderAdapterEventStreamError,
-  ProviderAdapterForkThreadError,
-  ProviderAdapterInterruptError,
-  ProviderAdapterOpenSessionError,
-  ProviderAdapterProtocolError,
-  ProviderAdapterReadThreadSnapshotError,
-  ProviderAdapterResumeThreadError,
-  ProviderAdapterRollbackThreadError,
-  ProviderAdapterRuntimeRequestResponseError,
-  ProviderAdapterSteerRunUnsupportedError,
-  ProviderAdapterTurnStartError,
-  ProviderAdapterV2,
-  ProviderAdapterV2Error,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
 import { OPENCODE_PROVIDER } from "./OpenCodeAdapterV2.ts";
 import { openCodeToolTurnItem } from "./OpenCodeToolItems.ts";
@@ -173,7 +154,7 @@ const OpenCode2ProviderCapabilities = {
 type EventOf<T extends OpenCodeEvent["type"]> = Extract<OpenCodeEvent, { readonly type: T }>;
 
 interface ActiveTurn {
-  readonly input: ProviderAdapterV2TurnInput;
+  readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   /** Open text and reasoning blocks, keyed `<assistantMessageID>:<kind>:<ordinal>`. */
   readonly texts: Map<string, OpenBlock>;
@@ -214,7 +195,7 @@ interface ThreadState {
 
 /** One wording for every capability later layers add. */
 const notYet = (feature: string) =>
-  new ProviderAdapterProtocolError({
+  new ProviderAdapter.ProviderAdapterProtocolError({
     driver: OPENCODE_PROVIDER,
     detail: `OpenCode 2 ${feature} is not supported yet`,
   });
@@ -229,7 +210,7 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
   const nativeId = providerThread.nativeThreadRef?.nativeId;
   return nativeId === undefined || nativeId === null
     ? Effect.fail(
-        new ProviderAdapterProtocolError({
+        new ProviderAdapter.ProviderAdapterProtocolError({
           driver: OPENCODE_PROVIDER,
           detail: `Provider thread ${providerThread.id} has no OpenCode session`,
         }),
@@ -294,14 +275,14 @@ const deliver = <E>(answer: Effect.Effect<void, E>) =>
 type ModelRef = ReturnType<typeof Model.Ref.make>;
 
 // Errors already in the adapter channel keep their tag; only lower-level ones are wrapped.
-const isProviderAdapterError = Schema.is(ProviderAdapterV2Error);
+const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
 
 /**
  * The model OpenCode should run for a `provider/model` slug and its reasoning
  * variant, or undefined for any other slug: sending none would run OpenCode's
  * default while T3 records the requested model.
  */
-const modelRef = (selection: ProviderAdapterV2TurnInput["modelSelection"]) => {
+const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
   const variant = getModelSelectionStringOptionValue(selection, "variant");
@@ -325,11 +306,11 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
 export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const serverConfig = yield* ServerConfig;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const driver = OPENCODE_PROVIDER;
 
   const openSession = Effect.fn("OpenCode2Adapter.openSession")(function* (
-    input: Parameters<ProviderAdapterV2Shape["openSession"]>[0],
+    input: Parameters<ProviderAdapter.ProviderAdapterV2Shape["openSession"]>[0],
     connection: OpenCode2Server.OpenCode2Connection,
   ) {
     const { client } = connection;
@@ -346,9 +327,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       updatedAt: now,
       lastError: null,
     };
-    const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
     const threads = new Map<string, ThreadState>();
-    const emit = (event: ProviderAdapterV2Event) => Queue.offer(events, event).pipe(Effect.asVoid);
+    const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+      Queue.offer(events, event).pipe(Effect.asVoid);
 
     const setSessionStatus = (
       status: OrchestrationV2ProviderSession["status"],
@@ -820,7 +802,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return providerThread;
     };
 
-    const prompt = (turnInput: ProviderAdapterV2TurnInput) => {
+    const prompt = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) => {
       const text = providerMessageTextWithAttachmentPaths({
         text: turnInput.message.text,
         attachments: turnInput.message.attachments,
@@ -833,7 +815,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return `${text}\n\n${instructions}`;
     };
 
-    const runtime: ProviderAdapterV2SessionRuntime = {
+    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId,
       driver,
       providerSessionId: input.providerSessionId,
@@ -853,7 +835,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const model = modelRef(threadInput.modelSelection);
           if (model === undefined) {
-            return yield* new ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
               detail: malformedModel(threadInput.modelSelection.model),
             });
@@ -890,7 +872,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
-              : new ProviderAdapterEnsureThreadError({
+              : new ProviderAdapter.ProviderAdapterEnsureThreadError({
                   driver,
                   threadId: threadInput.threadId,
                   cause,
@@ -933,7 +915,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
-              : new ProviderAdapterResumeThreadError({
+              : new ProviderAdapter.ProviderAdapterResumeThreadError({
                   driver,
                   providerSessionId: input.providerSessionId,
                   providerThreadId: threadInput.providerThread.id,
@@ -946,13 +928,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const sessionId = yield* sessionIdOf(turnInput.providerThread);
           const state = threads.get(sessionId);
           if (state === undefined) {
-            return yield* new ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
               detail: `OpenCode session ${sessionId} is not registered`,
             });
           }
           if (state.active !== undefined) {
-            return yield* new ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
               detail: `OpenCode session ${sessionId} already has an active turn`,
             });
@@ -1004,7 +986,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             };
             // No stream is left to end this turn, so it must not start.
             if (streamFailure !== undefined) {
-              return yield* new ProviderAdapterEventStreamError({
+              return yield* new ProviderAdapter.ProviderAdapterEventStreamError({
                 driver,
                 providerSessionId: input.providerSessionId,
                 cause: streamFailure,
@@ -1099,7 +1081,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
-              : new ProviderAdapterTurnStartError({
+              : new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver,
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
@@ -1110,7 +1092,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       steerTurn: (steerInput) =>
         Effect.fail(
-          new ProviderAdapterSteerRunUnsupportedError({
+          new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({
             driver,
             providerThreadId: steerInput.providerThread.id,
           }),
@@ -1150,7 +1132,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // is on the way), the turn is still open and nothing stopped.
           if (!reply.value.interrupted && state.active === turn) {
             turn.interrupted = false;
-            return yield* new ProviderAdapterProtocolError({
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
               detail: `OpenCode session ${sessionId} had nothing running to stop`,
             });
@@ -1159,7 +1141,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
-              : new ProviderAdapterInterruptError({
+              : new ProviderAdapter.ProviderAdapterInterruptError({
                   driver,
                   providerThreadId: interruptInput.providerThread.id,
                   providerTurnId: interruptInput.providerTurnId,
@@ -1180,7 +1162,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }),
       respondToRuntimeRequest: (requestInput) =>
         Effect.fail(
-          new ProviderAdapterRuntimeRequestResponseError({
+          new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
             driver,
             requestId: requestInput.requestId,
             cause: notYet("answering runtime requests"),
@@ -1188,7 +1170,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       readThreadSnapshot: ({ providerThread }) =>
         Effect.fail(
-          new ProviderAdapterReadThreadSnapshotError({
+          new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
             driver,
             providerThreadId: providerThread.id,
             cause: notYet("history snapshots"),
@@ -1196,7 +1178,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       rollbackThread: (rollbackInput) =>
         Effect.fail(
-          new ProviderAdapterRollbackThreadError({
+          new ProviderAdapter.ProviderAdapterRollbackThreadError({
             driver,
             providerThreadId: rollbackInput.providerThread.id,
             checkpointId: rollbackInput.target.checkpointId,
@@ -1205,7 +1187,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       forkThread: (forkInput) =>
         Effect.fail(
-          new ProviderAdapterForkThreadError({
+          new ProviderAdapter.ProviderAdapterForkThreadError({
             driver,
             providerThreadId: forkInput.sourceProviderThread.id,
             cause: notYet("fork"),
@@ -1215,7 +1197,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     return runtime;
   });
 
-  return ProviderAdapterV2.of({
+  return ProviderAdapter.ProviderAdapterV2.of({
     instanceId,
     driver,
     getCapabilities: () => Effect.succeed(OpenCode2ProviderCapabilities),
@@ -1240,7 +1222,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }).pipe(
         Effect.mapError(
           (cause) =>
-            new ProviderAdapterOpenSessionError({
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
               driver,
               providerSessionId: input.providerSessionId,
               cause,
