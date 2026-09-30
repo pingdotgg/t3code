@@ -329,7 +329,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <FanoutSwitchRow
                       icon="arrow.down.circle"
                       label="Automatically pull"
-                      subtitle="Keep the default branch current when there are no local changes."
+                      subtitle="Keep the default branch current when it can fast-forward without overwriting local changes."
                       value={uniform("defaultAutoPull")}
                       disabled={disabledFor("defaultAutoPull")}
                       onValueChange={(value) => write({ defaultAutoPull: value })}

@@ -966,7 +966,7 @@ export const make = (options?: StartupOptions) =>
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
       yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
-      yield* Effect.logDebug("startup phase: syncing clean projects");
+      yield* Effect.logDebug("startup phase: pulling projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
 
       const welcomeBase = yield* resolveWelcomeBase;
