@@ -114,6 +114,22 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
+  it("keeps Standard as text for models without speed tiers", () => {
+    const descriptor = serviceTierDescriptor("default");
+    const nonSpeedDescriptor = {
+      ...descriptor,
+      options: descriptor.options.filter(({ id }) => id === "default" || id === "flex"),
+    };
+    expect(display([EFFORT, nonSpeedDescriptor])).toEqual({
+      label: "High · Standard",
+      speedIcon: null,
+    });
+    expect(display([nonSpeedDescriptor])).toEqual({
+      label: "Standard",
+      speedIcon: null,
+    });
+  });
+
   it("keeps the Codex service tier readable when it is the only trait", () => {
     expect(display([serviceTierDescriptor("default")])).toEqual({
       label: "Standard",

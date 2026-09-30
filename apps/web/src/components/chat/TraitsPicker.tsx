@@ -502,7 +502,7 @@ export function buildTraitsTriggerDisplay(input: {
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
       const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
       if (
-        currentValue === "default" ||
+        ((fastTier || ultrafastTier) && currentValue === "default") ||
         (fastTier && currentValue === fastTier.id) ||
         (ultrafastTier && currentValue === ultrafastTier.id)
       ) {
