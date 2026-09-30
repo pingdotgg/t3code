@@ -121,6 +121,31 @@ it.effect("launches the default browser through the platform command", () => {
   );
 });
 
+it.effect("sets windowsHide for the Windows browser helper", () => {
+  let spawned: ChildProcess.StandardCommand | undefined;
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    yield* launcher.launchBrowser("https://example.com");
+    assert.ok(spawned);
+    assert.equal(spawned.options.windowsHide, true);
+    assert.equal(spawned.options.detached, true);
+    assert.equal(spawned.options.shell, false);
+    assert.include(
+      Buffer.from(spawned.args.at(-1) ?? "", "base64").toString("utf16le"),
+      "https://example.com",
+    );
+  }).pipe(
+    Effect.provide(
+      testLayer({
+        platform: "win32",
+        onSpawn: (command) => {
+          spawned = command;
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("launches an installed editor with platform-safe arguments", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -338,6 +363,7 @@ it.effect("reveals a file in File Explorer through PowerShell on Windows", () =>
       "$ProgressPreference = 'SilentlyContinue'; Start-Process 'explorer.exe' -ArgumentList ('/select,\"' + 'C:\\workspace with spaces\\media\\author''s clip.mp4' + '\"')",
     );
     assert.equal(spawned.options.shell, false);
+    assert.equal(spawned.options.windowsHide, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

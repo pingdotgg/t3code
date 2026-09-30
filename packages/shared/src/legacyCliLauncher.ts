@@ -21,6 +21,7 @@ const executable = join(dirname(require.resolve("@t3code/t3-" + process.platform
 const ipc = process.send !== undefined;
 const child = spawn(executable, process.argv.slice(2), {
   stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+  windowsHide: true,
 });
 const fail = (error) => {
   if (!error) return;

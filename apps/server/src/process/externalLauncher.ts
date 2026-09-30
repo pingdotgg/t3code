@@ -57,6 +57,7 @@ interface EditorLaunch {
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly hideConsole?: true;
 }
 
 interface ProcessLaunch {
@@ -215,6 +216,7 @@ function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLa
     args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
     options: {
       detached: true,
+      windowsHide: true,
       shell: false,
       stdin: "ignore",
       stdout: "ignore",
@@ -599,6 +601,7 @@ function fileExplorerRevealLaunch(
       ...POWERSHELL_ARGUMENTS_PREFIX,
       encodeUtf16LeBase64(buildFileExplorerRevealPowerShellSource("explorer.exe", explorerTarget)),
     ],
+    hideConsole: true,
   };
 }
 
@@ -730,6 +733,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: true,
         shell: spawnCommand.shell,
+        ...(launch.hideConsole === true ? { windowsHide: true } : {}),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",

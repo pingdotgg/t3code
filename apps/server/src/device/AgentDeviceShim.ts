@@ -39,7 +39,7 @@ const env = { ...process.env };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
 delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
 delete env.AGENT_DEVICE_CONFIG;
-const child = spawn(${JSON.stringify(node)}, [${JSON.stringify(entryPath)}, ...args], { stdio: "inherit", env });
+const child = spawn(${JSON.stringify(node)}, [${JSON.stringify(entryPath)}, ...args], { stdio: "inherit", env, windowsHide: true });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });
 `,

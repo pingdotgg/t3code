@@ -13,6 +13,50 @@ const hostPlatform = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Match the real executable used by the subprocess.
 const hostArch = NodeOS.arch();
 
+it("sets windowsHide and forwards arguments and exit status in the generated launcher", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-legacy-launcher-"));
+  try {
+    const entry = NodePath.join(root, "node_modules/t3/dist/bin.mjs");
+    const packageDir = NodePath.join(root, `node_modules/@t3code/t3-${hostPlatform}-${hostArch}`);
+    const preload = NodePath.join(root, "spawn-fixture.cjs");
+    await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+    await NodeFSP.mkdir(packageDir, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(packageDir, "package.json"), "{}");
+    await NodeFSP.writeFile(entry, legacyCliLauncherScript());
+    await NodeFSP.writeFile(
+      preload,
+      `
+const { EventEmitter } = require("node:events");
+require("node:child_process").spawn = (command, args, options) => {
+  const record = { command, args, options };
+  const child = new EventEmitter();
+  console.log(JSON.stringify(record));
+  queueMicrotask(() => child.emit("exit", 23));
+  return child;
+};
+require("node:module").syncBuiltinESMExports();
+`,
+    );
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      ["--require", preload, entry, "serve", "a path with spaces"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(23);
+    expect(JSON.parse(result.stdout)).toEqual({
+      command: NodePath.join(packageDir, hostPlatform === "win32" ? "t3.exe" : "t3"),
+      args: ["serve", "a path with spaces"],
+      options: { stdio: "inherit", windowsHide: true },
+    });
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
 // The fixture executable uses a POSIX shebang. The wrapper itself also runs on Windows.
 it.skipIf(hostPlatform === "win32")(
   "keeps service IPC, arguments, and termination connected",

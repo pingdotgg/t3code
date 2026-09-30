@@ -21,7 +21,7 @@ const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  options: { encoding: "utf8"; timeout: number; windowsHide?: true },
 ) => string;
 
 function canExecuteFile(filePath: string): boolean {
@@ -370,7 +370,7 @@ export function readEnvironmentFromWindowsShell(
   ];
   for (const shell of WINDOWS_SHELL_CANDIDATES) {
     try {
-      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
+      const output = execFile(shell, args, { encoding: "utf8", timeout: 5000, windowsHide: true });
 
       const environment: Partial<Record<string, string>> = {};
       for (const name of names) {
