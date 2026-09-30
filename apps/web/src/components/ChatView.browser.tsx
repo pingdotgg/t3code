@@ -3528,6 +3528,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         behind: true,
         behindBy: 3,
         readyToPull: true,
+        readinessReason: null,
         localBranch: "main",
         localSha: "b".repeat(40),
         remoteBranch: "main",
