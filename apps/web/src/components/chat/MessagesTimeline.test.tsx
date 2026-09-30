@@ -361,27 +361,78 @@ describe("MessagesTimeline", () => {
         });
         const questionToggle = renderer!.root.find(
           (node) =>
-            node.props["aria-label"]?.startsWith("Question answer submitted:") &&
+            node.props["aria-label"]?.startsWith("Provide a spec") &&
             node.props["aria-expanded"] === false,
         );
         expect(questionToggle.props["aria-label"]).toContain(
           Object.values(answers)[0] ?? "spec.txt",
         );
-        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
+        // The question leads the collapsed row so the exchange reads as a
+        // question and answer without expanding (heading + accessible label).
+        expect(JSON.stringify(renderer!.toJSON()).match(/Provide a spec/g)).toHaveLength(2);
         await act(() => questionToggle.props.onClick());
         const markup = JSON.stringify(renderer!.toJSON());
-        expect(markup.match(/Provide a spec/g)).toHaveLength(1);
+        // Expanded, the question also appears in the history: label, heading, history.
+        expect(markup.match(/Provide a spec/g)).toHaveLength(3);
         expect(markup).toContain("spec.txt");
         expect(markup).toContain("Provide a screenshot");
         expect(markup).toContain("shot.png");
         for (const answer of Object.values(answers)) expect(markup).toContain(answer);
         await act(() => questionToggle.props.onClick());
-        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
+        // Collapsing hides the history but keeps the question heading.
+        expect(JSON.stringify(renderer!.toJSON())).toContain("Provide a spec");
       } finally {
         await act(() => renderer?.unmount());
       }
     },
   );
+
+  it("leads an unanswered question row with the question text", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "question-entry",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "question-work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "User input requested",
+                  tone: "tool",
+                  questionAnswer: {
+                    requestId: ApprovalRequestId.make("question-request"),
+                    answers: {},
+                    questionTextById: { scope: "Which repository?" },
+                    attachmentsByQuestionId: {},
+                  },
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      const questionToggle = renderer!.root.find(
+        (node) =>
+          node.props["aria-label"] === "Which repository?" && node.props["aria-expanded"] === false,
+      );
+      const markup = JSON.stringify(renderer!.toJSON());
+      // Heading + accessible label.
+      expect(markup.match(/Which repository\?/g)).toHaveLength(2);
+      await act(() => questionToggle.props.onClick());
+      // Expanded history adds a third occurrence alongside heading and label.
+      expect(JSON.stringify(renderer!.toJSON()).match(/Which repository\?/g)).toHaveLength(3);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
 
   it.each([
     { toolLifecycleStatus: "inProgress", isAtEnd: true },
