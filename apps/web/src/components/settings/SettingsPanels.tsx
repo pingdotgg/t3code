@@ -775,6 +775,13 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     serverPasswordDescription:
       "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
   },
+  {
+    provider: ProviderDriverKind.make("pi"),
+    title: "Pi",
+    badgeLabel: "Early Access",
+    binaryPlaceholder: "Pi binary path",
+    binaryDescription: "Path to the Pi coding agent binary",
+  },
 ] as const;
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {

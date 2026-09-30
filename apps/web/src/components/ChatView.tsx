@@ -3384,14 +3384,18 @@ function ChatViewBody(
         });
         if (result.command === "copy") {
           try {
-            await navigator.clipboard?.writeText(result.text);
+            if (typeof navigator.clipboard?.writeText !== "function") {
+              throw new Error("Clipboard is unavailable.");
+            }
+            await navigator.clipboard.writeText(result.text);
           } catch {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Could not copy the Pi response",
-              }),
-            );
+            toastManager.update(notice, {
+              type: "error",
+              title: "Could not copy the Pi response",
+              description:
+                "The response was retrieved. Clipboard access was denied by the browser.",
+              timeout: 0,
+            });
             return;
           }
           toastManager.update(notice, {
