@@ -64,7 +64,9 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  ChevronDownIcon,
   CircleDashedIcon,
+  CircleIcon,
   ClockIcon,
   EyeIcon,
   FolderIcon,
@@ -84,6 +86,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -153,7 +156,7 @@ import {
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
-import { threadEnvironment } from "../state/threads";
+import { environmentThreadShells, threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -209,7 +212,14 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  type SidebarOpenSubagentBatches,
   type SidebarSubagentCounts,
+  followSidebarSubagentBatches,
+  setSidebarSubagentTreeBatch,
+  SIDEBAR_SUBAGENT_STATUS_LABELS,
+  isWorkingSidebarSubagentStatus,
+  selectSidebarSubagentBatch,
+  sidebarSubagentStatus,
   deriveSidebarSubagentCounts,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
@@ -1064,6 +1074,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   isPinned: boolean;
   // Present only while a subagent of this thread is still working.
   subagentCounts: SidebarSubagentCounts | undefined;
+  // The batch this row's open subagent tree lists; absent while it is closed.
+  // Held by the sidebar so search and section moves do not close the tree.
+  openSubagentBatch: string | undefined;
+  onSetSubagentsOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   // Present on rows whose server supports every drop outcome: dnd-kit
   // sortable bag applied to the row root so the whole row drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1134,11 +1148,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     variant,
     variantAction,
   } = props;
+  const subagentsExpanded = props.openSubagentBatch !== undefined;
+  const subagentTreeId = useId();
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const { onSetSubagentsOpen } = props;
+  // A parked row has no list. Closing it keeps a drag back into the active
+  // list from landing on a taller card than its preview reserved.
+  useEffect(() => {
+    if (variant === "slim" && subagentsExpanded) onSetSubagentsOpen(threadRef, false);
+  }, [onSetSubagentsOpen, subagentsExpanded, threadRef, variant]);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
@@ -2031,8 +2053,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   Regenerating title
                 </span>
               ) : null}
-              {props.subagentCounts ? (
-                <SidebarSubagentCountsBadge counts={props.subagentCounts} />
+              {/* An open tree keeps its toggle after the batch finishes, so it can be closed. */}
+              {props.subagentCounts || subagentsExpanded ? (
+                <SidebarSubagentsToggle
+                  counts={props.subagentCounts}
+                  expanded={subagentsExpanded}
+                  treeId={subagentTreeId}
+                  onToggle={() => onSetSubagentsOpen(threadRef, !subagentsExpanded)}
+                />
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
@@ -2081,42 +2109,204 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
+      {props.openSubagentBatch !== undefined ? (
+        <SidebarSubagentTree
+          id={subagentTreeId}
+          threadRef={threadRef}
+          batchStartedAt={props.openSubagentBatch}
+          lifted={sortable?.isDragging === true}
+          onThreadActivate={onThreadActivate}
+        />
+      ) : null}
     </li>
   );
 });
 
-function SidebarSubagentCountsBadge(props: { counts: SidebarSubagentCounts }) {
-  const { working, done, failed } = props.counts;
-  const label = [
-    `${working} subagent${working === 1 ? "" : "s"} working`,
-    done > 0 ? `${done} done` : null,
-    failed > 0 ? `${failed} failed` : null,
-  ]
-    .filter((part) => part !== null)
-    .join(", ");
+/** The live subagent counts, which also open the row's subagent tree. */
+function SidebarSubagentsToggle(props: {
+  counts: SidebarSubagentCounts | undefined;
+  expanded: boolean;
+  treeId: string;
+  onToggle: () => void;
+}) {
+  const label = props.counts
+    ? [
+        `${props.counts.working} subagent${props.counts.working === 1 ? "" : "s"} working`,
+        props.counts.done > 0 ? `${props.counts.done} done` : null,
+        props.counts.failed > 0 ? `${props.counts.failed} failed` : null,
+      ]
+        .filter((part) => part !== null)
+        .join(", ")
+    : "Subagents";
   return (
-    <span
-      role="img"
-      aria-label={label}
-      className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-xs font-medium tabular-nums"
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            aria-expanded={props.expanded}
+            aria-controls={props.expanded ? props.treeId : undefined}
+            // Taller than the title line it sits on, so the negative margin keeps the row's height.
+            className="-my-0.5 -mr-1 ml-auto inline-flex h-6 min-w-6 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-1 text-xs font-medium tabular-nums outline-none hover:bg-sidebar-control-surface focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              // Closing a finished tree removes this button; hand focus back to the row.
+              if (props.expanded && !props.counts) {
+                event.currentTarget.closest<HTMLElement>('[role="button"]')?.focus();
+              }
+              props.onToggle();
+            }}
+            // Keep a press on the toggle from picking up the sortable row.
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            {props.counts ? (
+              <>
+                <span className="inline-flex items-center gap-0.5 text-info-foreground">
+                  <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
+                  {props.counts.working}
+                </span>
+                {props.counts.done > 0 ? (
+                  <span className="inline-flex items-center gap-0.5 text-success-foreground">
+                    <CheckIcon aria-hidden className="size-3 shrink-0" />
+                    {props.counts.done}
+                  </span>
+                ) : null}
+                {props.counts.failed > 0 ? (
+                  <span className="inline-flex items-center gap-0.5 text-error-foreground">
+                    <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+                    {props.counts.failed}
+                  </span>
+                ) : null}
+              </>
+            ) : null}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "-ml-0.5 size-3 shrink-0 text-muted-foreground",
+                props.expanded && "rotate-180",
+              )}
+            />
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{props.expanded ? "Hide subagents" : "Show subagents"}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SidebarSubagentStatusIcon(props: { status: keyof typeof SIDEBAR_SUBAGENT_STATUS_LABELS }) {
+  if (isWorkingSidebarSubagentStatus(props.status)) {
+    return <CircleDashedIcon aria-hidden className="size-3.5 shrink-0 text-info-foreground" />;
+  }
+  if (props.status === "completed") {
+    return <CheckIcon aria-hidden className="size-3.5 shrink-0 text-success-foreground" />;
+  }
+  if (props.status === "failed") {
+    return <CircleAlertIcon aria-hidden className="size-3.5 shrink-0 text-error-foreground" />;
+  }
+  return <CircleIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />;
+}
+
+// A long batch must not push the rest of the sidebar out of reach.
+const SIDEBAR_SUBAGENT_TREE_PREVIEW_ROWS = 6;
+
+/** The badge's batch of subagents under the row, nested by lineage, with each status. */
+function SidebarSubagentTree(props: {
+  id: string;
+  threadRef: ScopedThreadRef;
+  batchStartedAt: string;
+  // True while the row is being dragged: the list lifts with its card.
+  lifted: boolean;
+  onThreadActivate: (threadRef: ScopedThreadRef) => void;
+}) {
+  const tree = useAtomValue(environmentThreadShells.subagentTreeAtom(props.threadRef));
+  const rows = useMemo(
+    () => selectSidebarSubagentBatch(tree, props.batchStartedAt),
+    [tree, props.batchStartedAt],
+  );
+  // The open subagent is not in the thread list, so mark it here.
+  const activeThreadId = useParams({
+    strict: false,
+    select: (params) =>
+      params.environmentId === props.threadRef.environmentId ? params.threadId : undefined,
+  });
+  const [showAll, setShowAll] = useState(false);
+  const visibleRows = showAll ? rows : rows.slice(0, SIDEBAR_SUBAGENT_TREE_PREVIEW_ROWS);
+  const hiddenCount = rows.length - visibleRows.length;
+  const rowClassName =
+    "flex h-6 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-sm pr-1 text-left text-xs outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+  if (rows.length === 0) {
+    return (
+      <p
+        id={props.id}
+        className="mx-(--sidebar-row-content-inset) py-1 text-muted-foreground text-xs"
+      >
+        No subagents in this batch
+      </p>
+    );
+  }
+  return (
+    <ul
+      id={props.id}
+      aria-label="Subagents"
+      className={cn(
+        "mx-(--sidebar-row-content-inset) mb-1 border-l border-border",
+        // Opaque like the lifted card, so the rows beneath never show through.
+        // Padding instead of margin closes the gap between the card and its list.
+        props.lifted ? "rounded-r-md bg-sidebar pt-1 shadow-lg" : "mt-1",
+      )}
+      // Keep a press on a subagent from picking up the sortable row.
+      onPointerDown={(event) => event.stopPropagation()}
     >
-      <span className="inline-flex items-center gap-0.5 text-info-foreground">
-        <CircleDashedIcon aria-hidden className="size-3.5 shrink-0" />
-        {working}
-      </span>
-      {done > 0 ? (
-        <span className="inline-flex items-center gap-0.5 text-success-foreground">
-          <CheckIcon aria-hidden className="size-3 shrink-0" />
-          {done}
-        </span>
+      {visibleRows.map(({ thread, depth }) => {
+        const status = sidebarSubagentStatus(thread);
+        return (
+          <li key={thread.id} aria-level={depth + 1}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-current={thread.id === activeThreadId ? "page" : undefined}
+                    className={cn(
+                      rowClassName,
+                      thread.id === activeThreadId && "bg-sidebar-row-active",
+                    )}
+                    style={{ paddingLeft: 8 + Math.min(depth, 4) * 12 }}
+                    onClick={() =>
+                      props.onThreadActivate(scopeThreadRef(thread.environmentId, thread.id))
+                    }
+                  />
+                }
+              >
+                <SidebarSubagentStatusIcon status={status} />
+                <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
+                  {thread.title}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {SIDEBAR_SUBAGENT_STATUS_LABELS[status]}
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="right">{thread.title}</TooltipPopup>
+            </Tooltip>
+          </li>
+        );
+      })}
+      {hiddenCount > 0 ? (
+        <li>
+          <button
+            type="button"
+            className={cn(rowClassName, "pl-2 text-muted-foreground")}
+            onClick={() => setShowAll(true)}
+          >
+            Show {hiddenCount} more
+          </button>
+        </li>
       ) : null}
-      {failed > 0 ? (
-        <span className="inline-flex items-center gap-0.5 text-error-foreground">
-          <CircleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-          {failed}
-        </span>
-      ) : null}
-    </span>
+    </ul>
   );
 }
 
@@ -2297,6 +2487,27 @@ export default function Sidebar() {
     previousSubagentCounts.current = counts;
     return counts;
   }, [threads]);
+  const [storedOpenSubagentBatches, setOpenSubagentBatches] = useState<SidebarOpenSubagentBatches>(
+    () => new Map(),
+  );
+  const openSubagentBatches = followSidebarSubagentBatches(
+    storedOpenSubagentBatches,
+    subagentCountsByThreadKey,
+  );
+  if (openSubagentBatches !== storedOpenSubagentBatches) {
+    setOpenSubagentBatches(openSubagentBatches);
+  }
+  const setSubagentTreeOpen = useCallback((threadRef: ScopedThreadRef, open: boolean) => {
+    const threadKey = scopedThreadKey(threadRef);
+    setOpenSubagentBatches((batches) =>
+      setSidebarSubagentTreeBatch(
+        batches,
+        threadKey,
+        // With nothing working there is no batch to open.
+        open ? previousSubagentCounts.current?.get(threadKey)?.batchStartedAt : undefined,
+      ),
+    );
+  }, []);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -4899,6 +5110,8 @@ export default function Sidebar() {
                             }
                             isPinned={thread.pinnedAt != null}
                             subagentCounts={subagentCountsByThreadKey.get(threadKey)}
+                            openSubagentBatch={openSubagentBatches.get(threadKey)}
+                            onSetSubagentsOpen={setSubagentTreeOpen}
                             sortable={sortable}
                             dropVerb={
                               dragState?.activeKey === threadKey

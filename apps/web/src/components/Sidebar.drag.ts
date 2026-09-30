@@ -130,6 +130,10 @@ export function createSidebarSortingStrategy(input: {
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
     let headerScale: number | undefined;
+    // An open subagent tree makes a card taller, so an arriving card takes the
+    // collapsed height from the root scale; measured cards only set the scale
+    // when nothing else on the list can.
+    let shortestCard: number | undefined;
     for (const [index, item] of items.entries()) {
       if (item.kind === "marker") {
         if (item.marker === "settled-header" || item.marker === "snoozed-header") {
@@ -138,14 +142,17 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
-      if (item.section === "pinned" || item.section === "active")
-        cardHeight ??= rects[index]?.height;
-      else slimHeight ??= rects[index]?.height;
+      const height = rects[index]?.height;
+      if (item.section === "pinned" || item.section === "active") {
+        if (height !== undefined) shortestCard = Math.min(shortestCard ?? height, height);
+      } else slimHeight ??= height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
     // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
     const scale =
-      slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
+      slimHeight !== undefined
+        ? slimHeight / 36
+        : (headerScale ?? (cardHeight ?? shortestCard ?? 82) / 82);
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
@@ -201,12 +208,17 @@ export function createSidebarSortingStrategy(input: {
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
+      // A card that stays a card keeps its measured height, open tree and all.
+      const keepsVariant =
+        moved &&
+        (item.section === "pinned" || item.section === "active") ===
+          (active.section === "pinned" || active.section === "active");
       return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
         ? labelHeight
         : item.kind === "marker" && item.marker.endsWith("placeholder")
           ? slimHeight
-          : moved
+          : moved && !keepsVariant
             ? fallback
             : (rect?.height ?? fallback);
     });

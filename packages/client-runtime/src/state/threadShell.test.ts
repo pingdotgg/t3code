@@ -3,6 +3,7 @@ import {
   ProjectId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
@@ -197,5 +198,81 @@ describe("v2 thread shell lists", () => {
       disposeList();
       harness.registry.dispose();
     }
+  });
+});
+
+describe("subagent thread trees", () => {
+  const root = v2ThreadShell;
+  const child = (id: string, parent = root.id): OrchestrationV2ThreadShell => ({
+    ...root,
+    id: ThreadId.make(id),
+    lineage: { ...root.lineage, parentThreadId: parent, relationshipToParent: "subagent" },
+  });
+
+  it("lists nested subagents depth first and skips forks, archived, and deleted threads", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const a = child("a");
+    const b = child("b", a.id);
+    const c = child("c");
+    const fork = {
+      ...child("fork"),
+      lineage: { ...a.lineage, relationshipToParent: "fork" as const },
+    };
+    const archived = { ...child("archived"), archivedAt: root.createdAt };
+    const deleted = { ...child("deleted"), deletedAt: root.createdAt };
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, c, b, a, fork, archived, deleted],
+    });
+    const atom = threads.subagentTreeAtom({ environmentId, threadId: root.id });
+    expect(registry.get(atom).map((row) => [row.thread.id, row.depth])).toEqual([
+      [a.id, 0],
+      [b.id, 1],
+      [c.id, 0],
+    ]);
+    registry.dispose();
+  });
+
+  it("keeps its rows across unrelated updates and refreshes when a subagent changes", () => {
+    const { registry, threads, snapshotAtom } = makeHarness([environmentId, remoteEnvironmentId]);
+    const a = child("a");
+    const other = { ...root, id: ThreadId.make("unrelated") };
+    const snapshot = { ...v2ShellSnapshot, threads: [root, a, other] };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    registry.set(snapshotAtom(remoteEnvironmentId), { ...v2ShellSnapshot, threads: [root] });
+    const local = threads.subagentTreeAtom({ environmentId, threadId: root.id });
+    const remote = threads.subagentTreeAtom({
+      environmentId: remoteEnvironmentId,
+      threadId: root.id,
+    });
+    const dispose = registry.mount(local);
+    const before = registry.get(local);
+    expect(before).toHaveLength(1);
+    expect(registry.get(remote)).toEqual([]);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [root, a, { ...other, title: "New title" }],
+    });
+    expect(registry.get(local)).toBe(before);
+
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [root, { ...a, status: "completed" }, other],
+    });
+    expect(registry.get(local)).not.toBe(before);
+    expect(registry.get(local)[0]?.thread.source.status).toBe("completed");
+    dispose();
+    registry.dispose();
+  });
+
+  it("terminates cyclic lineage without listing the parent under itself", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const a = child("a");
+    const cycle = { ...root, lineage: { ...a.lineage, parentThreadId: a.id } };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [cycle, a] });
+    const atom = threads.subagentTreeAtom({ environmentId, threadId: root.id });
+    expect(registry.get(atom).map((row) => row.thread.id)).toEqual([a.id]);
+    registry.dispose();
   });
 });

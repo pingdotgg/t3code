@@ -1380,11 +1380,13 @@ export interface SidebarSubagentCounts {
   readonly working: number;
   readonly done: number;
   readonly failed: number;
+  /** When the batch's earliest member started its run. */
+  readonly batchStartedAt: string;
 }
 
 type SidebarSubagentThread = Pick<
   SidebarThreadSummary,
-  "environmentId" | "lineage" | "createdAt"
+  "environmentId" | "lineage" | "createdAt" | "archivedAt" | "deletedAt"
 > & {
   readonly source: Pick<SidebarThreadSummary["source"], "status" | "activityRunStatus">;
   readonly runtime: Pick<NonNullable<SidebarThreadSummary["runtime"]>, "activityStartedAt"> | null;
@@ -1394,13 +1396,53 @@ type SidebarSubagentThread = Pick<
   > | null;
 };
 
-const WORKING_SUBAGENT_STATUSES = new Set([
+type SidebarSubagentStatus = SidebarThreadSummary["source"]["status"];
+
+const WORKING_SUBAGENT_STATUSES = new Set<SidebarSubagentStatus>([
   "preparing",
   "queued",
   "starting",
   "running",
   "waiting",
 ]);
+
+/** A subagent's live run status, falling back to its thread status. */
+export function sidebarSubagentStatus(
+  thread: Pick<SidebarSubagentThread, "source">,
+): SidebarSubagentStatus {
+  return thread.source.activityRunStatus ?? thread.source.status;
+}
+
+/** Run start, not creation, marks a subagent: a resumed child keeps its old createdAt. */
+export function sidebarSubagentStartedAt(
+  thread: Pick<SidebarSubagentThread, "runtime" | "latestRun" | "createdAt">,
+): string {
+  return (
+    thread.runtime?.activityStartedAt ??
+    thread.latestRun?.startedAt ??
+    thread.latestRun?.requestedAt ??
+    thread.createdAt
+  );
+}
+
+export function isWorkingSidebarSubagentStatus(status: SidebarSubagentStatus): boolean {
+  return WORKING_SUBAGENT_STATUSES.has(status);
+}
+
+// Matches the sidebar's own row statuses and the chat timeline's subagent rows.
+export const SIDEBAR_SUBAGENT_STATUS_LABELS = {
+  preparing: "Starting",
+  queued: "Queued",
+  starting: "Starting",
+  running: "Working",
+  waiting: "Waiting",
+  idle: "Idle",
+  completed: "Done",
+  failed: "Failed",
+  cancelled: "Stopped",
+  interrupted: "Stopped",
+  rolled_back: "Rolled back",
+} satisfies Record<SidebarSubagentStatus, string>;
 
 /**
  * Subagent tallies keyed by the parent's scoped thread key. Only parents with
@@ -1421,28 +1463,36 @@ export function deriveSidebarSubagentCounts(
 ): ReadonlyMap<string, SidebarSubagentCounts> {
   const subagentsByParent = new Map<
     string,
-    Array<{ readonly startedAt: string; readonly finishedAt: string; readonly status: string }>
+    Array<{
+      readonly startedAt: string;
+      readonly finishedAt: string;
+      readonly status: SidebarSubagentStatus;
+    }>
   >();
   for (const thread of threads) {
     const parentThreadId = thread.lineage.parentThreadId;
-    if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) continue;
+    // Match the subagent tree, which leaves out archived and deleted threads.
+    if (
+      thread.lineage.relationshipToParent !== "subagent" ||
+      parentThreadId === null ||
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null
+    ) {
+      continue;
+    }
     const parentKey = scopedThreadKey(scopeThreadRef(thread.environmentId, parentThreadId));
     const subagents = subagentsByParent.get(parentKey) ?? [];
-    const startedAt =
-      thread.runtime?.activityStartedAt ??
-      thread.latestRun?.startedAt ??
-      thread.latestRun?.requestedAt ??
-      thread.createdAt;
+    const startedAt = sidebarSubagentStartedAt(thread);
     subagents.push({
       startedAt,
       finishedAt: thread.latestRun?.completedAt ?? startedAt,
-      status: thread.source.activityRunStatus ?? thread.source.status,
+      status: sidebarSubagentStatus(thread),
     });
     subagentsByParent.set(parentKey, subagents);
   }
   const counts = new Map<string, SidebarSubagentCounts>();
   for (const [parentKey, subagents] of subagentsByParent) {
-    const working = subagents.filter((subagent) => WORKING_SUBAGENT_STATUSES.has(subagent.status));
+    const working = subagents.filter((subagent) => isWorkingSidebarSubagentStatus(subagent.status));
     if (working.length === 0) continue;
     let batchStartedAt = working.reduce(
       (earliest, subagent) => (subagent.startedAt < earliest ? subagent.startedAt : earliest),
@@ -1452,7 +1502,7 @@ export function deriveSidebarSubagentCounts(
     let failed = 0;
     // Latest finish first: each member can only move the batch start earlier.
     const finished = subagents
-      .filter((subagent) => !WORKING_SUBAGENT_STATUSES.has(subagent.status))
+      .filter((subagent) => !isWorkingSidebarSubagentStatus(subagent.status))
       .toSorted((left, right) => (left.finishedAt < right.finishedAt ? 1 : -1));
     for (const subagent of finished) {
       if (subagent.finishedAt < batchStartedAt) break;
@@ -1463,10 +1513,90 @@ export function deriveSidebarSubagentCounts(
     const kept = previous?.get(parentKey);
     counts.set(
       parentKey,
-      kept?.working === working.length && kept.done === done && kept.failed === failed
+      kept?.working === working.length &&
+        kept.done === done &&
+        kept.failed === failed &&
+        kept.batchStartedAt === batchStartedAt
         ? kept
-        : { working: working.length, done, failed },
+        : { working: working.length, done, failed, batchStartedAt },
     );
   }
   return counts;
+}
+
+/**
+ * The expanded tree's rows for one batch: the parent's direct subagents that
+ * joined it, each with all of its own descendants. Subagents with work still
+ * running under them come first, so a long batch's preview never hides what
+ * the counts say is working. A subagent the provider runs itself has no run
+ * here, so its status is unknown; it is left out rather than listed as idle.
+ */
+export function selectSidebarSubagentBatch<
+  Row extends {
+    readonly depth: number;
+    readonly thread: Pick<SidebarSubagentThread, "source" | "runtime" | "latestRun" | "createdAt">;
+  },
+>(rows: ReadonlyArray<Row>, batchStartedAt: string): ReadonlyArray<Row> {
+  const working: Row[][] = [];
+  const settled: Row[][] = [];
+  let group: Row[] | null = null;
+  let groupWorking = false;
+  let hiddenBelow: number | null = null;
+  const closeGroup = () => {
+    if (group !== null && group.length > 0) (groupWorking ? working : settled).push(group);
+  };
+  for (const row of rows) {
+    if (row.depth === 0) {
+      closeGroup();
+      group = sidebarSubagentStartedAt(row.thread) >= batchStartedAt ? [] : null;
+      groupWorking = false;
+      hiddenBelow = null;
+    }
+    if (group === null) continue;
+    if (hiddenBelow !== null && row.depth > hiddenBelow) continue;
+    hiddenBelow = row.thread.latestRun === null ? row.depth : null;
+    if (hiddenBelow !== null) continue;
+    group.push(row);
+    groupWorking ||= isWorkingSidebarSubagentStatus(sidebarSubagentStatus(row.thread));
+  }
+  closeGroup();
+  return [...working, ...settled].flat();
+}
+
+/** Open subagent trees: each parent's scoped thread key and the batch its tree lists. */
+export type SidebarOpenSubagentBatches = ReadonlyMap<string, string>;
+
+/**
+ * Opens a parent's tree on the given batch, or closes it when there is none.
+ * Repeating a call changes nothing, so an effect may close a tree safely.
+ */
+export function setSidebarSubagentTreeBatch(
+  open: SidebarOpenSubagentBatches,
+  threadKey: string,
+  batchStartedAt: string | undefined,
+): SidebarOpenSubagentBatches {
+  if (open.get(threadKey) === batchStartedAt) return open;
+  const next = new Map(open);
+  if (batchStartedAt === undefined) next.delete(threadKey);
+  else next.set(threadKey, batchStartedAt);
+  return next;
+}
+
+/**
+ * Moves each open tree to its parent's live batch. A parent with nothing
+ * working keeps the batch it last showed, so a finished tree stays until it
+ * is closed. Returns the same map when nothing moved.
+ */
+export function followSidebarSubagentBatches(
+  open: SidebarOpenSubagentBatches,
+  counts: ReadonlyMap<string, SidebarSubagentCounts>,
+): SidebarOpenSubagentBatches {
+  let next: Map<string, string> | null = null;
+  for (const [threadKey, batchStartedAt] of open) {
+    const live = counts.get(threadKey)?.batchStartedAt;
+    if (live === undefined || live === batchStartedAt) continue;
+    next ??= new Map(open);
+    next.set(threadKey, live);
+  }
+  return next ?? open;
 }

@@ -8,8 +8,14 @@
  * this stays a pure fold over `runs` and `subagents`.
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationV2Subagent, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadProjection,
+  ThreadId,
+} from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+
+import type { EnvironmentThreadShell } from "./models.ts";
 
 import { isActiveSubagentStatus, isTerminalSubagentStatus } from "./subagentRuntime.ts";
 import { resolveActiveThreadRun } from "./threadWorkflows.ts";
@@ -87,4 +93,33 @@ export function resolveSubagentPillSegment(
     label: `${total} done`,
     accessibilityLabel: `${total} ${total === 1 ? "agent" : "agents"} done`,
   };
+}
+
+export interface ThreadSubagentTreeRow {
+  readonly thread: EnvironmentThreadShell;
+  readonly depth: number;
+}
+
+/**
+ * Every subagent descended from a thread, depth first, for the sidebar's
+ * expanded row. Unlike the per-turn roster above this spans the whole thread.
+ * Only subagent lineage is walked: forks are independent conversations.
+ */
+export function deriveThreadSubagentTree(
+  parentThreadId: ThreadId,
+  childrenByParent: ReadonlyMap<ThreadId, ReadonlyArray<EnvironmentThreadShell>>,
+): ReadonlyArray<ThreadSubagentTreeRow> {
+  const rows: ThreadSubagentTreeRow[] = [];
+  // Lineage should be acyclic, but a bad projection must not hang the sidebar.
+  const visited = new Set([parentThreadId]);
+  const visit = (id: ThreadId, depth: number) => {
+    for (const thread of childrenByParent.get(id) ?? []) {
+      if (visited.has(thread.id)) continue;
+      visited.add(thread.id);
+      rows.push({ thread, depth });
+      visit(thread.id, depth + 1);
+    }
+  };
+  visit(parentThreadId, 0);
+  return rows;
 }

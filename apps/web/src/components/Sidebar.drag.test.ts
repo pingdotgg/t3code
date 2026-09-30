@@ -347,6 +347,57 @@ describe("sidebar drag projection", () => {
     }
   });
 
+  it("moves peers by a dragged card's measured height when its subagent tree is open", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      thread("s1", "settled"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: ["s1"],
+      settledExpanded: true,
+    });
+    const args = layout(items, "a2", "a1");
+    // a2 is 58px taller with its tree open; everything below it shifts down.
+    const expanded = args.rects[3]!;
+    expanded.height += 58;
+    expanded.bottom += 58;
+    for (const rect of args.rects.slice(4)) {
+      rect.top += 58;
+      rect.bottom += 58;
+    }
+    expect(strategy({ ...args, index: 2 })).toEqual({ ...stationary, y: 141 });
+  });
+
+  it("gives an arriving card its collapsed height when every card has a tree open", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      settledHeader,
+      thread("s1", "settled"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: ["s1"],
+      settledExpanded: true,
+    });
+    const args = layout(items, "s1", "a1");
+    const expanded = args.rects[2]!;
+    expanded.height += 58;
+    expanded.bottom += 58;
+    for (const rect of args.rects.slice(3)) {
+      rect.top += 58;
+      rect.bottom += 58;
+    }
+    // s1 lands above a1 as an 82px card, not as tall as a1's open tree.
+    expect(strategy({ ...args, index: 2 })?.y).toBe(83);
+  });
+
   it("keeps the pinned header above the gap when a lower pin moves to the top", () => {
     const result = preview(
       { items: pinned, settledOrder: [], settledExpanded: true },
