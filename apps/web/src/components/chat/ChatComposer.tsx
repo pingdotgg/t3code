@@ -6389,6 +6389,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         detectTrigger?: boolean;
       }) => {
         const promptForState = options?.prompt ?? promptRef.current;
+        if (promptForState === "") composerEditorRef.current?.resetUndoHistory();
         const cursor = clampCollapsedComposerCursor(promptForState, options?.cursor ?? 0);
         setComposerHighlightedItemId(null);
         setComposerCursor(cursor);
@@ -7341,6 +7342,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           )
                         : undefined
                     }
+                    historyScopeKey={composerTargetKey(routeThreadRef)}
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
