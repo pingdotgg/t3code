@@ -90,19 +90,31 @@ describe("normalizeProviderAccentColor", () => {
 
 describe("shouldShowInstanceBadge", () => {
   it("shows the badge when the entry has an accent color", () => {
-    const entry = { driverKind: codex, accentColor: "#ff8800" };
+    const entry = { driverKind: codex, accentColor: "#ff8800", enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("shows the badge when two entries share a driver, even without an accent", () => {
-    const first = { driverKind: codex, accentColor: undefined };
-    const second = { driverKind: codex, accentColor: undefined };
+    const first = { driverKind: codex, accentColor: undefined, enabled: true };
+    const second = { driverKind: codex, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
 
+  it("hides the badge when the other instance sharing the driver is disabled", () => {
+    const entry = { driverKind: codex, accentColor: undefined, enabled: true };
+    const disabled = { driverKind: codex, accentColor: undefined, enabled: false };
+    expect(shouldShowInstanceBadge(entry, [entry, disabled])).toBe(false);
+  });
+
+  it("keeps the badge on a disabled instance that shares a driver with an enabled one", () => {
+    const enabled = { driverKind: codex, accentColor: undefined, enabled: true };
+    const disabled = { driverKind: codex, accentColor: undefined, enabled: false };
+    expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
+  });
+
   it("hides the badge for a single instance of a driver with no accent", () => {
-    const entry = { driverKind: codex, accentColor: undefined };
-    const other = { driverKind: claude, accentColor: undefined };
+    const entry = { driverKind: codex, accentColor: undefined, enabled: true };
+    const other = { driverKind: claude, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry, other])).toBe(false);
   });
 });

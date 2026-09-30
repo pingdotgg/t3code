@@ -72,17 +72,25 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
 
 /**
  * Whether an instance's icon carries the account badge: accent color set, or
- * several instances sharing a driver so the brand glyph alone is ambiguous.
- * Shared by the composer trigger, the picker rail, and sidebar/thread rows.
+ * several enabled instances sharing a driver so the brand glyph alone is
+ * ambiguous. Disabled instances can't be picked, so they never make another
+ * instance ambiguous, but a disabled entry itself (an old thread's row) still
+ * counts against the enabled ones. Shared by the composer trigger, the picker
+ * rail, and sidebar/thread rows.
  */
 export function shouldShowInstanceBadge(
-  entry: { readonly driverKind: ProviderDriverKind; readonly accentColor?: string | undefined },
-  entries: Iterable<{ readonly driverKind: ProviderDriverKind }>,
+  entry: {
+    readonly driverKind: ProviderDriverKind;
+    readonly accentColor?: string | undefined;
+    readonly enabled: boolean;
+  },
+  entries: Iterable<{ readonly driverKind: ProviderDriverKind; readonly enabled: boolean }>,
 ): boolean {
   if (entry.accentColor) return true;
-  let sharedDriverCount = 0;
+  let sharedDriverCount = entry.enabled ? 0 : 1;
   for (const candidate of entries) {
-    if (candidate.driverKind === entry.driverKind && ++sharedDriverCount > 1) return true;
+    if (!candidate.enabled || candidate.driverKind !== entry.driverKind) continue;
+    if (++sharedDriverCount > 1) return true;
   }
   return false;
 }
