@@ -7,7 +7,7 @@
     "push:android:smoke": "node scripts/android-push-smoke.ts",
     "push:android:watch": "node scripts/android-push-watch.ts",
     "destroy": "alchemy destroy",
-    "test": "vp test run",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
