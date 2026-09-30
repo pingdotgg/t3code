@@ -12,6 +12,7 @@ import { readClaudeRelayUsageLimits, zaiQuotaResponseToLimits } from "./claudeRe
 
 const checkedAt = "2026-09-25T00:00:00.000Z";
 const isUsageWindow = Schema.is(ServerProviderUsageWindow);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const refuseRequests = HttpClient.make(() => Effect.die("must not call a relay usage endpoint"));
 
@@ -211,7 +212,7 @@ describe("Z.ai usage limits", () => {
         );
         expect(probed?.unavailable?.reason).toBe("probeFailed");
         expect(resolveUsageLimitsAfterProbe({ published, probed })).toBe(published);
-        expect(JSON.stringify(probed)).not.toContain("fixture-secret");
+        expect(yield* encodeJson(probed)).not.toContain("fixture-secret");
       }
     }),
   );
@@ -312,7 +313,7 @@ describe("Z.ai usage limits", () => {
           ANTHROPIC_API_KEY: " api-key ",
         }).pipe(Effect.provideService(HttpClient.HttpClient, client));
         expect(limits?.windows[0]?.usedPercent).toBe(0);
-        expect(JSON.stringify(limits)).not.toMatch(/auth-token|api-key/);
+        expect(yield* encodeJson(limits)).not.toMatch(/auth-token|api-key/);
       }
     }),
   );
