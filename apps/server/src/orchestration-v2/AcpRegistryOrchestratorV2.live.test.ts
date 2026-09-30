@@ -1,5 +1,5 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -22,26 +22,23 @@ import { describe } from "vite-plus/test";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { AntigravityInstallation } from "../provider/AntigravityInstallation.ts";
-import { CodexInstallation } from "../provider/CodexInstallation.ts";
-import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as AntigravityInstallation from "../provider/AntigravityInstallation.ts";
+import * as CodexInstallation from "../provider/CodexInstallation.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ModelManifest from "../provider/ModelManifest.ts";
 import { ProviderInstanceRegistryHydrationLive } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "../provider/Layers/ProviderEventLoggers.ts";
-import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime.ts";
+import * as ProviderEventLoggers from "../provider/Layers/ProviderEventLoggers.ts";
+import * as OpenCodeRuntime from "../provider/opencodeRuntime.ts";
 import * as OpenCodeServerLedger from "../provider/OpenCodeServerLedger.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
-import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 
 // The Antigravity switch is a durable, named conformance fixture for Google's
 // official Registry distribution. It uses credentials already owned by the
@@ -51,7 +48,9 @@ import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.
 //   src/orchestration-v2/AcpRegistryOrchestratorV2.live.test.ts
 const PlatformTestLayer = Layer.merge(
   NodeServices.layer,
-  Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => Effect.die("unused title link") }),
+  Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+    resolveLink: () => Effect.die("unused title link"),
+  }),
 );
 
 const runAntigravityFixture = process.env.T3_ACP_ANTIGRAVITY_LIVE === "1";
@@ -77,7 +76,7 @@ const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
 
 const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer));
 
-const serverSettingsLayer = ServerSettingsService.layerTest({
+const serverSettingsLayer = ServerSettings.layerTest({
   providerInstances: {
     [liveInstanceId]: {
       driver: ProviderDriverKind.make("acpRegistry"),
@@ -105,20 +104,25 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
       ),
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntimeLive.pipe(
+      OpenCodeRuntime.OpenCodeRuntimeLive.pipe(
         Layer.provide(OpenCodeServerLedger.layerTest),
         Layer.provide(PlatformTestLayer),
       ),
-      Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+      Layer.succeed(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
+      ),
       ModelManifest.layerTest,
-      AntigravityInstallation.layer.pipe(
+      AntigravityInstallation.AntigravityInstallation.layer.pipe(
         Layer.provide(serverConfigLayer.pipe(Layer.provide(PlatformTestLayer))),
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(PlatformTestLayer),
       ),
       // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
-      Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
-      Layer.succeed(ServerEnvironmentIdentity, {
+      Layer.mock(CodexInstallation.CodexInstallation)({
+        managedDirectory: "unused-managed-installation",
+      }),
+      Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(
           EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
         ),
@@ -128,7 +132,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
 );
 
 const liveLayer = OrchestrationV2LayerLive.pipe(
-  Layer.provide(mcpSessionRegistryTestLayer),
+  Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
   Layer.provide(serverConfigLayer),
@@ -144,7 +148,7 @@ const waitForIdle = Effect.fn("AcpRegistryOrchestratorV2Live.waitForIdle")(funct
   threadId: ThreadId,
   expectedRunCount: number,
 ) {
-  const orchestrator = yield* OrchestratorV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   for (let attempt = 0; attempt < 900; attempt += 1) {
     const projection = yield* orchestrator.getThreadProjection(threadId);
     if (
@@ -167,7 +171,7 @@ describe.runIf(runAntigravityFixture || process.env.T3_ACP_REGISTRY_LIVE_ORCHEST
       `runs and resumes ${runAntigravityFixture ? "Google Antigravity" : "a real registry agent"} through the production V2 harness`,
       () =>
         Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
           const projectId = ProjectId.make("project:acp-registry-live");
           const threadId = ThreadId.make("thread:acp-registry-live");
           const marker = "ACP_REGISTRY_LIVE_7H3Q";

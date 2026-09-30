@@ -16,30 +16,16 @@ import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
-import {
-  EventSinkV2,
-  type EventSinkV2Shape,
-  EventSinkWriteError,
-  layer as eventSinkLayer,
-} from "../orchestration-v2/EventSink.ts";
-import { layer as eventStoreLayer } from "../orchestration-v2/EventStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../orchestration-v2/IdAllocator.ts";
-import {
-  LegacyV1ThreadImporter,
-  layer as legacyImporterLayer,
-} from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
-import {
-  ProjectionMaintenanceV2,
-  layer as projectionMaintenanceLayer,
-} from "../orchestration-v2/ProjectionMaintenance.ts";
-import {
-  ProjectionStoreV2,
-  layer as projectionStoreLayer,
-} from "../orchestration-v2/ProjectionStore.ts";
-import { layer as projectStoreLayer } from "../orchestration-v2/ProjectStore.ts";
-import { layer as threadCommandExecutorLayer } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as EventStore from "../orchestration-v2/EventStore.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -48,15 +34,15 @@ import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
-const eventPersistenceLayer = eventSinkLayer.pipe(
-  Layer.provideMerge(Layer.merge(eventStoreLayer, projectionStoreLayer)),
+const eventPersistenceLayer = EventSink.layer.pipe(
+  Layer.provideMerge(Layer.merge(EventStore.layer, ProjectionStore.layer)),
 );
 const servicesLayer = Layer.mergeAll(
-  legacyImporterLayer.pipe(Layer.provideMerge(eventPersistenceLayer)),
-  projectionMaintenanceLayer.pipe(Layer.provide(eventPersistenceLayer)),
-  projectStoreLayer,
-  idAllocatorLayer,
-  threadCommandExecutorLayer,
+  LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(eventPersistenceLayer)),
+  ProjectionMaintenance.layer.pipe(Layer.provide(eventPersistenceLayer)),
+  ProjectStore.layer,
+  IdAllocator.layer,
+  ThreadCommandExecutor.layer,
   Layer.succeed(WorkspacePaths.WorkspacePaths, {
     normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
     resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
@@ -145,20 +131,20 @@ it.effect("retries a partial project deletion without repeating child events or 
     yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
 
     yield* Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const projections = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       yield* eventSink.write({
         events: threadIds.map((threadId) => nativeThreadCreated(projectId, threadId)),
       });
       const attempts: ThreadId[] = [];
-      const failingEventSink = EventSinkV2.of({
+      const failingEventSink = EventSink.EventSinkV2.of({
         ...eventSink,
         commitCommand: Effect.fn("ProjectDeletionTest.failSecondChild")(function* (
-          input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
+          input: Parameters<EventSink.EventSinkV2Shape["commitCommand"]>[0],
         ) {
           attempts.push(input.threadId);
           if (attempts.length === 2) {
-            return yield* new EventSinkWriteError({
+            return yield* new EventSink.EventSinkWriteError({
               commandId: input.commandId,
               eventCount: input.events.length,
               cause: new Error("Injected failure for the second child"),
@@ -168,7 +154,7 @@ it.effect("retries a partial project deletion without repeating child events or 
         }),
       });
       const service = yield* ProjectService.make.pipe(
-        Effect.provideService(EventSinkV2, failingEventSink),
+        Effect.provideService(EventSink.EventSinkV2, failingEventSink),
       );
       const input = { commandId, projectId, force: true };
       const failure = yield* service.delete(input).pipe(Effect.flip);
@@ -304,9 +290,9 @@ it.effect(
 
       // Build the engine after seeding the legacy database, as on a real restart.
       yield* Effect.gen(function* () {
-        const importer = yield* LegacyV1ThreadImporter;
-        const maintenance = yield* ProjectionMaintenanceV2;
-        const projections = yield* ProjectionStoreV2;
+        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
         const service = yield* ProjectService.make;
         assert.deepEqual(yield* importer.reconcileShells, {
           importedThreadCount: 1,
@@ -384,8 +370,8 @@ it.effect("rejects a child deletion command ID already accepted for an unrelated
     yield* seedProject(otherProjectId);
 
     yield* Effect.gen(function* () {
-      const eventSink = yield* EventSinkV2;
-      const projections = yield* ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const service = yield* ProjectService.make;
       yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
       const accepted = yield* eventSink.commitCommand({
@@ -443,10 +429,10 @@ it.effect("deletes a project without force once its imported threads were delete
     yield* TestClock.setTime(Date.parse("2026-09-04T12:00:00.000Z"));
 
     yield* Effect.gen(function* () {
-      const importer = yield* LegacyV1ThreadImporter;
-      const projections = yield* ProjectionStoreV2;
-      const eventSink = yield* EventSinkV2;
-      const idAllocator = yield* IdAllocatorV2;
+      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const service = yield* ProjectService.make;
       yield* importer.reconcileShells;
       const early = yield* service

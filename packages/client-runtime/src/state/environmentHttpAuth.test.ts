@@ -19,30 +19,24 @@ import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import type { HttpClient } from "effect/unstable/http";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   ConnectionTransientError,
   RelayConnectionTarget,
   type PreparedConnection,
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
-import { ManagedRelayDpopSigner, type ManagedRelayDpopProofInput } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rpc/http.ts";
-import {
-  fetchEnvironmentPullRequestDiff,
-  type PullRequestDiffCredentialRejectedError,
-  PullRequestDiffLoader,
-  pullRequestDiffLoaderLayer,
-} from "./pullRequestDiffHttp.ts";
+import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
-import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import {
   boundedThreadSnapshotLoaderLayer,
   fetchEnvironmentBoundedThreadSnapshot,
 } from "./boundedThreadSnapshotHttp.ts";
-import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -121,10 +115,12 @@ function credentialRejectedResponse(reason = "invalid_credential") {
 function makeHarness(reply: (requestNumber: number) => Response | Promise<Response>) {
   const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
   const authorizations: Array<
-    Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]>[0]
+    Parameters<
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpopHttp"]
+    >[0]
   > = [];
-  const proofs: Array<ManagedRelayDpopProofInput> = [];
-  const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+  const proofs: Array<ManagedRelay.ManagedRelayDpopProofInput> = [];
+  const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
     authorizeDpopHttp: (input) =>
@@ -143,7 +139,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
         };
       }),
   });
-  const signer = ManagedRelayDpopSigner.of({
+  const signer = ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("test-thumbprint"),
     createProof: (input) =>
       Effect.sync(() => {
@@ -180,7 +176,7 @@ const LOADERS: ReadonlyArray<{
     input: HttpInput,
   ) => Effect.Effect<
     unknown,
-    RemoteEnvironmentRequestError | PullRequestDiffCredentialRejectedError,
+    RemoteEnvironmentRequestError | PullRequestDiffLoader.PullRequestDiffCredentialRejectedError,
     HttpClient.HttpClient
   >;
 }> = [
@@ -190,7 +186,8 @@ const LOADERS: ReadonlyArray<{
     path: "/api/pull-requests/diff",
     response: DIFF_RESULT,
     expected: DIFF_RESULT,
-    load: (input: HttpInput) => fetchEnvironmentPullRequestDiff({ ...input, diff: DIFF }),
+    load: (input: HttpInput) =>
+      PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({ ...input, diff: DIFF }),
   },
   {
     name: "session permissions",
@@ -215,7 +212,10 @@ const LOADERS: ReadonlyArray<{
     response: encodeThreadSnapshot(THREAD),
     expected: THREAD,
     load: (input: HttpInput) =>
-      fetchEnvironmentThreadSnapshot({ ...input, threadId: THREAD.projection.thread.id }),
+      ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
+        ...input,
+        threadId: THREAD.projection.thread.id,
+      }),
   },
   {
     name: "bounded thread snapshot",
@@ -293,9 +293,10 @@ describe("authenticated environment HTTP requests", () => {
       const harness = makeHarness((requestNumber) =>
         requestNumber === 1 ? credentialRejectedResponse() : Response.json(DIFF_RESULT),
       );
-      const result = yield* fetchEnvironmentPullRequestDiff({ ...harness.input, diff: DIFF }).pipe(
-        Effect.provide(harness.httpLayer),
-      );
+      const result = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer));
 
       expect(result).toEqual(DIFF_RESULT);
       expect(harness.authorizations).toEqual([
@@ -363,12 +364,20 @@ describe("authenticated environment HTTP requests", () => {
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
-            Layer.succeed(ManagedRelayDpopSigner, Option.getOrThrow(harness.input.signer)),
-            Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
+            Layer.succeed(
+              ManagedRelay.ManagedRelayDpopSigner,
+              Option.getOrThrow(harness.input.signer),
+            ),
+            Layer.succeed(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+              harness.remoteAuthorization,
+            ),
           ),
         ),
       );
-      const loader = yield* ThreadSnapshotLoader.pipe(Effect.provide(loaderLayer));
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader.pipe(
+        Effect.provide(loaderLayer),
+      );
       const result = yield* loader.load(PREPARED, THREAD.projection.thread.id);
       expect(result).toEqual({
         _tag: "present",
@@ -389,16 +398,24 @@ describe("authenticated environment HTTP requests", () => {
   it.effect("uses the authorization service captured by the diff loader layer", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(DIFF_RESULT));
-      const loaderLayer = pullRequestDiffLoaderLayer.pipe(
+      const loaderLayer = PullRequestDiffLoader.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
             harness.httpLayer,
-            Layer.succeed(ManagedRelayDpopSigner, Option.getOrThrow(harness.input.signer)),
-            Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
+            Layer.succeed(
+              ManagedRelay.ManagedRelayDpopSigner,
+              Option.getOrThrow(harness.input.signer),
+            ),
+            Layer.succeed(
+              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+              harness.remoteAuthorization,
+            ),
           ),
         ),
       );
-      const loader = yield* PullRequestDiffLoader.pipe(Effect.provide(loaderLayer));
+      const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader.pipe(
+        Effect.provide(loaderLayer),
+      );
       const result = yield* loader.load(PREPARED, DIFF);
 
       expect(result).toEqual(DIFF_RESULT);
@@ -411,10 +428,10 @@ describe("authenticated environment HTTP requests", () => {
   it.effect("preserves the credential rejection after the one recovery attempt fails", () =>
     Effect.gen(function* () {
       const harness = makeHarness(() => credentialRejectedResponse());
-      const error = yield* fetchEnvironmentPullRequestDiff({ ...harness.input, diff: DIFF }).pipe(
-        Effect.provide(harness.httpLayer),
-        Effect.flip,
-      );
+      const error = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "PullRequestDiffCredentialRejectedError",
@@ -458,10 +475,10 @@ describe("authenticated environment HTTP requests", () => {
   ])("does not renew or retry on $name", ({ reply, errorTag }) =>
     Effect.gen(function* () {
       const harness = makeHarness(reply);
-      const error = yield* fetchEnvironmentPullRequestDiff({ ...harness.input, diff: DIFF }).pipe(
-        Effect.provide(harness.httpLayer),
-        Effect.flip,
-      );
+      const error = yield* PullRequestDiffLoader.fetchEnvironmentPullRequestDiff({
+        ...harness.input,
+        diff: DIFF,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
 
       expect(error._tag).toBe(errorTag);
       expect(harness.calls).toHaveLength(1);
@@ -532,7 +549,7 @@ describe("authenticated environment HTTP requests", () => {
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(SESSION));
       const authorizing = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: () =>
           Deferred.succeed(authorizing, undefined).pipe(Effect.andThen(Effect.never)),
@@ -564,7 +581,7 @@ describe("authenticated environment HTTP requests", () => {
       });
       const authorizing = yield* Deferred.make<void>();
       const authorize = yield* Deferred.make<void>();
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: (input) =>
           Deferred.succeed(authorizing, undefined).pipe(
@@ -601,7 +618,7 @@ describe("authenticated environment HTTP requests", () => {
         reason: "transport",
         detail: "Relay unavailable",
       });
-      const remoteAuthorization = RemoteEnvironmentAuthorization.of({
+      const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
         ...harness.remoteAuthorization,
         authorizeDpopHttp: () => Effect.fail(failure),
       });

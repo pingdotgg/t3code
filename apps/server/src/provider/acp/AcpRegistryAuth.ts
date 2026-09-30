@@ -16,7 +16,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as AcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
-import { make as makeProviderAuthFlow, type ProviderAuthFlowContext } from "../ProviderAuthFlow.ts";
+import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./AcpRegistryProbe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -157,7 +157,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const runTerminal = Effect.fnUntraced(function* (
     resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent,
     method: Extract<AcpSchema.AuthMethod, { readonly type: "terminal" }>,
-    context: ProviderAuthFlowContext,
+    context: ProviderAuthFlow.ProviderAuthFlowContext,
   ) {
     if (Option.isNone(pty))
       return yield* failure(
@@ -228,7 +228,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       return yield* failure("start", "The provider login command did not finish successfully.");
   });
 
-  const authenticate = (methodId: string, context: ProviderAuthFlowContext) =>
+  const authenticate = (methodId: string, context: ProviderAuthFlow.ProviderAuthFlowContext) =>
     Effect.gen(function* () {
       if (!options.settings.enabled)
         return yield* failure("start", "Enable this provider before signing in.");
@@ -357,7 +357,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       ? coordinator.value.withForegroundStartup(options.settings.agentId, logout)
       : logout
   ).pipe(Effect.andThen(options.onChanged(false)));
-  return yield* makeProviderAuthFlow({
+  return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
     // ACP doesn't advertise its credential scope. Conservatively treat all
     // instances of the same agent on this environment as sharing credentials.

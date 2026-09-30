@@ -18,21 +18,26 @@ import {
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
-import { ServerConfig } from "../../../config.ts";
-import { ThreadLaunchService } from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
-import { ProjectService } from "../../../project/ProjectService.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { SourceControlRepositoryService } from "../../../sourceControl/SourceControlRepositoryService.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
   success: Project,
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
-  dependencies: [McpInvocationContext, ThreadManagementService, ProjectService, Crypto.Crypto],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ProjectService.ProjectService,
+    Crypto.Crypto,
+  ],
 };
 const ProjectListTool = Tool.make("t3_project_list", {
   ...shared,
@@ -81,7 +86,10 @@ const ProjectCloneTool = Tool.make("t3_project_clone", {
     "Clone a repository using the app's source-control service. This only clones; register the returned cwd with t3_project_create. An existing destination is not adopted or removed on failure.",
   parameters: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
-  dependencies: [...shared.dependencies, SourceControlRepositoryService],
+  dependencies: [
+    ...shared.dependencies,
+    SourceControlRepositoryService.SourceControlRepositoryService,
+  ],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
@@ -116,7 +124,12 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     runId: Schema.NullOr(RunId),
     status: Schema.NullOr(OrchestrationV2RunStatus),
   }),
-  dependencies: [...shared.dependencies, ThreadLaunchService, FileSystem.FileSystem, ServerConfig],
+  dependencies: [
+    ...shared.dependencies,
+    ThreadLaunchService.ThreadLaunchService,
+    FileSystem.FileSystem,
+    ServerConfig.ServerConfig,
+  ],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);

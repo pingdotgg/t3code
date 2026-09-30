@@ -22,9 +22,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { ServerConfig, layerTest as serverConfigLayerTest } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import {
   cursorMcpServers,
@@ -65,10 +65,10 @@ describe("CursorAdapterV2", () => {
           environment: { HOME: workspace },
           fileSystem,
           path,
-          idAllocator: yield* IdAllocatorV2,
-          serverConfig: yield* ServerConfig.pipe(
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          serverConfig: yield* ServerConfig.ServerConfig.pipe(
             Effect.provide(
-              serverConfigLayerTest(workspace, { prefix: "cursor-v2-lifecycle-config-" }),
+              ServerConfig.layerTest(workspace, { prefix: "cursor-v2-lifecycle-config-" }),
             ),
           ),
           runner: {
@@ -184,7 +184,7 @@ describe("CursorAdapterV2", () => {
           status === "finished" ? "idle" : status === "cancelled" ? "cancelled" : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
     );
   }
 
@@ -209,9 +209,9 @@ describe("CursorAdapterV2", () => {
         environment: { HOME: workspace },
         fileSystem,
         path,
-        idAllocator: yield* IdAllocatorV2,
-        serverConfig: yield* ServerConfig.pipe(
-          Effect.provide(serverConfigLayerTest(workspace, { prefix: "cursor-v2-error-config-" })),
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig.pipe(
+          Effect.provide(ServerConfig.layerTest(workspace, { prefix: "cursor-v2-error-config-" })),
         ),
         runner: {
           assertComplete: Effect.void,
@@ -335,7 +335,7 @@ describe("CursorAdapterV2", () => {
         Stream.runHead,
       );
       assert.equal(sentMessages[1], "/compress");
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
@@ -514,9 +514,9 @@ describe("CursorAdapterV2", () => {
         environment: { HOME: workspace },
         fileSystem,
         path,
-        idAllocator: yield* IdAllocatorV2,
-        serverConfig: yield* ServerConfig.pipe(
-          Effect.provide(serverConfigLayerTest(workspace, { prefix: "cursor-v2-search-config-" })),
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig.pipe(
+          Effect.provide(ServerConfig.layerTest(workspace, { prefix: "cursor-v2-search-config-" })),
         ),
         runner: {
           assertComplete: Effect.void,
@@ -671,7 +671,7 @@ describe("CursorAdapterV2", () => {
           },
         ],
       );
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
   it("maps Cursor auto and model parameters to SDK selections", () => {

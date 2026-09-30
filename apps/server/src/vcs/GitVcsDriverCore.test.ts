@@ -28,7 +28,7 @@ import {
   type ReviewDiffFileContentsInput,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
   makeGitVcsDriverCore,

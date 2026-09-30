@@ -20,8 +20,8 @@ import * as Queue from "effect/Queue";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 
@@ -85,7 +85,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
     command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
   }>();
-  const supervisor = EnvironmentSupervisor.of({
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: { environmentId: ENVIRONMENT_ID },
     session: yield* SubscriptionRef.make(
       Option.some({
@@ -99,13 +99,13 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
         },
       } as unknown as RpcSession),
     ),
-  } as EnvironmentSupervisor["Service"]);
+  } as EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const runtime = Atom.runtime(
     Layer.mergeAll(
-      Layer.succeed(EnvironmentRegistry, {
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
         run: (_environmentId, effect) =>
-          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-      } as EnvironmentRegistry["Service"]),
+          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry.EnvironmentRegistry["Service"]),
       Layer.succeed(
         Crypto.Crypto,
         Crypto.make({

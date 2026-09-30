@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
@@ -55,7 +55,7 @@ export const EnvironmentHandlersLive = EnvironmentToolkit.toLayer({
     }),
   t3_environment_preferences_update: (patch) =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext;
+      const scope = yield* McpInvocationContext.McpInvocationContext;
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       return yield* executor.withLock(
         scope.threadId,

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { CursorSdkCatalogError, makeCursorSdkCatalog } from "./CursorSdkCatalog.ts";
+import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const user = {
   apiKeyName: "test-key",
@@ -18,7 +18,7 @@ const model = {
 } satisfies SDKModel;
 
 const catalogError = () =>
-  new CursorSdkCatalogError({
+  new CursorSdkCatalog.CursorSdkCatalogError({
     authenticationFailure: false,
     cause: new Error("catalog unavailable"),
   });
@@ -28,7 +28,7 @@ describe("CursorSdkCatalog", () => {
     Effect.gen(function* () {
       let userCalls = 0;
       let modelCalls = 0;
-      const catalog = yield* makeCursorSdkCatalog({
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
         readUser: () => Effect.sync(() => ((userCalls += 1), user)),
         readModels: () => Effect.sync(() => ((modelCalls += 1), [model])),
       });
@@ -45,7 +45,7 @@ describe("CursorSdkCatalog", () => {
   it.effect("does not cache failed or empty model discovery", () =>
     Effect.gen(function* () {
       let modelCalls = 0;
-      const catalog = yield* makeCursorSdkCatalog({
+      const catalog = yield* CursorSdkCatalog.makeCursorSdkCatalog({
         readUser: () => Effect.succeed(user),
         readModels: () =>
           Effect.suspend(() => {

@@ -29,7 +29,7 @@ import {
 } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { SshConnectionProfile, type ConnectionCatalogEntry } from "../connection/catalog.ts";
-import { ConnectionProfileStore } from "../connection/profileStore.ts";
+import * as ConnectionProfileStore from "../connection/profileStore.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -38,7 +38,7 @@ import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
 } from "./pullRequests.ts";
-import { PullRequestDiffLoader } from "./pullRequestDiffHttp.ts";
+import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { executeAtomQuery } from "./runtime.ts";
 import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import { GitHubRoutingPermissions } from "../connection/githubRoutingPermissions.ts";
@@ -408,8 +408,8 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
     Layer.merge(
       Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
       Layer.succeed(
-        PullRequestDiffLoader,
-        PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
+        PullRequestDiffLoader.PullRequestDiffLoader,
+        PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
       ),
     ),
   );
@@ -580,7 +580,7 @@ for (const side of ["origin", "destination"] as const) {
           yield* stored === "unavailable"
             ? route
             : route.pipe(
-                Effect.provideService(ConnectionProfileStore, {
+                Effect.provideService(ConnectionProfileStore.ConnectionProfileStore, {
                   get: () => read,
                   put: () => Effect.die("unused"),
                   remove: () => Effect.die("unused"),

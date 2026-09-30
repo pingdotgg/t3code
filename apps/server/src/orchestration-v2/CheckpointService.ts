@@ -21,7 +21,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
 const ROOT_CHECKPOINT_SCOPE_NAME = "root";
@@ -169,7 +169,7 @@ export function checkpointRefForScopeOrdinal(input: {
 }
 
 function checkpointIdForScopeOrdinal(
-  idAllocator: IdAllocatorV2Shape,
+  idAllocator: IdAllocator.IdAllocatorV2Shape,
   input: {
     readonly scopeId: CheckpointScopeId;
     readonly ordinalWithinScope: number;
@@ -182,7 +182,7 @@ function checkpointIdForScopeOrdinal(
 }
 
 function makeRootRunScope(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
@@ -243,12 +243,12 @@ function makeCheckpoint(input: {
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
-  CheckpointStore.CheckpointStore | IdAllocatorV2
+  CheckpointStore.CheckpointStore | IdAllocator.IdAllocatorV2
 > = Layer.effect(
   CheckpointServiceV2,
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;
-    const idAllocator = yield* IdAllocatorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const workspaceSemaphores = yield* Ref.make(new Map<string, Semaphore.Semaphore>());
 
     const getWorkspaceSemaphore = (cwd: string) =>

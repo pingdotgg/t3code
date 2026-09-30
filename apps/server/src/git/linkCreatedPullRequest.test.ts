@@ -12,19 +12,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
-import {
-  OrchestratorV2,
-  type OrchestratorV2Shape,
-  OrchestratorDispatchError,
-} from "../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
 } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { ProjectService } from "../project/ProjectService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
-import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -76,14 +72,14 @@ function prResult(pr: GitRunStackedActionResult["pr"]): Pick<GitRunStackedAction
 }
 
 const makeDependencies = (
-  dispatch: OrchestratorV2Shape["dispatch"],
+  dispatch: Orchestrator.OrchestratorV2Shape["dispatch"],
   threadShell: PullRequestTestThread | null = thread,
 ) =>
   Layer.mergeAll(
-    Layer.mock(ProjectService)({
+    Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeedSome(project),
     }),
-    Layer.mock(OrchestratorV2)({
+    Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: () => Effect.succeed(threadShell ? v2PullRequestThread(threadShell) : null),
       dispatch,
     }),
@@ -91,7 +87,7 @@ const makeDependencies = (
 
 const recordingDispatch = Effect.fn("recordingDispatch")(function* () {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
-  const dispatch: OrchestratorV2Shape["dispatch"] = (command) =>
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Ref.update(commands, (recorded) => [...recorded, command]).pipe(
       Effect.as({ sequence: 1, storedEvents: [] }),
     );
@@ -201,9 +197,9 @@ describe("linkCreatedPullRequest", () => {
 
   it.effect("swallows an already-linked rejection and other dispatch failures", () =>
     Effect.gen(function* () {
-      const rejecting: OrchestratorV2Shape["dispatch"] = (command) =>
+      const rejecting: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
         Effect.fail(
-          new OrchestratorDispatchError({
+          new Orchestrator.OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: "already linked",
@@ -234,13 +230,13 @@ it.effect(
     Effect.gen(function* () {
       const refreshed: string[] = [];
       const dependencies = Layer.mergeAll(
-        Layer.mock(OrchestratorV2)({
+        Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadShell: () => Effect.succeed(v2PullRequestThread(thread)),
         }),
         Layer.mock(ProjectStore.ProjectStoreV2)({
           listShells: () => Effect.succeed([project]),
         }),
-        Layer.mock(PullRequestService)({
+        Layer.mock(PullRequestService.PullRequestService)({
           refreshAfterTurn: (id) =>
             Effect.sync(() => {
               refreshed.push(id);

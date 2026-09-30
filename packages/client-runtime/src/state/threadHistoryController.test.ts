@@ -3,19 +3,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import {
-  ThreadHistoryController,
-  threadHistoryControllerLayer,
-  type ThreadHistoryHandler,
-  type ThreadHistoryLoadEarlierResult,
-} from "./threadHistoryController.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 
 const ENV = "env-history" as EnvironmentId;
 const THREAD = "thread-history" as ThreadId;
 
 function handler(
   tag: string,
-): ThreadHistoryHandler & { readonly tag: string; readonly calls: number } {
+): ThreadHistoryController.ThreadHistoryHandler & { readonly tag: string; readonly calls: number } {
   const state = { tag, calls: 0 };
   return {
     get tag() {
@@ -26,7 +21,9 @@ function handler(
     },
     loadEarlier: () => {
       state.calls += 1;
-      return Effect.succeed({ _tag: "loaded" } satisfies ThreadHistoryLoadEarlierResult);
+      return Effect.succeed({
+        _tag: "loaded",
+      } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult);
     },
   };
 }
@@ -34,7 +31,7 @@ function handler(
 describe("ThreadHistoryController", () => {
   it.effect("does not let an older finalizer delete a newer registration", () =>
     Effect.gen(function* () {
-      const controller = yield* ThreadHistoryController;
+      const controller = yield* ThreadHistoryController.ThreadHistoryController;
       const older = handler("older");
       const newer = handler("newer");
 
@@ -51,16 +48,16 @@ describe("ThreadHistoryController", () => {
 
       yield* controller.unregister(newerRegistration);
       expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
-    }).pipe(Effect.provide(threadHistoryControllerLayer)),
+    }).pipe(Effect.provide(ThreadHistoryController.layer)),
   );
 
   it.effect("unregister removes only its own matching registration", () =>
     Effect.gen(function* () {
-      const controller = yield* ThreadHistoryController;
+      const controller = yield* ThreadHistoryController.ThreadHistoryController;
       const first = handler("first");
       const registration = yield* controller.register(ENV, THREAD, first);
       yield* controller.unregister(registration);
       expect(yield* controller.loadEarlier(ENV, THREAD)).toEqual({ _tag: "noop" });
-    }).pipe(Effect.provide(Layer.fresh(threadHistoryControllerLayer))),
+    }).pipe(Effect.provide(Layer.fresh(ThreadHistoryController.layer))),
   );
 });

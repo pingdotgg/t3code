@@ -30,13 +30,16 @@ import {
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestratorMcpService } from "../../OrchestratorMcpService.ts";
-import { ThreadMetadataMcpService } from "../../ThreadMetadataMcpService.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
-const dependencies = [McpInvocationContext.McpInvocationContext, OrchestratorMcpService];
+const dependencies = [
+  McpInvocationContext.McpInvocationContext,
+  OrchestratorMcpService.OrchestratorMcpService,
+];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
-  ThreadMetadataMcpService,
+  ThreadMetadataMcpService.ThreadMetadataMcpService,
 ];
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {

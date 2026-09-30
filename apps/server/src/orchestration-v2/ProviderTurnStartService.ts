@@ -20,10 +20,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { GitWorkflowService } from "../git/GitWorkflowService.ts";
-import { ProjectService } from "../project/ProjectService.ts";
-import { ProviderAuthService } from "../provider/Services/ProviderAuthService.ts";
-import { EventSinkV2 } from "./EventSink.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -41,16 +41,12 @@ import {
   type ProviderAdapterV2HistoricalContext,
   type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
-import { ProjectionStoreV2, type ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
-import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
-import {
-  canRouteRelatedSubagent,
-  RunExecutionServiceV2,
-  selectInheritedBackgroundTurnItems,
-} from "./RunExecutionService.ts";
-import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import * as RunExecutionService from "./RunExecutionService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -88,31 +84,31 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
-  | EventSinkV2
+  | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
-  | IdAllocatorV2
+  | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
-  | GitWorkflowService
-  | ProjectService
-  | ProviderAuthService
-  | ProjectionStoreV2
-  | ProviderSessionManagerV2
-  | RunExecutionServiceV2
-  | RuntimePolicyV2
+  | GitWorkflowService.GitWorkflowService
+  | ProjectService.ProjectService
+  | ProviderAuthService.ProviderAuthService
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | RunExecutionService.RunExecutionServiceV2
+  | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
-    const eventSink = yield* EventSinkV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
-    const idAllocator = yield* IdAllocatorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const fileSystem = yield* FileSystem.FileSystem;
-    const gitWorkflow = yield* GitWorkflowService;
-    const projects = yield* ProjectService;
-    const providerAuth = yield* ProviderAuthService;
-    const projectionStore = yield* ProjectionStoreV2;
-    const providerSessions = yield* ProviderSessionManagerV2;
-    const runExecution = yield* RunExecutionServiceV2;
-    const runtimePolicy = yield* RuntimePolicyV2;
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+    const projects = yield* ProjectService.ProjectService;
+    const providerAuth = yield* ProviderAuthService.ProviderAuthService;
+    const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -122,7 +118,9 @@ export const layer: Layer.Layer<
       readonly attemptId: OrchestrationV2RunAttempt["id"];
       readonly providerThreadId: OrchestrationV2ProviderThread["id"];
       readonly runOrdinal: number;
-      readonly inheritedBackgroundTurnItems: ReturnType<typeof selectInheritedBackgroundTurnItems>;
+      readonly inheritedBackgroundTurnItems: ReturnType<
+        typeof RunExecutionService.selectInheritedBackgroundTurnItems
+      >;
     }) => {
       // Guards and background routing need live execution state, not a fresh
       // allocation of every completed message and tool output in the thread.
@@ -139,7 +137,7 @@ export const layer: Layer.Layer<
         loadInheritedBackgroundTurnItems: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) =>
-              selectInheritedBackgroundTurnItems({
+              RunExecutionService.selectInheritedBackgroundTurnItems({
                 threadId: input.threadId,
                 currentProviderThreadId: input.providerThreadId,
                 currentRunOrdinal: input.runOrdinal,
@@ -494,9 +492,9 @@ export const layer: Layer.Layer<
         }
       }
       const selectInheritedBackgroundItems = (
-        current: ProjectionRuntimeRecoveryState,
-      ): ReturnType<typeof selectInheritedBackgroundTurnItems> =>
-        selectInheritedBackgroundTurnItems({
+        current: ProjectionStore.ProjectionRuntimeRecoveryState,
+      ): ReturnType<typeof RunExecutionService.selectInheritedBackgroundTurnItems> =>
+        RunExecutionService.selectInheritedBackgroundTurnItems({
           threadId: current.thread.id,
           currentProviderThreadId: providerThread.id,
           currentRunOrdinal: run.ordinal,
@@ -940,7 +938,7 @@ export const layer: Layer.Layer<
         return;
       }
       const routableSubagents = projection.subagents.filter((subagent) =>
-        canRouteRelatedSubagent(subagent.status),
+        RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
       const userText = projectComposerContextForProvider({
         text: message.text,

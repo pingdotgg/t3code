@@ -21,7 +21,7 @@ import {
   renderHistory,
   selectHistory,
 } from "./ContextHandoffBudget.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
@@ -228,7 +228,7 @@ function providerMessageWithContextHandoffs(input: {
 
 const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffService.layer")(
   function* () {
-    const idAllocator = yield* IdAllocatorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const tokenCap = yield* handoffTokenCapConfig.pipe(
       Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
     );
@@ -494,7 +494,5 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
   },
 );
 
-export const layer: Layer.Layer<ContextHandoffServiceV2, never, IdAllocatorV2> = Layer.effect(
-  ContextHandoffServiceV2,
-  makeContextHandoffService(),
-);
+export const layer: Layer.Layer<ContextHandoffServiceV2, never, IdAllocator.IdAllocatorV2> =
+  Layer.effect(ContextHandoffServiceV2, makeContextHandoffService());

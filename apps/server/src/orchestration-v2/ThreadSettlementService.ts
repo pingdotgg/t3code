@@ -24,8 +24,8 @@ import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
-import { ProjectionStoreV2, type ProjectionSettlementCandidate } from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -131,7 +131,7 @@ function pullRequestSettles(
 
 /** Cheap checks that run before any source control lookup. */
 export function isAutoSettlementCandidate(
-  thread: ProjectionSettlementCandidate,
+  thread: ProjectionStore.ProjectionSettlementCandidate,
   nowMs: number,
 ): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
@@ -157,7 +157,7 @@ export function isAutoSettlementCandidate(
 }
 
 export function resolveAutoSettlementAt(input: {
-  readonly thread: ProjectionSettlementCandidate;
+  readonly thread: ProjectionStore.ProjectionSettlementCandidate;
   readonly pullRequest: SettlementPullRequest | null;
   readonly nowMs: number;
   readonly autoSettleAfterDays: number | null;
@@ -250,8 +250,8 @@ export function autoSettlementSettingsKey(
 }
 
 export const make = Effect.gen(function* () {
-  const orchestrator = yield* OrchestratorV2;
-  const projections = yield* ProjectionStoreV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const git = yield* GitManager.GitManager;

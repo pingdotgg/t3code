@@ -16,7 +16,7 @@ import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { ProjectHandlersLive } from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
 
@@ -40,7 +40,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     let launchedSender: ThreadId | undefined;
     const dependencies = Layer.mergeAll(
       NodeCrypto.layer,
-      Layer.succeed(McpInvocationContext, {
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
         environmentId: EnvironmentId.make("environment"),
         threadId: sourceThreadId,
         providerSessionId: "session",

@@ -15,10 +15,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as CheckpointService from "./CheckpointService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 export class CheckpointCaptureExecutionError extends Schema.TaggedError<CheckpointCaptureExecutionError>()(
   "CheckpointCaptureExecutionError",
@@ -48,14 +48,17 @@ export class CheckpointCaptureServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   CheckpointCaptureServiceV2,
   never,
-  CheckpointServiceV2 | EventSinkV2 | IdAllocatorV2 | ProjectionStoreV2
+  | CheckpointService.CheckpointServiceV2
+  | EventSink.EventSinkV2
+  | IdAllocator.IdAllocatorV2
+  | ProjectionStore.ProjectionStoreV2
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
-    const checkpoints = yield* CheckpointServiceV2;
-    const eventSink = yield* EventSinkV2;
-    const ids = yield* IdAllocatorV2;
-    const projections = yield* ProjectionStoreV2;
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
 
     const execute = Effect.fn("orchestrationV2.checkpointCapture.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -249,7 +252,7 @@ export const layer: Layer.Layer<
 );
 
 function makeCheckpointTurnItem(input: {
-  readonly idAllocator: IdAllocatorV2Shape;
+  readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;

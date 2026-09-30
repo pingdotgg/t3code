@@ -1,6 +1,6 @@
-import { CodexInstallation } from "../CodexInstallation.ts";
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
-import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
+import * as CodexInstallation from "../CodexInstallation.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -23,10 +23,10 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
   createProviderVersionAdvisory,
@@ -34,11 +34,8 @@ import {
   resolveLatestProviderVersion,
 } from "../providerMaintenance.ts";
 import { CodexDriver } from "./CodexDriver.ts";
-import {
-  CodexAppServerClientFactory,
-  type CodexAppServerClientFactoryShape,
-} from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
+import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
 
@@ -46,22 +43,24 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(idAllocatorLayer),
+  Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(
-    Layer.mock(CodexAppServerClientFactory)({
+    Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),
     }),
   ),
   Layer.provideMerge(
-    Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+    Layer.mock(CodexInstallation.CodexInstallation)({
+      managedDirectory: "unused-managed-installation",
+    }),
   ),
-  Layer.provideMerge(Layer.mock(ServerSecretStore)({})),
+  Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
   Layer.provideMerge(
-    Layer.succeed(ServerEnvironmentIdentity, {
+    Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
     }),
   ),
-  Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ResetCreditCoordinator.layerTest),
   Layer.provideMerge(
@@ -69,7 +68,12 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
       shouldRunScopeWork: () => Effect.succeed(false),
     }),
   ),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,
@@ -91,7 +95,7 @@ it.layer(testLayer)("CodexDriver", (it) => {
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
       const credentials = new Map<string, Uint8Array>();
-      const secrets = ServerSecretStore.of({
+      const secrets = ServerSecretStore.ServerSecretStore.of({
         get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
         set: (key, value) =>
           Effect.sync(() => {
@@ -123,10 +127,12 @@ it.layer(testLayer)("CodexDriver", (it) => {
           source: "local" as const,
           version: "0.156.1",
         };
-        const installation = yield* CodexInstallation;
-        const serverConfig = yield* ServerConfig;
+        const installation = yield* CodexInstallation.CodexInstallation;
+        const serverConfig = yield* ServerConfig.ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
-        const launches: Array<Parameters<CodexAppServerClientFactoryShape["open"]>[0]> = [];
+        const launches: Array<
+          Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+        > = [];
         // Sign-out interrupts an account check that is still resolving the runtime.
         // Interrupt the two startup checks that way (one is the sign-in listener's);
         // the disconnect below must still refresh.
@@ -150,8 +156,8 @@ it.layer(testLayer)("CodexDriver", (it) => {
           config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
         }).pipe(
           Effect.provideService(
-            CodexAppServerClientFactory,
-            CodexAppServerClientFactory.of({
+            CodexAdapterV2.CodexAppServerClientFactory,
+            CodexAdapterV2.CodexAppServerClientFactory.of({
               open: (launch) =>
                 Effect.sync(() => launches.push(launch)).pipe(
                   Effect.andThen(Effect.die("The fixture stops after recording the launch")),
@@ -159,8 +165,8 @@ it.layer(testLayer)("CodexDriver", (it) => {
             }),
           ),
           Effect.provideService(
-            CodexInstallation,
-            CodexInstallation.of({
+            CodexInstallation.CodexInstallation,
+            CodexInstallation.CodexInstallation.of({
               ...installation,
               managedDirectory: "unused-managed-installation",
               resolve: () => Effect.succeed(executable),
@@ -230,7 +236,7 @@ it.layer(testLayer)("CodexDriver", (it) => {
         expect(after.models).toEqual([]);
         expect(Option.isNone(yield* store.get)).toBe(true);
       }).pipe(
-        Effect.provideService(ServerSecretStore, secrets),
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
         Effect.provideService(
           HttpClient.HttpClient,
           HttpClient.make((request) =>

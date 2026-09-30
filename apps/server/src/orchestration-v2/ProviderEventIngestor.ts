@@ -25,10 +25,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { AnalyticsService } from "../telemetry/AnalyticsService.ts";
-import { EventSinkV2 } from "./EventSink.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { IdAllocatorV2 } from "./IdAllocator.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as EventSink from "./EventSink.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 
@@ -80,7 +80,7 @@ export class ProviderTurnAnalytics extends Context.Reference<{
 export const analyticsLive = Layer.effect(
   ProviderTurnAnalytics,
   Effect.gen(function* () {
-    const analytics = yield* AnalyticsService;
+    const analytics = yield* AnalyticsService.AnalyticsService;
     return {
       record: (properties: Readonly<Record<string, unknown>>) =>
         analytics.record("provider.turn.completed", properties),
@@ -249,13 +249,13 @@ const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent)
 export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
-  EventSinkV2 | IdAllocatorV2 | ProjectionStoreV2
+  EventSink.EventSinkV2 | IdAllocator.IdAllocatorV2 | ProjectionStore.ProjectionStoreV2
 > = Layer.effect(
   ProviderEventIngestorV2,
   Effect.gen(function* () {
-    const eventSink = yield* EventSinkV2;
-    const projections = yield* ProjectionStoreV2;
-    const idAllocator = yield* IdAllocatorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const analytics = yield* ProviderTurnAnalytics;
     const completedTurnAnalytics = new Set<string>();
 

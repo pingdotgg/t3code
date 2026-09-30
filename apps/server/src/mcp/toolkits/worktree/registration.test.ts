@@ -1,6 +1,6 @@
-import { OrchestratorV2 } from "../../../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
-import { DeviceService } from "../../../device/DeviceService.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
+import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -13,31 +13,31 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
-import { ProviderAdapterRegistryV2 } from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
-import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
-import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ProviderRegistry from "../../../provider/Services/ProviderRegistry.ts";
+import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
-import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
+import * as VcsStatusBroadcaster from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const StubServicesLive = Layer.mergeAll(
-  Layer.mock(OrchestratorV2)({}),
-  Layer.mock(ProjectionStoreV2)({}),
-  Layer.mock(DeviceService)({}),
-  Layer.mock(ThreadManagementService)({}),
-  Layer.mock(ProviderRegistry)({}),
-  Layer.mock(ProviderAdapterRegistryV2)({}),
-  Layer.mock(ScheduledTaskService)({}),
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+  Layer.mock(DeviceService.DeviceService)({}),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+  Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+  Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
-  Layer.mock(VcsStatusBroadcaster)({}),
+  Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

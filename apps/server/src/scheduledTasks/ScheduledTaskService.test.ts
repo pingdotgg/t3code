@@ -37,11 +37,7 @@ import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../persistence/Layers/Sqlite.ts";
-import {
-  ScheduledTaskService,
-  layer as scheduledTaskServiceLayer,
-  listDueTasks,
-} from "./ScheduledTaskService.ts";
+import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -136,7 +132,7 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       yield* insertRow(sql, { ...row, prompt: secret }, now);
     }
     const warnings: unknown[] = [];
-    const tasks = yield* listDueTasks(DateTime.makeUnsafe(now)).pipe(
+    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now)).pipe(
       Effect.provide(
         Logger.layer([
           Logger.make(({ message }) => {
@@ -218,7 +214,7 @@ it.effect(
         Effect.gen(function* () {
           yield* Layer.build(
             Layer.provideMerge(
-              scheduledTaskServiceLayer,
+              ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
@@ -315,7 +311,7 @@ it.effect(
         Effect.gen(function* () {
           yield* Layer.build(
             Layer.provideMerge(
-              scheduledTaskServiceLayer,
+              ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
@@ -383,7 +379,7 @@ const updateTestDeps = Layer.mergeAll(
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
 );
 
-const updateTestLayer = scheduledTaskServiceLayer.pipe(Layer.provide(updateTestDeps));
+const updateTestLayer = ScheduledTaskService.layer.pipe(Layer.provide(updateTestDeps));
 
 // Only `boundThreadId` (v2) exists as a live binding target, inside
 // `updateProjectId`. `v1ThreadId` exists only in the legacy projection —
@@ -397,7 +393,7 @@ const archivedThreadId = ThreadId.make("thread:archived");
 
 // Same service plus direct SQL access to its in-memory database, for tests
 // that must plant row state the public API cannot express.
-const updateTestLayerWithSql = scheduledTaskServiceLayer.pipe(Layer.provideMerge(updateTestDeps));
+const updateTestLayerWithSql = ScheduledTaskService.layer.pipe(Layer.provideMerge(updateTestDeps));
 
 const seedProjectThreads = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -437,7 +433,7 @@ const seedProjectThreads = Effect.gen(function* () {
 });
 
 const seedTask = Effect.gen(function* () {
-  const tasks = yield* ScheduledTaskService;
+  const tasks = yield* ScheduledTaskService.ScheduledTaskService;
   const { task } = yield* tasks.upsert({
     id: updateTaskId,
     title: "title original",
@@ -457,14 +453,14 @@ const seedTask = Effect.gen(function* () {
 });
 
 const findSeeded = Effect.gen(function* () {
-  const tasks = yield* ScheduledTaskService;
+  const tasks = yield* ScheduledTaskService.ScheduledTaskService;
   const { tasks: all } = yield* tasks.list();
   return all.find((candidate) => candidate.id === updateTaskId);
 });
 
 it.effect("update keeps disjoint concurrent edits and untouched fields", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const seeded = yield* seedTask;
     const [first, second] = yield* Effect.all(
       [
@@ -490,7 +486,7 @@ it.effect("update keeps disjoint concurrent edits and untouched fields", () =>
 
 it.effect("update patches runtimeMode without disturbing other fields", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const seeded = yield* seedTask;
     const result = yield* tasks.update({
       id: updateTaskId,
@@ -509,7 +505,7 @@ it.effect("update patches runtimeMode without disturbing other fields", () =>
 
 it.effect("concurrent schedule and enabled patches merge inside the transaction", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     // Each update reads the scoped row inside its own transaction, so the
     // second writer sees the first writer's committed columns: whichever
@@ -536,7 +532,7 @@ it.effect("concurrent schedule and enabled patches merge inside the transaction"
 
 it.effect("concurrent workspaceStrategyPatch edits merge into the live strategy", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     // Move the seeded task to a worktree strategy carrying a field no client
     // control edits (`branch`), then race two disjoint control patches: two
@@ -580,7 +576,7 @@ it.effect("concurrent workspaceStrategyPatch edits merge into the live strategy"
 
 it.effect("workspaceStrategyPatch drops keys foreign to a concurrently switched kind", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     // The seeded strategy is `root`; a stale worktree-control patch has no
     // keys that belong to it, so the merge encodes the stale edit away
@@ -600,7 +596,7 @@ it.effect("workspaceStrategyPatch drops keys foreign to a concurrently switched 
 
 it.effect("update loses to a racing delete and never recreates the task", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     yield* Effect.all(
       [
@@ -628,7 +624,7 @@ it.effect("update loses to a racing delete and never recreates the task", () =>
 
 it.effect("update enforces project scope and reports missing tasks as none", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     const wrongProject = yield* tasks.update({
       id: updateTaskId,
@@ -656,7 +652,7 @@ let launchBarrier: {
   readonly release: Deferred.Deferred<void>;
 } | null = null;
 
-const gatedLaunchTestLayer = scheduledTaskServiceLayer.pipe(
+const gatedLaunchTestLayer = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       SqlitePersistenceMemory,
@@ -684,7 +680,7 @@ const gatedLaunchTestLayer = scheduledTaskServiceLayer.pipe(
 
 it.effect("run completion computes the next due time from an edit committed mid-run", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
@@ -721,7 +717,7 @@ it.effect("run completion computes the next due time from an edit committed mid-
 
 it.effect("interrupted run records the failure against the edit committed mid-run", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
@@ -756,7 +752,7 @@ it.effect("interrupted run records the failure against the edit committed mid-ru
 
 it.effect("update retains the pending due time unless the schedule changes", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const seeded = yield* seedTask;
     assert.isNotNull(seeded.nextRunAt);
 
@@ -854,7 +850,7 @@ it.effect("update retains the pending due time unless the schedule changes", () 
 
 it.effect("update applies model selection and project moves patch-style", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const seeded = yield* seedTask;
     const moved = yield* tasks.update({
       id: updateTaskId,
@@ -892,7 +888,7 @@ it.effect("update applies model selection and project moves patch-style", () =>
 
 it.effect("scoped delete loses to a racing project move instead of deleting cross-project", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     // The task moves to project B before a delete authorized for project A
     // commits: the scoped DELETE finds no row in A and must not touch B's row.
@@ -926,7 +922,7 @@ it.effect("scoped delete loses to a racing project move instead of deleting cros
 
 it.effect("scoped runNow loses to a racing project move and never dispatches", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     dispatchLaunchCount = 0;
     // A manual run authorized for project A commits after the task moved to
@@ -958,7 +954,7 @@ it.effect(
   "legacy explicit-id upsert can move an unbound task without restarting its schedule",
   () =>
     Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
       const seeded = yield* seedTask;
       const moved = yield* tasks.upsert({
         ...seeded,
@@ -979,7 +975,7 @@ it.effect(
   "replayed commandId upsert loses to a racing project move instead of dragging it back",
   () =>
     Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
       const replayId = ScheduledTaskId.make("scheduled-task:cmd:replay-move");
       const replayInput = {
         title: "replay title",
@@ -1111,7 +1107,7 @@ const bunBusyError = () =>
     }),
   });
 
-const gatedDispatchLayer = scheduledTaskServiceLayer.pipe(
+const gatedDispatchLayer = ScheduledTaskService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       gatedSqlClient.pipe(Layer.provide(SqlitePersistenceMemory)),
@@ -1162,7 +1158,7 @@ const armDueReadGate = (
 
 it.effect("scheduled dispatch honours a pause committed after the due read", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const sql = yield* SqlClient.SqlClient;
     yield* seedTask; // interval 60s: due at T+60s
     const dueArrived = yield* Deferred.make<void>();
@@ -1201,7 +1197,7 @@ it.effect("scheduled dispatch honours a pause committed after the due read", () 
 
 it.effect("scheduled dispatch honours a postpone committed after the due read", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const sql = yield* SqlClient.SqlClient;
     yield* seedTask;
     const dueArrived = yield* Deferred.make<void>();
@@ -1242,7 +1238,7 @@ it.effect("scheduled dispatch honours a postpone committed after the due read", 
 
 it.effect("scheduled dispatch honours a delete committed after the due read", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     const sql = yield* SqlClient.SqlClient;
     yield* seedTask;
     const dueArrived = yield* Deferred.make<void>();
@@ -1323,7 +1319,7 @@ it.effect("scheduled dispatch still fires when no edit lands in the gap", () =>
 
 it.effect("a contended completion write retries instead of stranding the task", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     dispatchLaunchCount = 0;
     let injected = false;
@@ -1349,7 +1345,7 @@ it.effect("a contended completion write retries instead of stranding the task", 
 
 it.effect("a contended recovery write retries instead of stranding the task", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     dispatchLaunchCount = 0;
     let completionFails = 0;
@@ -1389,7 +1385,7 @@ it.effect("a contended recovery write retries instead of stranding the task", ()
 // single connection serializes transactions, so nothing else can interleave
 // mid-transaction — a file database plus a raw second handle can.
 const fileDbLayer = (dbPath: string) =>
-  scheduledTaskServiceLayer.pipe(
+  ScheduledTaskService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         gatedSqlClient.pipe(Layer.provide(makeSqlitePersistenceLive(dbPath))),
@@ -1421,7 +1417,7 @@ const armUpdateReadGate = (readDone: Deferred.Deferred<void>, proceed: Deferred.
 
 it.effect("update keeps a project move and a thread binding consistent", () =>
   Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService;
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
     yield* seedTask;
     yield* seedProjectThreads;
     // Binding to a v2 thread that lives in the task's project works.
@@ -1499,7 +1495,7 @@ it.effect("competing updates on separate connections preserve disjoint fields", 
     const dir = yield* fs.makeTempDirectory();
     const dbPath = `${dir}/state.sqlite`;
     yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
       yield* seedTask;
       const readDone = yield* Deferred.make<void>();
       const proceed = yield* Deferred.make<void>();
@@ -1540,7 +1536,7 @@ it.effect("a schedule update contended by a committed disable merges on a fresh 
     const dir = yield* fs.makeTempDirectory();
     const dbPath = `${dir}/state.sqlite`;
     yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
       yield* seedTask;
       const readDone = yield* Deferred.make<void>();
       const proceed = yield* Deferred.make<void>();
@@ -1591,7 +1587,7 @@ it.effect("a delete committed inside the update read window is never resurrected
     const dir = yield* fs.makeTempDirectory();
     const dbPath = `${dir}/state.sqlite`;
     yield* Effect.gen(function* () {
-      const tasks = yield* ScheduledTaskService;
+      const tasks = yield* ScheduledTaskService.ScheduledTaskService;
       yield* seedTask;
       const readDone = yield* Deferred.make<void>();
       const proceed = yield* Deferred.make<void>();

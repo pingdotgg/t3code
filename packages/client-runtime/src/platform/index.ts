@@ -1,5 +1,7 @@
-export * from "./capabilities.ts";
-export * from "./persistence.ts";
+export * as ClientCapabilities from "./capabilities.ts";
+export * as Persistence from "./persistence.ts";
+// Flat so consumers' inferred types can name it.
+export { ConnectionPersistenceError } from "./persistence.ts";
 export * from "./orchestrationCache.ts";
-export * from "./source.ts";
+export * as PlatformConnectionSource from "./source.ts";
 export * from "./storageDocument.ts";

@@ -20,23 +20,20 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/unstable/http";
 import { Atom } from "effect/unstable/reactivity";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
-import {
-  ThreadHistoryController,
-  type ThreadHistoryLoadEarlierResult,
-} from "./threadHistoryController.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import {
   applyHistoryPageMeta,
@@ -46,7 +43,7 @@ import {
   mergeOlderHistoryIntoProjection,
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
-import { ThreadSnapshotLoader, type ThreadSnapshotLoadResult } from "./threadSnapshotHttp.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -173,13 +170,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
 ) {
-  const supervisor = yield* EnvironmentSupervisor;
-  const cache = yield* EnvironmentCacheStore;
-  const snapshotLoader = yield* ThreadSnapshotLoader;
-  const historyController = yield* Effect.serviceOption(ThreadHistoryController);
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const cache = yield* Persistence.EnvironmentCacheStore;
+  const snapshotLoader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+  const historyController = yield* Effect.serviceOption(
+    ThreadHistoryController.ThreadHistoryController,
+  );
   const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
-  const dpopSigner = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const dpopSigner = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+  );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const retained = resumeCache?.snapshot;
@@ -640,10 +641,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       !current.history.hasMoreHistory ||
       current.history.historyCursor === null
     ) {
-      return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+      return { _tag: "noop" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     }
     if (current.history.loading) {
-      return { _tag: "busy" } satisfies ThreadHistoryLoadEarlierResult;
+      return { _tag: "busy" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
     }
 
     // Capture the cursor that initiated this request. Completions/failures must
@@ -675,12 +676,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           },
         );
         if (!stillCurrent) {
-          return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+          return { _tag: "noop" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
         }
         return {
           _tag: "error",
           message,
-        } satisfies ThreadHistoryLoadEarlierResult;
+        } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
       }
 
       const pageResult = yield* fetchEnvironmentThreadHistoryPage({
@@ -711,9 +712,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           },
         );
         if (!stillCurrent) {
-          return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+          return { _tag: "noop" } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
         }
-        return { _tag: "error", message } satisfies ThreadHistoryLoadEarlierResult;
+        return {
+          _tag: "error",
+          message,
+        } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
       }
 
       const page = pageResult.success;
@@ -723,7 +727,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       return yield* applyLock.withPermits(1)(
         SubscriptionRef.modify(
           state,
-          (latest): readonly [ThreadHistoryLoadEarlierResult, EnvironmentThreadState] => {
+          (
+            latest,
+          ): readonly [
+            ThreadHistoryController.ThreadHistoryLoadEarlierResult,
+            EnvironmentThreadState,
+          ] => {
             // Stale page: socket/full snapshot or newer bounded install changed the
             // progressive cursor while this request was in flight. Never mutate the
             // replacement meta (including deleted/empty installs).
@@ -851,10 +860,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpResult: ThreadSnapshotLoadResult = yield* snapshotLoader.load(
-            prepared,
-            threadId,
-          );
+          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
+            yield* snapshotLoader.load(prepared, threadId);
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -942,7 +949,10 @@ function threadStateChanges(
 
 export function createEnvironmentThreadStateAtoms<R, E>(
   runtime: Atom.AtomRuntime<
-    EnvironmentRegistry | EnvironmentCacheStore | ThreadSnapshotLoader | R,
+    | EnvironmentRegistry.EnvironmentRegistry
+    | Persistence.EnvironmentCacheStore
+    | ThreadSnapshotLoader.ThreadSnapshotLoader
+    | R,
     E
   >,
 ) {
@@ -986,7 +996,9 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 export * from "./archivedThreads.ts";
 export * from "./checkpointDiff.ts";
 export * from "./boundedThreadSnapshotHttp.ts";
-export * from "./threadHistoryController.ts";
+export * as ThreadHistoryController from "./threadHistoryController.ts";
+// Flat so consumers' inferred types can name it.
+export type { ThreadHistoryLoadEarlierResult } from "./threadHistoryController.ts";
 export * from "./threadHistoryMerge.ts";
 export * from "./threadSnapshotHttp.ts";
 export * from "./composerPathSearch.ts";

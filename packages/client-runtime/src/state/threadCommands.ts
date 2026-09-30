@@ -88,11 +88,8 @@ import {
   visitThread,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import {
-  ThreadHistoryController,
-  type ThreadHistoryLoadEarlierResult,
-} from "./threadHistoryController.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 
 export type LoadEarlierThreadHistoryInput = {
   readonly threadId: ThreadId;
@@ -361,10 +358,14 @@ export function createThreadEnvironmentAtoms<R, E>(
       label: "environment-data:commands:thread:load-earlier-history",
       execute: (input: LoadEarlierThreadHistoryInput) =>
         Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor;
-          const controller = yield* Effect.serviceOption(ThreadHistoryController);
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const controller = yield* Effect.serviceOption(
+            ThreadHistoryController.ThreadHistoryController,
+          );
           if (Option.isNone(controller)) {
-            return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+            return {
+              _tag: "noop",
+            } satisfies ThreadHistoryController.ThreadHistoryLoadEarlierResult;
           }
           return yield* controller.value.loadEarlier(
             supervisor.target.environmentId,

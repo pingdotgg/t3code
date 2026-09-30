@@ -8,15 +8,15 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
-import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAuthService from "../Services/ProviderAuthService.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 
 export const makeProviderAuthService = Effect.gen(function* () {
-  const registry = yield* ProviderInstanceRegistry;
-  const projections = yield* ProjectionStoreV2;
-  const providerSessions = yield* ProviderSessionManagerV2;
+  const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const credentialChanges = yield* Semaphore.make(1);
 
   const getController = Effect.fn("ProviderAuthService.getController")(function* (

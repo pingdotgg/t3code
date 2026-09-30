@@ -1,11 +1,7 @@
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
-  ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
-  EnvironmentCacheStore,
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
   StoredOrchestrationThreadSnapshot,
@@ -16,6 +12,7 @@ import {
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   replaceCatalogValue,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -105,7 +102,7 @@ function persistenceError(
     | "clear-environment",
   cause: unknown,
 ) {
-  return new ConnectionPersistenceError({
+  return new Persistence.ConnectionPersistenceError({
     operation,
     message: `Could not ${operation.replaceAll("-", " ")}: ${String(cause)}`,
   });
@@ -466,7 +463,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
-    const targetStore = ConnectionTargetStore.of({
+    const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
@@ -476,7 +473,7 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
       ),
     });
-    const registrationStore = ConnectionRegistrationStore.of({
+    const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
@@ -561,7 +558,7 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    const cacheStore = EnvironmentCacheStore.of({
+    const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
           Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
@@ -762,13 +759,13 @@ export const connectionStorageLayer = Layer.effectContext(
         ).pipe(Effect.mapError((cause) => persistenceError("clear-environment", cause))),
     });
 
-    return Context.make(ConnectionTargetStore, targetStore).pipe(
+    return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
-      Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
-      Context.add(EnvironmentCacheStore, cacheStore),
+      Context.add(Persistence.EnvironmentCacheStore, cacheStore),
     );
   }),
 );

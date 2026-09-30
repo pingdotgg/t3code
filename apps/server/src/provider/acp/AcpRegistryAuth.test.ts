@@ -13,9 +13,9 @@ import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
 import { AcpRequestError } from "effect-acp/errors";
 
-import { PtyAdapter, type PtyExitEvent, type PtySpawnInput } from "../../terminal/PtyAdapter.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { makeAcpRegistryAuth } from "./AcpRegistryAuth.ts";
-import { AcpRegistryCatalog, type ResolvedAcpRegistryAgent } from "./AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import type { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -28,7 +28,7 @@ const terminalMethod = {
   args: ["login"],
   env: { LOGIN: "yes", OVERRIDE: "method" },
 };
-const resolved: ResolvedAcpRegistryAgent = {
+const resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent = {
   agent: {
     id: "test-agent",
     name: "Test",
@@ -43,7 +43,7 @@ const resolved: ResolvedAcpRegistryAgent = {
     env: { OVERRIDE: "spawn", AGENT_HOME: "/custom/home" },
   },
 };
-const catalog: AcpRegistryCatalog["Service"] = {
+const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
   inspect: () =>
     Effect.succeed({
       status: "ready",
@@ -66,9 +66,9 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
     const started: number[] = [];
     let runtimes = 0;
     let version = "1.0.0";
-    let terminalSpawn: PtySpawnInput | undefined;
+    let terminalSpawn: PtyAdapter.PtySpawnInput | undefined;
     let data: ((data: string) => void) | undefined;
-    let exit: ((event: PtyExitEvent) => void) | undefined;
+    let exit: ((event: PtyAdapter.PtyExitEvent) => void) | undefined;
     let killed = false;
     let closedBeforeTerminal = false;
     const written: string[] = [];
@@ -140,7 +140,7 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
           };
         }),
     }).pipe(
-      Effect.provideService(AcpRegistryCatalog, {
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
         ...catalog,
         inspect: () =>
           Effect.sync(() => ({
@@ -150,7 +150,7 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
             distribution: "binary" as const,
           })),
       }),
-      Effect.provideService(PtyAdapter, {
+      Effect.provideService(PtyAdapter.PtyAdapter, {
         spawn: (input) =>
           Effect.sync(() => {
             terminalSpawn = input;
@@ -209,7 +209,7 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
         version = value;
       },
     };
-  }).pipe(Effect.provideService(AcpRegistryCatalog, catalog));
+  }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
 
 it.effect(
   "discovers methods without signing in, then waits for browser consent and session verification",

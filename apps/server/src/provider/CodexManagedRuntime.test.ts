@@ -11,10 +11,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ServerConfig } from "../config.ts";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
-import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
-import { CodexInstallation } from "./CodexInstallation.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./Layers/codexLaunchArgs.ts";
@@ -63,7 +63,7 @@ for (const source of ["managed", "local"] as const)
           yield* fs.writeFileString(path.join(sharedHome, "auth.json"), "native-auth-unchanged");
           yield* fs.writeFileString(path.join(sharedHome, "config.toml"), "# shared config\n");
           const data = new Map<string, Uint8Array>();
-          const secrets = ServerSecretStore.of({
+          const secrets = ServerSecretStore.ServerSecretStore.of({
             get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
             set: (key, value) =>
               Effect.sync(() => {
@@ -84,7 +84,7 @@ for (const source of ["managed", "local"] as const)
             source,
             version: "0.156.1",
           };
-          const installerLayer = Layer.mock(CodexInstallation)({
+          const installerLayer = Layer.mock(CodexInstallation.CodexInstallation)({
             managedDirectory: "/isolated/tools/codex",
             resolve: () => Effect.succeed(executable),
             acquire: () =>
@@ -181,8 +181,8 @@ for (const source of ["managed", "local"] as const)
               "native-auth-unchanged",
             );
           }).pipe(
-            Effect.provideService(ServerSecretStore, secrets),
-            Effect.provideService(ServerEnvironmentIdentity, {
+            Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+            Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, {
               getEnvironmentId: Effect.succeed(
                 EnvironmentId.make("00000000-0000-4000-8000-000000000001"),
               ),
@@ -217,9 +217,9 @@ for (const source of ["managed", "local"] as const)
         }).pipe(
           Effect.scoped,
           Effect.provide(
-            ServerConfig.layerTest(process.cwd(), { prefix: "t3-managed-runtime-" }).pipe(
-              Layer.provideMerge(NodeServices.layer),
-            ),
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3-managed-runtime-",
+            }).pipe(Layer.provideMerge(NodeServices.layer)),
           ),
         ),
     );

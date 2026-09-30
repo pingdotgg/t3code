@@ -10,7 +10,7 @@ import {
   ClaudeOrchestratorReplayHarness,
   makeClaudeRestartReplayHarness,
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT } from "./fixtures/claude_background_subagent_after_root/input.ts";
@@ -163,7 +163,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
           {
             type: "await_run_status" as const,
             threadId,
-            runId: (yield* IdAllocatorV2).derive.run({ threadId, ordinal: 2 }),
+            runId: (yield* IdAllocator.IdAllocatorV2).derive.run({ threadId, ordinal: 2 }),
             status: "completed" as const,
           },
         ]
@@ -235,7 +235,7 @@ describe("restart-cancelled background work", () => {
         ]);
       }).pipe(
         provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
       ),
     ),
   );
@@ -263,7 +263,7 @@ describe("restart-cancelled background work", () => {
         ]);
       }).pipe(
         provideDeterministicTestRuntime,
-        Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
       ),
     ),
   );

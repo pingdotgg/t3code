@@ -6,14 +6,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { makeCursorCredentialStore } from "./CursorCredentialStore.ts";
 
 const makeSecrets = () => {
   const data = new Map<string, Uint8Array>();
   return {
     data,
-    secrets: ServerSecretStore.of({
+    secrets: ServerSecretStore.ServerSecretStore.of({
       get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
       set: (key, bytes) =>
         Effect.sync(() => {
@@ -78,12 +78,12 @@ it.effect.each([
     const instanceId = ProviderInstanceId.make("personal");
     if (stored !== undefined) {
       const current = yield* makeCursorCredentialStore(instanceId).pipe(
-        Effect.provideService(ServerSecretStore, secrets),
+        Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
       );
       yield* secrets.set(current.binding.key, new TextEncoder().encode(stored));
     }
     const migrated = yield* makeCursorCredentialStore(instanceId, legacyFile).pipe(
-      Effect.provideService(ServerSecretStore, secrets),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     );
     assert.strictEqual((yield* Effect.tryPromise(() => migrated.store.load()))?.apiKey, expected);
     assert.isFalse(yield* fileSystem.exists(legacyFile));
@@ -95,7 +95,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const data = new Map<string, Uint8Array>();
-      const secrets = ServerSecretStore.of({
+      const secrets = ServerSecretStore.ServerSecretStore.of({
         get: (key) => Effect.sync(() => Option.fromUndefinedOr(data.get(key))),
         set: (key, bytes) =>
           Effect.sync(() => {
@@ -110,7 +110,7 @@ it.effect(
       });
       const makeStore = (id: string) =>
         makeCursorCredentialStore(ProviderInstanceId.make(id)).pipe(
-          Effect.provideService(ServerSecretStore, secrets),
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
         );
       const personal = yield* makeStore("personal");
       const work = yield* makeStore("work");

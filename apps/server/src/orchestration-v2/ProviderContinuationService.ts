@@ -3,12 +3,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
-import { IdAllocatorV2 } from "./IdAllocator.ts";
-import {
-  type ProviderContinuationRequest,
-  ProviderContinuationRequests,
-} from "./ProviderContinuationRequests.ts";
-import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
@@ -22,7 +19,9 @@ function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
 
 function currentDelegatedCompletionDelivery(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
-  completion: NonNullable<ProviderContinuationRequest["delegatedCompletion"]>,
+  completion: NonNullable<
+    ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
+  >,
 ) {
   const sourceRun = projection.runs.find((candidate) => candidate.id === completion.parentRunId);
   const delivery = sourceRun?.delegatedCompletion?.delivery;
@@ -43,8 +42,10 @@ function currentDelegatedCompletionDelivery(
 }
 
 function delegatedCompletionRetryKey(
-  request: ProviderContinuationRequest,
-  completion: NonNullable<ProviderContinuationRequest["delegatedCompletion"]>,
+  request: ProviderContinuationRequests.ProviderContinuationRequest,
+  completion: NonNullable<
+    ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
+  >,
 ): string {
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
 }
@@ -58,9 +59,9 @@ function delegatedCompletionRetryKey(
  */
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const ids = yield* IdAllocatorV2;
-    const requests = yield* ProviderContinuationRequests;
-    const threads = yield* ThreadManagementService;
+    const ids = yield* IdAllocator.IdAllocatorV2;
+    const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
 
     const clearRetryAttempt = (key: string) =>
@@ -80,7 +81,7 @@ export const workerLive = Layer.effectDiscard(
       });
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
-      function* (request: ProviderContinuationRequest) {
+      function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
           ["messages", "runs", "providerTurns"],

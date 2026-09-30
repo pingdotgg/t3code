@@ -1,5 +1,5 @@
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
-import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
-import { ProjectService } from "../project/ProjectService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -55,9 +55,9 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provide(
     Layer.mergeAll(
-      Layer.mock(ProjectService)({}),
-      Layer.mock(OrchestratorV2)({}),
-      Layer.mock(ProjectionStoreV2)({}),
+      Layer.mock(ProjectService.ProjectService)({}),
+      Layer.mock(Orchestrator.OrchestratorV2)({}),
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
       NodeServices.layer,
     ),
   ),

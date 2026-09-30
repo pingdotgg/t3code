@@ -23,11 +23,11 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
-import { AcpRegistryCatalog, toAcpRegistryOperationError } from "./AcpRegistrySupport.ts";
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import { parseSessionModeState } from "./AcpRuntimeModel.ts";
 import { acpProviderOptionDescriptors } from "./AcpSessionConfig.ts";
-import { AcpRegistryRuntimeCoordinator } from "./AcpRegistryRuntimeCoordinator.ts";
+import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const MAX_AUTH_METHODS = 32;
@@ -313,12 +313,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
   ): Effect.fn.Return<
     AcpRegistryConfigurationProbeResult,
     AcpRegistryOperationError,
-    AcpRegistryCatalog | ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
+    AcpRegistrySupport.AcpRegistryCatalog | ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
   > {
-    const catalog = yield* AcpRegistryCatalog;
+    const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
-    const pty = yield* Effect.serviceOption(PtyAdapter);
+    const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
       // Resolution may install a missing registry package. Keep it inside the
@@ -326,10 +326,12 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       // much longer timeout.
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
-        .pipe(Effect.mapError(toAcpRegistryOperationError));
+        .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
       const authMethodsRef = yield* Ref.make<ReadonlyArray<AcpRegistryProbeAuthMethod>>([]);
       const authActionRef = yield* Ref.make<AcpRegistryUrlAuthAction | undefined>(undefined);
-      const runtimeCoordinator = yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator);
+      const runtimeCoordinator = yield* Effect.serviceOption(
+        AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+      );
       const runtimeContext = yield* Layer.build(
         AcpSessionRuntime.layer({
           spawn: resolved.spawn,
@@ -454,13 +456,15 @@ const MANAGEMENT_TIMEOUT = Duration.seconds(60);
 
 const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagementRuntime")(
   function* (input: AcpRegistryManagementInput) {
-    const catalog = yield* AcpRegistryCatalog;
+    const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
-    const runtimeCoordinator = yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator);
+    const runtimeCoordinator = yield* Effect.serviceOption(
+      AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+    );
     const resolved = yield* catalog
       .resolve(input.settings, input.cwd, input.environment)
-      .pipe(Effect.mapError(toAcpRegistryOperationError));
+      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
     const runtimeContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         spawn: resolved.spawn,

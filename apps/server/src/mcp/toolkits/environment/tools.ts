@@ -8,11 +8,11 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
-import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
-import { ThreadCommandExecutor } from "../../../orchestration-v2/ThreadCommandExecutor.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { ServerSettingsService } from "../../../serverSettings.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as Settings from "../../../serverSettings.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
@@ -30,11 +30,11 @@ const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
-    McpInvocationContext,
-    ThreadManagementService,
-    ServerEnvironment,
-    ServerSettingsService,
-    ThreadCommandExecutor,
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ServerEnvironment.ServerEnvironment,
+    Settings.ServerSettingsService,
+    ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
