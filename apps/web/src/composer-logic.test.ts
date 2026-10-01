@@ -736,3 +736,11 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
 });
+
+it("keeps mentions literal and suppresses suggestions inside fenced code", () => {
+  const prompt = "```\n$skill @src/path.ts\n```\n@outside";
+  const inside = prompt.indexOf("@src") + 4;
+  expect(detectComposerTrigger(prompt, inside)).toBeNull();
+  expect(expandCollapsedComposerCursor(prompt, inside)).toBe(inside);
+  expect(detectComposerTrigger(prompt, prompt.length)?.kind).toBe("path");
+});

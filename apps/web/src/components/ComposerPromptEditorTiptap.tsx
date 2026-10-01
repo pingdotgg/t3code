@@ -48,6 +48,7 @@ import {
   buildTiptapContent,
   collapsedToFlat,
   ComposerCodeExtension,
+  ComposerBlockAttributesExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
@@ -741,6 +742,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       contextIds: map.contextIds,
     };
     const cursorAdjacentToMention =
+      updated.isActive("codeBlock") ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
       isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
     onChangeRef.current(
@@ -785,9 +787,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     {
       extensions: [
         StarterKit.configure({
-          blockquote: false,
+          blockquote: richText ? {} : false,
           bulletList: false,
-          codeBlock: false,
+          codeBlock: richText ? {} : false,
           heading: false,
           horizontalRule: false,
           listItem: false,
@@ -809,6 +811,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ...(richText
           ? [
               ComposerCodeExtension,
+              ComposerBlockAttributesExtension,
               TaskList,
               ComposerTaskItemExtension.extend({
                 addInputRules() {
@@ -945,6 +948,45 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             event.preventDefault();
             return true;
           }
+          // Match GoSearch: the third backtick turns an otherwise empty line into code.
+          if (richText && event.key === "`" && !event.isComposing && view.state.selection.empty) {
+            const { $from } = view.state.selection;
+            if (
+              $from.parent.type.name === "paragraph" &&
+              $from.parent.textContent === "``" &&
+              $from.parentOffset === 2
+            ) {
+              event.preventDefault();
+              const instance = editorHolder.current;
+              instance
+                ?.chain()
+                .deleteRange({ from: $from.start(), to: $from.end() })
+                .setCodeBlock()
+                .run();
+              return true;
+            }
+          }
+          if (
+            richText &&
+            event.key === "ArrowDown" &&
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.shiftKey &&
+            !event.isComposing &&
+            view.state.selection.empty
+          ) {
+            const { $from } = view.state.selection;
+            if (
+              $from.parent.type.name === "codeBlock" &&
+              $from.parentOffset === $from.parent.content.size
+            ) {
+              event.preventDefault();
+              const instance = editorHolder.current;
+              instance?.chain().updateAttributes("codeBlock", { closed: true }).exitCode().run();
+              return true;
+            }
+          }
           const handler = onCommandKeyDownRef.current;
           if (event.key === "Enter") {
             const instance = editorHolder.current;
@@ -956,6 +998,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               return true;
             }
             event.preventDefault();
+            if (richText && instance?.isActive("codeBlock")) {
+              return instance.commands.insertContent("\n");
+            }
+            if (richText && instance?.isActive("blockquote")) {
+              if (view.state.selection.$from.parent.content.size === 0)
+                return instance.commands.lift("blockquote");
+              return instance.chain().splitBlock().lift("blockquote").run();
+            }
             if (
               isTaskItem &&
               instance &&
@@ -1024,6 +1074,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           const pastedText = clipboardData.getData("text/plain");
           if (!pastedText) return false;
           event.preventDefault();
+          if (view.state.selection.$from.parent.type.name === "codeBlock") {
+            view.dispatch(view.state.tr.insertText(pastedText).scrollIntoView());
+            return true;
+          }
           const importFragment = importFragmentRef.current;
           let text = importFragment
             ? importPastedComposerText(clipboardData, importFragment)

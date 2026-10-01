@@ -75,10 +75,53 @@ function forEachMentionMatch(
   });
 }
 
+function codeBlockRanges(text: string): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = [];
+  let active: { start: number; fence: string; depth: number } | null = null;
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    let content = line;
+    let depth = 0;
+    while (content.startsWith(">")) {
+      content = content.replace(/^> ?/, "");
+      depth += 1;
+    }
+    if (active && depth < active.depth) {
+      ranges.push({ start: active.start, end: offset });
+      active = null;
+    }
+    const fence = content.match(/^(`{3,}|~{3,})(.*)$/);
+    if (active) {
+      if (
+        depth === active.depth &&
+        fence &&
+        fence[1]![0] === active.fence[0] &&
+        fence[1]!.length >= active.fence.length &&
+        /^[ \t]*$/.test(fence[2]!)
+      ) {
+        ranges.push({ start: active.start, end: offset + line.length });
+        active = null;
+      }
+    } else if (fence && (fence[1]![0] !== "`" || !fence[2]!.includes("`"))) {
+      active = { start: offset, fence: fence[1]!, depth };
+    }
+    offset += line.length + 1;
+  }
+  if (active) ranges.push({ start: active.start, end: text.length });
+  return ranges;
+}
+
+export function isComposerCursorInCodeBlock(text: string, cursor: number): boolean {
+  return codeBlockRanges(text).some((range) => cursor > range.start && cursor <= range.end);
+}
+
 export function collectComposerPromptInlineTokens(text: string) {
-  const tokens = collectComposerInlineTokens(text);
-  const citations = collectAssistantCitations(text);
-  const references = collectComposerContextReferences(text);
+  const code = codeBlockRanges(text);
+  const outsideCode = (token: { start: number; end: number }) =>
+    !code.some((range) => token.start < range.end && token.end > range.start);
+  const tokens = collectComposerInlineTokens(text).filter(outsideCode);
+  const citations = collectAssistantCitations(text).filter(outsideCode);
+  const references = collectComposerContextReferences(text).filter(outsideCode);
   if (citations.length === 0 && references.length === 0) return tokens;
 
   // An unfinished @ mention can otherwise consume the start of a link label.

@@ -8,6 +8,7 @@ import {
   buildDocJson,
   collapsedToFlat,
   ComposerCodeExtension,
+  ComposerBlockAttributesExtension,
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
@@ -29,9 +30,9 @@ function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
 const schema = getSchemaByResolvedExtensions(
   resolveExtensions([
     StarterKit.configure({
-      blockquote: false,
+      blockquote: {},
       bulletList: false,
-      codeBlock: false,
+      codeBlock: {},
       heading: false,
       horizontalRule: false,
       listItem: false,
@@ -42,6 +43,7 @@ const schema = getSchemaByResolvedExtensions(
       code: false,
     }),
     ComposerCodeExtension,
+    ComposerBlockAttributesExtension,
     stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
     stubAtom("composer-skill", {
       skillName: { default: "" },
@@ -359,5 +361,59 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(collapsedToFlat(map, 3)).toBe(2);
     expect(collapsedToFlat(map, 9)).toBe(6);
+  });
+});
+
+describe("composer block Markdown", () => {
+  it.each([
+    "before\n```ts\nconst x = 1;\n\n  x++;\n```\nafter",
+    "```\n**literal** $skill @file\n```",
+    "```\n```",
+    "```\n\n```",
+    "```",
+    "```\n",
+    "```\n\n",
+    "> ```\n> \n> ```",
+    "```ts\nunfinished\n",
+    "> **quote**\n> second line\n> \nafter",
+    "> > nested\n> normal",
+    "> ```js\n> const a = 1;\n> ```",
+    "> - [ ] task\n> - [x] done",
+    "~~~~\n```\n~~~~",
+  ])("round-trips block content: %s", (source) => {
+    const first = roundTrip(source);
+    expect(first.value).toBe(source);
+    expect(roundTrip(first.value).value).toBe(source);
+    for (const run of first.runs) {
+      if (run.kind !== "text" || run.docLen === 0) continue;
+      for (let offset = 0; offset < run.docLen; offset += 1) {
+        const flat = run.flatStart + offset;
+        expect(pmToFlat(first, flatToPm(first, flat))).toBe(flat);
+        expect(collapsedToFlat(first, flatToCollapsed(first, flat))).toBe(flat);
+      }
+    }
+  });
+
+  it("keeps code literal and places the end caret before the closing fence", () => {
+    const source = "```\n**bold** $skill @file\n```";
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(source, (name) => ({ label: name, description: null })),
+    );
+    expect(doc.firstChild?.type.name).toBe("codeBlock");
+    expect(doc.firstChild?.firstChild?.marks).toEqual([]);
+    const map = serializeEditorDoc(doc);
+    expect(flatToMarkdown(map, map.docLength)).toBe(source.lastIndexOf("\n```"));
+    expect(flatToPm(map, map.docLength)).toBe(1 + doc.firstChild!.textContent.length);
+  });
+
+  it("lengthens the fence when edited code contains backticks", () => {
+    const doc = ProseMirrorNode.fromJSON(schema, {
+      type: "doc",
+      content: [{ type: "codeBlock", content: [{ type: "text", text: "```" }] }],
+    });
+    const value = serializeEditorDoc(doc).value;
+    expect(value).toBe("````\n```\n````");
+    expect(roundTrip(value).value).toBe(value);
   });
 });
