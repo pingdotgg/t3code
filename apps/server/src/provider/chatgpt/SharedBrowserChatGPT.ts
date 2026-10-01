@@ -4,6 +4,8 @@
 import * as NodeTimersPromises from "node:timers/promises";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { PreviewAutomationNoAvailableHostError } from "@t3tools/contracts";
 import type {
   PreviewAutomationOperation,
   PreviewAutomationStatus,
@@ -13,6 +15,7 @@ import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../mcp/PreviewAutomationBroker.ts";
 
 type Scope = McpInvocationContext.McpInvocationScope;
+const isNoAvailableHostError = Schema.is(PreviewAutomationNoAvailableHostError);
 
 export class ChatGPTInteractionRequiredError extends Error {
   readonly startCooldown: boolean;
@@ -52,7 +55,14 @@ export class SharedBrowserChatGPT {
   ): Promise<A> {
     return Effect.runPromise(
       PreviewAutomationBroker.invokeActive<A>({ scope, operation, input, timeoutMs }),
-    );
+    ).catch((error: unknown) => {
+      if (isNoAvailableHostError(error))
+        throw new ChatGPTInteractionRequiredError(
+          "The T3 desktop app is not connected to this environment, so ChatGPT Web cannot open its shared browser. Connect T3 Code desktop to this environment and retry. This did not start a ChatGPT cooldown.",
+          false,
+        );
+      throw error;
+    });
   }
 
   private async tab(scope: Scope, signal: AbortSignal): Promise<PreviewTabId> {
