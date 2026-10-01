@@ -1200,6 +1200,59 @@ describe("plus key parsing", () => {
   });
 });
 
+describe("new thread without a project shortcut", () => {
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`resolves mod+0 on ${platform} without stealing preview or terminal shortcuts`, () => {
+      const input = event({
+        key: "0",
+        code: "Digit0",
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+        "chat.newWithoutProject",
+      );
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { previewFocus: true },
+        }),
+        "preview.resetZoom",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+      assert.strictEqual(
+        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "chat.newWithoutProject", platform),
+        platform === "MacIntel" ? "⌘0" : "Ctrl+0",
+      );
+    });
+  }
+
+  it("keeps a saved custom shortcut for starting a thread without a project", () => {
+    const bindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "mod+alt+n", command: "chat.newWithoutProject", when: "!terminalFocus" },
+      ]),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "n", metaKey: true, altKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "chat.newWithoutProject",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "0", metaKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+    );
+  });
+});
+
 describe("composer and pull request shortcuts", () => {
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(

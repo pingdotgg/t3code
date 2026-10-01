@@ -184,6 +184,22 @@ export function enumerateCommandPaletteItems(
   });
 }
 
+/** Keeps the no-project action first while numbering only the real projects. */
+export function buildNewThreadProjectItems(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  preferredProjectValue: string | null = null,
+): CommandPaletteActionItem[] {
+  const noProjectItems = items.filter((item) => item.shortcutCommand === "chat.newWithoutProject");
+  const projectItems = items.filter((item) => item.shortcutCommand !== "chat.newWithoutProject");
+  const prioritizedProjects = preferredProjectValue
+    ? [
+        ...projectItems.filter((item) => item.value === preferredProjectValue),
+        ...projectItems.filter((item) => item.value !== preferredProjectValue),
+      ]
+    : projectItems;
+  return [...noProjectItems, ...enumerateCommandPaletteItems(prioritizedProjects)];
+}
+
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
 // A project as the palette shows it. `displayName` is the grouped label (for

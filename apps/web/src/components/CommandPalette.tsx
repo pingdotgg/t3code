@@ -143,11 +143,11 @@ import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
+  buildNewThreadProjectItems,
   buildProjectActionItems,
   buildRootGroups,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
-  enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -1279,9 +1279,9 @@ function OpenCommandPaletteDialog(props: {
 
   const projectThreadItems = useMemo(
     () =>
-      enumerateCommandPaletteItems([
+      buildNewThreadProjectItems([
         ...buildProjectActionItems({
-          // The no-project home shows once, as the "No project" item below.
+          // The no-project home appears only as the dedicated action.
           projects: pickerProjects.filter(
             (project) => !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
           ),
@@ -1748,19 +1748,13 @@ function OpenCommandPaletteDialog(props: {
       currentProjectEnvironmentId && currentProjectId
         ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
         : null;
-    const prioritized = currentPrefix
-      ? [
-          ...projectThreadItems.filter((item) => item.value === currentPrefix),
-          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
-        ]
-      : projectThreadItems;
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [
         {
           value: "projects",
           label: "Projects",
-          items: enumerateCommandPaletteItems(prioritized),
+          items: buildNewThreadProjectItems(projectThreadItems, currentPrefix),
         },
       ],
     });
@@ -2721,7 +2715,10 @@ function OpenCommandPaletteDialog(props: {
       platform: navigator.platform,
       context: { modelPickerOpen: false },
     });
-    if (threadJumpIndexFromCommand(command ?? "") !== null) {
+    if (
+      threadJumpIndexFromCommand(command ?? "") !== null ||
+      command === "chat.newWithoutProject"
+    ) {
       event.preventDefault();
       event.stopPropagation();
       const matchingItem = displayedGroups

@@ -5,6 +5,7 @@ import {
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
+  buildNewThreadProjectItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
@@ -296,6 +297,54 @@ describe("enumerateCommandPaletteItems", () => {
       "thread.jump.9",
       undefined,
     ]);
+  });
+});
+
+describe("new-thread project picker shortcuts", () => {
+  const noProjectItem: CommandPaletteActionItem = {
+    kind: "action",
+    value: "new-thread-in:no-project",
+    title: "No project",
+    searchTerms: ["no project"],
+    icon: null,
+    shortcutCommand: "chat.newWithoutProject",
+    run: async () => undefined,
+  };
+  const projects = Array.from({ length: 12 }, (_, index): CommandPaletteActionItem => ({
+    kind: "action",
+    value: `project-${index + 1}`,
+    title: `Project ${index + 1}`,
+    searchTerms: [],
+    icon: null,
+    run: async () => undefined,
+  }));
+
+  it.each([0, 1, 8, 9, 12])(
+    "keeps No project first with its own shortcut when there are %i projects",
+    (count) => {
+      const items = buildNewThreadProjectItems([...projects.slice(0, count), noProjectItem]);
+      expect(items[0]).toBe(noProjectItem);
+      expect(items[1]?.shortcutCommand).toBe(count > 0 ? "thread.jump.1" : undefined);
+      if (count >= 9) expect(items[9]?.shortcutCommand).toBe("thread.jump.9");
+      if (count > 9) expect(items[10]?.shortcutCommand).toBeUndefined();
+    },
+  );
+
+  it("prioritizes the current project without moving or renumbering No project", () => {
+    const initialItems = buildNewThreadProjectItems([...projects, noProjectItem]);
+    const items = buildNewThreadProjectItems(initialItems, "project-12");
+    expect(items[0]).toBe(noProjectItem);
+    expect(items[1]).toMatchObject({ value: "project-12", shortcutCommand: "thread.jump.1" });
+    expect(items[2]).toMatchObject({ value: "project-1", shortcutCommand: "thread.jump.2" });
+    expect(items[9]).toMatchObject({ value: "project-8", shortcutCommand: "thread.jump.9" });
+    expect(items[10]?.shortcutCommand).toBeUndefined();
+  });
+
+  it("numbers projects normally when the environment does not offer No project", () => {
+    const items = buildNewThreadProjectItems(projects, "project-12");
+    expect(items[0]).toMatchObject({ value: "project-12", shortcutCommand: "thread.jump.1" });
+    expect(items[8]).toMatchObject({ value: "project-8", shortcutCommand: "thread.jump.9" });
+    expect(items[9]?.shortcutCommand).toBeUndefined();
   });
 });
 
