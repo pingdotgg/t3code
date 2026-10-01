@@ -1,8 +1,10 @@
-import type { PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+
+import type { ProjectId } from "@t3tools/contracts";
+import { threadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
@@ -15,67 +17,106 @@ import {
 import { PullRequestMonitorService } from "./PullRequestMonitorService.ts";
 
 const SWEEP_INTERVAL = "5 minutes";
+const LOG_TAG = "review-thread-merge-archive";
 
-const makeReactor = Effect.gen(function* () {
+type SweepServices =
+  | OrchestrationEngineService
+  | PullRequestMonitorService
+  | PullRequestService
+  | ServerSettingsService;
+
+/**
+ * One pass. A merge is only ever observed by polling, so this runs on a timer rather than off a
+ * domain event: a missed or crashed pass is corrected by the next one.
+ */
+export const sweepOnce = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const monitors = yield* PullRequestMonitorService;
   const pullRequests = yield* PullRequestService;
   const serverSettings = yield* ServerSettingsService;
 
-  /**
-   * Only the poll loop observes a merge, so the monitor is the authority on one. A monitor that
-   * already went terminal still answers with its last snapshot, and a review whose pull request
-   * was never monitored falls back to a single cached read.
-   */
-  const isMerged = (ref: PullRequestRef) =>
-    Effect.gen(function* () {
-      const monitored = yield* Effect.result(
-        monitors.status({ reference: ref }).pipe(Effect.catch(() => Effect.succeed(null))),
-      );
-      const snapshot = Result.isSuccess(monitored)
-        ? (monitored.success?.latestSnapshot ?? null)
-        : null;
-      if (snapshot !== null) return snapshot.state === "merged";
-      return yield* pullRequests.detail(ref).pipe(
-        Effect.map((detail) => detail.state === "merged"),
-        Effect.catch(() => Effect.succeed(false)),
-      );
-    });
+  const settings = yield* Effect.result(serverSettings.getSettings);
+  if (Result.isFailure(settings) || settings.success.autoArchiveReviewThreadsOnMerge !== true) {
+    return;
+  }
+  const readModel = yield* engine.getReadModel();
+  const live = liveReviewThreadPullRequests(readModel);
+  const mergedPullRequestKeys = new Set<string>();
 
-  const sweep = Effect.gen(function* () {
-    const settings = yield* Effect.result(serverSettings.getSettings);
-    if (Result.isFailure(settings) || settings.success.autoArchiveReviewThreadsOnMerge !== true) {
-      return;
+  // A review thread that already records the merge needs no provider read. Only the rest are
+  // worth asking about, and those are grouped so a project costs one call rather than one per
+  // pull request — the fan-out that a per-pull-request read would create is a rate-limit risk.
+  const unrecordedProjects = new Set<ProjectId>();
+  for (const review of live) {
+    if (review.recordedState === "merged") {
+      for (const key of review.pullRequestKeys) mergedPullRequestKeys.add(key);
+      continue;
     }
-    const readModel = yield* engine.getReadModel();
-    const mergedPullRequestKeys = new Set<string>();
-    for (const live of liveReviewThreadPullRequests(readModel)) {
-      // A review thread that already records the merge is archived on this pass; only an
-      // unrecorded one costs a provider read.
-      if (live.recordedState !== "merged" && !(yield* isMerged(live.ref))) continue;
-      for (const key of live.pullRequestKeys) mergedPullRequestKeys.add(key);
-    }
-    for (const candidate of planReviewThreadAutoArchive(readModel, mergedPullRequestKeys)) {
-      yield* engine
-        .dispatch({
-          type: "thread.archive",
-          commandId: reviewThreadMergeArchiveCommandId(candidate),
-          threadId: candidate.threadId,
-        })
-        .pipe(
-          Effect.tapCause((cause) =>
-            Effect.logDebug("review thread auto-archive skipped", {
-              threadId: candidate.threadId,
-              pullRequestKey: candidate.pullRequestKey,
-              cause: cause,
-            }),
-          ),
-          Effect.catchCause(() => Effect.void),
-        );
-    }
-  });
+    unrecordedProjects.add(review.ref.projectId);
+  }
 
-  yield* Effect.forkScoped(sweep.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
+  for (const projectId of unrecordedProjects) {
+    const listing = yield* pullRequests.list({ state: "merged", projectId }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning(`${LOG_TAG}: merged pull request listing failed`, {
+          projectId,
+          error: error instanceof Error ? error.message : String(error),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (listing === null) continue;
+    if (listing.truncated) {
+      // Entries are newest-first, so a recent merge is still on this page; an older one may be
+      // missed until the thread's own state refreshes. Worth saying out loud rather than hiding.
+      yield* Effect.logWarning(`${LOG_TAG}: merged pull request listing was truncated`, {
+        projectId,
+      });
+    }
+    for (const entry of listing.entries) {
+      mergedPullRequestKeys.add(threadPullRequestKey({ url: entry.url, number: entry.number }));
+    }
+  }
+
+  // A monitored pull request answers from local state, which is cheaper and more current than
+  // the listing above; it only settles the answer for keys the listing did not already carry.
+  for (const review of live) {
+    if (review.recordedState === "merged") continue;
+    if (review.pullRequestKeys.some((key) => mergedPullRequestKeys.has(key))) continue;
+    const monitored = yield* monitors.status({ reference: review.ref }).pipe(
+      Effect.catch((error) =>
+        Effect.logDebug(`${LOG_TAG}: monitor read failed`, {
+          projectId: review.ref.projectId,
+          number: review.ref.number,
+          error: error instanceof Error ? error.message : String(error),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (monitored?.latestSnapshot?.state === "merged") {
+      for (const key of review.pullRequestKeys) mergedPullRequestKeys.add(key);
+    }
+  }
+
+  for (const candidate of planReviewThreadAutoArchive(readModel, mergedPullRequestKeys)) {
+    yield* engine
+      .dispatch({
+        type: "thread.archive",
+        commandId: reviewThreadMergeArchiveCommandId(candidate),
+        threadId: candidate.threadId,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning(`${LOG_TAG}: archive dispatch failed`, {
+            threadId: candidate.threadId,
+            pullRequestKey: candidate.pullRequestKey,
+            cause,
+          }),
+        ),
+      );
+  }
+}) satisfies Effect.Effect<void, never, SweepServices>;
+
+const makeReactor = Effect.gen(function* () {
+  yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
 });
 
 export const layer = Layer.effectDiscard(makeReactor);

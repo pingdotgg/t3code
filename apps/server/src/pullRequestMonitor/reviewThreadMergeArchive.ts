@@ -43,7 +43,10 @@ export function reviewThreadPullRequests(
 function isArchiveCandidate(thread: OrchestrationThread): boolean {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
   // Settling is a deliberate signal from the user; archiving would overwrite it.
-  return thread.settledOverride !== "settled";
+  if (thread.settledOverride === "settled") return false;
+  // Archiving stops the provider session, so a review that is still mid-turn would lose its
+  // in-flight findings. A merged pull request stays merged, so the next sweep takes it instead.
+  return thread.latestTurn?.state !== "running";
 }
 
 function activeReviewRoots(readModel: OrchestrationReadModel): OrchestrationThread[] {

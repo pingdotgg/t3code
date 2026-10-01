@@ -84,6 +84,28 @@ describe("planReviewThreadAutoArchive", () => {
     expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
   });
 
+  it("skips a review thread with a turn still running", () => {
+    const threads = [
+      reviewThread({
+        id: "running",
+        latestTurn: { turnId: "turn-1", state: "running", completedAt: null },
+      }),
+      reviewThread({
+        id: "done",
+        latestTurn: {
+          turnId: "turn-2",
+          state: "completed",
+          completedAt: "2026-01-02T00:00:00.000Z",
+        },
+      }),
+    ];
+    expect(
+      planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7).map(
+        (candidate) => candidate.threadId,
+      ),
+    ).toEqual(["done"]);
+  });
+
   it("skips a review thread the user settled", () => {
     const threads = [reviewThread({ id: "root", settledOverride: "settled" })];
     expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
@@ -315,6 +337,16 @@ describe("liveReviewThreadPullRequests", () => {
         recordedState: "merged",
       },
     ]);
+  });
+
+  it("does not report a review thread with a turn still running", () => {
+    const threads = [
+      reviewThread({
+        id: "running",
+        latestTurn: { turnId: "turn-1", state: "running", completedAt: null },
+      }),
+    ];
+    expect(liveReviewThreadPullRequests(readModel(threads))).toEqual([]);
   });
 
   it("does not report an archived or settled review thread", () => {
