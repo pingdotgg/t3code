@@ -61,47 +61,42 @@ export const make = Effect.gen(function* () {
     const id = ++nextId;
     let released = false;
     const initialize: SearchOperation = { method: "initialize", cwd, variant };
-    const run = Effect.fn("WorkspaceSearchHost.request")(
-      function* (operation: SearchOperation) {
-        yield* Effect.annotateCurrentSpan({ cwd, variant, operation: operation.method });
-        if (closed || released)
-          return yield* new WorkspaceSearchProcessFailed({
-            cause: new Error("Workspace search index is closed."),
-          });
-        activeIndex = id;
-        return yield* Effect.gen(function* () {
-          const active = yield* Effect.gen(function* () {
-            if (current) return current;
-            const process = yield* startSearchProcess();
-            current = { process, indexes: new Set<number>() };
-            return current;
-          }).pipe(Effect.uninterruptible);
-          if (!active.indexes.has(id)) {
-            yield* active.process.request({ id, operation: initialize });
-            active.indexes.add(id);
-          }
-          return operation.method === "initialize"
-            ? null
-            : yield* active.process.request({ id, operation });
-        }).pipe(
-          Effect.onError((cause) =>
-            cause.reasons.length > 0 &&
-            cause.reasons.every(
-              (reason) => Cause.isFailReason(reason) && isRecoverable(reason.error),
-            )
-              ? Effect.void
-              : stop(),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              activeIndex = undefined;
-            }),
-          ),
-        );
-      },
-      semaphore.withPermits(1),
-      Effect.timeout("20 seconds"),
-    );
+    const run = Effect.fn("WorkspaceSearchHost.request")(function* (operation: SearchOperation) {
+      yield* Effect.annotateCurrentSpan({ cwd, variant, operation: operation.method });
+      if (closed || released)
+        return yield* new WorkspaceSearchProcessFailed({
+          cause: new Error("Workspace search index is closed."),
+        });
+      activeIndex = id;
+      return yield* Effect.gen(function* () {
+        const active = yield* Effect.gen(function* () {
+          if (current) return current;
+          const process = yield* startSearchProcess();
+          current = { process, indexes: new Set<number>() };
+          return current;
+        }).pipe(Effect.uninterruptible);
+        if (!active.indexes.has(id)) {
+          yield* active.process.request({ id, operation: initialize });
+          active.indexes.add(id);
+        }
+        return operation.method === "initialize"
+          ? null
+          : yield* active.process.request({ id, operation });
+      }).pipe(
+        Effect.timeout("20 seconds"),
+        Effect.onError((cause) =>
+          cause.reasons.length > 0 &&
+          cause.reasons.every((reason) => Cause.isFailReason(reason) && isRecoverable(reason.error))
+            ? Effect.void
+            : stop(),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            activeIndex = undefined;
+          }),
+        ),
+      );
+    }, semaphore.withPermits(1));
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {

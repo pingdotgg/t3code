@@ -14,6 +14,15 @@ const decodeSearchRequest = Schema.decodeUnknownSync(SearchRequest);
 const encodeSearchResponse = Schema.encodeSync(SearchResponse);
 
 const directories = new Map<number, string>();
+const hold = (value: unknown) => {
+  const socket = NodeNet.connect(Number(process.env.T3_SEARCH_TEST_RECEIPT_PORT), "127.0.0.1", () =>
+    socket.write("blocked"),
+  );
+  socket.once("data", () => {
+    socket.end();
+    process.send?.(encodeSearchResponse(Exit.succeed(value)));
+  });
+};
 const block = () => {
   const socket = NodeNet.connect(
     Number(process.env.T3_SEARCH_TEST_RECEIPT_PORT),
@@ -30,6 +39,14 @@ process.on("message", (message) => {
   const { id, operation: input } = decodeSearchRequest(message);
   if (input.method === "initialize") directories.set(id, input.cwd);
   const cwd = directories.get(id) ?? "";
+  if (
+    input.method === "initialize" &&
+    cwd === "hold-initialize" &&
+    process.env.T3_SEARCH_TEST_HOLD_INITIALIZE === "1"
+  ) {
+    hold(null);
+    return;
+  }
   if (input.method === "dispose") {
     if (cwd === "block-dispose") {
       block();
@@ -60,21 +77,9 @@ process.on("message", (message) => {
     return;
   }
   if (input.method === "search" && input.query === "hold") {
-    const socket = NodeNet.connect(
-      Number(process.env.T3_SEARCH_TEST_RECEIPT_PORT),
-      "127.0.0.1",
-      () => socket.write("blocked"),
-    );
-    socket.once("data", () => {
-      socket.end();
-      process.send?.(
-        encodeSearchResponse(
-          Exit.succeed({
-            entries: [{ path: String(process.pid), kind: "file" }],
-            truncated: false,
-          }),
-        ),
-      );
+    hold({
+      entries: [{ path: String(process.pid), kind: "file" }],
+      truncated: false,
     });
     return;
   }

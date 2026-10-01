@@ -92,6 +92,39 @@ it.effect(
     ),
 );
 
+it.effect("gives a queued request a fresh deadline for a delayed worker rebuild", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const activeControl = yield* receipts();
+      const rebuildControl = yield* receipts();
+      yield* Effect.gen(function* () {
+        const index = yield* Index.make("workspace");
+        const other = yield* Index.make("hold-initialize");
+        const original = yield* index.list();
+        const blocked = yield* index.search("block", 1).pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(activeControl.blocked);
+        yield* TestClock.adjust("1 second");
+        const queued = yield* other.list().pipe(
+          Effect.provideService(HostProcessEnvironment, {
+            ...rebuildControl.environment,
+            T3_SEARCH_TEST_HOLD_INITIALIZE: "1",
+          }),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("19 seconds");
+        expect(Exit.isFailure(yield* Fiber.join(blocked))).toBe(true);
+        yield* Deferred.await(activeControl.exited);
+        yield* Deferred.await(rebuildControl.blocked);
+        yield* TestClock.adjust("2 seconds");
+        yield* rebuildControl.release;
+        const rebuilt = yield* Fiber.join(queued);
+        expect(rebuilt.entries).not.toEqual(original.entries);
+        expect((yield* index.list()).entries).toEqual(rebuilt.entries);
+      }).pipe(Effect.provideService(HostProcessEnvironment, activeControl.environment));
+    }).pipe(withWorker),
+  ),
+);
+
 it.effect("cancels a blocked request before allowing the queued request to rebuild", () =>
   Effect.scoped(
     Effect.gen(function* () {
