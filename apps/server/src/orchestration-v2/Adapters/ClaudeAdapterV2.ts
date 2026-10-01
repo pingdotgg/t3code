@@ -2943,6 +2943,11 @@ export function makeClaudeAdapterV2(
         }>({ userTurns: new Map(), reports: new Map() });
         // Subagents Claude started in the background. Only their ends wake the root.
         const backgroundedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // Subagents another subagent started (spawn_depth above 1). Claude
+        // reports their end to the owning subagent, so it never wakes the root.
+        const nestedSubagentTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const isNestedSubagentTask = (taskId: string) =>
+          Ref.get(nestedSubagentTaskIds).pipe(Effect.map((ids) => ids.has(taskId)));
         const recordWakeReport = (
           nativeThreadId: string,
           taskId: string,
@@ -4893,9 +4898,17 @@ export function makeClaudeAdapterV2(
             ));
           const bufferedMessages =
             (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId)?.messages ?? [];
+          // A nested subagent's end goes to the subagent that started it, not
+          // the root. It is buffered so the next drain completes its card, but
+          // it is not a wake.
+          const isNestedSubagentNotification =
+            isNotification &&
+            !isPendingTaskNotification &&
+            (yield* isNestedSubagentTask(message.task_id));
           const isPendingSubagentNotification =
             isNotification &&
             !isPendingTaskNotification &&
+            !isNestedSubagentNotification &&
             ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.task.status ===
               "running" ||
               bufferedMessages.some(
@@ -4954,6 +4967,7 @@ export function makeClaudeAdapterV2(
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
+            isNestedSubagentNotification ||
             isKnownSubagentTaskStarted ||
             isNewSubagentTaskStarted ||
             message.type === "assistant" ||
@@ -5016,13 +5030,17 @@ export function makeClaudeAdapterV2(
           // assistant, or result output proves that Claude actually began the
           // wake turn. Subagent notifications retain their existing immediate
           // offer because their projected lifecycle owns the continuation.
+          // Only root output proves it: a background subagent keeps streaming
+          // its own frames while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
             buffered?.messages.some(
               (entry) => entry.type === "system" && entry.subtype === "task_notification",
             ) ?? false;
           const isNativeOpaqueWakeFrame =
-            hasBufferedNotification && (message.type === "assistant" || message.type === "user");
+            hasBufferedNotification &&
+            (message.type === "assistant" || message.type === "user") &&
+            parentToolUseIdFromSdkMessage(message) === null;
           if (
             !isPendingSubagentNotification &&
             !isNativeOpaqueWakeFrame &&
@@ -5190,6 +5208,17 @@ export function makeClaudeAdapterV2(
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
+          // Before routing too: the wake gate reads it while the root is idle.
+          if (
+            message.type === "system" &&
+            message.subtype === "task_started" &&
+            !isClaudeNonSubagentTask(message) &&
+            (message.spawn_depth ?? 1) > 1
+          ) {
+            yield* Ref.update(nestedSubagentTaskIds, (current) =>
+              current.has(message.task_id) ? current : new Set(current).add(message.task_id),
+            );
+          }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;
             if (!rateLimitInfo) return;
@@ -5661,7 +5690,11 @@ export function makeClaudeAdapterV2(
               // With no model of its own, a nested subagent runs on its
               // owner's (the SDK's default for a subagent's Agent call).
               const model = launch?.model ?? owner?.task.model ?? undefined;
-              if (message.is_backgrounded === true) {
+              // A nested subagent's end goes to its owner, so it never wakes the root.
+              if (
+                message.is_backgrounded === true &&
+                !(yield* isNestedSubagentTask(message.task_id))
+              ) {
                 yield* Ref.update(backgroundedSubagentTaskIds, (current) =>
                   new Set(current).add(message.task_id),
                 );
