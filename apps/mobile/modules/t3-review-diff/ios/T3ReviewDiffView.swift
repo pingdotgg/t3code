@@ -1923,7 +1923,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     theme.headerBackground.setFill()
     context.fill(cardRect)
 
-    let hairline = 1 / UIScreen.main.scale
+    let hairline = 1 / traitCollection.displayScale
     theme.border.setFill()
     context.fill(CGRect(x: cardRect.minX, y: cardRect.maxY - hairline, width: cardRect.width, height: hairline))
 
@@ -1982,7 +1982,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     theme.background.setFill()
     context.fill(rect)
 
-    let hairline = 1 / UIScreen.main.scale
+    let hairline = 1 / traitCollection.displayScale
     theme.border.withAlphaComponent(0.65).setFill()
     context.fill(CGRect(x: 0, y: rect.maxY - hairline, width: rect.width, height: hairline))
 
