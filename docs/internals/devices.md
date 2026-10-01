@@ -69,7 +69,8 @@ already-running agent without the CLI.
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a
 device and cannot drift from the pinned CLI version. The always-on prompt block
-is a few lines that point at the tools and forbid raw `simctl` and `adb`.
+is a few lines that point at the tools and prefer them over raw `simctl` and
+`adb`, which stay available for what the tools do not cover.
 
 ## The viewer decodes both vendored protocols
 

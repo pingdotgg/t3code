@@ -275,12 +275,12 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         next.set(environmentId, snapshot);
         return next;
       }),
-    loadThread: (_environmentId, _threadId) => Effect.succeed(Option.none()),
+    loadThread: (_environmentId, _threadId) => Effect.succeedNone,
     saveThread: (_environmentId, _thread) => Effect.void,
     removeThread: (_environmentId, _threadId) => Effect.void,
-    loadServerConfig: () => Effect.succeed(Option.none()),
+    loadServerConfig: () => Effect.succeedNone,
     saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
+    loadVcsRefs: () => Effect.succeedNone,
     saveVcsRefs: () => Effect.void,
     removeVcsRefs: () => Effect.void,
     clearVcsRefs: () => Effect.void,
@@ -683,7 +683,7 @@ describe("EnvironmentRegistry", () => {
 
   it.effect("only a fresh health check for the rejected environment unlocks it", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+      const harness = yield* makeHarness([RELAY_TARGET, SECOND_RELAY_TARGET], [], [], {
         initialDisabled: [RELAY_TARGET.environmentId],
       });
       const descriptor = (environmentId: EnvironmentId): ExecutionEnvironmentDescriptor => ({
@@ -778,8 +778,8 @@ describe("EnvironmentRegistry", () => {
         yield* SubscriptionRef.update(discoveryState, (state) => ({
           ...state,
           environments: new Map(state.environments).set(
-            SECOND_TARGET.environmentId,
-            discovered(descriptor(SECOND_TARGET.environmentId)),
+            SECOND_RELAY_TARGET.environmentId,
+            discovered(descriptor(SECOND_RELAY_TARGET.environmentId)),
           ),
         }));
         yield* Deferred.await(unrelated);
@@ -798,8 +798,8 @@ describe("EnvironmentRegistry", () => {
           environments: new Map([
             [RELAY_TARGET.environmentId, discovered(descriptor(RELAY_TARGET.environmentId))],
             [
-              SECOND_TARGET.environmentId,
-              discovered(descriptor(SECOND_TARGET.environmentId), "2026-09-15T00:01:00Z"),
+              SECOND_RELAY_TARGET.environmentId,
+              discovered(descriptor(SECOND_RELAY_TARGET.environmentId), "2026-09-15T00:01:00Z"),
             ],
           ]),
         }));
@@ -823,6 +823,92 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)
             ?.unsupportedReason,
         ).toBeUndefined();
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("discovery leaves direct connections that share an environment id alone", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET, RELAY_TARGET]);
+      const discovered = (environmentId: EnvironmentId) => {
+        const endpoint = {
+          httpBaseUrl: "https://relay.example.test",
+          wsBaseUrl: "wss://relay.example.test",
+          providerKind: "manual" as const,
+        };
+        return {
+          environment: {
+            environmentId,
+            label: "Preview server",
+            endpoint,
+            linkedAt: "2026-09-25T00:00:00Z",
+          },
+          availability: "online" as const,
+          status: Option.some<RelayEnvironmentStatusResponse>({
+            environmentId,
+            endpoint,
+            status: "online",
+            checkedAt: "2026-09-25T00:00:00Z",
+            descriptor: {
+              environmentId,
+              label: "Preview server",
+              platform: { os: "darwin", arch: "arm64" },
+              serverVersion: "2.0.0",
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+              capabilities: { repositoryIdentity: true },
+            },
+          }),
+          error: Option.none(),
+        };
+      };
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        const relayChecked = yield* Deferred.make<void>();
+        yield* watchDiscoveredCompatibility().pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, {
+            ...registry,
+            setCompatibility: (environmentId, error) =>
+              registry
+                .setCompatibility(environmentId, error)
+                .pipe(
+                  Effect.andThen(
+                    environmentId === RELAY_TARGET.environmentId
+                      ? Deferred.succeed(relayChecked, undefined)
+                      : Effect.void,
+                  ),
+                ),
+          }),
+          Effect.provideService(
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery,
+            RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.of({
+              state:
+                yield* SubscriptionRef.make<RelayEnvironmentDiscovery.RelayEnvironmentDiscoveryState>(
+                  {
+                    ...RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
+                    environments: new Map([
+                      [TARGET.environmentId, discovered(TARGET.environmentId)],
+                      [RELAY_TARGET.environmentId, discovered(RELAY_TARGET.environmentId)],
+                    ]),
+                  },
+                ),
+              refresh: Effect.void,
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(relayChecked);
+
+        const entries = yield* SubscriptionRef.get(registry.entries);
+        expect(entries.get(RELAY_TARGET.environmentId)).toMatchObject({ enabled: false });
+        expect(entries.get(TARGET.environmentId)).toMatchObject({ enabled: true });
+        expect(entries.get(TARGET.environmentId)?.unsupportedReason).toBeUndefined();
+        expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connected");
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
