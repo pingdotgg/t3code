@@ -2258,6 +2258,33 @@ describe("storage cleanup", () => {
             );
             const recovered = yield* settledPreview({ ...input, refreshKey: "overflow" });
             assert.strictEqual(recovered.scanning, false);
+            // An environment draft cannot reclassify a project that keeps its own rule.
+            yield* settingsService.updateSettings({
+              projectSettingsOverrides: {
+                [PROJECT_ID]: {
+                  worktreeCleanup: {
+                    mode: "custom",
+                    rules: {
+                      worktreeAfterDays: 8,
+                      worktreeOnDelete: false,
+                      worktreeOnMerge: false,
+                      worktreeUnchanged: false,
+                    },
+                  },
+                },
+              },
+            });
+            yield* settledPreview(input);
+            for (const [projectId, folders] of [
+              [null, 1],
+              [PROJECT_ID, 0],
+            ] as const) {
+              const drafted = yield* settledPreview({ projectId, inactiveAfterDays: 60 });
+              assert.strictEqual(
+                drafted.categories.find((category) => category.kind === "inactive")?.folders,
+                folders,
+              );
+            }
             assert.deepStrictEqual(removals, []);
             return;
           }
@@ -2459,6 +2486,8 @@ describe("storage cleanup", () => {
             });
             yield* Deferred.await(deletionStarted);
             assert.strictEqual(yield* fs.exists(worktreePath), true);
+            // A sweep still waiting on its own work does not hold preview requests.
+            assert.strictEqual((yield* cleanup.preview({ projectId: null })).scanning, true);
             yield* Deferred.succeed(deletionStopped, undefined);
             yield* cleanup.drain;
           }

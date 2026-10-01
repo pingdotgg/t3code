@@ -10,7 +10,7 @@ import type {
   StorageCleanupCategory,
 } from "@t3tools/contracts";
 import { StorageCleanupPreviewBusy } from "@t3tools/contracts";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import { resolveProjectSettings, resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -801,11 +801,15 @@ export const make = Effect.gen(function* () {
     const projectIds = new Set<ProjectId>();
     let scanning = entry.running;
     for (const folder of entry.scan.folders) {
+      // An environment draft cannot change a project that has its own policy.
+      const policy = resolveProjectSettings(settings, folder.projectId).settings.worktreeCleanup;
+      const drafted =
+        input.projectId !== null || (policy?.mode !== "custom" && policy?.mode !== "off")
+          ? input.inactiveAfterDays
+          : undefined;
       // Switching a rule off does not hide its matching storage from the preview.
       const inactiveAfterDays =
-        input.inactiveAfterDays ??
-        resolveWorktreeCleanup(settings, folder.projectId).worktreeAfterDays ??
-        8;
+        drafted ?? resolveWorktreeCleanup(settings, folder.projectId).worktreeAfterDays ?? 8;
       // Specific Git outcomes take precedence over age in the display only.
       const kind =
         folder.category === "kept" &&
@@ -894,13 +898,16 @@ export const make = Effect.gen(function* () {
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) => Effect.logWarning("storage cleanup failed", { cause }),
       ),
+      // Only the invalidation is ordered against previews; a sweep can run for
+      // minutes and must not hold preview requests for that long.
       Effect.andThen(
         Effect.sync(() => {
           previewCache.length = 0;
-        }),
+        }).pipe(
+          Effect.andThen(SubscriptionRef.update(revision, (value) => value + 1)),
+          previewGate.withPermits(1),
+        ),
       ),
-      Effect.andThen(SubscriptionRef.update(revision, (value) => value + 1)),
-      previewGate.withPermits(1),
     ),
   );
 

@@ -105,6 +105,7 @@ function StorageSettingsEditor() {
     setDraftMode(null);
     setSaveError(null);
   };
+  const notSaved = "Changes could not be saved. Your draft is retained; try again.";
   const save = async () => {
     if (!dirty || saving) return;
     setSaving(true);
@@ -117,13 +118,16 @@ function StorageSettingsEditor() {
               worktreeCleanup: mode === "off" ? { mode: "off" } : { mode: "custom", rules: draft },
             })
         : await updateSettings({ storageCleanup: draft });
-      if (result && result.failedEnvironments.length === 0) discard();
+      if (result?.failedEnvironments.length === 0) discard();
       else
         setSaveError(
-          "Some changes could not be saved. Your draft is retained; retry to apply it to the remaining machines.",
+          // No result means nothing was attempted, so no machine holds the change.
+          result
+            ? "Some changes could not be saved. Your draft is retained; retry to apply it to the remaining machines."
+            : notSaved,
         );
     } catch {
-      setSaveError("Changes could not be saved. Your draft is retained; try again.");
+      setSaveError(notSaved);
     } finally {
       setSaving(false);
     }

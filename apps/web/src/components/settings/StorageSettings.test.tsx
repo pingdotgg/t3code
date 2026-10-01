@@ -167,6 +167,16 @@ describe("saving cleanup rules", () => {
     });
   });
 
+  it("does not claim other machines saved when nothing was attempted", async () => {
+    state.update.mockReturnValueOnce(undefined);
+    await toggle();
+    await submit();
+    expect(merged().props.checked).toBe(true);
+    const rendered = JSON.stringify(renderer.toJSON());
+    expect(rendered).toContain("Changes could not be saved");
+    expect(rendered).not.toContain("remaining machines");
+  });
+
   it("retains drafts after a partial failure so they can be retried", async () => {
     state.update.mockResolvedValueOnce({
       failedEnvironments: [{ label: "machine-a" }],
