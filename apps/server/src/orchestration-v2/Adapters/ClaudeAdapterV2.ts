@@ -2280,6 +2280,34 @@ function claudeEchoedPromptUuids(message: SDKMessage): ReadonlyArray<string> {
   return typeof uuid === "string" ? [uuid] : [];
 }
 
+// The prompt uuid a command_lifecycle frame (queued, started, completed)
+// acknowledges. A CLI that sends them also echoes that uuid on the result of
+// the turn answering the prompt; one that does not keeps the old path.
+function claudeAcknowledgedPromptUuid(message: SDKMessage): string | null {
+  const type: unknown = Reflect.get(message, "type");
+  if (type !== "command_lifecycle") return null;
+  const uuid: unknown = Reflect.get(message, "command_uuid");
+  return typeof uuid === "string" ? uuid : null;
+}
+
+// A result that answers a turn other than the pending prompt's. An echo
+// names the prompts its turn consumed. Without one, only a process known to
+// echo proves the turn foreign by its non-human origin; on a CLI that never
+// echoes, that result can be the prompt turn's only result.
+function isClaudeResultForOtherTurn(input: {
+  readonly message: SDKResultMessage;
+  readonly promptUuid: string;
+  readonly promptEchoMode: ClaudeLiveQueryContext["promptEchoMode"];
+}): boolean {
+  const echoed = claudeEchoedPromptUuids(input.message);
+  if (echoed.length > 0) return !echoed.includes(input.promptUuid);
+  return (
+    input.promptEchoMode !== "unknown" &&
+    input.message.origin !== undefined &&
+    input.message.origin.kind !== "human"
+  );
+}
+
 function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is SDKResultMessage & {
   readonly origin: Extract<
     NonNullable<SDKResultMessage["origin"]>,
@@ -2566,8 +2594,10 @@ interface ClaudeLiveQueryContext {
   readonly closed: Deferred.Deferred<void, never>;
   // Whether this CLI process echoes a prompt's uuid on the first frame of
   // the turn answering it ("early") or only on its result. Learned from the
-  // first prompt turn, which no queued wake turn can precede in a new process.
-  promptEchoMode: "unknown" | "early" | "result_only";
+  // first prompt turn. "acknowledged": the CLI confirmed it took a prompt's
+  // uuid before any echo, so it echoes, but a resume's own turns can still
+  // run ahead of that prompt.
+  promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
 }
 
 interface ActiveClaudeToolCall {
@@ -6147,17 +6177,19 @@ export function makeClaudeAdapterV2(
           }
         });
 
-        // A prompt offered while Claude has a wake turn queued (a background
-        // task or subagent finished during the previous turn) is answered
-        // only after that wake turn runs, and the two look alike until each
-        // turn's result. Claude echoes the prompt's uuid on the turn that
-        // answers it. On a CLI that echoes on the turn's first frame, root
-        // output that arrives before the echo is held: the echo releases it
-        // to this turn, and a task-notification-origin result proves it was a
-        // wake turn, which goes to the wake buffer and so to a continuation
-        // run. The echo lands on the turn's first frame, so the prompt's own
-        // turn streams without delay. A CLI that echoes only on the result
-        // (or not at all) is never held, exactly as before this gate.
+        // A prompt offered while Claude has a turn of its own queued (a
+        // background task or subagent finished, a peer message arrived, a
+        // resume reports work the previous process left) is answered only
+        // after that turn runs, and the two look alike until each turn's
+        // result. Claude echoes the prompt's uuid on the turn that answers
+        // it, so a result for another turn (see isClaudeResultForOtherTurn)
+        // never settles this one. On a CLI that echoes on the turn's first
+        // frame, root output that arrives before the echo is held: the echo
+        // releases it to this turn, and another turn's result sends it to the
+        // wake buffer and so to a continuation run. The echo lands on the
+        // turn's first frame, so the prompt's own turn streams without delay.
+        // A CLI that echoes only on the result (or not at all) is never held,
+        // exactly as before this gate.
         const handleSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -6175,7 +6207,10 @@ export function makeClaudeAdapterV2(
             return;
           }
           if (claudeEchoedPromptUuids(message).includes(context.promptUuid)) {
-            if (liveQuery.promptEchoMode === "unknown") {
+            if (
+              liveQuery.promptEchoMode === "unknown" ||
+              liveQuery.promptEchoMode === "acknowledged"
+            ) {
               liveQuery.promptEchoMode =
                 message.type !== "result" && context.gatedFramesBeforeEcho === 0
                   ? "early"
@@ -6184,6 +6219,12 @@ export function makeClaudeAdapterV2(
             yield* releaseHeldRootFrames(context);
             yield* handleRoutedSdkMessage(input);
             return;
+          }
+          if (
+            liveQuery.promptEchoMode === "unknown" &&
+            claudeAcknowledgedPromptUuid(message) === context.promptUuid
+          ) {
+            liveQuery.promptEchoMode = "acknowledged";
           }
           if (!isClaudePromptEchoGatedFrame(message)) {
             // Frames the held turn produced through its own tool uses (a
@@ -6201,6 +6242,59 @@ export function makeClaudeAdapterV2(
             return;
           }
           context.gatedFramesBeforeEcho += 1;
+          if (
+            message.type === "result" &&
+            isClaudeResultForOtherTurn({
+              message,
+              promptUuid: context.promptUuid,
+              promptEchoMode: liveQuery.promptEchoMode,
+            })
+          ) {
+            const held = context.heldRootFrames.splice(0);
+            // The prompt's own turn follows, so echo timing is learned from it alone.
+            context.gatedFramesBeforeEcho = 0;
+            if (message.num_turns === 0) {
+              // Lifecycle debris, not a turn: any held output stays held for
+              // its real owner.
+              context.heldRootFrames.push(...held);
+              yield* Effect.logDebug("orchestration-v2.claude-result-for-other-turn-dropped", {
+                providerTurnId: context.providerTurnId,
+                origin: message.origin?.kind,
+                uuid: message.uuid,
+              });
+              return;
+            }
+            if (liveQuery.promptEchoMode === "early") {
+              // The held turn ran before this prompt's turn, which still
+              // follows on the same stream.
+              yield* Effect.logInfo("orchestration-v2.claude-wake-turn-before-prompt", {
+                providerTurnId: context.providerTurnId,
+                origin: message.origin?.kind,
+                heldFrames: held.length,
+              });
+              for (const frame of [...held, message]) {
+                yield* bufferWakeMessage({
+                  nativeThreadId: liveQuery.nativeThreadId,
+                  message: frame,
+                });
+              }
+              return;
+            }
+            // Its output already streamed into this turn, so only its result
+            // stays out: settling here would end the turn before its prompt
+            // runs. The prompt's own turn ends it with an echoing result.
+            if (isClaudeTaskNotificationOriginResult(message)) {
+              // This turn showed the wake, so no offer will name its work.
+              yield* clearWakeReports(liveQuery.nativeThreadId);
+            }
+            yield* Effect.logInfo("orchestration-v2.claude-result-for-other-turn", {
+              providerTurnId: context.providerTurnId,
+              origin: message.origin?.kind,
+              num_turns: message.num_turns,
+              uuid: message.uuid,
+            });
+            return;
+          }
           if (liveQuery.promptEchoMode !== "early") {
             yield* handleRoutedSdkMessage(input);
             return;
@@ -6209,32 +6303,8 @@ export function makeClaudeAdapterV2(
             context.heldRootFrames.push(message);
             return;
           }
-          const held = context.heldRootFrames.splice(0);
-          if (isClaudeTaskNotificationOriginResult(message) && message.num_turns === 0) {
-            // Lifecycle debris, not a turn: the frame handler drops it as it
-            // always has, and any held output stays held for its real owner.
-            context.heldRootFrames.push(...held);
-            yield* handleRoutedSdkMessage(input);
-            return;
-          }
-          if (isClaudeTaskNotificationOriginResult(message)) {
-            // The held turn was a wake turn Claude ran before this prompt's
-            // turn, which still follows on the same stream.
-            yield* Effect.logInfo("orchestration-v2.claude-wake-turn-before-prompt", {
-              providerTurnId: context.providerTurnId,
-              heldFrames: held.length,
-            });
-            for (const frame of [...held, message]) {
-              yield* bufferWakeMessage({
-                nativeThreadId: liveQuery.nativeThreadId,
-                message: frame,
-              });
-            }
-            return;
-          }
-          // A result that neither echoes the prompt nor comes from a wake
-          // (an interrupt, a startup failure) settles the prompt's turn.
-          context.heldRootFrames.unshift(...held);
+          // A result from no other turn (an interrupt, a startup failure)
+          // settles the prompt's turn.
           yield* releaseHeldRootFrames(context);
           yield* handleRoutedSdkMessage(input);
         });

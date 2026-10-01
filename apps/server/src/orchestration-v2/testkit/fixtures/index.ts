@@ -16,6 +16,14 @@ import { claudeBackgroundMonitorWakeInput } from "./claude_background_monitor_wa
 import { assertClaudeBackgroundMonitorWakeOutput } from "./claude_background_monitor_wake/output.ts";
 import { claudeBackgroundTaskWakeInput } from "./claude_background_task_wake/input.ts";
 import { assertClaudeBackgroundTaskWakeOutput } from "./claude_background_task_wake/output.ts";
+import {
+  claudeCompactAfterPeerTurnInput,
+  claudeCompactAfterPeerTurnNoEchoInput,
+} from "./claude_compact_after_peer_turn/input.ts";
+import { assertClaudeCompactAfterPeerTurnOutput } from "./claude_compact_after_peer_turn/output.ts";
+import { assertClaudeCompactAfterPeerTurnNoEchoOutput } from "./claude_compact_after_peer_turn_no_echo/output.ts";
+import { claudeCompactAfterResumeWakeInput } from "./claude_compact_after_resume_wake/input.ts";
+import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after_resume_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
@@ -275,6 +283,54 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CLAUDE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertClaudeBackgroundWakeBeforeQueuedPromptNoEchoOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_compact_after_resume_wake",
+    buildInput: claudeCompactAfterResumeWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_compact_after_resume_wake/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeCompactAfterResumeWakeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_compact_after_peer_turn",
+    buildInput: claudeCompactAfterPeerTurnInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_compact_after_peer_turn/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeCompactAfterPeerTurnOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_compact_after_peer_turn_no_echo",
+    buildInput: claudeCompactAfterPeerTurnNoEchoInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_compact_after_peer_turn_no_echo/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertClaudeCompactAfterPeerTurnNoEchoOutput,
       },
     ],
   },
