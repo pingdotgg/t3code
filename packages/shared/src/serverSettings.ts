@@ -6,6 +6,8 @@ import {
   defaultInstanceIdForDriver,
   globalIdleCompaction,
   type IdleCompactionMode,
+  DEFAULT_SPEECH_POST_PROCESSING_MODELS,
+  isProviderDriverKind,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -148,6 +150,62 @@ export function resolveReviewGuideModelSelection(
     }
   }
   return resolveSourceControlWriterModelSelection(settings, providers, projectId);
+}
+
+/** Resolve voice cleanup without changing the user's persisted selection. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const canUse = (selection: ModelSelection) => {
+    if (!isModelSelectionProviderEnabled(settings, selection)) return false;
+    if (providers === undefined) return true;
+    const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+    return (
+      provider?.enabled === true &&
+      provider.installed &&
+      isProviderAvailable(provider) &&
+      provider.supportsTextGeneration !== false
+    );
+  };
+  let selection = settings.speechPostProcessingModelSelection;
+  if (!canUse(selection)) {
+    for (const [driver, defaults] of Object.entries(DEFAULT_SPEECH_POST_PROCESSING_MODELS)) {
+      const instanceIds = [
+        ProviderInstanceId.make(driver),
+        ...Object.entries(settings.providerInstances)
+          .filter(([id, instance]) => instance.driver === driver && id !== driver)
+          .map(([id]) => ProviderInstanceId.make(id)),
+      ];
+      const instanceId = instanceIds.find((id) =>
+        canUse({ instanceId: id, model: defaults.model }),
+      );
+      if (instanceId) {
+        selection = createModelSelection(instanceId, defaults.model, defaults.options);
+        break;
+      }
+    }
+  }
+  if (providers === undefined || !selection.options?.length) return selection;
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const model =
+    provider?.models.find(
+      (model) => model.slug === selection.model || model.aliases?.includes(selection.model),
+    ) ??
+    (provider?.driver === "grok" && selection.model === "grok-build"
+      ? provider.models.find((entry) => entry.isDefault)
+      : undefined);
+  const descriptors = model?.capabilities?.optionDescriptors ?? [];
+  const options = selection.options.filter((option) =>
+    descriptors.some(
+      (descriptor) =>
+        descriptor.id === option.id &&
+        (descriptor.type === "boolean"
+          ? typeof option.value === "boolean"
+          : descriptor.options.some((choice) => choice.id === option.value)),
+    ),
+  );
+  return createModelSelection(selection.instanceId, selection.model, options);
 }
 
 export interface PersistedServerObservabilitySettings {

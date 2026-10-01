@@ -51,6 +51,7 @@ import {
   deriveLegacyProjectOverrides,
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
+  resolveSpeechPostProcessingModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -482,7 +483,7 @@ function resolveTextGenerationProvider(
   isDriverAllowed: DriverAllowed = anyDriver,
 ): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  return isModelSelectionProviderEnabled(settings, selection) &&
+  const resolved = isModelSelectionProviderEnabled(settings, selection) &&
     selectionSupportsTextGeneration(settings, selection) &&
     isDriverAllowed(
       settings.providerInstances[selection.instanceId]?.driver ??
@@ -490,6 +491,10 @@ function resolveTextGenerationProvider(
     )
     ? settings
     : fallbackTextGenerationProvider(settings, isDriverAllowed);
+  const speechPostProcessingModelSelection = resolveSpeechPostProcessingModelSelection(resolved);
+  return speechPostProcessingModelSelection === resolved.speechPostProcessingModelSelection
+    ? resolved
+    : { ...resolved, speechPostProcessingModelSelection };
 }
 
 function fallbackTextGenerationProvider(

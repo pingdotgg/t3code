@@ -1,6 +1,9 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
@@ -10,18 +13,93 @@ import { describe, expect, vi } from "vite-plus/test";
 
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { postProcessTranscript } from "./postProcessing.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+
+const codexProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-01T00:00:00.000Z",
+  models: [
+    {
+      slug: "gpt-6-luna",
+      name: "GPT-6 Luna",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            options: [{ id: "low", label: "Low" }],
+          },
+        ],
+      },
+    },
+  ],
+  slashCommands: [],
+  skills: [],
+};
 
 const runPostProcess = (
   input: { readonly transcript: string; readonly cwd: string; readonly settings: ServerSettings },
   generate: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"],
+  providers: ReadonlyArray<ServerProvider> = [codexProvider],
 ) =>
   postProcessTranscript(input).pipe(
     Effect.provide(
-      Layer.mock(TextGeneration.TextGeneration)({ generateTranscriptionPostProcessing: generate }),
+      Layer.mergeAll(
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateTranscriptionPostProcessing: generate,
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+      ),
     ),
   );
 
 describe("postProcessTranscript", () => {
+  it.effect("cleans transcripts through Claude when Codex is not installed", () =>
+    Effect.gen(function* () {
+      const generate = vi.fn(
+        (
+          _input: Parameters<
+            TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"]
+          >[0],
+        ) => Effect.succeed({ transcription: "Clean text." }),
+      );
+      const claude: ServerProvider = {
+        ...codexProvider,
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        models: [
+          {
+            slug: "claude-haiku-4-5",
+            name: "Haiku",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" }],
+            },
+          },
+        ],
+      };
+      expect(
+        yield* runPostProcess(
+          { transcript: "raw", cwd: "C:/neutral", settings: DEFAULT_SERVER_SETTINGS },
+          generate,
+          [{ ...codexProvider, installed: false }, claude],
+        ),
+      ).toBe("Clean text.");
+      expect(generate.mock.calls[0]?.[0].modelSelection).toEqual({
+        instanceId: "claudeAgent",
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      });
+    }),
+  );
   it.effect("uses the dedicated model selection and built-in prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(

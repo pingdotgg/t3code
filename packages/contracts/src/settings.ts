@@ -29,6 +29,8 @@ import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+  DEFAULT_SPEECH_POST_PROCESSING_MODEL,
+  DEFAULT_SPEECH_POST_PROCESSING_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
@@ -1265,11 +1267,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
-        model: DEFAULT_TEXT_GENERATION_MODEL,
+        model: DEFAULT_SPEECH_POST_PROCESSING_MODEL,
         options: [
           {
             id: "reasoningEffort",
-            value: DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
+            value: DEFAULT_SPEECH_POST_PROCESSING_REASONING_EFFORT,
           },
         ],
       }),

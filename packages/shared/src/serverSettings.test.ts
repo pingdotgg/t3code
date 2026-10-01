@@ -24,6 +24,7 @@ import {
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
+  resolveSpeechPostProcessingModelSelection,
 } from "./serverSettings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
@@ -91,6 +92,154 @@ describe("serverSettings helpers", () => {
     expect(stillOff.idleCompaction).toBe("off");
     const on = applyServerSettingsPatch(off, { compactIdleThreads: true });
     expect([on.idleCompaction, on.compactIdleThreads]).toEqual(["beforeCacheExpires", true]);
+  });
+
+  it("uses voice defaults in the configured fallback order, including custom instances", () => {
+    const entries = [
+      ["codex", { model: "gpt-6-luna", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["claudeAgent", { model: "claude-haiku-4-5", options: [{ id: "thinking", value: false }] }],
+      ["opencode", { model: "opencode/big-pickle", options: [{ id: "variant", value: "low" }] }],
+      ["cursor", { model: "composer-2", options: [{ id: "reasoning", value: "low" }] }],
+      ["grok", { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["antigravity", { model: "antigravity-default", options: [] }],
+    ] as const;
+    for (let index = 0; index < entries.length; index++) {
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        speechPostProcessingModelSelection: createModelSelection(
+          ProviderInstanceId.make("missing"),
+          "custom",
+        ),
+        providerInstances: Object.fromEntries(
+          entries.map(([driver], candidateIndex) => [
+            driver,
+            {
+              driver: ProviderDriverKind.make(driver),
+              enabled: candidateIndex >= index,
+              config: {},
+            },
+          ]),
+        ),
+      };
+      const [driver, defaults] = entries[index]!;
+      expect(resolveSpeechPostProcessingModelSelection(settings)).toEqual(
+        createModelSelection(ProviderInstanceId.make(driver), defaults.model, defaults.options),
+      );
+      const customSettings = {
+        ...settings,
+        providerInstances: {
+          ...settings.providerInstances,
+          [driver]: { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+          custom: { driver: ProviderDriverKind.make(driver), enabled: true, config: {} },
+        },
+      };
+      expect(resolveSpeechPostProcessingModelSelection(customSettings)).toEqual(
+        createModelSelection(ProviderInstanceId.make("custom"), defaults.model, defaults.options),
+      );
+    }
+  });
+
+  it("preserves an enabled custom voice selection independently of text generation", () => {
+    const selection = createModelSelection(ProviderInstanceId.make("voice"), "custom-model", [
+      { id: "variant", value: "high" },
+    ]);
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      speechPostProcessingModelSelection: selection,
+      providerInstances: {
+        voice: { driver: ProviderDriverKind.make("opencode"), enabled: true, config: {} },
+      },
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings)).toBe(selection);
+    expect(settings.textGenerationModelSelection).toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+  });
+
+  it("uses the supported model default when low reasoning is not advertised", () => {
+    const selection = createModelSelection(
+      ProviderInstanceId.make("opencode"),
+      "opencode/big-pickle",
+      [{ id: "variant", value: "low" }],
+    );
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      speechPostProcessingModelSelection: selection,
+      providerInstances: {
+        opencode: { driver: ProviderDriverKind.make("opencode"), enabled: true, config: {} },
+      },
+    };
+    const provider: ServerProvider = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      driver: ProviderDriverKind.make("opencode"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-01T00:00:00.000Z",
+      models: [
+        {
+          slug: "opencode/big-pickle",
+          name: "Big Pickle",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "variant",
+                label: "Reasoning",
+                type: "select",
+                options: [{ id: "high", label: "High", isDefault: true }],
+              },
+            ],
+          },
+        },
+      ],
+      slashCommands: [],
+      skills: [],
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings, [provider])).toEqual({
+      instanceId: "opencode",
+      model: "opencode/big-pickle",
+    });
+    expect(
+      resolveSpeechPostProcessingModelSelection(settings, [
+        {
+          ...provider,
+          models: [
+            {
+              ...provider.models[0]!,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "variant",
+                    label: "Reasoning",
+                    type: "select",
+                    options: [{ id: "low", label: "Low" }],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    ).toEqual(selection);
+    expect(settings.speechPostProcessingModelSelection).toBe(selection);
+  });
+
+  it("leaves the configured selection intact when every provider is disabled", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: Object.fromEntries(
+        Object.keys(DEFAULT_SERVER_SETTINGS.providers).map((driver) => [
+          driver,
+          { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
+        ]),
+      ),
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings)).toBe(
+      settings.speechPostProcessingModelSelection,
+    );
   });
 
   it("keeps the built-in voice prompt selected until custom instructions are nonempty", () => {

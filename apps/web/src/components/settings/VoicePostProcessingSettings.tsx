@@ -1,11 +1,9 @@
 import { DEFAULT_SPEECH_POST_PROCESSING_PROMPT, ProviderDriverKind } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
 import { useRef, useState } from "react";
 
-import {
-  getCustomModelOptionsByInstance,
-  resolveAppModelSelectionState,
-} from "../../modelSelection";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -44,11 +42,8 @@ export function VoicePostProcessingSettings() {
     (entry) => entry.enabled && entry.isAvailable,
   );
   const modelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
-  const modelSelection = resolveAppModelSelectionState(
-    {
-      ...settings,
-      textGenerationModelSelection: settings.speechPostProcessingModelSelection,
-    },
+  const modelSelection = resolveSpeechPostProcessingModelSelection(
+    settings,
     textGenerationProviders,
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
