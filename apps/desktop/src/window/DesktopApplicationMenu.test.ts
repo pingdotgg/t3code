@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
@@ -41,7 +40,6 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   setAboutPanelOptions: () => Effect.void,
   setAppUserModelId: () => Effect.void,
   getAppMetrics: Effect.succeed([]),
-  isDefaultProtocolClient: () => Effect.succeed(false),
   setAsDefaultProtocolClient: () => Effect.succeed(true),
   setDesktopName: () => Effect.void,
   setDockIcon: () => Effect.void,
@@ -52,7 +50,7 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
 } satisfies ElectronApp.ElectronApp["Service"]);
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
-  pickFolder: () => Effect.succeed(Option.none()),
+  pickFolder: () => Effect.succeedNone,
   pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
@@ -64,7 +62,7 @@ const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   isInstallActive: Effect.succeed(false),
   subscribe: Effect.die("unexpected subscribe"),
   emitState: Effect.void,
-  disabledReason: Effect.succeed(Option.none()),
+  disabledReason: Effect.succeedNone,
   configure: Effect.void,
   setChannel: () => Effect.die("unexpected setChannel"),
   check: () => Effect.die("unexpected check"),
@@ -99,7 +97,7 @@ const makeElectronMenuLayer = (
     setApplicationMenu: (template) =>
       Deferred.succeed(applicationMenuTemplate, template).pipe(Effect.asVoid),
     popupTemplate: () => Effect.void,
-    showContextMenu: () => Effect.succeed(Option.none()),
+    showContextMenu: () => Effect.succeedNone,
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const configureMenu = (

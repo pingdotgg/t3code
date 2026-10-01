@@ -42,7 +42,7 @@ import { RpcProviderProxy } from "./RpcProviderProxy.ts";
  * ```
  *
  * @param cls - The tag of the resource class to construct a provider for.
- * @param serverEntryUrl - The main file for the server entry point, if the provider is to be run in a separate process. This is typically obtained using `import.meta.url` or `import.meta.resolve`.
+ * @param providersUrl - URL of the module whose default export is the provider group's layer (the layer this provider is registered in). When the provider runs in the dev sidecar, the sidecar imports that module on first use — see `Local/Sidecar.ts`. Typically `import.meta.resolve("./Local.ts")`.
  * @param eff - The Effect to use to construct the provider.
  * @returns A layer containing the RpcProvider.
  */
@@ -166,7 +166,7 @@ export const effect = <
   ListReq = never,
 >(
   cls: ResourceClassLike<R> | Platform<R, any, any, any, any, any>,
-  serverEntryUrl: string,
+  providersUrl: string,
   eff: Effect.Effect<
     RpcProviderService<
       R,
@@ -223,7 +223,7 @@ export const effect = <
           },
         });
       }
-      return withDefaultList(yield* client.value.get(serverEntryUrl, cls.Type));
+      return withDefaultList(yield* client.value.get(providersUrl, cls.Type));
     }),
   );
 

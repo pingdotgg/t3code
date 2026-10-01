@@ -1,8 +1,9 @@
-import type { CreateRule, Visitor } from "@oxlint/plugins"
+import type { CreateRule, Fix, Fixer, Visitor } from "@oxlint/plugins"
 
 export interface ReportedError {
   node: unknown
   message: string
+  fix?: (fixer: Pick<Fixer, "replaceTextRange">) => Fix
 }
 
 export interface TestContextOptions {

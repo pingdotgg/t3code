@@ -1,6 +1,5 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
   useNavigation,
@@ -194,7 +193,8 @@ export function ConnectionsNewRouteScreen({
       actions={[
         {
           accessibilityLabel: showScanner ? "Close scanner" : "Scan QR code",
-          icon: showScanner ? "xmark" : "camera",
+          icon: showScanner ? "xmark" : Platform.OS === "ios" ? "qrcode.viewfinder" : "camera",
+          tintColor: headerIconColor,
           onPress: () => {
             if (showScanner) {
               closeScanner();
@@ -205,26 +205,6 @@ export function ConnectionsNewRouteScreen({
         },
       ]}
     >
-      <NativeStackScreenOptions
-        options={{ title: showScanner ? "Scan QR Code" : "Add Environment" }}
-      />
-      {Platform.OS !== "android" ? (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button
-            icon={showScanner ? "xmark" : "qrcode.viewfinder"}
-            onPress={() => {
-              if (showScanner) {
-                closeScanner();
-              } else {
-                void openScanner();
-              }
-            }}
-            separateBackground
-            tintColor={headerIconColor}
-          />
-        </NativeHeaderToolbar>
-      ) : null}
-
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -284,7 +264,7 @@ export function ConnectionsNewRouteScreen({
 
               {pairingConnectionError ? <ErrorBanner message={pairingConnectionError} /> : null}
 
-              <View className={Platform.OS === "android" ? "flex-row justify-end" : undefined}>
+              <View className="android:flex-row android:justify-end">
                 <ConnectionSheetButton
                   icon="plus"
                   label={isSubmitting ? "Pairing..." : "Add environment"}

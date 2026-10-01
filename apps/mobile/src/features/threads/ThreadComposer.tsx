@@ -1,3 +1,4 @@
+import { ChatGptUsageLimitNotice } from "./ChatGptUsageLimitNotice";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
@@ -244,12 +245,8 @@ export function ComposerSurface(props: {
     >
       <AnimatedGlassSurface
         chrome="none"
-        fallbackColor={
-          Platform.OS === "android" ? colors["--color-composer-surface"] : colors["--color-card"]
-        }
-        fallbackClassName={
-          Platform.OS === "android" ? "border border-composer-border" : "border border-border"
-        }
+        fallbackColor={colors["--color-composer-surface"]}
+        fallbackClassName="border border-composer-border"
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
         // Keep native glass out of the interactive content's layout path.
@@ -641,6 +638,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
+        <ChatGptUsageLimitNotice
+          environmentId={props.environmentId}
+          thread={props.selectedThread}
+        />
         {!voiceInput.isBusy &&
         composerMenu.trigger &&
         (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
@@ -655,6 +656,27 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </View>
         ) : null}
 
+        {selectedProviderStatus?.compatibilityAdvisory?.message &&
+        (selectedProviderStatus.compatibilityAdvisory.status === "unsupported" ||
+          selectedProviderStatus.compatibilityAdvisory.status === "broken") ? (
+          <Text
+            accessibilityRole={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken" ? "alert" : undefined
+            }
+            accessibilityLiveRegion={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken"
+                ? "assertive"
+                : "polite"
+            }
+            className={
+              selectedProviderStatus.compatibilityAdvisory.status === "broken"
+                ? "bg-danger px-3 py-2 text-xs text-danger-foreground"
+                : "px-3 py-2 text-xs text-foreground"
+            }
+          >
+            {selectedProviderStatus.compatibilityAdvisory.message}
+          </Text>
+        ) : null}
         {modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
@@ -948,9 +970,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
-                        iconNode={
-                          <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                        }
+                        renderIcon={(size) => (
+                          <ProviderIcon provider={currentModelOption?.providerDriver} size={size} />
+                        )}
                         label={currentModelOption?.label ?? currentModelSelection.model}
                         maxWidth="100%"
                         onPress={openSettings}

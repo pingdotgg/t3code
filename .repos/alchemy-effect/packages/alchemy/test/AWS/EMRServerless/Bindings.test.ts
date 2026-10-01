@@ -40,7 +40,12 @@ class TransientUpstream extends Data.TaggedError("TransientUpstream")<{
 class JobRunNotTerminal extends Data.TaggedError("JobRunNotTerminal")<{
   readonly jobRunId: string;
   readonly state: string;
-}> {}
+  readonly stateDetails?: string;
+}> {
+  override get message() {
+    return `EMR Serverless job ${this.jobRunId} is still ${this.state}: ${this.stateDetails ?? "no state details"}`;
+  }
+}
 
 class ApplicationNotStarted extends Data.TaggedError("ApplicationNotStarted")<{
   readonly applicationId: string;
@@ -87,7 +92,11 @@ const postJson = (path: string) =>
 const waitForTerminalJobRun = (jobRunId: string) =>
   getJson(`/jobrun-detail?id=${jobRunId}`).pipe(
     Effect.flatMap((value) => {
-      const detail = value as { jobRunId: string; state: string };
+      const detail = value as {
+        jobRunId: string;
+        state: string;
+        stateDetails?: string;
+      };
       return terminalJobRunStates.includes(
         detail.state as (typeof terminalJobRunStates)[number],
       )
@@ -96,14 +105,20 @@ const waitForTerminalJobRun = (jobRunId: string) =>
             new JobRunNotTerminal({
               jobRunId: detail.jobRunId,
               state: detail.state,
+              stateDetails: detail.stateDetails,
             }),
           );
     }),
+    Effect.tapError((error) =>
+      error._tag === "JobRunNotTerminal"
+        ? Effect.logInfo(error.message)
+        : Effect.void,
+    ),
     Effect.retry({
       while: (error) => error._tag === "JobRunNotTerminal",
       schedule: Schedule.max([
         Schedule.spaced("3 seconds"),
-        Schedule.recurs(25),
+        Schedule.recurs(40),
       ]),
     }),
   );
@@ -313,9 +328,9 @@ describe.sequential("EMRServerless Bindings", () => {
           const roleArn = `arn:aws:iam::${Account}:role/${BINDINGS_ROLE_NAME}`;
           const response = (yield* postJson(
             `/session-start?roleArn=${encodeURIComponent(roleArn)}`,
-          )) as { tag: string };
-          expect(response.tag).not.toBe("AccessDeniedException");
-          expect(response.tag).not.toBe("ok");
+          )) as { tag: string; detail: string };
+          expect(response.detail).not.toContain("not authorized");
+          expect(response.tag).toBe("ValidationException");
         }),
     );
   });

@@ -133,7 +133,7 @@ function SectionTitle(props: { readonly children: string }) {
     <Text
       className={
         Platform.OS === "android"
-          ? "px-4 text-sm font-t3-medium text-primary"
+          ? "px-4 text-sm font-t3-medium text-primary-text"
           : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
       }
     >
@@ -409,7 +409,10 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         supportsCloneTracking: config?.environment.capabilities.projectCloneTracking === true,
       };
     });
-    return Arr.sort(options, environmentOptionOrder);
+    return Arr.sort(
+      options.filter((environment) => canCreateProjectInEnvironment(environment.connectionState)),
+      environmentOptionOrder,
+    );
   }, [connectedEnvironments, savedConnectionsById, serverConfigByEnvironmentId]);
 }
 

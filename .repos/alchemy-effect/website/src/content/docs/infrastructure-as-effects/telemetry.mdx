@@ -13,8 +13,8 @@ Layer, configured like everything else in Alchemy.
 
 ## Provide an exporter layer
 
-Telemetry is configured by providing a Layer on the Function/Worker
-init Effect, merged into the single `Effect.provide` alongside the
+Telemetry is configured by providing a Layer on the Runtime's
+constructor Effect, merged into the single `Effect.provide` alongside the
 other binding layers:
 
 ```typescript
@@ -39,6 +39,11 @@ export default Cloudflare.Worker(
 
 Without a telemetry layer, nothing exports — Effect's default tracer
 is a no-op, so all instrumentation stays free.
+
+On Cloudflare, [`Cloudflare.Telemetry()`](/cloudflare/observability/workers-tracing)
+is the platform-native alternative: it mirrors Effect spans into
+Workers Observability (fetch/KV/R2/D1 auto-spans included) instead of
+shipping OTLP from the Worker. Cloudflare owns sampling and export.
 
 ## Binding layers
 
@@ -73,14 +78,14 @@ Vendor layers wrap this. [`Axiom.Telemetry`](/axiom) takes an ingest
 walkthrough.
 
 For a manually-configured backend — a url and an API key — resolve
-the secret with `Config` in the layer's init and pass it as a header.
+the secret with `Config` in the layer's constructor and pass it as a header.
 The `Config` read binds the value at deploy time, and because it is
 `Redacted` it travels as a secret binding:
 
 ```typescript
 const Honeycomb = Layer.unwrap(
   Effect.gen(function* () {
-    const key = yield* Config.redacted("HONEYCOMB_API_KEY");
+    const key = yield* Config.Redacted("HONEYCOMB_API_KEY");
     return Alchemy.Telemetry.layerOtlp({
       url: "https://api.honeycomb.io",
       headers: { "x-honeycomb-team": key },
@@ -198,6 +203,8 @@ settings for you.
   telemetry to Axiom end to end
 - [Observability](/testing/observability) — provision the receiving
   end (datasets, tokens, monitors, alarms) as resources
+- [Native Workers tracing](/cloudflare/observability/workers-tracing) —
+  `Cloudflare.Telemetry()`, Effect spans in the Cloudflare waterfall
 - [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) —
   the Cloudflare-specific reference, including the platform-push
   alternative
