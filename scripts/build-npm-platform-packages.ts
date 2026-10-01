@@ -429,24 +429,22 @@ export const buildNpmPlatformPackages = Effect.fn("buildNpmPlatformPackages")(fu
   yield* fs.makeDirectory(path.join(input.outputDir, NPM_PLATFORM_PACKAGE_SCOPE), {
     recursive: true,
   });
-  const outputs: Array<NpmPackageOutput> = [];
-  for (const { key, archive } of archives) {
-    outputs.push(
-      yield* stagePlatformPackage({
-        key,
-        archive,
-        outputDir: input.outputDir,
-        version: input.version,
-      }),
-    );
-  }
-  outputs.push(
+  // Each archive stages in its own scratch dir, so all of them unpack and
+  // compress at once. Sequentially this took about 45s for five archives.
+  const platformOutputs = yield* Effect.forEach(
+    archives,
+    ({ key, archive }) =>
+      stagePlatformPackage({ key, archive, outputDir: input.outputDir, version: input.version }),
+    { concurrency: "unbounded" },
+  );
+  const outputs = [
+    ...platformOutputs,
     yield* stageLauncherPackage({
       outputDir: input.outputDir,
       version: input.version,
       platformKeys: archives.map((entry) => entry.key),
     }),
-  );
+  ];
 
   for (const output of outputs) {
     yield* Effect.log(`[npm-packages] Wrote ${output.packageDir} and ${output.tarball}`);
@@ -462,16 +460,16 @@ export const buildNpmPlatformPackages = Effect.fn("buildNpmPlatformPackages")(fu
 const command = Command.make(
   "build-npm-platform-packages",
   {
-    archivesDir: Flag.string("archives-dir").pipe(
+    archivesDir: Flag.String("archives-dir").pipe(
       Flag.withDescription("Directory holding the release's t3-<version>-<platform> archives."),
     ),
-    version: Flag.string("version").pipe(
+    version: Flag.String("version").pipe(
       Flag.withDescription(
         "Exact release version; selects the archives and versions the packages.",
       ),
     ),
-    outputDir: Flag.string("output-dir").pipe(Flag.withDefault("npm-packages")),
-    allowMissing: Flag.boolean("allow-missing").pipe(
+    outputDir: Flag.String("output-dir").pipe(Flag.withDefault("npm-packages")),
+    allowMissing: Flag.Boolean("allow-missing").pipe(
       Flag.withDefault(false),
       Flag.withDescription("Build a launcher that lists only the platforms present."),
     ),

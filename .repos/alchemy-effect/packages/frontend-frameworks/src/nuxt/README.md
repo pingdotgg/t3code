@@ -257,7 +257,7 @@ the Worker's binding hooks (`ctx.worker.bindings`) serve on
 ## Limitations & known constraints
 
 - **Pinned upstream surfaces.** nuxt `4.5.x`, nitropack `2.13.x` (see
-  `fixtures/nuxt`); treat version bumps as deliberate migrations. Note the
+  `packages/frontend-frameworks/fixtures/nuxt`); treat version bumps as deliberate migrations. Note the
   repo's `minimumReleaseAge` install gate (3 days) when bumping.
 - **`isr` route rule ignored.** Nitro implements `isr` only in the Vercel
   and Netlify presets — on `cloudflare_module` it is silently dropped at
@@ -298,8 +298,14 @@ the Worker's binding hooks (`ctx.worker.bindings`) serve on
   and the dev transport — host platform acquisition, connect-info shape,
   and the plugin's request bridge against a fake proxy server
   (`test/Dev.test.ts`).
-- `fixtures/nuxt` — the end-to-end fixture (Playwright against both the
+- `packages/frontend-frameworks/fixtures/nuxt` — the end-to-end fixture (Playwright against both the
   miniflare-served production build and the nitro dev server); see its
   layout for the covered surface (SSR routes, `server/` API routes,
   prerendered pages, `event.context.cloudflare.env` with real bindings and
   literal overrides, and the custom `worker-entry.ts` seam).
+
+## Upstream references
+
+- Nuxt: [`17119f8ee6f753faf2e61564bba3211871e16e2c`](https://github.com/nuxt/nuxt/tree/17119f8ee6f753faf2e61564bba3211871e16e2c)
+- Nitro: [`52abde8aa9d85215bc0e8dc3b007f29fc6112ac3`](https://github.com/nitrojs/nitro/tree/52abde8aa9d85215bc0e8dc3b007f29fc6112ac3)
+- Nitro Cloudflare dev: [`a22a83b7151b314d70a01089c352ca6007161051`](https://github.com/nitrojs/nitro-cloudflare-dev/tree/a22a83b7151b314d70a01089c352ca6007161051)

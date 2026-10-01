@@ -1,10 +1,11 @@
-import Mime from "@effect/platform-node/Mime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as Path from "effect/Path";
+import * as Mime from "effect/unstable/http/Mime";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -83,7 +84,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
   // the build-configured Clerk, relay, and OTLP endpoints. Those environment
   // origins are not known when this response policy is created, so restrict
   // connections by the network schemes the client supports instead of by host.
-  const connectSources = ["'self'", "http:", "https:", "ws:", "wss:"];
+  // GLTFLoader fetches embedded textures through blob URLs after parsing the model.
+  const connectSources = ["'self'", "blob:", "http:", "https:", "ws:", "wss:"];
 
   return [
     "default-src 'self'",
@@ -124,6 +126,9 @@ function registerDesktopSchemePrivilegesSync(): void {
         supportFetchAPI: true,
         corsEnabled: true,
         stream: true,
+        // Custom schemes skip Chromium's V8 code cache unless they opt in.
+        // Dev stays off: Vite serves changing code at stable URLs.
+        codeCache: true,
       },
     },
     {
@@ -227,7 +232,9 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   const contents = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
   if (contents === null) return new Response(null, { status: 404 });
   return new Response(request.method === "HEAD" ? null : new Uint8Array(contents), {
-    headers: { "content-type": Mime.getType(filePath) ?? "application/octet-stream" },
+    headers: {
+      "content-type": Option.getOrElse(Mime.getType(filePath), () => "application/octet-stream"),
+    },
   });
 });
 

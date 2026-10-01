@@ -150,10 +150,10 @@ export function SnapShotContentsButton({
                   aria-label={
                     includesAccessibility ? "View accessibility data" : "No accessibility data"
                   }
-                  className={cn("[--control-icon-color:currentColor]", className)}
+                  className={className}
                   onClick={(event) => event.stopPropagation()}
                   size="icon-micro"
-                  variant="ghost-muted"
+                  variant="overlay"
                 />
               }
             />
@@ -163,18 +163,13 @@ export function SnapShotContentsButton({
         </TooltipTrigger>
         <TooltipPopup side={side}>{tooltip}</TooltipPopup>
       </Tooltip>
-      <PopoverPopup
-        side={side}
-        align="center"
-        className="w-[min(24rem,calc(100vw-2rem))]"
-        viewportClassName="max-h-[min(28rem,70vh)]"
-      >
-        <div className="space-y-2">
-          <PopoverTitle className="text-sm leading-5">Accessibility data</PopoverTitle>
+      <PopoverPopup side={side} align="center" width="md">
+        <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
+          <PopoverTitle>Accessibility data</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
-              className="max-h-64 rounded-md border border-border/70 bg-muted/45 p-2.5 text-[11px] leading-4"
+              className="max-h-64 rounded-md border border-border/70 bg-muted/45 p-2.5 text-2xs leading-4"
             />
           ) : includesAccessibility ? (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
@@ -209,17 +204,14 @@ export function SnapShotAttachmentDetails({
       {source.appIconDataUrl ? (
         <img src={source.appIconDataUrl} alt="" className="size-7 shrink-0 rounded-md" />
       ) : (
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-[length:calc(10px*var(--conversation-font-scale,1))] font-medium text-white uppercase">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-[length:calc(10px*var(--conversation-font-scale,1))] font-medium text-white uppercase">
           {source.appName.slice(0, 1)}
         </div>
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[length:calc(11px*var(--conversation-font-scale,1))] font-medium leading-[calc(var(--conversation-text-unit,1rem)*0.875)] text-white">
           <span className="truncate">{source.appName}</span>
-          <SnapShotContentsButton
-            source={source}
-            className="pointer-events-auto text-white/60 hover:bg-white/10 hover:text-white focus-visible:ring-white/70"
-          />
+          <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
         <div className="truncate text-[length:calc(9px*var(--conversation-font-scale,1))] leading-[calc(var(--conversation-text-unit,1rem)*0.875)] text-white/70">
           {source.windowTitle || "Captured window"}

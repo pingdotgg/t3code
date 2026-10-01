@@ -68,6 +68,7 @@ export interface ThreadFeedActivity {
     | "eye"
     | "globe"
     | "hammer"
+    | "lock"
     | "message"
     | "warning"
     | "wrench"
@@ -971,6 +972,7 @@ function workEntryIcon(entry: DerivedWorkLogEntry): ThreadFeedActivity["icon"] {
   if (entry.requestKind === "command") return "command";
   if (entry.requestKind === "file-read") return "eye";
   if (entry.requestKind === "file-change") return "edit";
+  if (entry.requestKind === "permission") return "lock";
   if (entry.itemType === "command_execution" || entry.command) return "command";
   if (entry.itemType === "file_change" || (entry.changedFiles?.length ?? 0) > 0) return "edit";
   if (entry.itemType === "web_search") return "globe";
@@ -1439,7 +1441,8 @@ function extractWorkLogRequestKind(
   if (
     payload?.requestKind === "command" ||
     payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
+    payload?.requestKind === "file-change" ||
+    payload?.requestKind === "permission"
   ) {
     return payload.requestKind;
   }
@@ -1901,10 +1904,7 @@ function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
     !isContextCompactionActivityGroup(entry) &&
     !isUserInputActivityGroup(entry) &&
     entry.activities.every(
-      (activity) =>
-        !activity.workEntry.agentSpawn &&
-        activity.workEntry.tone !== "error" &&
-        !workEntryIndicatesToolFailure(activity.workEntry),
+      (activity) => !activity.workEntry.agentSpawn && activity.workEntry.tone !== "error",
     )
   ) {
     return entry.turnId;

@@ -26,6 +26,7 @@ import {
   AndroidHeaderIconButton,
   AndroidSheetHeader,
 } from "../../../components/AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "../../../components/AndroidAnchoredMenu";
 import { MaterialScreenContent } from "../../../components/MaterialScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { AppText as Text } from "../../../components/AppText";
@@ -232,7 +233,8 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 
   const content = (
     <ScrollView
-      className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-screen"}
+      alwaysBounceVertical
+      className="flex-1 android:bg-sheet-solid ios:bg-screen"
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
@@ -246,13 +248,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       }
     >
       <View
-        className={
-          Platform.OS === "android"
-            ? "overflow-hidden rounded-[20px] bg-card"
-            : isInspector
-              ? "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
-              : "overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1"
-        }
+        className={`overflow-hidden bg-card android:rounded-[20px] ios:border ios:border-border ${
+          isInspector ? "ios:rounded-2xl ios:px-3 ios:py-1" : "ios:rounded-[22px] ios:px-4 ios:py-1"
+        }`}
       >
         {sheetMenuItems.map(({ item, disabledReason }, index) => (
           <View key={`${item.id}-${item.label}`}>
@@ -318,11 +316,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           {linkedPrChains.map((chain) => (
             <View
               key={threadPullRequestKeyOf(chain.layers[0]!)}
-              className={
-                Platform.OS === "android"
-                  ? "overflow-hidden rounded-[20px] bg-card"
-                  : "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
-              }
+              className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border ios:px-3 ios:py-1"
             >
               {chain.layers.length > 1 ? (
                 <View className="flex-row items-center gap-2 px-1 pt-2 pb-1">
@@ -400,7 +394,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     // stack header, so — like the Settings sheet — the header must come from a
     // nested native stack INSIDE the sheet. This reuses the exact structure of the
     // inspector branch below: branch as the title, status summary as the native
-    // subtitle, refresh as a header button.
+    // subtitle, and content that owns pull-to-refresh.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
@@ -431,6 +425,30 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     );
   }
 
+  const refreshMenu = (
+    <AndroidAnchoredMenu
+      title="Repository options"
+      actions={[
+        {
+          id: "refresh",
+          title: "Refresh repository status",
+          attributes: { disabled: busy || isPullRefreshing },
+        },
+      ]}
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === "refresh") void handlePullRefresh();
+      }}
+    >
+      {(open) => (
+        <AndroidHeaderIconButton
+          accessibilityLabel="Repository options"
+          icon="ellipsis"
+          onPress={open}
+        />
+      )}
+    </AndroidAnchoredMenu>
+  );
+
   return (
     <View
       collapsable={false}
@@ -457,22 +475,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       ) : null}
 
       {isInspector ? (
-        <View
-          className={
-            Platform.OS === "android"
-              ? "gap-1 bg-header px-4 pb-4 pt-3"
-              : "gap-1 border-b border-border px-4 pb-4 pt-3"
-          }
-        >
+        <View className="gap-1 px-4 pb-4 pt-3 android:bg-header ios:border-b ios:border-border">
           {Platform.OS === "android" ? (
-            <View className="absolute right-3 top-4 z-[1]">
-              <AndroidHeaderIconButton
-                accessibilityLabel="Refresh repository status"
-                disabled={busy}
-                icon="arrow.clockwise"
-                onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
-              />
-            </View>
+            <View className="absolute right-3 top-4 z-[1]">{refreshMenu}</View>
           ) : (
             <Pressable
               className={
@@ -506,14 +511,19 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           hideBottomBorder={Platform.OS === "android"}
           subtitle={currentStatusSummary}
           onBack={() => navigation.goBack()}
-          actions={[
-            {
-              accessibilityLabel: "Refresh repository status",
-              disabled: busy,
-              icon: "arrow.clockwise",
-              onPress: () => void gitActions.refreshSelectedThreadGitStatus(),
-            },
-          ]}
+          trailing={Platform.OS === "android" ? refreshMenu : undefined}
+          actions={
+            Platform.OS === "android"
+              ? undefined
+              : [
+                  {
+                    accessibilityLabel: "Refresh repository status",
+                    disabled: busy,
+                    icon: "arrow.clockwise",
+                    onPress: () => void gitActions.refreshSelectedThreadGitStatus(),
+                  },
+                ]
+          }
         />
       )}
 

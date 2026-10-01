@@ -29,13 +29,16 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsSummary,
   WS_METHODS.pullRequestsStack,
   WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsPreview,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
+  WS_METHODS.pullRequestsFilesViewed,
   WS_METHODS.pullRequestsReviewerCandidates,
   WS_METHODS.pullRequestsLabelCandidates,
 ]);
 const writes = new Set<string>([
+  WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,
   WS_METHODS.pullRequestsUpdate,
   WS_METHODS.pullRequestsComment,
@@ -182,7 +185,7 @@ export function createPullRequestRouter() {
         targets,
         ([target, reference]) =>
           invalidateTarget(registry, origin.target.environmentId, target, [
-            input.reference === undefined ? {} : { reference },
+            { ...input, ...(input.reference === undefined ? {} : { reference }) },
           ]),
         { concurrency: 4, discard: true },
       );
@@ -229,8 +232,13 @@ export function createPullRequestRouter() {
             targets,
             ([target, refs]) =>
               invalidateTarget(registry, origin.target.environmentId, target, [
-                ...refs.map((reference) => ({ reference })),
-                {},
+                ...refs.map((reference) => ({
+                  reference,
+                  ...(tag === WS_METHODS.pullRequestsSetFilesViewed
+                    ? { filesViewedOnly: true }
+                    : {}),
+                })),
+                ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
               ]),
             { concurrency: 4, discard: true },
           );
@@ -331,15 +339,11 @@ export function createPullRequestRouter() {
         }
         const operation = run(id);
         return yield* (reads.has(tag) ? operation.pipe(readTimeout(id)) : operation).pipe(
-          Effect.catch((error) => {
-            if (
-              (reads.has(tag) || rejectedBeforeDispatch(error)) &&
-              index + 1 < candidates.length
-            ) {
-              return visit(index + 1);
-            }
-            return Effect.fail(error);
-          }),
+          Effect.catchIf(
+            (error) =>
+              (reads.has(tag) || rejectedBeforeDispatch(error)) && index + 1 < candidates.length,
+            () => visit(index + 1),
+          ),
           Effect.map((result) =>
             typeof result === "object" && result !== null && "projectId" in result
               ? {

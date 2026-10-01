@@ -1,4 +1,8 @@
-import type { ServerProvider, ServerProviderVersionAdvisory } from "@t3tools/contracts";
+import type {
+  ServerProvider,
+  ServerProviderVersionAdvisory,
+  ServerProviderCompatibilityAdvisory,
+} from "@t3tools/contracts";
 
 /**
  * Visual treatment for each server-reported provider status. Centralized so
@@ -99,14 +103,53 @@ export function getProviderVersionLabel(version: string | null | undefined) {
   return /^\d/.test(version) ? `v${version}` : version;
 }
 
+const COMPATIBILITY_TITLES = {
+  graceful: "Limited support",
+  unsupported: "Unsupported version",
+  broken: "Known broken version",
+} as const;
+
+/** Compatibility guidance shares the version popover, with safe install actions. */
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
+  compatibility?: ServerProviderCompatibilityAdvisory | undefined,
+  showCompatibility = true,
 ): {
+  readonly title: string;
   readonly detail: string;
   readonly updateCommand: string | null;
   readonly emphasis: "normal" | "strong";
+  readonly targetVersion: string | null;
 } | null {
-  if (!advisory || advisory.status === "current" || advisory.status === "unknown") {
+  const latestIsIncompatible =
+    compatibility?.latestVersionStatus === "broken" ||
+    compatibility?.latestVersionStatus === "unsupported";
+  if (
+    showCompatibility &&
+    compatibility &&
+    (compatibility.status === "graceful" ||
+      compatibility.status === "unsupported" ||
+      compatibility.status === "broken")
+  ) {
+    const targetVersion = compatibility.recommendedVersion;
+    const recommendation = getProviderVersionLabel(targetVersion) ?? compatibility.recommendedRange;
+    return {
+      title: COMPATIBILITY_TITLES[compatibility.status],
+      detail:
+        compatibility.message ??
+        (recommendation ? `Use ${recommendation} for full support.` : "Update for full support."),
+      updateCommand:
+        targetVersion || latestIsIncompatible ? null : (advisory?.updateCommand ?? null),
+      emphasis: compatibility.status === "graceful" ? "normal" : "strong",
+      targetVersion,
+    };
+  }
+  if (
+    !advisory ||
+    advisory.status === "current" ||
+    advisory.status === "unknown" ||
+    latestIsIncompatible
+  ) {
     return null;
   }
 
@@ -115,6 +158,7 @@ export function getProviderVersionAdvisoryPresentation(
   const versionLabel = getProviderVersionLabel(version);
 
   return {
+    title: label,
     detail:
       advisory.message ??
       (versionLabel
@@ -122,5 +166,6 @@ export function getProviderVersionAdvisoryPresentation(
         : `${label}: install the latest provider version.`),
     updateCommand: advisory.updateCommand,
     emphasis: "normal" as const,
+    targetVersion: null,
   };
 }
