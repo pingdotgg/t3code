@@ -1491,8 +1491,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const epoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     const control = yield* ensureControlSession(wc);
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
-      agentDrivenWebContents.add(wc);
-      yield* update(tabId, { controller: "agent" });
       const checkControl = Effect.gen(function* () {
         const currentEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
         if (currentEpoch !== epoch) {
@@ -1503,6 +1501,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           });
         }
       });
+      // A human who took over while this action waited for the permit owns
+      // the page; marking it agent-driven would hide their Save dialog.
+      yield* checkControl;
+      agentDrivenWebContents.add(wc);
+      yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
         function* (method, commandParams, sessionId) {
           yield* checkControl;

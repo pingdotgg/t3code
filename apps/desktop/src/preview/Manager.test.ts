@@ -4550,18 +4550,32 @@ describe("PreviewManager", () => {
             if (channel === "preview:human-input") humanInput = listener;
           }),
         });
+        let holdEvaluate = false;
+        let releaseEvaluate: (() => void) | undefined;
         Object.assign(wc.debugger, {
-          sendCommand: vi.fn(async (method: string) =>
-            method === "Runtime.evaluate" ? { result: { value: 42 } } : undefined,
-          ),
+          sendCommand: vi.fn(async (method: string) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            if (holdEvaluate) {
+              holdEvaluate = false;
+              await new Promise<void>((resolve) => {
+                releaseEvaluate = resolve;
+              });
+            }
+            return { result: { value: 42 } };
+          }),
         });
         fromId.mockReturnValue(wc);
-        const humanTookOver = yield* Deferred.make<void>();
-        yield* manager.subscribeStateChanges((_tabId, state) =>
-          state.controller === "human"
-            ? Deferred.succeed(humanTookOver, undefined).pipe(Effect.asVoid)
-            : Effect.void,
-        );
+        const takeovers = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+        let takeoverCount = 0;
+        let controller = "none";
+        yield* manager.subscribeStateChanges((_tabId, state) => {
+          const takeover =
+            controller !== "human" && state.controller === "human"
+              ? takeovers[takeoverCount++]
+              : undefined;
+          controller = state.controller;
+          return takeover ? Deferred.succeed(takeover, undefined).pipe(Effect.asVoid) : Effect.void;
+        });
         yield* manager.getBrowserSession();
         yield* manager.getBrowserSession();
         const installs = previewSession.on.mock.calls.filter(
@@ -4602,7 +4616,24 @@ describe("PreviewManager", () => {
         );
 
         humanInput?.({}, { kind: "pointer", x: 10, y: 10, button: 0 });
-        yield* Deferred.await(humanTookOver);
+        yield* Deferred.await(takeovers[0]!);
+        expect(download()).not.toHaveBeenCalled();
+
+        // An action still waiting for the page when the human takes over must
+        // not mark it as agent-driven again.
+        holdEvaluate = true;
+        const running = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => releaseEvaluate !== undefined);
+        const queued = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        humanInput?.({}, { kind: "pointer", x: 20, y: 20, button: 0 });
+        yield* Deferred.await(takeovers[1]!);
+        releaseEvaluate?.();
+        yield* Fiber.await(running);
+        expect(Exit.isFailure(yield* Fiber.await(queued))).toBe(true);
         expect(download()).not.toHaveBeenCalled();
       }),
     ),
