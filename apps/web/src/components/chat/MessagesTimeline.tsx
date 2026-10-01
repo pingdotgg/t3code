@@ -2042,9 +2042,17 @@ const WorkEntryDetails = memo(function WorkEntryDetails({
   const { activeThreadEnvironmentId, activeThreadId } = use(TimelineRowCtx);
   const output = extractCommandOutputText(workEntry.toolData);
   const command = workEntryFullCommand(workEntry);
+  const fallbackToolData =
+    typeof workEntry.toolData === "object" &&
+    workEntry.toolData !== null &&
+    !Array.isArray(workEntry.toolData)
+      ? Object.fromEntries(
+          Object.entries(workEntry.toolData).filter(([key]) => key !== "toolCallId"),
+        )
+      : workEntry.toolData;
   const fallback =
-    !output && hasWorkLogToolData(workEntry.toolData)
-      ? JSON.stringify(workEntry.toolData, null, 2)
+    !output && hasWorkLogToolData(fallbackToolData)
+      ? JSON.stringify(fallbackToolData, null, 2)
       : undefined;
   const detail = [
     command,
