@@ -104,7 +104,15 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 function OpeningThreadLoadingScreen() {
-  return <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+  const content = <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+
+  if (Platform.OS !== "android") return content;
+
+  return (
+    <View className="flex-1 bg-header">
+      <View className="flex-1 overflow-hidden rounded-t-[28px]">{content}</View>
+    </View>
+  );
 }
 
 type ThreadRouteScreenRouteProps = StaticScreenProps<{
