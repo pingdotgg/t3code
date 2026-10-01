@@ -25,7 +25,6 @@ import {
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
   type ThreadPullRequestBadge,
-  threadPullRequestSearchTerms,
 } from "@t3tools/shared/threadPullRequests";
 import { useRender } from "@base-ui/react/use-render";
 import {
@@ -45,6 +44,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import {
+  pullRequestMatchesSearchQuery,
   resolveThreadLastVisitedAt,
   resolveThreadStatusPill,
   type ThreadStatusPill,
@@ -1086,14 +1086,8 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
-  const normalizedQuery = query.trim().toLowerCase();
-  const matches = (candidate: Parameters<typeof threadPullRequestSearchTerms>[0]) =>
-    normalizedQuery.length > 0 &&
-    threadPullRequestSearchTerms(candidate).some((term) =>
-      term.toLowerCase().includes(normalizedQuery),
-    );
   const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
-    matches({ pullRequests: [pr] }),
+    pullRequestMatchesSearchQuery({ pullRequests: [pr] }, query),
   );
   const fallbackCandidates =
     thread.pullRequests.length === 0
@@ -1101,7 +1095,9 @@ export function ThreadSearchPullRequestNumber({
       : [thread.branchPullRequest];
   const legacyReference = matchedLink
     ? undefined
-    : fallbackCandidates.find((pr) => pr != null && matches({ linkedPullRequest: pr }));
+    : fallbackCandidates.find(
+        (pr) => pr != null && pullRequestMatchesSearchQuery({ linkedPullRequest: pr }, query),
+      );
   const legacyStatus = useLinkedThreadPullRequest(
     thread.environmentId,
     legacyReference,
