@@ -1,3 +1,5 @@
+import { createV5StackNavigator as createNativeStackNavigator } from "./native/createV5StackNavigator";
+import { createWorkspaceStackNavigator } from "./features/layout/createWorkspaceStackNavigator";
 import {
   createPathConfigForStaticNavigation,
   getPathFromState,
@@ -6,7 +8,6 @@ import {
   useNavigation,
 } from "@react-navigation/native";
 import {
-  createNativeStackNavigator,
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
@@ -602,7 +603,7 @@ function NotFoundScreen() {
   );
 }
 
-const RootStackConfig = createNativeStackNavigator({
+const RootStackConfig = createWorkspaceStackNavigator({
   initialRouteName: "Home",
   layout: RootStackLayout,
   screenOptions: {

@@ -258,7 +258,12 @@ export function FileTreeBrowser(props: {
       updateCellsBatchingPeriod={16}
       windowSize={5}
       contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
-      refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={props.isPending && visibleNodes.length > 0}
+          onRefresh={props.onRefresh}
+        />
+      }
       renderItem={renderItem}
       ListHeaderComponent={
         <>
