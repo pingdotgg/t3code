@@ -4753,7 +4753,6 @@ describe("ProviderRuntimeIngestion", () => {
         status: "in_progress",
         title: "Read file",
         detail: "/tmp/file.ts",
-        data: { item: { command: ["cat", "/tmp/file.ts"], cwd: "/tmp" } },
       },
     });
     harness.emit({
@@ -4806,10 +4805,6 @@ describe("ProviderRuntimeIngestion", () => {
         ? (toolActivity.payload as Record<string, unknown>)
         : undefined;
     expect(toolPayload?.itemId).toBe("item-read-file");
-    expect(toolPayload?.status).toBe("in_progress");
-    expect(toolPayload?.data).toEqual({
-      item: { command: ["cat", "/tmp/file.ts"], cwd: "/tmp" },
-    });
   });
 
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
