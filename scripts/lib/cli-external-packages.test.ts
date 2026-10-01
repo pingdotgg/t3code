@@ -101,7 +101,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
   // `require("<name>/package.json")` cannot do this job: under pnpm isolation a
   // transitive package (node-addon-api, ffi-rs) is not reachable
   // by name from this file at all, and an `exports` map can refuse the
-  // `/package.json` subpath outright (@ff-labs/fff-node). Both surface as "not
+  // `/package.json` subpath outright. Both surface as "not
   // installed", which would let this test skip everything and pass while
   // checking nothing. The store contains the dependency graph the sidecar's
   // minimal production install resolves.
@@ -235,7 +235,7 @@ var x = 1;
 
   it("flags scoped external packages", () => {
     const result = findInlinedExternalPackages(
-      region("../../node_modules/@ff-labs/fff-node/dist/src/index.js"),
+      region("../../node_modules/@ff-labs/fff-node/dist/index.js"),
     );
     assert.deepStrictEqual(result.inlined, ["@ff-labs/fff-node"]);
   });

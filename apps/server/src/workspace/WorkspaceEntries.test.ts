@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { FileFinder } from "@ff-labs/fff-node";
+import * as NodeModule from "node:module";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -20,6 +20,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
+
+// Use the same CJS entry as WorkspaceSearchIndex so spies observe its native calls.
+const { FileFinder } = NodeModule.createRequire(import.meta.url)(
+  "@ff-labs/fff-node",
+) as typeof import("@ff-labs/fff-node");
 
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
@@ -215,6 +220,34 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         );
         expect(result.entries.some((entry) => entry.path.startsWith("node_modules"))).toBe(false);
         expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("includes binary file extensions in non-git workspaces", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-non-git-binary-" });
+        for (const relativePath of [
+          "assets/photo.jpeg",
+          "assets/screenshot.png",
+          "archive.bin",
+          "document.pdf",
+          "README.md",
+        ]) {
+          yield* writeTextFile(cwd, relativePath);
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.list({ cwd });
+
+        expect(result.entries).toEqual(
+          expect.arrayContaining([
+            { path: "assets/photo.jpeg", kind: "file" },
+            { path: "assets/screenshot.png", kind: "file" },
+            { path: "archive.bin", kind: "file" },
+            { path: "document.pdf", kind: "file" },
+            { path: "README.md", kind: "file" },
+          ]),
+        );
       }),
     );
   });
