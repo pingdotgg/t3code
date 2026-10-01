@@ -1157,6 +1157,28 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+const supersededReasoningEntries = new WeakMap<TimelineEntry, TimelineEntry>();
+
+/** A steer or subsequent activity ends thinking even if the provider omits its completion. */
+function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
+  return entries.map((entry, index) => {
+    if (
+      index === entries.length - 1 ||
+      entry.kind !== "work" ||
+      entry.entry.itemType !== "reasoning" ||
+      entry.entry.toolLifecycleStatus !== "inProgress"
+    ) {
+      return entry;
+    }
+    let settled = supersededReasoningEntries.get(entry);
+    if (!settled) {
+      settled = { ...entry, entry: { ...entry.entry, toolLifecycleStatus: "completed" } };
+      supersededReasoningEntries.set(entry, settled);
+    }
+    return settled;
+  });
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestRun?: TimelineLatestRun | null;
@@ -1178,7 +1200,9 @@ export function deriveMessagesTimelineRows(input: {
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
-  const timelineEntries = withoutSubagentDelegationRows(input.timelineEntries);
+  const timelineEntries = withoutSubagentDelegationRows(
+    settleSupersededReasoning(input.timelineEntries),
+  );
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {

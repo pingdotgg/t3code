@@ -2140,6 +2140,60 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
   },
 );
 
+it("stops stranded thinking after a steer and follows the next thought or tool", () => {
+  const at = "2026-06-20T00:00:02.000Z";
+  const thought = (id: string): OrchestrationV2TurnItem => ({
+    ...base(id, at, 1),
+    type: "reasoning",
+    status: "running",
+    completedAt: null,
+    streaming: true,
+    text: id,
+  });
+  const first = thought("first-thought");
+  const next = thought("next-thought");
+  const steer = { ...userMessage(at), inputIntent: "steer" as const };
+  const tool = { ...command(at), status: "running" as const, completedAt: null };
+  const rows = (items: ReadonlyArray<OrchestrationV2TurnItem>, expanded = new Set<string>()) =>
+    deriveThreadFeedPresentation(
+      buildThreadFeed(items.map((item, position) => projected(item, position))),
+      { runId, status: "running", startedAt: at, completedAt: null },
+      new Set(),
+      expanded,
+      at,
+    );
+  expect(rows([first]).find((row) => row.type === "work-toggle")).toMatchObject({
+    summary: "first-thought",
+    live: true,
+    shimmer: true,
+  });
+  const afterSteer = rows([first, steer]);
+  expect(afterSteer.find((row) => row.type === "work-toggle")).toMatchObject({
+    live: false,
+    shimmer: false,
+  });
+  expect(afterSteer.at(-1)?.type).toBe("thinking");
+  const header = afterSteer.find((row) => row.type === "work-toggle");
+  if (header?.type !== "work-toggle") throw new Error("Expected thought toggle");
+  const expanded = rows([first, steer], new Set([header.groupId]));
+  expect(expanded.find((row) => row.type === "work-toggle")).toMatchObject({ summary: "Thought" });
+  expect(expanded.find((row) => row.type === "activity-group")).toMatchObject({
+    activities: [{ lifecycleStatus: "completed", workEntry: { toolLifecycleStatus: "completed" } }],
+  });
+  for (const items of [
+    [first, steer, next],
+    [first, next],
+    [first, steer, next, tool],
+  ]) {
+    const live = rows(items).filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({
+      summary: items.at(-1)!.type === "reasoning" ? "next-thought" : "Running vp",
+    });
+  }
+  expect(first.status).toBe("running");
+});
+
 it("previews a settled thought in its collapsed header and labels its expanded header", () => {
   const thought: OrchestrationV2TurnItem = {
     ...base("thought-preview", "2026-06-20T00:00:02.000Z", 1),

@@ -612,6 +612,87 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("stops stranded thinking after a steer and follows the next thought or tool", () => {
+    const runId = RunId.make("steered-run");
+    const at = "2026-10-01T06:19:10Z";
+    const thought = (id: string): TimelineEntry => ({
+      kind: "work",
+      id,
+      createdAt: at,
+      entry: {
+        id,
+        runId,
+        createdAt: at,
+        label: "Thinking",
+        tone: "thinking",
+        itemType: "reasoning",
+        detail: id,
+        toolLifecycleStatus: "inProgress",
+      },
+    });
+    const steer: TimelineEntry = {
+      kind: "message",
+      id: "steer",
+      createdAt: at,
+      message: {
+        id: MessageId.make("steer"),
+        role: "user",
+        text: "Also evaluate speed",
+        runId,
+        inputIntent: "steer",
+        streaming: false,
+        createdAt: at,
+        updatedAt: at,
+      },
+    };
+    const first = thought("first-thought");
+    const next = thought("next-thought");
+    const tool: TimelineEntry = {
+      kind: "work",
+      id: "tool",
+      createdAt: at,
+      entry: {
+        id: "tool",
+        runId,
+        createdAt: at,
+        label: "Running cat",
+        tone: "tool",
+        command: "cat file",
+        toolLifecycleStatus: "inProgress",
+      },
+    };
+    const rows = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        runningRunId: runId,
+        isWorking: true,
+        activeTurnStartedAt: at,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    expect(rows([first]).find((row) => row.kind === "work-live")).toMatchObject({
+      active: true,
+      entry: { id: "first-thought" },
+    });
+    const afterSteer = rows([first, steer]);
+    expect(afterSteer.some((row) => row.kind === "work-live")).toBe(false);
+    expect(afterSteer.at(-1)?.kind).toBe("thinking");
+    expect(afterSteer.find((row) => row.kind === "work")).toMatchObject({
+      groupedEntries: [{ id: "first-thought", toolLifecycleStatus: "completed" }],
+    });
+    for (const entries of [
+      [first, steer, next],
+      [first, next],
+      [first, steer, next, tool],
+    ]) {
+      const live = rows(entries).filter((row) => row.kind === "work-live" && row.active);
+      expect(live).toHaveLength(1);
+      expect(live[0]).toMatchObject({ entry: { id: entries.at(-1)!.id } });
+    }
+    // Presentation must not rewrite the retained provider lifecycle.
+    expect(first.kind === "work" && first.entry.toolLifecycleStatus).toBe("inProgress");
+  });
+
   it("shows the CUA action title for a retained tool item", () => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;

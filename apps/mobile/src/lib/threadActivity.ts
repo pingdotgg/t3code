@@ -1110,6 +1110,37 @@ function deriveThreadFeedRunFolds(
   return foldsByAnchorId;
 }
 
+const supersededReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedActivityGroup>();
+const trailingReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedActivityGroup>();
+
+/** A steer or subsequent activity ends thinking even if the provider omits its completion. */
+function settleSupersededReasoning(
+  entry: Extract<ThreadFeedEntry, { readonly type: "message" | "activity-group" }>,
+  tail: boolean,
+) {
+  if (entry.type !== "activity-group") return entry;
+  const cache = tail ? trailingReasoningGroups : supersededReasoningGroups;
+  const cached = cache.get(entry);
+  if (cached) return cached;
+  const activities = entry.activities.map((activity, index) =>
+    activity.workEntry.itemType === "reasoning" &&
+    activity.lifecycleStatus === "inProgress" &&
+    (!tail || index < entry.activities.length - 1)
+      ? {
+          ...activity,
+          lifecycleStatus: "completed" as const,
+          status: "success" as const,
+          workEntry: { ...activity.workEntry, toolLifecycleStatus: "completed" as const },
+        }
+      : activity,
+  );
+  const settled = activities.some((activity, index) => activity !== entry.activities[index])
+    ? { ...entry, activities }
+    : entry;
+  cache.set(entry, settled);
+  return settled;
+}
+
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1119,9 +1150,12 @@ export function deriveThreadFeedPresentation(
   /** The live work is a provider-native subagent's runless root turn. */
   runlessWorkActive = false,
 ): ThreadFeedEntry[] {
-  const sourceFeed = feed.filter(
+  const retainedFeed = feed.filter(
     (entry) =>
       entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
+  );
+  const sourceFeed = retainedFeed.map((entry, index) =>
+    settleSupersededReasoning(entry, index === retainedFeed.length - 1),
   );
   const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
   const activeTailGroup = sourceFeed.at(-1);
