@@ -12,6 +12,7 @@ const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
 const createAssetUrlMock = vi.hoisted(() =>
   vi.fn(async () => ({ relativeUrl: "/assets/signed/abc123" })),
 );
+const getActivityEvidenceMock = vi.hoisted(() => vi.fn());
 const toastAddMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../ui/toast", async (importOriginal) => ({
@@ -20,8 +21,14 @@ vi.mock("../ui/toast", async (importOriginal) => ({
 }));
 
 vi.mock("~/environmentApi", () => ({
-  readEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
-  ensureEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
+  readEnvironmentApi: vi.fn(() => ({
+    assets: { createUrl: createAssetUrlMock },
+    orchestration: { getActivityEvidence: getActivityEvidenceMock },
+  })),
+  ensureEnvironmentApi: vi.fn(() => ({
+    assets: { createUrl: createAssetUrlMock },
+    orchestration: { getActivityEvidence: getActivityEvidenceMock },
+  })),
 }));
 
 vi.mock("~/environments/runtime", () => ({
@@ -125,6 +132,7 @@ describe("MessagesTimeline", () => {
   afterEach(() => {
     scrollToEndSpy.mockReset();
     getStateSpy.mockClear();
+    getActivityEvidenceMock.mockReset();
     vi.restoreAllMocks();
     document.body.innerHTML = "";
     document.documentElement.style.removeProperty("--app-tool-font-size");
@@ -521,6 +529,64 @@ describe("MessagesTimeline", () => {
           chevron.getBoundingClientRect().left - label.getBoundingClientRect().right,
         ).toBeLessThanOrEqual(8);
       }
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps expanded audit evidence compact when tool text is enlarged", async () => {
+    document.documentElement.style.setProperty("--app-tool-font-size", "16px");
+    getActivityEvidenceMock.mockResolvedValueOnce({
+      activityId: "tool-1",
+      evidenceStatus: "complete",
+      payload: { tool: "bash", input: { command: "echo evidence" } },
+      redacted: false,
+      threadId: "thread-1",
+      warning: "Historical provider metadata is unavailable.",
+    });
+    const turnId = TurnId.make("tool-evidence-turn");
+    const createdAt = new Date().toISOString();
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnId={turnId}
+        activeTurnInProgress
+        isWorking
+        activeTurnStartedAt={createdAt}
+        timelineEntries={[
+          {
+            id: "tool-1",
+            kind: "work",
+            createdAt,
+            entry: {
+              id: "tool-1",
+              createdAt,
+              turnId,
+              sourceActivityKind: "tool.completed",
+              tone: "tool",
+              label: "Ran command",
+              command: "echo evidence",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+              isComplete: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await page.getByRole("button", { name: /Expand details/ }).click();
+      await page.getByRole("button", { name: "Load full tool evidence" }).click();
+      await expect.element(page.getByText("Evidence: complete")).toBeVisible();
+
+      const details = document.querySelector(".chat-work-details")!;
+      const evidence = details.querySelector(".mt-2.space-y-1")!;
+      expect(getComputedStyle(details).fontSize).toBe("16px");
+      expect(getComputedStyle(evidence).fontSize).toBe("12px");
+      expect(getComputedStyle(evidence.querySelector("p[role='status']")!).fontSize).toBe("12px");
+      expect(getComputedStyle(evidence.querySelector("p.text-amber-700")!).fontSize).toBe("12px");
+      expect(getComputedStyle(evidence.querySelector("pre")!).fontSize).toBe("12px");
     } finally {
       await screen.unmount();
     }
