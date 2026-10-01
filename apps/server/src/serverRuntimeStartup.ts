@@ -499,35 +499,6 @@ const make = (options?: StartupOptions) =>
           },
         });
       }
-      const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
-        importLegacyShells: runStartupPhase(
-          "orchestration-v2.legacy-v1.import-shells",
-          legacyV1ThreadImporter.reconcileShells.pipe(
-            Effect.tap((summary) =>
-              summary.importedThreadCount === 0
-                ? Effect.void
-                : Effect.logInfo("Imported legacy v1 thread shells", summary),
-            ),
-          ),
-        ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
-        startEffectWorker: runStartupPhase(
-          "orchestration-v2.effect-worker.start",
-          startEffectWorkerWithRelay({
-            runWorker: EffectWorker.runDaemon,
-            startRelay: agentAwarenessRelay.start(),
-            workerFiberRef: effectWorkerFiber,
-          }),
-        ),
-        autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
-          ? runStartupPhase(
-              "welcome.autobootstrap",
-              resolveAutoBootstrapWelcomeTargets.pipe(Effect.provideService(Crypto.Crypto, crypto)),
-            )
-          : Effect.succeed({})
-        ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
-      });
-      yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
       // An idle-released session's process is gone, so a run it still owned
       // (for example one pinned open by background work that never reported
       // back) can never finish. Settle it instead of leaving it working.
@@ -561,6 +532,35 @@ const make = (options?: StartupOptions) =>
         ),
         Effect.forkScoped,
       );
+      const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
+        importLegacyShells: runStartupPhase(
+          "orchestration-v2.legacy-v1.import-shells",
+          legacyV1ThreadImporter.reconcileShells.pipe(
+            Effect.tap((summary) =>
+              summary.importedThreadCount === 0
+                ? Effect.void
+                : Effect.logInfo("Imported legacy v1 thread shells", summary),
+            ),
+          ),
+        ),
+        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        startEffectWorker: runStartupPhase(
+          "orchestration-v2.effect-worker.start",
+          startEffectWorkerWithRelay({
+            runWorker: EffectWorker.runDaemon,
+            startRelay: agentAwarenessRelay.start(),
+            workerFiberRef: effectWorkerFiber,
+          }),
+        ),
+        autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
+          ? runStartupPhase(
+              "welcome.autobootstrap",
+              resolveAutoBootstrapWelcomeTargets.pipe(Effect.provideService(Crypto.Crypto, crypto)),
+            )
+          : Effect.succeed({})
+        ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
+      });
+      yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
       yield* runStartupPhase(
         "projects.auto-pull",
         Effect.gen(function* () {
