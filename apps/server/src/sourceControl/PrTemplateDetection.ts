@@ -44,11 +44,34 @@ const AZURE_DEVOPS_TEMPLATE_PATHS = [
   "pull_request_template.txt",
 ] as const;
 
+// Azure Repos branch-specific templates live under `pull_request_template/branches/`
+// in the same folders searched for the default template. The filename matches the
+// first level of the branch the pull request targets (for example
+// `pull_request_template/branches/release.md` for a pull request into `release/1.2`).
+// https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-templates#branch-specific-templates
+const AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORIES = [
+  ".azuredevops/pull_request_template/branches",
+  ".vsts/pull_request_template/branches",
+  "docs/pull_request_template/branches",
+  "pull_request_template/branches",
+] as const;
+
+function azureDevOpsBranchTemplatePaths(baseBranch: string): ReadonlyArray<string> {
+  const branchTemplateName = baseBranch.split("/", 1)[0];
+  return AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORIES.flatMap((directory) =>
+    ["md", "txt"].map((extension) => `${directory}/${branchTemplateName}.${extension}`),
+  );
+}
+
 interface ChangeRequestTemplatePaths {
   readonly paths: ReadonlyArray<string>;
   readonly directories: ReadonlyArray<string>;
   // When set, directory templates must match this basename (case-insensitive).
   readonly directoryBaseName?: string;
+  // Resolve the template tree from the repository's default branch instead of the
+  // tree the change request targets. GitLab and Azure Repos are the only providers
+  // that document this behavior.
+  readonly readFromDefaultBranch?: boolean;
 }
 
 function templatePathsForProvider(
@@ -60,9 +83,14 @@ function templatePathsForProvider(
         paths: [],
         directories: [...GITLAB_TEMPLATE_DIRECTORIES],
         directoryBaseName: "Default",
+        readFromDefaultBranch: true,
       };
     case "azure-devops":
-      return { paths: [...AZURE_DEVOPS_TEMPLATE_PATHS], directories: [] };
+      return {
+        paths: [...AZURE_DEVOPS_TEMPLATE_PATHS],
+        directories: [],
+        readFromDefaultBranch: true,
+      };
     case "github":
     case "forgejo":
       return { paths: [...GITHUB_TEMPLATE_PATHS], directories: [...GITHUB_TEMPLATE_DIRECTORIES] };
@@ -74,6 +102,22 @@ function templatePathsForProvider(
 }
 
 type ExecuteGit = GitVcsDriver.GitVcsDriver["Service"]["execute"];
+
+export interface DetectPrTemplateOptions {
+  /**
+   * Base branch the change request targets. Azure Repos consults branch-specific
+   * templates saved under `pull_request_template/branches/` before it falls back to
+   * the repository-wide default template.
+   */
+  readonly baseBranch?: string;
+  /**
+   * Resolved tree of the repository's default branch. GitLab and Azure Repos look
+   * change request templates up on the default branch rather than on the branch the
+   * change request targets, so a change request into a non-default branch would
+   * otherwise miss a template that is committed on the default branch.
+   */
+  readonly defaultTreeish?: string;
+}
 
 interface TemplateTreeEntry {
   readonly objectId: string;
@@ -188,19 +232,31 @@ export const detectPrTemplate = Effect.fn("detectPrTemplate")(function* (
   treeish: string,
   executeGit: ExecuteGit,
   providerKind: SourceControlProviderKind,
+  options: DetectPrTemplateOptions = {},
 ) {
   return yield* Effect.gen(function* () {
     const templatePaths = templatePathsForProvider(providerKind);
     if (templatePaths === null) {
       return Option.none();
     }
-    const treePaths = [...templatePaths.paths, ...templatePaths.directories] as const;
-    // Worktree paths can be replaced between validation and open. Read regular blobs from the
-    // committed base tree so repository-controlled symlinks and path races never reach the host filesystem.
+    const templateTreeish =
+      templatePaths.readFromDefaultBranch && options.defaultTreeish
+        ? options.defaultTreeish
+        : treeish;
+    const pathEntries = [
+      ...(providerKind === "azure-devops" && options.baseBranch
+        ? azureDevOpsBranchTemplatePaths(options.baseBranch)
+        : []),
+      ...templatePaths.paths,
+    ] as const;
+    const treePaths = [...pathEntries, ...templatePaths.directories] as const;
+    // Worktree paths can be replaced between validation and open. Read regular blobs from
+    // the committed template tree so repository-controlled symlinks and path races never
+    // reach the host filesystem.
     const result = yield* executeGit({
       operation: "PrTemplateDetection.listTemplates",
       cwd,
-      args: ["ls-tree", "-r", "-z", "--full-tree", treeish, "--", ...treePaths],
+      args: ["ls-tree", "-r", "-z", "--full-tree", templateTreeish, "--", ...treePaths],
       maxOutputBytes: TREE_LIST_MAX_BYTES,
       appendTruncationMarker: true,
     });
@@ -210,7 +266,7 @@ export const detectPrTemplate = Effect.fn("detectPrTemplate")(function* (
 
     const entries = parseTemplateTreeEntries(result.stdout);
     const entriesByPath = new Map(entries.map((entry) => [entry.path, entry]));
-    for (const templatePath of templatePaths.paths) {
+    for (const templatePath of pathEntries) {
       const entry = entriesByPath.get(templatePath);
       if (!entry) {
         continue;
@@ -218,6 +274,12 @@ export const detectPrTemplate = Effect.fn("detectPrTemplate")(function* (
       const template = yield* readTemplateBlob({ cwd, executeGit, entry });
       if (Option.isSome(template)) {
         return template;
+      }
+      // Azure Repos applies the first default template it finds in the folder order even
+      // when its contents are empty, so an existing empty template must win over the
+      // lower-priority locations that follow it.
+      if (providerKind === "azure-devops") {
+        return Option.some("");
       }
     }
 

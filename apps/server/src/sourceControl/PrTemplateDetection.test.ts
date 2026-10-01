@@ -10,7 +10,7 @@ import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { detectPrTemplate } from "./PrTemplateDetection.ts";
+import { detectPrTemplate, type DetectPrTemplateOptions } from "./PrTemplateDetection.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const SINGLE_TEMPLATE_PATHS = [
@@ -33,6 +33,17 @@ const GITLAB_DEFAULT_TEMPLATE_NAMES = [
   "default.md",
   "DEFAULT.MD",
   "Default.MD",
+] as const;
+
+const AZURE_DEVOPS_BRANCH_TEMPLATE_PATHS = [
+  ".azuredevops/pull_request_template/branches/release.md",
+  ".azuredevops/pull_request_template/branches/release.txt",
+  ".vsts/pull_request_template/branches/release.md",
+  ".vsts/pull_request_template/branches/release.txt",
+  "docs/pull_request_template/branches/release.md",
+  "docs/pull_request_template/branches/release.txt",
+  "pull_request_template/branches/release.md",
+  "pull_request_template/branches/release.txt",
 ] as const;
 
 const AZURE_DEVOPS_TEMPLATE_PATHS = [
@@ -100,10 +111,11 @@ const detectTemplate = (
   cwd: string,
   treeish = "HEAD",
   providerKind: SourceControlProviderKind = "github",
+  options?: DetectPrTemplateOptions,
 ) =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    return yield* detectPrTemplate(cwd, treeish, git.execute, providerKind);
+    return yield* detectPrTemplate(cwd, treeish, git.execute, providerKind, options);
   });
 
 it.effect.each(SINGLE_TEMPLATE_PATHS)("recognizes $0", (relativePath) =>
@@ -230,6 +242,166 @@ it.effect("uses the first Azure DevOps template in folder precedence order", () 
       assert.strictEqual(Option.getOrUndefined(template), "azuredevops txt");
     }),
   ),
+);
+
+it.effect(
+  "uses the Azure branch-specific template for the target branch before the default template",
+  () =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(
+          cwd,
+          ".azuredevops/pull_request_template/branches/release.md",
+          "release branch template",
+        );
+        yield* writeTemplate(
+          cwd,
+          ".azuredevops/pull_request_template.md",
+          "default azure template",
+        );
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+          baseBranch: "release",
+        });
+        assert.strictEqual(Option.getOrUndefined(template), "release branch template");
+      }),
+    ),
+);
+
+it.effect("matches the Azure branch template to the first segment of the target branch", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(
+        cwd,
+        ".azuredevops/pull_request_template/branches/release.md",
+        "release branch template",
+      );
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "default azure template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+        baseBranch: "release/1.2",
+      });
+      assert.strictEqual(Option.getOrUndefined(template), "release branch template");
+    }),
+  ),
+);
+
+it.effect("falls back to the default Azure template when no branch template exists", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "default azure template");
+      yield* writeTemplate(cwd, ".vsts/pull_request_template.md", "vsts template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+        baseBranch: "main",
+      });
+      assert.strictEqual(Option.getOrUndefined(template), "default azure template");
+    }),
+  ),
+);
+
+it.effect("keeps an existing empty Azure template over lower-priority locations", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", " \n");
+      yield* writeTemplate(cwd, ".vsts/pull_request_template.md", "vsts template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+      assert.strictEqual(Option.getOrUndefined(template), "");
+    }),
+  ),
+);
+
+it.effect("reads GitLab templates from the default branch tree", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "README.md", "initial\n");
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["branch", "feature"]);
+      yield* writeTemplate(
+        cwd,
+        ".gitlab/merge_request_templates/Default.md",
+        "default branch gitlab template",
+      );
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["checkout", "feature"]);
+
+      assert.isTrue(Option.isNone(yield* detectTemplate(cwd, "HEAD", "gitlab")));
+      assert.strictEqual(
+        Option.getOrUndefined(
+          yield* detectTemplate(cwd, "HEAD", "gitlab", { defaultTreeish: "main" }),
+        ),
+        "default branch gitlab template",
+      );
+    }),
+  ),
+);
+
+it.effect("reads Azure templates from the default branch tree", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "README.md", "initial\n");
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["branch", "feature"]);
+      yield* writeTemplate(
+        cwd,
+        ".azuredevops/pull_request_template.md",
+        "default branch azure template",
+      );
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["checkout", "feature"]);
+
+      assert.isTrue(Option.isNone(yield* detectTemplate(cwd, "HEAD", "azure-devops")));
+      assert.strictEqual(
+        Option.getOrUndefined(
+          yield* detectTemplate(cwd, "HEAD", "azure-devops", { defaultTreeish: "main" }),
+        ),
+        "default branch azure template",
+      );
+    }),
+  ),
+);
+
+it.effect("GitHub reads from the change request base even when a default tree is supplied", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "README.md", "initial\n");
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["branch", "feature"]);
+      yield* writeTemplate(cwd, ".github/pull_request_template.md", "base branch template");
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["checkout", "feature"]);
+
+      assert.isTrue(
+        Option.isNone(yield* detectTemplate(cwd, "HEAD", "github", { defaultTreeish: "main" })),
+      );
+    }),
+  ),
+);
+
+it.effect.each(AZURE_DEVOPS_BRANCH_TEMPLATE_PATHS)(
+  "recognizes the Azure DevOps branch template at $0",
+  (relativePath) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(cwd, relativePath, `branch template from ${relativePath}`);
+        yield* writeTemplate(
+          cwd,
+          ".azuredevops/pull_request_template.md",
+          "default azure template",
+        );
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+          baseBranch: "release",
+        });
+        assert.strictEqual(Option.getOrUndefined(template), `branch template from ${relativePath}`);
+      }),
+    ),
 );
 
 it.effect("only detects templates for the active provider kind", () =>
