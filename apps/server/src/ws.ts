@@ -261,6 +261,31 @@ const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
 
+// Discoveries run side by side so the slowest one, not their sum, bounds the
+// server config snapshot. Each degrades on timeout rather than failing it.
+export const resolveOpenDiscoveryForConfig = <T, E1, R1, E2, R2, E3, R3>(discovery: {
+  readonly editors: Effect.Effect<ReadonlyArray<EditorId>, E1, R1>;
+  readonly fileManagerRevealKind: Effect.Effect<FileManagerRevealKind | undefined, E2, R2>;
+  readonly remoteOpenTargets: Effect.Effect<ReadonlyArray<T>, E3, R3>;
+}) =>
+  Effect.all(
+    {
+      editors: resolveAvailableEditorsForConfig(discovery.editors).pipe(
+        Effect.flatMap((availableEditors) =>
+          (availableEditors.includes("file-manager")
+            ? resolveFileManagerRevealKindForConfig(discovery.fileManagerRevealKind)
+            : Effect.succeed(undefined)
+          ).pipe(
+            Effect.map((fileManagerRevealKind) => ({ availableEditors, fileManagerRevealKind })),
+          ),
+        ),
+      ),
+      // A slow probe must not stall server.getConfig, so it degrades to no targets.
+      remoteOpenTargets: resolveAvailableEditorsForConfig(discovery.remoteOpenTargets),
+    },
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map(({ editors, remoteOpenTargets }) => ({ ...editors, remoteOpenTargets })));
+
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
@@ -1620,14 +1645,15 @@ const makeWsRpcLayer = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
-          const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
-          );
-          const fileManagerRevealKind = availableEditors.includes("file-manager")
-            ? yield* resolveFileManagerRevealKindForConfig(
-                externalLauncher.resolveFileManagerRevealKind(),
-              )
-            : undefined;
+          const {
+            availableEditors,
+            fileManagerRevealKind,
+            remoteOpenTargets: openTargets,
+          } = yield* resolveOpenDiscoveryForConfig({
+            editors: externalLauncher.resolveAvailableEditors(),
+            fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
+            remoteOpenTargets: remoteOpenTargets.resolveTargets(),
+          });
 
           return {
             environment,
@@ -1638,11 +1664,7 @@ const makeWsRpcLayer = (
             issues: keybindingsConfig.issues,
             providers,
             availableEditors,
-            // Same discovery-with-timeout treatment as editors: a slow probe
-            // must not stall server.getConfig, so it degrades to no targets.
-            remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-              remoteOpenTargets.resolveTargets(),
-            ),
+            remoteOpenTargets: openTargets,
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
