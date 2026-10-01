@@ -1442,6 +1442,66 @@ describe("workspace handoff rows", () => {
 
     expect(findMarker(repeated)).toBe(findMarker(initial));
   });
+
+  it("shows neither a divider nor boilerplate when a repeated handoff emits only a continuation", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "Move this work to a new worktree",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "continuation-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:13Z",
+          message: {
+            id: "continuation-1" as never,
+            role: "user",
+            text: "Continue the task from the previous user request in the newly bound workspace.",
+            origin: handoffOrigin("continuation"),
+            turnId: null,
+            createdAt: "2026-01-01T00:00:13Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-2" as never,
+            role: "assistant",
+            text: "Done in the new worktree.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            completedAt: "2026-01-01T00:00:21Z",
+            streaming: false,
+          },
+        },
+      ] as never,
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnId: null,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["message", "message"]);
+    expect(rows.some((row) => row.id === "continuation-entry")).toBe(false);
+    expect(
+      rows.some((row) => row.kind === "message" && row.message.text.includes("Continue the task")),
+    ).toBe(false);
+  });
 });
 
 describe("collectReviewOutputMessageIds", () => {

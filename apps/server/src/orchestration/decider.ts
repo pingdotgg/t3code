@@ -2948,6 +2948,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // The marker is the invariant of a handoff: it records the workspace move
       // whether the thread continues on a generated continuation or on a turn
       // the user had already queued.
+      const alreadyBoundHere =
+        thread.workspaceBinding !== undefined && thread.workspaceBinding !== null
+          ? thread.workspaceBinding.canonicalPath ===
+              (command.workspaceBinding?.canonicalPath ?? command.worktreePath) &&
+            thread.workspaceBinding.branch === command.branch
+          : thread.worktreePath === command.worktreePath && thread.branch === command.branch;
       const markerEvent: PlannedOrchestrationEvent = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -2968,33 +2974,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
-      if (firstQueuedTurn !== undefined) {
-        return [metaUpdatedEvent, markerEvent];
+      const events: PlannedOrchestrationEvent[] = [metaUpdatedEvent];
+      if (!alreadyBoundHere) {
+        events.push(markerEvent);
       }
-      return [
-        metaUpdatedEvent,
-        markerEvent,
-        {
-          ...withEventBase({
-            aggregateKind: "thread",
-            aggregateId: command.threadId,
-            occurredAt: command.continuation.createdAt,
-            commandId: command.commandId,
-          }),
-          type: "thread.queued-turn-created",
-          payload: {
-            threadId: command.threadId,
-            // The origin is derived here, not trusted from the caller: it is
-            // what suppresses the boilerplate bubble, so an untagged or
-            // mistagged continuation would re-expose it or render a second
-            // divider. It must also agree with the marker it accompanies.
-            queuedTurn: {
-              ...command.continuation,
-              origin: { ...handoffOrigin, role: "continuation" },
-            },
+      if (firstQueuedTurn !== undefined) {
+        return events;
+      }
+      events.push({
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.continuation.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-created",
+        payload: {
+          threadId: command.threadId,
+          // The origin is derived here, not trusted from the caller: it is
+          // what suppresses the boilerplate bubble, so an untagged or
+          // mistagged continuation would re-expose it or render a second
+          // divider. It must also agree with the marker it accompanies.
+          queuedTurn: {
+            ...command.continuation,
+            origin: { ...handoffOrigin, role: "continuation" },
           },
         },
-      ];
+      });
+      return events;
     }
 
     case "thread.title.regeneration.complete": {
