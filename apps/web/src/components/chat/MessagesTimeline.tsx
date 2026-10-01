@@ -2121,11 +2121,11 @@ const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
   }, [activityId, environmentId, threadId]);
 
   return (
-    <div className="mt-2 space-y-1">
+    <div className="mt-2 space-y-1 text-xs">
       {evidence === null ? (
         <button
           type="button"
-          className="text-xs text-muted-foreground underline underline-offset-2"
+          className="text-[length:inherit] text-muted-foreground underline underline-offset-2"
           disabled={loading}
           onClick={() => void loadEvidence()}
         >
