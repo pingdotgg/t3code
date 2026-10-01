@@ -121,6 +121,11 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  ariaLabel?: string | undefined;
+  /** Identifies an editor with suggestions, even while its list is closed. */
+  suggestionListId?: string | undefined;
+  /** References the highlighted option only while its list is rendered. */
+  activeSuggestionId?: string | undefined;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -592,6 +597,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    ariaLabel,
+    suggestionListId,
+    activeSuggestionId,
     containerClassName,
     className,
     placeholderClassName,
@@ -752,9 +760,25 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       ),
       "data-testid": "composer-editor",
       "data-composer-rich-text": richText ? "true" : "false",
+      role: "textbox",
+      "aria-multiline": "true",
+      ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+      ...(disabled ? { "aria-readonly": "true" } : {}),
+      ...(!disabled && suggestionListId
+        ? {
+            "aria-autocomplete": "list",
+            "aria-haspopup": "listbox",
+            ...(activeSuggestionId
+              ? {
+                  "aria-controls": suggestionListId,
+                  "aria-activedescendant": activeSuggestionId,
+                }
+              : {}),
+          }
+        : {}),
       "aria-placeholder": placeholder,
     }),
-    [className, placeholder, richText],
+    [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
   );
 
   const editor = useEditor(
