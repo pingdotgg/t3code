@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createGatedFirstDialUrlProvider,
   shouldApplyProjectionEvent,
   shouldApplyProjectionSnapshot,
   shouldApplyTerminalEvent,
@@ -144,5 +145,20 @@ describe("shouldApplyProjectionEvent", () => {
         sequence: 6,
       }),
     ).toBe(true);
+  });
+});
+
+describe("createGatedFirstDialUrlProvider", () => {
+  it("waits for authentication only on the first dial", async () => {
+    let waits = 0;
+    const provider = createGatedFirstDialUrlProvider("ws://127.0.0.1:3000/", async () => {
+      waits += 1;
+    });
+
+    await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
+    await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
+    // Reconnects must not re-gate: post-auth recovery (including session
+    // expiry flows) keeps today's immediate-dial behavior.
+    expect(waits).toBe(1);
   });
 });

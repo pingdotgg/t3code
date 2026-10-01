@@ -272,6 +272,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
   await waitForAuthenticatedSessionAfterBootstrap();
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = { status: "authenticated" };
+  flushAuthenticatedWaiters();
   stripPairingTokenFromUrl();
 }
 
@@ -411,7 +412,61 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
     });
 }
 
+let authenticatedWaiters: Array<() => void> = [];
+
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  authenticatedWaiters = [];
+}
+
+// How often a still-unauthenticated waiter re-checks the session: pairing in
+// another tab lands a cookie this tab never submitted for, and the re-check
+// picks that up without any further user action.
+const AUTH_RECHECK_INTERVAL_MS = 10_000;
+
+const flushAuthenticatedWaiters = () => {
+  const waiters = authenticatedWaiters;
+  authenticatedWaiters = [];
+  for (const waiter of waiters) waiter();
+};
+
+const waitForAuthProgress = (): Promise<void> =>
+  new Promise<void>((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      authenticatedWaiters = authenticatedWaiters.filter((waiter) => waiter !== settle);
+      resolve();
+    };
+    const timeout = setTimeout(settle, AUTH_RECHECK_INTERVAL_MS);
+    authenticatedWaiters.push(settle);
+  });
+
+/**
+ * Resolves once the primary session exists. Joins (and triggers, if needed)
+ * the initial bootstrap attempt so desktop-managed environments connect with
+ * no manual pairing; while pairing is still required, waits for a future
+ * successful submit instead of dialing a socket the server must reject.
+ * Falls through immediately when the check itself is unreachable, preserving
+ * today's dial behavior for outages.
+ */
+export async function waitForPrimaryAuthentication(): Promise<void> {
+  try {
+    const gate = await resolveInitialServerAuthGateState();
+    if (gate.status === "authenticated") return;
+  } catch {
+    return;
+  }
+  for (;;) {
+    await waitForAuthProgress();
+    try {
+      const session = await fetchSessionState();
+      if (session.authenticated) return;
+    } catch {
+      return;
+    }
+  }
 }

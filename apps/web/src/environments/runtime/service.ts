@@ -31,7 +31,7 @@ import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
 import { providerQueryKeys } from "~/lib/providerReactQuery";
-import { getPrimaryKnownEnvironment } from "../primary";
+import { getPrimaryKnownEnvironment, waitForPrimaryAuthentication } from "../primary";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
@@ -1039,12 +1039,33 @@ function createPrimaryEnvironmentClient(
   }
 
   return createWsRpcClient(
-    new WsTransport(wsBaseUrl, {
+    new WsTransport(createGatedFirstDialUrlProvider(wsBaseUrl, waitForPrimaryAuthentication), {
       onProtocolConnected: () => {
         repairRetainedThreadDetailSubscriptionsAfterReconnect();
       },
     }),
   );
+}
+
+/**
+ * Defers the primary socket's first dial until the session exists. Pre-auth
+ * dials are rejected with 401s that Chromium logs as console errors and the
+ * transport retries loudly, all before the user could possibly be paired.
+ * Only the first dial waits: reconnects keep today's immediate behavior so
+ * post-auth recovery (including session-expiry flows) is unchanged.
+ */
+export function createGatedFirstDialUrlProvider(
+  wsBaseUrl: string,
+  waitForAuthentication: () => Promise<void>,
+): () => Promise<string> {
+  let firstDialPending = true;
+  return async () => {
+    if (firstDialPending) {
+      firstDialPending = false;
+      await waitForAuthentication();
+    }
+    return wsBaseUrl;
+  };
 }
 
 function createSavedEnvironmentClient(

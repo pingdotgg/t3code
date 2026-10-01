@@ -3233,13 +3233,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             const rect = element.getBoundingClientRect();
             return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
           };
+          // Implicit ARIA roles for native elements: snapshots only carry
+          // the explicit role attribute, which native controls never set,
+          // so role-based Playwright locators could not address them.
+          const implicitRole = (element) => {
+            const tag = element.tagName.toLowerCase();
+            if (tag === "button") return "button";
+            if (tag === "a" && element.hasAttribute("href")) return "link";
+            if (tag === "textarea") return "textbox";
+            if (tag === "select") return "combobox";
+            if (tag === "input") {
+              const type = (element.getAttribute("type") || "text").toLowerCase();
+              if (type === "checkbox") return "checkbox";
+              if (type === "radio") return "radio";
+              if (type === "range") return "slider";
+              if (type === "button" || type === "submit" || type === "reset") return "button";
+              if (type === "hidden") return null;
+              return "textbox";
+            }
+            return null;
+          };
           const elements = Array.from(document.querySelectorAll(
             "a[href],button,input,textarea,select,[role],[tabindex]"
           )).filter(visible).slice(0, ${maxElements}).map((element) => {
             const rect = element.getBoundingClientRect();
             return {
               tag: element.tagName.toLowerCase(),
-              role: element.getAttribute("role"),
+              role: element.getAttribute("role") || implicitRole(element),
               name: element.getAttribute("aria-label") || element.innerText || element.getAttribute("name") || "",
               selector: selectorFor(element),
               x: rect.x,
@@ -3721,9 +3741,47 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       send,
       `(() => {
         try {
-          const target = ${locatorJson ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${locatorJson}), document, true); })()` : "window"};
-          if (!target) return { notFound: true };
-          target.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
+          const explicitTarget = ${locatorJson ? `(() => { const injected = globalThis.__t3PlaywrightInjected; return injected.querySelector(injected.parseSelector(${locatorJson}), document, true); })()` : "null"};
+          if (${locatorJson ? "true" : "false"}) {
+            if (!explicitTarget) return { notFound: true };
+            explicitTarget.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
+            return { ok: true };
+          }
+          const startX = window.scrollX;
+          const startY = window.scrollY;
+          window.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
+          if (window.scrollX !== startX || window.scrollY !== startY) return { ok: true };
+          // The window did not move: inner-scroll pages keep their scroll
+          // state in a container, where window.scrollBy is a silent no-op.
+          // Fall back to the document scroller, else the largest scrollable
+          // element, instead of reporting success without moving.
+          const isScrollable = (element) => {
+            if (!(element instanceof Element)) return false;
+            const style = getComputedStyle(element);
+            return (style.overflowY === "auto" || style.overflowY === "scroll") &&
+              element.scrollHeight > element.clientHeight;
+          };
+          let fallback =
+            document.scrollingElement && isScrollable(document.scrollingElement)
+              ? document.scrollingElement
+              : null;
+          if (!fallback && document.body) {
+            let largestArea = 0;
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+            let node = walker.currentNode;
+            while (node) {
+              if (isScrollable(node)) {
+                const area = node.clientWidth * node.clientHeight;
+                if (area > largestArea) {
+                  largestArea = area;
+                  fallback = node;
+                }
+              }
+              node = walker.nextNode();
+            }
+          }
+          if (!fallback) return { ok: true };
+          fallback.scrollBy({ left: ${input.deltaX ?? 0}, top: ${input.deltaY ?? 0}, behavior: "instant" });
           return { ok: true };
         } catch (error) {
           return { invalidSelector: true, message: String(error) };
