@@ -37,6 +37,9 @@ concurrency:
   queue: max
 
 permissions:
+  # The Windows desktop jobs read this run's artifact list to wait for the
+  # Linux CLI archive they embed (see release-desktop.yml).
+  actions: read
   contents: read
   id-token: none
 
@@ -531,11 +534,12 @@ jobs:
           retention-days: 1
 
   # One job per platform and architecture (see release-desktop.yml), each on
-  # hardware of its own architecture, and each gated only on what it consumes:
-  # every platform needs the JS bundle, and the Windows jobs also need the
-  # same-arch Linux job, whose CLI archive they embed as the WSL runtime. Every
-  # job builds the desktop app; all but macOS x64 also build the CLI archive
-  # for their platform, so a target either ships fully or not at all.
+  # hardware of its own architecture, and each gated only on the JS bundle.
+  # The Windows jobs also embed the same-arch Linux CLI archive as the WSL
+  # runtime; they wait for that artifact partway through instead of for the
+  # whole Linux job. Every job builds the desktop app; all but macOS x64 also
+  # build the CLI archive for their platform, so a target either ships fully or
+  # not at all.
   desktop_mac_arm64:
     name: Desktop macOS arm64
     needs: [preflight, relay_public_config, build_bundle]
@@ -633,13 +637,12 @@ jobs:
       resource_key: linux-arm64
       cli_archive: true
 
-  # The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime.
-  # `!cancelled()` (not `!failure()`) still lets them start when that Linux job
-  # failed; the download step inside then fails this single platform if the
-  # archive is missing.
+  # The Windows jobs start with the other platforms. Their checkout, install,
+  # and toolchain setup take longer than the same-arch Linux job needs to
+  # upload its CLI archive, so the wait inside is usually instant.
   desktop_win_x64:
     name: Desktop Windows x64
-    needs: [preflight, relay_public_config, build_bundle, desktop_linux_x64]
+    needs: [preflight, relay_public_config, build_bundle]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
@@ -662,7 +665,7 @@ jobs:
 
   desktop_win_arm64:
     name: Desktop Windows arm64
-    needs: [preflight, relay_public_config, build_bundle, desktop_linux_arm64]
+    needs: [preflight, relay_public_config, build_bundle]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.build_bundle.result == 'success' }}
     uses: ./.github/workflows/release-desktop.yml
     secrets: inherit
