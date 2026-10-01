@@ -1,8 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -162,3 +165,90 @@ describe("PiProvider", () => {
     }),
   );
 });
+
+/**
+ * A `pi --mode rpc` whose discovery answers arrive only after a cold
+ * extension load: `get_state` waits `stateDelayMs` before responding, every
+ * other request answers immediately. `pi --version` reports `version`.
+ */
+function slowPiSpawner(version: string, stateDelayMs: number) {
+  return ChildProcessSpawner.make((command) => {
+    if (ChildProcess.isStandardCommand(command) && command.args.includes("--version")) {
+      return Effect.succeed(processHandle({ stdout: `pi ${version}\n` }));
+    }
+    return Effect.gen(function* () {
+      const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+      let buffer = "";
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(900_000_001),
+        exitCode: Effect.never,
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.forEach((chunk: Uint8Array) =>
+          Effect.gen(function* () {
+            buffer += new TextDecoder().decode(chunk);
+            let newline = buffer.indexOf("\n");
+            while (newline !== -1) {
+              const record = decodeRecordLine(buffer.slice(0, newline));
+              buffer = buffer.slice(newline + 1);
+              if (record["type"] === "get_state") {
+                // Cold Pi loads extensions before answering anything.
+                yield* Effect.sleep(Duration.millis(stateDelayMs));
+              }
+              const data =
+                record["type"] === "get_state"
+                  ? { thinkingLevel: "medium" }
+                  : record["type"] === "get_available_models"
+                    ? {
+                        models: [
+                          {
+                            provider: "github-copilot",
+                            id: "gpt-5.4",
+                            name: "GPT-5.4",
+                          },
+                        ],
+                      }
+                    : undefined;
+              yield* Queue.offer(
+                stdout,
+                encoder.encode(
+                  `${encodeJsonLine({ type: "response", id: record["id"], success: true, data })}\n`,
+                ),
+              );
+              newline = buffer.indexOf("\n");
+            }
+          }),
+        ),
+        stdout: Stream.fromQueue(stdout),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    });
+  });
+}
+
+it.effect("discovers models from a slow-starting Pi instead of falling back", () =>
+  Effect.gen(function* () {
+    // Cold Pi loads extensions for tens of seconds before answering
+    // anything; the old 15s discovery cap gave up and left only Pi default.
+    const checking = yield* Effect.forkScoped(
+      checkPiProviderStatus(settings).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          slowPiSpawner("0.99.1", 20_000),
+        ),
+      ),
+    );
+    yield* TestClock.adjust("25 seconds");
+    const snapshot = yield* Fiber.join(checking);
+    assert.equal(snapshot.status, "ready");
+    assert.equal(snapshot.auth.status, "authenticated");
+    assert.deepEqual(
+      snapshot.models.map((model) => model.slug),
+      ["default", "github-copilot/gpt-5.4"],
+    );
+  }),
+);

@@ -61,7 +61,12 @@ const PI_PRESENTATION = {
 } as const satisfies ServerProviderPresentation;
 
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
-const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
+// Cold Pi processes spend well over 15s loading extensions (measured
+// 15s+ with zero RPC responses while extension status spam streams, ~3s
+// warm) before answering discovery. Failing fast here degrades the
+// snapshot to Pi-default-only models, so allow a full minute; refreshes
+// run in the background and keep the previous snapshot meanwhile.
+const PI_RPC_DISCOVERY_TIMEOUT_MS = 60_000;
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks. T3
