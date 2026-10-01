@@ -13,7 +13,10 @@ import {
   RelayEnvironmentMintResponse,
   RelayEnvironmentMintResponseProofPayload,
   RelayCloudMintCredentialProofPayload,
+  type RelayCloudWebhookDeliveryProofPayload,
   RelayEnvironmentConnectNotAuthorizedReason,
+  RelayEnvironmentWebhookDeliveryResponseProofPayload,
+  type RelayWebhookDelivery,
   type RelayEnvironmentConnectResponse,
   type RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
@@ -23,10 +26,12 @@ import {
   RELAY_HEALTH_RESPONSE_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
+  RELAY_WEBHOOK_DELIVERY_REQUEST_TYP,
+  RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP,
   signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { stableStringify } from "@t3tools/shared/relaySigning";
+import { sha256StableJson, stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -72,7 +77,7 @@ export class EnvironmentConnectNotAuthorized extends Schema.TaggedError<Environm
   "EnvironmentConnectNotAuthorized",
   {
     environmentId: Schema.String,
-    operation: Schema.Literals(["connect", "status"]),
+    operation: Schema.Literals(["connect", "status", "webhook"]),
     reason: RelayEnvironmentConnectNotAuthorizedReason,
   },
 ) {
@@ -85,7 +90,7 @@ export class EnvironmentMintRequestFailed extends Schema.TaggedError<Environment
   "EnvironmentMintRequestFailed",
   {
     environmentId: Schema.String,
-    operation: Schema.Literals(["connect", "status"]),
+    operation: Schema.Literals(["connect", "status", "webhook"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -110,7 +115,7 @@ export class EnvironmentMintResponseInvalid extends Schema.TaggedError<Environme
   "EnvironmentMintResponseInvalid",
   {
     environmentId: Schema.String,
-    operation: Schema.Literals(["connect", "status"]),
+    operation: Schema.Literals(["connect", "status", "webhook"]),
   },
 ) {
   override get message(): string {
@@ -142,6 +147,12 @@ export class EnvironmentConnector extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<RelayEnvironmentStatusResponse, EnvironmentConnectorError>;
+    /** Pushes a webhook delivery over the managed tunnel; succeeds once the environment's signed ack verifies. */
+    readonly deliverWebhook: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly delivery: RelayWebhookDelivery;
+    }) => Effect.Effect<void, EnvironmentConnectorError>;
   }
 >()("t3code-relay/environments/EnvironmentConnector") {}
 
@@ -150,6 +161,9 @@ const decodeMintResponseProof = Schema.decodeUnknownEffect(
 );
 const decodeHealthResponseProof = Schema.decodeUnknownEffect(
   RelayEnvironmentHealthResponseProofPayload,
+);
+const decodeWebhookDeliveryResponseProof = Schema.decodeUnknownEffect(
+  RelayEnvironmentWebhookDeliveryResponseProofPayload,
 );
 const isEnvironmentHealthError = Schema.is(
   Schema.Union([
@@ -301,7 +315,7 @@ const make = Effect.gen(function* () {
     );
   const resolveManagedEndpoint = Effect.fn("relay.environment_connector.resolve_managed_endpoint")(
     function* (input: {
-      readonly operation: "connect" | "status";
+      readonly operation: "connect" | "status" | "webhook";
       readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
       readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
     }) {
@@ -537,6 +551,97 @@ const make = Effect.gen(function* () {
         checkedAt: decoded.checkedAt,
         descriptor: decoded.descriptor,
       };
+    }),
+    deliverWebhook: Effect.fn("relay.environment_connector.deliver_webhook")(function* (input) {
+      yield* Effect.annotateCurrentSpan({
+        "relay.environment_id": input.environmentId,
+        "relay.operation": "webhook",
+        "relay.webhook.delivery_id": input.delivery.deliveryId,
+      });
+      const failed = (cause: unknown) =>
+        new EnvironmentMintRequestFailed({
+          environmentId: input.environmentId,
+          operation: "webhook",
+          cause,
+        });
+      const { link, allocation } = yield* Effect.all(
+        {
+          link: links.getForUser(input),
+          allocation: allocations.get(input),
+        },
+        { concurrency: 2 },
+      );
+      if (!link) {
+        return yield* new EnvironmentConnectNotAuthorized({
+          environmentId: input.environmentId,
+          operation: "webhook",
+          reason: "environment_link_not_found",
+        });
+      }
+      const endpoint = yield* resolveManagedEndpoint({
+        operation: "webhook",
+        link,
+        allocation,
+      });
+      const now = yield* DateTime.now;
+      const nonce = yield* crypto.randomUUIDv4.pipe(Effect.mapError(failed));
+      const deliveryDigest = yield* Effect.tryPromise({
+        try: () => sha256StableJson(input.delivery),
+        catch: failed,
+      });
+      const payload = {
+        iss: relayIssuer,
+        aud: `t3-env:${link.environmentId}`,
+        sub: input.userId,
+        jti: yield* crypto.randomUUIDv4.pipe(Effect.mapError(failed)),
+        iat: Math.floor(now.epochMilliseconds / 1_000),
+        exp: Math.floor(DateTime.add(now, { minutes: 2 }).epochMilliseconds / 1_000),
+        environmentId: link.environmentId,
+        nonce,
+        scope: ["environment:webhook"],
+        deliveryId: input.delivery.deliveryId,
+        deliveryDigest,
+      } satisfies RelayCloudWebhookDeliveryProofPayload;
+      const proof = yield* signRelayJwt({
+        privateKey: Redacted.value(settings.cloudMintPrivateKey),
+        typ: RELAY_WEBHOOK_DELIVERY_REQUEST_TYP,
+        payload,
+      }).pipe(Effect.mapError(failed));
+      const environmentClient = yield* makeEnvironmentClient(endpoint.httpBaseUrl);
+      const response = yield* environmentClient.connect
+        .webhookDelivery({ payload: { proof, delivery: input.delivery } })
+        .pipe(
+          withoutRedirects,
+          Effect.mapError(failed),
+          Effect.timeoutOption(Duration.millis(ENVIRONMENT_MINT_REQUEST_TIMEOUT_MS)),
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.fail(failed("Webhook delivery timed out.")),
+              onSome: Effect.succeed,
+            }),
+          ),
+        );
+      const responseProof = yield* verifyWithEnvironmentKeys({
+        token: response.proof,
+        typ: RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP,
+        issuer: `t3-env:${link.environmentId}`,
+        audience: relayIssuer,
+        nowEpochSeconds: Math.floor((yield* DateTime.now).epochMilliseconds / 1_000),
+        environmentPublicKeys: [link.environmentPublicKey],
+        decodePayload: decodeWebhookDeliveryResponseProof,
+      });
+      if (
+        responseProof === null ||
+        responseProof.environmentId !== link.environmentId ||
+        responseProof.requestNonce !== nonce ||
+        responseProof.deliveryId !== input.delivery.deliveryId ||
+        response.deliveryId !== input.delivery.deliveryId
+      ) {
+        return yield* new EnvironmentMintResponseInvalid({
+          environmentId: input.environmentId,
+          operation: "webhook",
+        });
+      }
     }),
     connect: Effect.fn("relay.environment_connector.connect")(function* (input) {
       yield* Effect.annotateCurrentSpan({

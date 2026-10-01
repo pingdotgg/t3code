@@ -66,6 +66,7 @@ import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllo
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
 import * as AgentActivityPublisher from "../agentActivity/AgentActivityPublisher.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
+import * as WebhookInboxes from "../webhooks/WebhookInboxes.ts";
 
 vi.mock("@clerk/backend", () => ({
   createClerkClient: vi.fn(),
@@ -1214,7 +1215,7 @@ describe("relay routing fallback", () => {
                 Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
               ),
             ),
-            Layer.provide([publisher, signatures]),
+            Layer.provide([publisher, signatures, Layer.mock(WebhookInboxes.WebhookInboxes, {})]),
           ),
         ),
         Layer.provide(auth),

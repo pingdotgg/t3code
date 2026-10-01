@@ -74,6 +74,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as WebhookInboxes from "../webhooks/WebhookInboxes.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
@@ -1081,6 +1082,7 @@ export const serverApi = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
     const publishSignatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+    const webhookInboxes = yield* WebhookInboxes.WebhookInboxes;
     const activityHandlers = handlers.handle(
       "publishAgentActivity",
       Effect.fn("relay.api.server.publishAgentActivity")(
@@ -1290,9 +1292,47 @@ export const serverApi = HttpApiBuilder.group(
           }),
           mapRelayCommonApiErrors("not_authorized"),
         ),
+      )
+      .handle(
+        "createWebhookInbox",
+        Effect.fn("relay.api.server.createWebhookInbox")(
+          function* ({ params }) {
+            const owner = yield* webhookInboxOwner(params.environmentId);
+            return yield* webhookInboxes.create(owner);
+          },
+          Effect.catchTag("WebhookInboxPersistenceError", () =>
+            relayInternalErrorResponse("persistence_failed"),
+          ),
+          mapRelayCommonApiErrors("not_authorized"),
+        ),
+      )
+      .handle(
+        "deleteWebhookInbox",
+        Effect.fn("relay.api.server.deleteWebhookInbox")(
+          function* ({ params }) {
+            const owner = yield* webhookInboxOwner(params.environmentId);
+            yield* webhookInboxes.remove({ ...owner, inboxId: params.inboxId });
+            return { ok: true };
+          },
+          Effect.catchTag("WebhookInboxPersistenceError", () =>
+            relayInternalErrorResponse("persistence_failed"),
+          ),
+          mapRelayCommonApiErrors("not_authorized"),
+        ),
       );
   }),
 );
+
+const webhookInboxOwner = Effect.fnUntraced(function* (environmentId: string) {
+  const principal = yield* RelayEnvironmentPrincipal;
+  if (principal.environmentId !== environmentId) {
+    return yield* new HttpApiError.Unauthorized({});
+  }
+  return {
+    environmentId: principal.environmentId,
+    environmentPublicKey: principal.environmentPublicKey,
+  };
+});
 
 class ClerkTokenVerificationFailed extends Schema.TaggedError<ClerkTokenVerificationFailed>()(
   "ClerkTokenVerificationFailed",

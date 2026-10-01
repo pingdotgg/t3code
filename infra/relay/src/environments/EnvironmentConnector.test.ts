@@ -10,10 +10,19 @@ import {
   RelayEnvironmentHealthResponseProofPayload,
   RelayEnvironmentMintResponse,
   RelayEnvironmentMintResponseProofPayload,
+  RelayCloudWebhookDeliveryRequest,
+  type RelayCloudWebhookDeliveryProofPayload,
+  type RelayEnvironmentWebhookDeliveryResponseProofPayload,
+  type RelayWebhookDelivery,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import { RELAY_HEALTH_RESPONSE_TYP, RELAY_MINT_RESPONSE_TYP } from "@t3tools/shared/relayJwt";
+import {
+  RELAY_HEALTH_RESPONSE_TYP,
+  RELAY_MINT_RESPONSE_TYP,
+  RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP,
+} from "@t3tools/shared/relayJwt";
+import { sha256StableJson } from "@t3tools/shared/relaySigning";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -825,5 +834,105 @@ describe("EnvironmentConnector", () => {
         });
       }
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), connectorTestLayer(execute))));
+  });
+});
+
+const decodeWebhookRequestBody = Schema.decodeUnknownSync(
+  Schema.fromJsonString(RelayCloudWebhookDeliveryRequest),
+);
+
+const webhookDelivery: RelayWebhookDelivery = {
+  deliveryId: "delivery-1",
+  inboxId: "inbox-1",
+  receivedAt: "2026-10-01T10:00:00.000Z",
+  headers: { "content-type": "application/json", "sentry-hook-resource": "issue" },
+  body: '{"action":"created"}',
+};
+
+function signWebhookAck(
+  request: RelayCloudWebhookDeliveryRequest,
+  privateKey = environmentKeyPair.privateKey,
+) {
+  const requestProof = decodeRequestProof<RelayCloudWebhookDeliveryProofPayload>(request.proof);
+  const payload = {
+    iss: `t3-env:${requestProof.environmentId}`,
+    aud: "https://relay.example.test",
+    sub: requestProof.environmentId,
+    jti: "webhook-response-jti",
+    iat: requestProof.iat,
+    exp: requestProof.exp,
+    environmentId: requestProof.environmentId,
+    requestNonce: requestProof.nonce,
+    deliveryId: requestProof.deliveryId,
+  } satisfies RelayEnvironmentWebhookDeliveryResponseProofPayload;
+  return {
+    deliveryId: payload.deliveryId,
+    proof: signTestJwt(payload, RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP, privateKey),
+  };
+}
+
+describe("EnvironmentConnector webhook delivery", () => {
+  it.effect("pushes a delivery bound to its proof and accepts the environment's signed ack", () => {
+    const seen: Array<RelayCloudWebhookDeliveryRequest & { readonly url: string }> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        const webhookRequest = decodeWebhookRequestBody(requestBodyText(request));
+        seen.push({ ...webhookRequest, url: request.url });
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(signWebhookAck(webhookRequest), { status: 200 }),
+        );
+      });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      yield* connector.deliverWebhook({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+        delivery: webhookDelivery,
+      });
+
+      expect(seen.map((request) => request.url)).toEqual([
+        "https://env.example.test/api/t3-connect/webhook-delivery",
+      ]);
+      expect(seen[0]?.delivery).toEqual(webhookDelivery);
+      const proof = decodeRequestProof<RelayCloudWebhookDeliveryProofPayload>(seen[0]!.proof);
+      expect(proof).toMatchObject({
+        iss: "https://relay.example.test",
+        aud: "t3-env:env-connector-test",
+        sub: "user_123",
+        scope: ["environment:webhook"],
+        deliveryId: "delivery-1",
+        deliveryDigest: yield* Effect.promise(() => sha256StableJson(webhookDelivery)),
+      });
+    }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("keeps the delivery when the ack is not signed by the linked environment", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() =>
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            signWebhookAck(
+              decodeWebhookRequestBody(requestBodyText(request)),
+              otherEnvironmentKeyPair.privateKey,
+            ),
+            { status: 200 },
+          ),
+        ),
+      );
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const error = yield* Effect.flip(
+        connector.deliverWebhook({
+          userId: "user_123",
+          environmentId: "env-connector-test",
+          delivery: webhookDelivery,
+        }),
+      );
+      expect(error._tag).toBe("EnvironmentMintResponseInvalid");
+    }).pipe(Effect.provide(connectorTestLayer(execute)));
   });
 });

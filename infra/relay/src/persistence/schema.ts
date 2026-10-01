@@ -181,6 +181,38 @@ export const relayDeliveryAttempts = pgTable(
   ],
 );
 
+// A webhook inbox is a public URL that stores whatever is POSTed to it until
+// the relay has pushed the delivery to its environment. The relay never reads
+// the body.
+export const relayWebhookInboxes = pgTable(
+  "relay_webhook_inboxes",
+  {
+    inboxId: varchar("inbox_id", { length: 64 }).primaryKey(),
+    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    environmentPublicKey: text("environment_public_key").notNull(),
+    createdAt: varchar("created_at", { length: 64 }).notNull(),
+  },
+  (table) => [index("idx_relay_webhook_inboxes_environment").on(table.environmentId)],
+);
+
+export const relayWebhookDeliveries = pgTable(
+  "relay_webhook_deliveries",
+  {
+    deliveryId: varchar("delivery_id", { length: 36 }).primaryKey(),
+    inboxId: varchar("inbox_id", { length: 64 })
+      .notNull()
+      .references(() => relayWebhookInboxes.inboxId, { onDelete: "cascade" }),
+    receivedAt: varchar("received_at", { length: 64 }).notNull(),
+    headers: jsonb("headers").notNull().$type<Record<string, string>>(),
+    body: text("body").notNull(),
+    lastAttemptedAt: varchar("last_attempted_at", { length: 64 }),
+  },
+  (table) => [
+    index("idx_relay_webhook_deliveries_inbox").on(table.inboxId, table.receivedAt),
+    index("idx_relay_webhook_deliveries_received_at").on(table.receivedAt),
+  ],
+);
+
 export const relayDpopProofs = pgTable(
   "relay_dpop_proofs",
   {

@@ -16,7 +16,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApiScalar from "effect/unstable/httpapi/HttpApiScalar";
 
-import { RelayApi } from "@t3tools/contracts/relay";
+import { RELAY_WEBHOOK_DELIVERY_RETENTION_DAYS, RelayApi } from "@t3tools/contracts/relay";
 
 import {
   clientApi,
@@ -53,6 +53,8 @@ import {
   RelayApnsDeliveryQueue,
   RelayFcmDeliveryQueue,
   RelayFcmDeliveryDeadLetterQueue,
+  RelayWebhookDeliveryDeadLetterQueue,
+  RelayWebhookDeliveryQueue,
 } from "./queues.ts";
 import * as WebCrypto from "./WebCrypto.ts";
 import * as FcmAssertionSigner from "./agentActivity/FcmAssertionSigner.ts";
@@ -73,6 +75,10 @@ import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as WebhookDeliveries from "./webhooks/WebhookDeliveries.ts";
+import * as WebhookInboxes from "./webhooks/WebhookInboxes.ts";
+import * as WebhookDeliveryQueueConsumer from "./webhooks/WebhookDeliveryQueueConsumer.ts";
+import { webhookInboxRoute } from "./webhooks/WebhookInboxRoute.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -135,6 +141,8 @@ export const ApiLive = Api.make(
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
     const fcmDeliveryDeadLetterQueue = yield* RelayFcmDeliveryDeadLetterQueue;
+    const webhookDeliveryQueue = yield* RelayWebhookDeliveryQueue;
+    const webhookDeliveryDeadLetterQueue = yield* RelayWebhookDeliveryDeadLetterQueue;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
@@ -163,6 +171,7 @@ export const ApiLive = Api.make(
     const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
     const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
+    const webhookDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(webhookDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.workerIngestToken.token;
@@ -214,8 +223,19 @@ export const ApiLive = Api.make(
       }).pipe(Effect.map(makeRelayTraceLayer)),
     );
 
+    const webhookDeliveriesLayer = WebhookDeliveries.layer.pipe(
+      Layer.provide(
+        Layer.succeed(WebhookDeliveries.WebhookDeliveryQueueSender, {
+          send: (body) =>
+            webhookDeliveryQueueSender
+              .send(body)
+              .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+        }),
+      ),
+    );
+
     const runtimeLayer = Layer.empty.pipe(
-      Layer.provideMerge(MobileRegistrations.layer),
+      Layer.provideMerge(Layer.merge(webhookDeliveriesLayer, MobileRegistrations.layer)),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),
       Layer.provideMerge(EnvironmentLinker.layer),
@@ -264,7 +284,7 @@ export const ApiLive = Api.make(
           ManagedTunnelLimits.layer,
         ),
       ),
-      Layer.provideMerge(LiveActivities.layer),
+      Layer.provideMerge(Layer.merge(LiveActivities.layer, WebhookInboxes.layer)),
       Layer.provideMerge(DeliveryAttempts.layer),
       Layer.provideMerge(RelayTokens.layer),
       Layer.provideMerge(
@@ -322,6 +342,25 @@ export const ApiLive = Api.make(
         ),
     );
 
+    // Each message is one push over a managed tunnel. Failures retry here;
+    // after that the cron sweep requeues the delivery until it expires.
+    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
+      webhookDeliveryQueue,
+      {
+        batchSize: 10,
+        maxRetries: 5,
+        maxWaitTime: "1 second",
+        retryDelay: "30 seconds",
+        deadLetterQueue: webhookDeliveryDeadLetterQueue.queueName as unknown as string,
+      },
+      (stream) =>
+        stream.pipe(
+          Stream.withSpan("relay.webhook_delivery_queue.process_batch"),
+          Stream.runForEach(WebhookDeliveryQueueConsumer.processMessage),
+          Effect.provide(runtimeLayer),
+        ),
+    );
+
     yield* Cloudflare.Workers.cron("*/5 * * * *", () =>
       Effect.all(
         [
@@ -337,10 +376,29 @@ export const ApiLive = Api.make(
                 ),
               ),
             ),
+            Effect.andThen(
+              Effect.all([WebhookInboxes.WebhookInboxes, DateTime.now]).pipe(
+                Effect.flatMap(([inboxes, now]) =>
+                  inboxes.pruneExpired({
+                    receivedBefore: DateTime.formatIso(
+                      DateTime.subtract(now, { days: RELAY_WEBHOOK_DELIVERY_RETENTION_DAYS }),
+                    ),
+                  }),
+                ),
+              ),
+            ),
             Effect.catchCause((cause) =>
               Cause.hasInterrupts(cause)
                 ? Effect.interrupt
                 : Effect.logWarning("Failed to prune expired relay state", { cause }),
+            ),
+          ),
+          WebhookDeliveries.WebhookDeliveries.pipe(
+            Effect.flatMap((deliveries) => deliveries.retryPending),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to requeue pending webhook deliveries", { cause }),
             ),
           ),
           ManagedEndpointReaper.ManagedEndpointReaper.pipe(
@@ -357,7 +415,7 @@ export const ApiLive = Api.make(
             ),
           ),
         ],
-        { concurrency: 2, discard: true },
+        { concurrency: 3, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
         // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
@@ -365,7 +423,7 @@ export const ApiLive = Api.make(
       ),
     );
 
-    const fetch = Layer.merge(
+    const fetch = Layer.mergeAll(
       Layer.mergeAll(
         HttpApiBuilder.layer(RelayApi, { openapiPath: "/openapi.json" }).pipe(
           Layer.provide(appLayer),
@@ -373,6 +431,8 @@ export const ApiLive = Api.make(
         HttpApiScalar.layer(RelayApi, { path: "/docs" }),
         relayDocsRedirectRoute,
       ).pipe(Layer.provide([Etag.layerWeak, httpPlatformNotSupportedLayer, relayCors])),
+      // Webhook senders are servers, not browsers, so the inbox skips relay CORS.
+      webhookInboxRoute.pipe(Layer.provide(runtimeLayer)),
       relayNotFoundRoute,
     ).pipe(
       HttpRouter.toHttpEffect,
