@@ -48,7 +48,7 @@ describe("projectActivityPayload", () => {
         agentRunId: "agent-1",
         toolCallId: "tool-1",
         kind: "execute",
-        item: { input: { command: ["pnpm", "test"] } },
+        command: "pnpm test",
         files: [{ path: "src/index.ts" }],
         rawOutput: { content: "passed" },
       },

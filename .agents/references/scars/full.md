@@ -24,6 +24,7 @@
 - Runtime PID files published after HTTP startup are observations, not startup ownership. Hold a shared per-state-directory OS-backed claim before constructing runtime services/migrations, revalidate legacy runtime evidence under it, and never unlink the claim file to recover a crash.
 
 - Provider runtime activity is projected into orchestration domain events server-side before the web app consumes it.
+- Preserve command input on tool starts and normalize provider-specific nesting before compact activity projection; shell audit timing must identify native versus observed starts and never treat an unfinished provider call as OS-process liveness.
 - Runtime warning/error activities carry user-facing text in `payload.message` with optional `payload.detail`; every client's work-log derivation must surface both, or the rows render with nothing to expand.
 - Session startup/resume and turn lifecycle require predictable recovery: terminal reconciliation must settle the matching projected turn and clear `session.activeTurnId`; preserve a pre-acknowledgement start failure's `messageId`; and preserve terminal provider-event ordering during normal adapter shutdown.
 - Provider `turn.aborted` events may arrive after interrupt handling clears `session.activeTurnId`: use durable per-turn abort activity to reject later completion signals, condition session writes on the expected active turn at command application, project resolved turn IDs into activity, and clear tool-update fingerprints.

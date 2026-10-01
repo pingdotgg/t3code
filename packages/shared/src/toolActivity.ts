@@ -60,6 +60,7 @@ export function extractToolCommandInput(
   const itemResult = asRecord(item?.result);
   const rawInput = asRecord(data?.rawInput);
   const input = asRecord(data?.input);
+  const stateInput = asRecord(asRecord(data?.state)?.input);
   const candidates = [
     item?.command,
     itemInput?.command,
@@ -67,6 +68,7 @@ export function extractToolCommandInput(
     data?.command,
     rawInput?.command,
     input?.command,
+    stateInput?.command,
   ];
   for (const candidate of candidates) {
     if (

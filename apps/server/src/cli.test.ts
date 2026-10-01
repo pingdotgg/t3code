@@ -2987,6 +2987,198 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
     }),
   );
 
+  it.effect("inspects shell commands and timing through persisted, paginated CLI history", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-shell-test-"));
+      const workspaceRoot = makeGitWorkspace("t3-cli-shell-workspace-");
+      const start = "2026-09-30T02:30:00.000Z";
+      yield* withLiveProjectCliServer(baseDir, () =>
+        Effect.gen(function* () {
+          yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+          const createdOutput = yield* captureStdout(
+            runCli(["chat", "create", "--project", workspaceRoot, "--base-dir", baseDir]),
+          );
+          const threadId = ThreadId.make(JSON.parse(createdOutput.output).threadId);
+          const engine = yield* OrchestrationEngineService;
+          const activities = [
+            {
+              id: "shell-running",
+              kind: "tool.updated",
+              payload: {
+                itemType: "command_execution",
+                itemId: "shell-1",
+                provider: "opencode",
+                status: "inProgress",
+                data: {
+                  tool: "bash",
+                  state: {
+                    status: "running",
+                    input: {
+                      command: "API_KEY=private-test-value pnpm test",
+                      workdir: "/repo",
+                      timeout: 120000,
+                    },
+                    time: { start: Date.parse(start) },
+                  },
+                },
+              },
+            },
+            {
+              id: "shell-completed",
+              kind: "tool.completed",
+              payload: {
+                itemType: "command_execution",
+                itemId: "shell-1",
+                provider: "opencode",
+                status: "completed",
+                data: {
+                  tool: "bash",
+                  state: {
+                    status: "completed",
+                    input: { command: "API_KEY=private-test-value pnpm test", workdir: "/repo" },
+                    time: { start: Date.parse(start), end: Date.parse(start) + 5000 },
+                    metadata: { exit: 0 },
+                  },
+                },
+              },
+            },
+            {
+              id: "shell-missing-start",
+              kind: "tool.updated",
+              payload: {
+                itemType: "command_execution",
+                itemId: "shell-2",
+                provider: "copilot",
+                status: "inProgress",
+                data: { rawInput: { command: "pnpm lint" } },
+              },
+            },
+          ];
+          for (const [index, activity] of activities.entries()) {
+            const createdAt = new Date(Date.parse(start) + index * 5000).toISOString();
+            yield* engine.dispatch({
+              type: "thread.activity.append",
+              commandId: CommandId.make(activity.id),
+              threadId,
+              activity: {
+                ...activity,
+                id: EventId.make(activity.id),
+                summary: "bash",
+                tone: "tool",
+                turnId: TurnId.make("shell-turn"),
+                createdAt,
+              },
+              createdAt,
+            });
+          }
+          const output = yield* captureStdout(
+            runCli([
+              "chat",
+              "show",
+              threadId,
+              "--activities",
+              "--limit",
+              "2",
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const page = JSON.parse(output.output);
+          assert.notInclude(output.output, "private-test-value");
+          assert.equal(page.activities[0].payload.data.command, "API_KEY=[REDACTED] pnpm test");
+          assert.equal(page.shellExecutions.scope, "activity-page");
+          assert.equal(page.shellExecutions.executions.length, 2);
+          assert.deepInclude(page.shellExecutions.executions[0], {
+            itemId: "shell-1",
+            provider: "opencode",
+            command: "API_KEY=[REDACTED] pnpm test",
+            cwd: "/repo",
+            providerStatus: "completed",
+            startedAt: start,
+            completedAt: "2026-09-30T02:30:05.000Z",
+            elapsedMs: 5000,
+            exitCode: 0,
+            timingSource: "provider",
+          });
+          assert.deepInclude(page.shellExecutions.executions[1], {
+            command: "pnpm lint",
+            providerStatus: "inProgress",
+            startedAt: null,
+            elapsedMs: null,
+            timingSource: "unknown",
+          });
+          const olderOutput = yield* captureStdout(
+            runCli([
+              "chat",
+              "show",
+              threadId,
+              "--activities",
+              "--limit",
+              "2",
+              "--before",
+              page.page.before,
+              "--base-dir",
+              baseDir,
+            ]),
+          );
+          const older = JSON.parse(olderOutput.output);
+          assert.deepInclude(older.shellExecutions.executions[0], {
+            command: "API_KEY=[REDACTED] pnpm test",
+            providerStatus: "inProgress",
+            startedAt: start,
+            elapsedMs: 0,
+            timeoutMs: 120000,
+          });
+          assert.equal(older.shellExecutions.asOf, start);
+          yield* engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("shell-argv-start"),
+            threadId,
+            activity: {
+              id: EventId.make("shell-argv-start"),
+              kind: "tool.started",
+              tone: "tool",
+              summary: "Run shell",
+              turnId: TurnId.make("shell-turn"),
+              createdAt: "2026-09-30T02:30:15.000Z",
+              payload: {
+                itemType: "command_execution",
+                itemId: "shell-argv",
+                provider: "codex",
+                data: { item: { command: ["bash", "-lc", "printf 'hello world'"], cwd: "/repo" } },
+              },
+            },
+            createdAt: start,
+          });
+          const latestOutput = yield* captureStdout(
+            runCli(["chat", "show", threadId, "--activities", "--base-dir", baseDir]),
+          );
+          const latest = JSON.parse(latestOutput.output);
+          assert.equal(latest.shellExecutions.executions.length, 3);
+          assert.deepInclude(latest.shellExecutions.executions[0], {
+            elapsedMs: 5000,
+            completionObserved: true,
+            timeoutMs: 120000,
+          });
+          const argv = latest.shellExecutions.executions[2];
+          assert.equal(argv.command, "bash -lc \"printf 'hello world'\"");
+          assert.equal(argv.timingSource, "activity");
+          assert.equal(
+            argv.elapsedMs,
+            Date.parse(latest.shellExecutions.asOf) - Date.parse("2026-09-30T02:30:15.000Z"),
+          );
+        }),
+      ).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(baseDir, { recursive: true, force: true });
+            rmSync(workspaceRoot, { recursive: true, force: true });
+          }),
+        ),
+      );
+    }),
+  );
+
   it.effect("lists and responds to approval and user-input requests from the CLI", () =>
     Effect.gen(function* () {
       const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-requests-test-"));
