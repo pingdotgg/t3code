@@ -2076,7 +2076,7 @@ export default function ChatView(props: ChatViewProps) {
     [activeRightPanelSurface, rightPanelState.surfaces],
   );
   const rightPanelPresence = usePanelPresence(
-    rightPanelOpen && activeThreadRef !== null,
+    (rightPanelOpen || shouldUseRightPanelSheet) && activeThreadRef !== null,
     rightPanelPresenceValue,
     panelAnimationsActive,
     activeThreadKey,
