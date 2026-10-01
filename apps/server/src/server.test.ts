@@ -38,6 +38,7 @@ import {
   ProviderSetupError,
   ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
+  type ServerProvider,
   ThreadId,
   TurnId,
   UsageLimitSourceId,
@@ -149,6 +150,7 @@ import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDi
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
   ProviderVersionCache,
 } from "./provider/providerMaintenance.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -7155,6 +7157,109 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
     });
   }
+
+  it.effect("pushes refreshed provider models to another client after a CLI update", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("example");
+      const driver = ProviderDriverKind.make("example");
+      const model = {
+        slug: "example-new",
+        name: "Example model",
+        isCustom: false,
+        capabilities: { optionDescriptors: [] },
+      };
+      const initial = {
+        instanceId,
+        driver,
+        enabled: true,
+        installed: true,
+        version: "1.0.0",
+        status: "ready" as const,
+        auth: { status: "authenticated" as const },
+        checkedAt: DateTime.formatIso(TEST_EPOCH),
+        models: [],
+        slashCommands: [],
+        skills: [],
+      };
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([initial]);
+      const changes = yield* PubSub.unbounded<ReadonlyArray<ServerProvider>>();
+      const subscribed = yield* Deferred.make<void>();
+      const settings = DEFAULT_SERVER_SETTINGS;
+      yield* buildAppUnderTest({
+        layers: {
+          modelManifest: { current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST) },
+          serverSettings: {
+            getSettings: Effect.succeed(settings),
+            updateSettings: () => Effect.die("An update must not change preferences."),
+          },
+          providerRegistry: {
+            getProviders: Ref.get(providers),
+            getProviderMaintenanceCapabilitiesForInstance: () =>
+              Effect.succeed(
+                makeProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                  updateExecutable: process.execPath,
+                  updateArgs: ["-e", ""],
+                  updateLockKey: "synthetic-update",
+                  latestVersion: "2.0.0",
+                }),
+              ),
+            refreshInstance: () =>
+              Ref.updateAndGet(providers, (values) =>
+                values.map((value) => ({ ...value, version: "2.0.0", models: [model] })),
+              ).pipe(Effect.tap((values) => PubSub.publish(changes, values))),
+            setProviderMaintenanceActionState: ({ state }) =>
+              Ref.updateAndGet(providers, (values) =>
+                values.map((value) => (state ? { ...value, updateState: state } : value)),
+              ).pipe(Effect.tap((values) => PubSub.publish(changes, values))),
+            streamChanges: Stream.unwrap(
+              Effect.gen(function* () {
+                const subscription = yield* PubSub.subscribe(changes);
+                yield* Deferred.succeed(subscribed, undefined);
+                return Stream.fromSubscription(subscription);
+              }),
+            ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const observer = yield* withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "providerStatuses" &&
+                  event.payload.providers.some(
+                    (provider) => provider.updateState?.status === "succeeded",
+                  ),
+              ),
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ).pipe(Effect.forkScoped);
+          yield* Deferred.await(subscribed);
+          const updated = yield* withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverUpdateProvider]({ provider: driver, instanceId }),
+          );
+          assert.equal(
+            updated.providers[0]?.updateState?.status,
+            "succeeded",
+            updated.providers[0]?.updateState?.message ?? undefined,
+          );
+          const event = yield* Fiber.join(observer);
+          assert.equal(event.type, "providerStatuses");
+          if (event.type === "providerStatuses")
+            assert.deepEqual(event.payload.providers[0]?.models, [model]);
+          const config = yield* withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.serverGetConfig]({}),
+          );
+          assert.deepEqual(config.settings, settings);
+        }),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
 
   it.effect("serves config on reconnect without starting provider probes", () =>
     Effect.gen(function* () {

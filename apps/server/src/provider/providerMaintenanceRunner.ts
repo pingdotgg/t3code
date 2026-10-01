@@ -24,6 +24,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -219,6 +220,7 @@ function makeUpdateState(input: {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const manifestService = yield* ModelManifest.ModelManifest;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
@@ -243,28 +245,33 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
     maintenanceCapabilities: ProviderMaintenanceCapabilities,
     instanceId: ProviderInstanceId,
   ): Effect.Effect<VerifiedProviderRefresh> =>
-    providerRegistry.getProviders.pipe(
-      Effect.map((providers) => {
-        const instanceIds: Array<ProviderInstanceId> = [];
-        for (const candidate of providers) {
-          if (candidate.driver === provider && candidate.instanceId === instanceId) {
-            instanceIds.push(candidate.instanceId);
-          }
-        }
-        return instanceIds;
-      }),
-      Effect.flatMap((instanceIds) =>
-        instanceIds.length === 0
-          ? providerRegistry.refreshInstance(instanceId)
-          : Effect.forEach(
-              instanceIds,
-              (instanceId) => providerRegistry.refreshInstance(instanceId),
-              {
-                concurrency: "unbounded",
-                discard: true,
-              },
-            ).pipe(Effect.andThen(providerRegistry.getProviders)),
-      ),
+    Effect.gen(function* () {
+      yield* manifestService.forceRefresh;
+      const instances = (yield* providerInstances.listInstances).filter(
+        (instance) => instance.driverKind === provider && instance.enabled,
+      );
+      // Accounts can share an installation. Invalidate every enabled instance
+      // of this driver, then discover through each instance's own configuration.
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+            if (maintenance.packageName) versionCache.delete(maintenance.packageName);
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+      const instanceIds = new Set([
+        instanceId,
+        ...instances.map((instance) => instance.instanceId),
+      ]);
+      yield* Effect.forEach(instanceIds, (id) => providerRegistry.refreshInstance(id), {
+        concurrency: "unbounded",
+        discard: true,
+      });
+      return yield* providerRegistry.getProviders;
+    }).pipe(
       Effect.flatMap((providers) => {
         const refreshedProviders = providers.filter(
           (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
@@ -454,6 +461,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               verifiedProviders.some(
                 (verifiedProvider) =>
                   !isStillInstalled(verifiedProvider) ||
+                  verifiedProvider.status === "error" ||
                   (targetVersion !== undefined &&
                     verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
               );
