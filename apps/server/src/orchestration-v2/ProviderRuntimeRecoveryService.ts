@@ -192,8 +192,9 @@ const TRIGGER_DETAIL: Record<ReconcileTrigger, string> = {
 };
 
 /**
- * A thread is stranded when every unfinished run is a running or waiting one
- * on a provider thread bound to the released session.
+ * A thread is stranded when every unfinished run is a running one on a
+ * provider thread bound to the released session. A waiting run is left alone:
+ * its checkpoint capture can still complete concurrently with this read.
  */
 function isStrandedBySession(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
@@ -204,7 +205,7 @@ function isStrandedBySession(
     unfinished.length > 0 &&
     unfinished.every(
       (run) =>
-        (run.status === "running" || run.status === "waiting") &&
+        run.status === "running" &&
         projection.providerThreads.some(
           (thread) =>
             thread.id === run.providerThreadId && thread.providerSessionId === providerSessionId,
@@ -264,8 +265,11 @@ export const make = Effect.gen(function* () {
       );
       const why = TRIGGER_DETAIL[trigger];
       const detail = `Cancelled because ${why} before the provider work completed.`;
+      // Restart reconciliation commands are skipped by terminal-run queue
+      // promotion, which keeps their queue held. A released session leaves the
+      // queue live, so its cancelled run must be allowed to start the next one.
       const commandId = CommandId.make(
-        `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
+        `command:${trigger === "session-released" ? "session-released-reconcile" : `runtime-reconcile:${trigger}`}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
       const allocateEventId = () =>
         ids.allocate.event({ threadId: projection.thread.id, commandId }).pipe(

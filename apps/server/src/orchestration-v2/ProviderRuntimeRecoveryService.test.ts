@@ -1273,7 +1273,7 @@ it.effect(
   },
 );
 
-const releasedSessionFixture = (secondRunStatus: "queued" | "preparing") => {
+const releasedSessionFixture = (secondRunStatus: "queued" | "preparing" | "waiting") => {
   const threadId = ThreadId.make("thread_released_session");
   const providerSessionId = ProviderSessionId.make("session_released");
   const providerThreadId = ProviderThreadId.make("provider_thread_released");
@@ -1366,6 +1366,8 @@ it.effect("settles a run stranded by an idle-released session and keeps the queu
     const command = fixture.committed();
     assert.isNotNull(command);
     if (command === null) return;
+    // Terminal-run queue promotion ignores restart reconciliation commands.
+    assert.isFalse(String(command.commandId).startsWith("command:runtime-reconcile:"));
     const runStatuses = command.events.flatMap((event) =>
       event.type === "run.updated" ? [[event.runId, event.payload.status] as const] : [],
     );
@@ -1390,6 +1392,19 @@ it.effect(
   "leaves a thread alone when an unfinished run is not owned by the released session",
   () => {
     const fixture = releasedSessionFixture("preparing");
+    return Effect.gen(function* () {
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
+        { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+      );
+      assert.isNull(fixture.committed());
+    }).pipe(Effect.provide(fixture.layer));
+  },
+);
+
+it.effect(
+  "leaves a thread alone when another unfinished run is only waiting on a checkpoint",
+  () => {
+    const fixture = releasedSessionFixture("waiting");
     return Effect.gen(function* () {
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
         { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
