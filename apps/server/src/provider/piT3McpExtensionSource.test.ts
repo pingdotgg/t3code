@@ -13,6 +13,11 @@ type AgentStartHook = (event: { systemPrompt: string }) => { systemPrompt: strin
 
 type McpToolContent = (result: unknown) => unknown;
 
+type RegisteredMcpTool = {
+  readonly name: string;
+  readonly promptGuidelines?: ReadonlyArray<string>;
+};
+
 // The shipped extension as a plain script. The paths under test need no Typebox.
 const runnableSource = NodeModule.stripTypeScriptTypes(
   PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
@@ -29,6 +34,40 @@ async function loadHandlers(env: Record<string, string> = {}): Promise<Map<strin
     pi: { on: (name: string, handler: unknown) => handlers.set(name, handler) },
   });
   return handlers;
+}
+
+async function loadMcpTools(
+  tools: ReadonlyArray<{ readonly name: string; readonly description?: string }>,
+): Promise<Map<string, RegisteredMcpTool>> {
+  const registered = new Map<string, RegisteredMcpTool>();
+  const fetchMcp = async (_url: string, init: { readonly body: string }) => {
+    const request = JSON.parse(init.body) as { readonly id?: number; readonly method: string };
+    const result =
+      request.method === "initialize"
+        ? { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "t3-code" } }
+        : request.method === "tools/list"
+          ? { tools }
+          : undefined;
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name: string) => (name === "content-type" ? "application/json" : null) },
+      text: async () =>
+        result === undefined ? "" : JSON.stringify({ jsonrpc: "2.0", id: request.id, result }),
+    };
+  };
+
+  await NodeVM.runInNewContext(`${runnableSource}\nt3McpExtension(pi)`, {
+    AbortSignal,
+    Type: { Unsafe: (schema: unknown) => schema },
+    fetch: fetchMcp,
+    process: { env: { T3_MCP_URL: "http://t3.test/mcp", T3_MCP_BEARER_TOKEN: "test-token" } },
+    pi: {
+      on: () => undefined,
+      registerTool: (tool: RegisteredMcpTool) => registered.set(tool.name, tool),
+    },
+  });
+  return registered;
 }
 
 async function loadRequestHook(): Promise<RequestHook> {
@@ -101,6 +140,25 @@ describe("Pi MCP tool results", () => {
       { type: "text", text: '{"ok":true}' },
       image,
     ]);
+  });
+});
+
+describe("Pi T3 delegation guidance", () => {
+  it("distinguishes T3 child threads from Pi-local subagents", async () => {
+    const tools = await loadMcpTools([
+      { name: "delegate_work", description: "Create helper threads." },
+      { name: "send_to_thread", description: "Send a message to a thread." },
+    ]);
+    const delegate = tools.get("mcp__t3-code__delegate_work");
+
+    assert.isDefined(delegate);
+    assert.isTrue(
+      delegate.promptGuidelines?.some(
+        (guideline) =>
+          guideline.includes("T3 child thread") && guideline.includes("local subagent tool"),
+      ),
+    );
+    assert.equal(tools.get("mcp__t3-code__send_to_thread")?.promptGuidelines?.length, 1);
   });
 });
 
