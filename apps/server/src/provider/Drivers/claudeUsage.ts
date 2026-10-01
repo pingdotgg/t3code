@@ -20,6 +20,13 @@ import {
 } from "@t3tools/provider-core/server/usage";
 
 /**
+ * Claude Code stamps this model on messages it writes locally, such as the
+ * placeholder after an interrupted turn. They never reached the API, so they
+ * are not usage.
+ */
+export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
+
+/**
  * Parses one line of a Claude Code transcript.
  *
  * T3 Code writes one record per assistant *content block*, and every one of
@@ -55,7 +62,7 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
   if (timestampMs === null) return null;
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
+  if (model.length === 0 || model === CLAUDE_SYNTHETIC_MODEL) return null;
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
