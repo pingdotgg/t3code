@@ -36,6 +36,14 @@ const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) 
   }).pipe(Atom.withLabel(`mobile-project-clones:${environmentId}`)),
 );
 
+/** The environment's tracked clones, empty until the stream's first list. */
+export const environmentProjectCloneListAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
+    const clones = get(environmentProjectClonesAtom(environmentId));
+    return clones === "pending" ? EMPTY_CLONES : clones;
+  }).pipe(Atom.withLabel(`mobile-project-clone-list:${environmentId}`)),
+);
+
 const projectCloneAtom = Atom.family((key: string) => {
   const ref = parseScopedProjectKey(key);
   return Atom.make((get): ProjectCloneState => {

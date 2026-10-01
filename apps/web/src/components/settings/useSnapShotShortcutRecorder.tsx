@@ -106,6 +106,8 @@ export function useSnapShotShortcutRecorder({
       }
       return;
     }
+    // A global shortcut without a modifier would take that key from every app.
+    if (!event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) return;
     const input = keybindingFromKeyboardEvent(event, navigator.platform);
     if (!input) return;
     const next = parseKeybindingShortcut(input);

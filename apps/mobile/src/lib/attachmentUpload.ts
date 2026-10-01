@@ -276,7 +276,7 @@ async function uploadFileBytes(
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
-      file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
+      await file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
         encoding: "base64",
       });
     }

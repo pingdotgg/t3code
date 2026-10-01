@@ -195,7 +195,8 @@ export function resolveThreadPullRequestBadgePresentation({
  * The linked-PR badge shared by the sidebar and composer footer. The badge owns what it shows:
  * the state glyph and number at the meta size, in the state's color. The caller owns the control
  * it sits in through `render` (an inline link in a sidebar row, a toolbar control in the
- * composer), and the badge fills in the link or stack button behavior.
+ * composer), and the badge fills in the behavior: a single PR is a link to it, while a stack or
+ * several linked PRs is a button that opens the thread's pull requests tab.
  */
 export function ThreadPullRequestBadgeControl({
   render,
@@ -203,7 +204,7 @@ export function ThreadPullRequestBadgeControl({
   number,
   url,
   status,
-  onOpenStack,
+  onOpenList,
   onOpenPullRequest,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
@@ -211,7 +212,7 @@ export function ThreadPullRequestBadgeControl({
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
-  onOpenStack: () => void;
+  onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
@@ -220,9 +221,9 @@ export function ThreadPullRequestBadgeControl({
     <PullRequestBadge
       render={render}
       presentation={presentation}
-      isStack={badge?.kind === "stack"}
+      opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
       url={url}
-      onOpenStack={onOpenStack}
+      onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
     />
   );
@@ -231,26 +232,26 @@ export function ThreadPullRequestBadgeControl({
 function PullRequestBadge({
   render,
   presentation,
-  isStack,
+  opensList,
   url,
-  onOpenStack,
+  onOpenList,
   onOpenPullRequest,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   presentation: NonNullable<ReturnType<typeof resolveThreadPullRequestBadgePresentation>>;
-  isStack: boolean;
+  opensList: boolean;
   url: string | undefined;
-  onOpenStack: () => void;
+  onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
 }) {
-  const onClick = isStack
+  const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        onOpenStack();
+        onOpenList();
       }
     : onOpenPullRequest;
-  const element = isStack ? (
+  const element = opensList ? (
     <button type="button" />
   ) : (
     <a href={url} target="_blank" rel="noopener noreferrer" />

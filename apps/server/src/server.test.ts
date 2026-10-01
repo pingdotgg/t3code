@@ -124,7 +124,10 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
@@ -5336,6 +5339,284 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("creates the Scratch project once and restores its folder on reuse", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const created: Array<{ readonly projectId: ProjectId; readonly workspaceRoot: string }> = [];
+      const iconUpdates: Array<unknown> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "project.create") {
+                  created.push({
+                    projectId: command.projectId,
+                    workspaceRoot: command.workspaceRoot,
+                  });
+                }
+                if (command.type === "project.meta.update") iconUpdates.push(command.projectIcon);
+                return { sequence: created.length + iconUpdates.length };
+              }),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.succeed(
+                Option.fromNullishOr(
+                  created.find((project) => project.workspaceRoot === workspaceRoot),
+                ).pipe(
+                  Option.map((project) => ({
+                    ...makeDefaultOrchestrationReadModel().projects[0]!,
+                    id: project.projectId,
+                    workspaceRoot,
+                  })),
+                ),
+              ),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const scratchRoot = config.scratchWorkspaceRoot ?? "";
+            const first = yield* client[WS_METHODS.projectsEnsureScratch]({});
+            // A user may delete the folder; reuse must bring it back.
+            yield* fileSystem.remove(scratchRoot, { recursive: true });
+            const second = yield* client[WS_METHODS.projectsEnsureScratch]({});
+
+            assert.isTrue(scratchRoot.endsWith("scratch"));
+            assert.equal(created.length, 1);
+            assert.equal(created[0]?.workspaceRoot, scratchRoot);
+            assert.equal(first.projectId, created[0]?.projectId);
+            assert.equal(second.projectId, first.projectId);
+            // The icon is set once, at create.
+            assert.deepEqual(iconUpdates, [
+              { kind: "lucide", name: "message-square-dashed", color: "gray" },
+            ]);
+            assert.isTrue(yield* fileSystem.exists(scratchRoot));
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("resolves a lost Scratch create race to the winning project", () =>
+    Effect.gen(function* () {
+      const winnerId = ProjectId.make("project-scratch-winner");
+      let lookups = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.fail(
+                new OrchestrationCommandInvariantError({
+                  commandType: command.type,
+                  detail: "Active project already exists for workspace root.",
+                }),
+              ),
+          },
+          projectionSnapshotQuery: {
+            // Empty before the create, then the other client's project.
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.sync(() =>
+                lookups++ === 0
+                  ? Option.none()
+                  : Option.some({
+                      ...makeDefaultOrchestrationReadModel().projects[0]!,
+                      id: winnerId,
+                      workspaceRoot,
+                    }),
+              ),
+          },
+        },
+      });
+
+      const result = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[WS_METHODS.projectsEnsureScratch]({}),
+        ),
+      );
+      assert.equal(result.projectId, winnerId);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("gives each new Scratch thread its own folder", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const scratchProjectId = ProjectId.make("project-scratch");
+      let scratchRoot = "";
+      const created: Array<string | null> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "thread.create") created.push(command.worktreePath);
+                return { sequence: created.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectionSnapshotQuery: {
+            getProjectShellById: (projectId) =>
+              Effect.succeed(
+                projectId === scratchProjectId
+                  ? Option.some({
+                      id: scratchProjectId,
+                      title: "Scratch",
+                      workspaceRoot: scratchRoot,
+                      defaultModelSelection: null,
+                      scripts: [],
+                      createdAt: "2026-09-25T00:00:00.000Z",
+                      updatedAt: "2026-09-25T00:00:00.000Z",
+                    })
+                  : Option.none(),
+              ),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            scratchRoot =
+              (yield* client[WS_METHODS.serverGetConfig]({})).scratchWorkspaceRoot ?? "";
+            const createdAt = "2026-09-25T10:00:00.000Z";
+            // The second id shares the first's short prefix, the third tries to
+            // climb out of the scratch root, and the fourth pastes a long token.
+            const text = "Convert these PNGs to WebP, please!";
+            const starts = [
+              { id: "a1b2c3d4-scratch-thread", text },
+              { id: "a1b2c3d4-other", text },
+              { id: "../../escape", text },
+              { id: "f00dcafe-long", text: "x".repeat(300) },
+            ];
+            for (const [index, { id, text: messageText }] of starts.entries()) {
+              yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId: CommandId.make(`cmd-scratch-turn-start-${index}`),
+                threadId: ThreadId.make(id),
+                message: {
+                  messageId: MessageId.make(`msg-scratch-${index}`),
+                  role: "user",
+                  text: messageText,
+                  attachments: [],
+                },
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: {
+                  createThread: {
+                    projectId: scratchProjectId,
+                    title: "New thread",
+                    modelSelection: defaultModelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: null,
+                    worktreePath: null,
+                    createdAt,
+                  },
+                },
+                createdAt,
+              });
+            }
+          }),
+        ),
+      );
+
+      // The date is the server's receipt time, not the client's createdAt.
+      const names = created.map((folder) => path.basename(folder ?? ""));
+      assert.match(names[0] ?? "", /^\d{4}-\d{2}-\d{2}-convert-these-pngs-to-webp-a1b2c3d4$/);
+      assert.match(names[1] ?? "", /-convert-these-pngs-to-webp-a1b2c3d4other$/);
+      assert.match(names[2] ?? "", /-convert-these-pngs-to-webp-escape$/);
+      assert.match(names[3] ?? "", /^\d{4}-\d{2}-\d{2}-x{48}-f00dcafe$/);
+      for (const folder of created) {
+        assert.equal(path.dirname(folder ?? ""), scratchRoot);
+        assert.isTrue(yield* fileSystem.exists(folder ?? ""));
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("withholds Scratch when the data dir sits inside a work tree", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: { vcsDriver: { isInsideWorkTree: () => Effect.succeed(true) } },
+      });
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            const ensure = yield* Effect.flip(client[WS_METHODS.projectsEnsureScratch]({}));
+
+            assert.isUndefined(config.scratchWorkspaceRoot);
+            assert.include(String(ensure.message), "not available");
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("creates a project from just a name in the projects folder", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const created: Array<{ readonly title: string; readonly workspaceRoot: string }> = [];
+      const gitCalls: Array<string> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type === "project.create") {
+                  created.push({ title: command.title, workspaceRoot: command.workspaceRoot });
+                }
+                return { sequence: created.length };
+              }),
+          },
+          gitVcsDriver: {
+            readConfigValue: () => Effect.succeed(null),
+            execute: (input) =>
+              Effect.sync(() => {
+                gitCalls.push(input.args.join(" "));
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const root = (yield* client[WS_METHODS.serverGetConfig]({})).newProjectsRoot ?? "";
+            const result = yield* client[WS_METHODS.projectsCreateNew]({ name: "Pinball Stats" });
+
+            assert.equal(result.workspaceRoot, path.join(root, "pinball-stats"));
+            assert.isUndefined(result.commitError);
+            assert.deepEqual(created, [
+              { title: "Pinball Stats", workspaceRoot: result.workspaceRoot },
+            ]);
+            assert.deepEqual(gitCalls, [
+              "init --initial-branch=main",
+              "add --force -- README.md assets/icon.svg",
+              "commit --message Initial commit",
+            ]);
+            assert.isTrue(
+              yield* fileSystem.exists(path.join(result.workspaceRoot, "assets", "icon.svg")),
+            );
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("advertises the usable file manager and its reveal label", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -7971,6 +8252,87 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             // identity updates. That hook runs after the done snapshot.
             yield* Deferred.await(metaUpdateDispatched);
             assert.deepEqual(dispatched, ["project.create", "project.meta.update"]);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("finds a cloned project's icon once the clone lands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-clone-favicon-" });
+      const destinationPath = path.join(parentDir, "app");
+      const projectId = ProjectId.make("project-clone-favicon");
+      const cloneGate = yield* Deferred.make<void>();
+      const metaUpdateDispatched = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              (command.type === "project.meta.update"
+                ? Deferred.succeed(metaUpdateDispatched, undefined)
+                : Effect.void
+              ).pipe(Effect.as({ sequence: 1 })),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.succeed(
+                workspaceRoot === destinationPath
+                  ? Option.some({
+                      ...makeDefaultOrchestrationReadModel().projects[0]!,
+                      id: projectId,
+                      workspaceRoot,
+                    })
+                  : Option.none(),
+              ),
+          },
+          sourceControlRepositoryService: {
+            prepareClone: (input) =>
+              Effect.succeed({
+                destinationPath: input.destinationPath,
+                remoteUrl: input.remoteUrl ?? "",
+                cloneUrl: input.remoteUrl ?? "",
+                repository: null,
+              }),
+            cloneRepository: (input) =>
+              Deferred.await(cloneGate).pipe(
+                Effect.andThen(
+                  fs.writeFileString(path.join(input.destinationPath, "favicon.svg"), "<svg/>"),
+                ),
+                Effect.orDie,
+                Effect.as({
+                  cwd: input.destinationPath,
+                  remoteUrl: input.remoteUrl ?? "",
+                  repository: null,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.projectCloneStart]({
+              projectId,
+              title: "app",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              remoteUrl: "git@github.com:octocat/app.git",
+              destinationPath,
+            });
+            const resource = { _tag: "project-favicon" as const, cwd: destinationPath };
+            const duringClone = yield* client[WS_METHODS.assetsCreateUrl]({ resource });
+            assert.isTrue(duringClone.relativeUrl.endsWith("/project-favicon-missing"));
+
+            yield* Deferred.succeed(cloneGate, undefined);
+            yield* Deferred.await(metaUpdateDispatched);
+            // The lookup during the clone must not leave a cached miss behind.
+            const afterClone = yield* client[WS_METHODS.assetsCreateUrl]({ resource });
+            assert.equal(afterClone.sourcePath, "favicon.svg");
           }),
         ),
       );
