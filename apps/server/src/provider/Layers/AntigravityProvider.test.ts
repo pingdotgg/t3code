@@ -620,6 +620,18 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
           after.workspaceSnapshots?.find((entry) => entry.cwd === "/workspace")?.skills,
         ).toEqual(skills);
         expect((yield* harness.provider.snapshotForCwd("/workspace")).skills).toEqual(skills);
+
+        const rescanned = [
+          ...skills,
+          { name: "review", path: "/workspace/.agent/skills/review", enabled: true },
+        ];
+        yield* harness.provider.snapshotForCwd("/workspace", rescanned);
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        expect(
+          (yield* harness.provider.snapshot.getSnapshot).workspaceSnapshots?.find(
+            (entry) => entry.cwd === "/workspace",
+          )?.skills,
+        ).toEqual(rescanned);
       }),
     ),
   );
