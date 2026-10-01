@@ -392,7 +392,8 @@ function StatusLabelRow(props: {
 }
 
 // Stop is its own button inside the row rather than the whole pill, so a
-// stray tap on the label cannot end background work.
+// stray tap on the label cannot end background work. Everything but Stop
+// passes touches through to the feed, like the non-interactive labels.
 function BackgroundWorkLabel(props: {
   readonly status: Extract<FloatingWorkingStatus, { kind: "background" }>;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -400,13 +401,19 @@ function BackgroundWorkLabel(props: {
   const label = props.status.liveness === "monitoring" ? "Monitoring" : "Working";
   return (
     <Animated.View
+      pointerEvents="box-none"
       className="absolute max-w-full"
       entering={LABEL_ENTERING}
       exiting={LABEL_EXITING}
       onLayout={props.onLayout}
     >
-      <View className="h-11 flex-row items-center pl-4">
-        <View accessible accessibilityLabel={label} className="flex-row items-center gap-2">
+      <View pointerEvents="box-none" className="h-11 flex-row items-center pl-4">
+        <View
+          pointerEvents="none"
+          accessible
+          accessibilityLabel={label}
+          className="flex-row items-center gap-2"
+        >
           {/* Monitoring is a calm watch state, matching the web banner (no pulse). */}
           {props.status.liveness === "working" ? (
             <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
@@ -415,7 +422,7 @@ function BackgroundWorkLabel(props: {
             {label}
           </Text>
         </View>
-        <View className="ml-3 h-4 w-px bg-border" />
+        <View pointerEvents="none" className="ml-3 h-4 w-px bg-border" />
         <Pressable
           accessibilityLabel={props.status.stopping ? "Stopping" : "Stop background work"}
           accessibilityRole="button"
