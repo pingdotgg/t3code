@@ -1112,6 +1112,8 @@ export function makeCursorAdapter(
                 ),
               ),
             );
+            // The cancelled prompt's reply must not decide whether this one failed.
+            ctx.assistantReply = new CursorTransportFailure();
           }
 
           // ACP commands parse the complete text. Extra context can turn an exact
