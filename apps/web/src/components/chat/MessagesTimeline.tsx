@@ -157,6 +157,7 @@ import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useAtomValue } from "@effect/atom-react";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThread } from "../../state/entities";
+import { useEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -1783,6 +1784,8 @@ function QueuedMessageTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const { queuedMessage } = row;
+  const environment = useEnvironment(ctx.activeThreadEnvironmentId);
+  const offline = environment?.connection.phase !== "connected";
   const attachmentCount = queuedMessage.images.length + queuedMessage.files.length;
   const contextCount =
     queuedMessage.terminalContexts.length +
@@ -1794,9 +1797,11 @@ function QueuedMessageTimelineRow({
     ? "Sending to the agent"
     : queuedMessage.holdUntilUserAction
       ? "Waits for Send now"
-      : row.isNext
-        ? "Sends after the next tool call or when the turn ends"
-        : "Sends after the messages above it";
+      : !row.isNext
+        ? "Sends after the messages above it"
+        : offline
+          ? "Sends when connected · keep this window open"
+          : "Sends after the next tool call or when the turn ends";
   return (
     <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
       <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
@@ -1842,14 +1847,15 @@ function QueuedMessageTimelineRow({
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
                     aria-label="Send now"
+                    disabled={offline}
                   />
                 }
               >
                 <ArrowUpIcon className="size-3.5" aria-hidden />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                Send now
-                {row.isNext && ctx.steerQueuedMessageShortcutLabel
+                {offline ? "Waiting for connection" : "Send now"}
+                {!offline && row.isNext && ctx.steerQueuedMessageShortcutLabel
                   ? ` (${ctx.steerQueuedMessageShortcutLabel})`
                   : null}
               </TooltipPopup>

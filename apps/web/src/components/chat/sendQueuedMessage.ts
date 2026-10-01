@@ -14,6 +14,8 @@ import {
   awaitAttachmentUploads,
   getUploadedAttachments,
   releaseDraftAttachments,
+  readAttachmentUpload,
+  retryAttachmentUpload,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { newMessageId } from "../../lib/utils";
@@ -21,6 +23,7 @@ import { latestCompletedToolActivityId, useQueuedMessageStore } from "../../queu
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThread, readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { environmentPresentations } from "../../state/presentation";
 import { threadEnvironment } from "../../state/threads";
 import {
   createLocalDispatchSnapshot,
@@ -51,6 +54,11 @@ export async function sendQueuedMessage(
 ): Promise<void> {
   const { environmentId, threadId } = threadRef;
   const threadKey = scopedThreadKey(threadRef);
+  const connected = () =>
+    appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId)?.connection
+      .phase === "connected";
+  if (!connected()) return;
+  let dispatched = false;
   const queue = useQueuedMessageStore.getState();
   const message = queue.beginSend(
     threadKey,
@@ -103,9 +111,22 @@ export async function sendQueuedMessage(
     const useUploads = readConfig()?.environment.capabilities.attachmentUploads === true;
     if (useUploads && attachments.length > 0) {
       for (const attachment of attachments) {
-        startAttachmentUpload({ environmentId, image: attachment, draftTarget: threadRef });
+        const upload = { environmentId, image: attachment, draftTarget: threadRef };
+        if (
+          message.queuedWhileDisconnected &&
+          readAttachmentUpload(attachment.id)?.status === "failed"
+        ) {
+          retryAttachmentUpload(upload);
+        } else {
+          startAttachmentUpload(upload);
+        }
       }
-      await awaitAttachmentUploads(attachments.map((attachment) => attachment.id));
+      await awaitAttachmentUploads(
+        attachments.map((attachment) => attachment.id),
+        {
+          includeRetries: message.queuedWhileDisconnected === true,
+        },
+      );
     }
     const wireAttachments = await Promise.all(
       attachments.map(async (attachment) => {
@@ -162,6 +183,7 @@ export async function sendQueuedMessage(
 
     // Stop hands a preparing message back to the composer. Past this point
     // the send can no longer be taken back.
+    if (!connected()) throw new Error("Environment disconnected before delivery.");
     const thread = readThread(threadRef) ?? undefined;
     if (!queue.markDispatching(threadKey, message.id, createLocalDispatchSnapshot(thread))) return;
     const context = buildMessageContext({
@@ -176,6 +198,7 @@ export async function sendQueuedMessage(
     // Servers from before inline context drop the records, so their turns
     // carry the payload in the text instead.
     const inlineContext = readConfig()?.environment.capabilities.inlineMessageContext === true;
+    dispatched = true;
     await run(threadEnvironment.startTurn, {
       environmentId,
       input: {
@@ -200,7 +223,10 @@ export async function sendQueuedMessage(
     if (useUploads) releaseDraftAttachments(attachments);
     for (const image of message.images) revokeBlobPreviewUrl(image.previewUrl);
   } catch (error) {
-    if (!queue.failSend(threadKey, message.id)) return;
+    // Only preparation is safe to retry automatically. A lost turn-start ack
+    // is ambiguous and must stay held for user action.
+    const waitForReconnect = message.queuedWhileDisconnected && !dispatched && !connected();
+    if (!queue.failSend(threadKey, message.id, !waitForReconnect) || waitForReconnect) return;
     const title = readThreadShell(threadRef)?.title;
     toastManager.add({
       type: "error",

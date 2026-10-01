@@ -578,8 +578,25 @@ export function verifyStashedAttachmentUpload(input: {
   });
 }
 
-export async function awaitAttachmentUploads(imageIds: ReadonlyArray<string>): Promise<void> {
-  await Promise.all(imageIds.map((imageId) => jobsByImageId.get(imageId)?.settled));
+export async function awaitAttachmentUploads(
+  imageIds: ReadonlyArray<string>,
+  options: { includeRetries?: boolean } = {},
+): Promise<void> {
+  await Promise.all(
+    imageIds.map(async (imageId) => {
+      let job = jobsByImageId.get(imageId);
+      while (job) {
+        await job.settled;
+        // Reconnect handlers may have subscribed after this waiter. Let their
+        // settlement callbacks replace the job before deciding it is finished.
+        if (options.includeRetries) await Promise.resolve();
+        const current = jobsByImageId.get(imageId);
+        if (!options.includeRetries || current === job) return;
+        // A reconnect can replace the HTTP attempt while its original waiter settles.
+        job = current;
+      }
+    }),
+  );
 }
 
 export function getUploadedAttachments(input: {

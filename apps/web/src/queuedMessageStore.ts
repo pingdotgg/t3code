@@ -26,7 +26,7 @@ export interface QueuedMessageSendSettings {
 }
 
 /**
- * A composer submission held back while the thread's turn is running. It
+ * A composer submission held while a turn runs or its environment is offline. It
  * carries the full draft snapshot so the send path can dispatch it later with
  * the same text, attachments, and contexts the user pressed Enter on.
  */
@@ -50,6 +50,8 @@ export interface QueuedComposerMessage {
    * user pressing send. It waits for Send now instead of leaving on its own.
    */
   holdUntilUserAction?: boolean;
+  /** Queued offline; preparation may resume after a disconnect. */
+  queuedWhileDisconnected?: boolean;
   /**
    * Set while a send is under way; the row stays until it settles. Stop can
    * still take a "preparing" message back (uploads, thread settings), but not
@@ -92,10 +94,11 @@ interface QueuedMessageStoreState {
   finishSend: (threadKey: string, id: string) => void;
   /**
    * Moves a message whose send failed back to the head, held for user action.
+   * Preparation interrupted by disconnection can opt back into automatic delivery.
    * The queue keeps its order and nothing behind it overtakes. False when
    * Stop already took the message back.
    */
-  failSend: (threadKey: string, id: string) => boolean;
+  failSend: (threadKey: string, id: string, holdUntilUserAction?: boolean) => boolean;
   /** Removes one message without touching the others' anchors. Null when gone or sending. */
   remove: (threadKey: string, id: string) => QueuedComposerMessage | null;
   /** Removes and returns every message for the thread that is not already on the wire. */
@@ -177,7 +180,7 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
         queue.filter((message) => message.id !== id),
       );
     },
-    failSend: (threadKey, id) => {
+    failSend: (threadKey, id, holdUntilUserAction = true) => {
       const queue = queueOf(threadKey);
       const entry = queue.find((message) => message.id === id);
       if (!entry) return false;
@@ -187,7 +190,7 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
       const dispatch = get().lastDispatchByThreadKey[threadKey];
       update(
         threadKey,
-        [{ ...rest, holdUntilUserAction: true }, ...queue.filter((message) => message.id !== id)],
+        [{ ...rest, holdUntilUserAction }, ...queue.filter((message) => message.id !== id)],
         dispatch?.messageId !== id
           ? undefined
           : dispatch.previous && { messageId: null, thread: dispatch.previous, previous: null },

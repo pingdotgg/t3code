@@ -49,7 +49,14 @@ the oldest queued message now. Change `thread.steerQueuedMessage` in
 **Settings → Keybindings** to use another shortcut. It leaves the current draft
 in the composer and waits if the agent needs an approval or an answer.
 
-## Queue messages offline on mobile
+## Queue messages offline
+
+On web and desktop, send a message in an existing thread while its environment
+is disconnected to queue it for delivery on reconnection. You can switch threads
+while waiting, or use the X on a queued message to return it to the composer.
+Keep the window open: this queue does not survive a reload or closing the app.
+Starting a new thread and responding to approvals or questions still require a
+connection.
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
 messages while disconnected. Uploads resume when you reconnect. Drafts and queued

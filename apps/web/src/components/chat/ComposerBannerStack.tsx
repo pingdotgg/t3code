@@ -12,7 +12,7 @@ const DISMISS_TRANSITION_MS = 220;
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
-  readonly priority?: "urgent" | "activity" | "notice";
+  readonly priority?: "connection" | "urgent" | "activity" | "notice";
   readonly compact?: boolean;
   readonly icon: ReactNode;
   readonly title: ReactNode;
@@ -31,6 +31,7 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
+  if (item.priority === "connection") return -1;
   if (item.priority === "activity") {
     return 0;
   }
@@ -88,7 +89,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     return null;
   }
 
-  // Activity stays attached. Urgency and severity only order the notices behind it.
+  // Connection loss must stay visible even when stale agent activity is present.
   const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
   const frontItem = orderedItems[0];
   if (!frontItem) {

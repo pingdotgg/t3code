@@ -247,6 +247,38 @@ describe("attachmentUploadQueue", () => {
     },
   );
 
+  it.each([false, true])(
+    "waits for replacement uploads (delivery started before reconnect: %s)",
+    async (beforeReconnect) => {
+      const image = makeFile("late-reconnect-delivery");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      await Promise.resolve();
+      if (!beforeReconnect) {
+        setConnected(firstEnvironment, false);
+        setConnected(firstEnvironment, true);
+      }
+      let deliveryReady = false;
+      const delivery = awaitAttachmentUploads([image.id], { includeRetries: true }).then(() => {
+        deliveryReady = true;
+      });
+      if (beforeReconnect) {
+        setConnected(firstEnvironment, false);
+        setConnected(firstEnvironment, true);
+      }
+      const originalAttempt = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[0]!.complete(503);
+      await originalAttempt;
+      await Promise.resolve();
+      expect(deliveryReady).toBe(false);
+      expect(TestXmlHttpRequest.requests).toHaveLength(2);
+      TestXmlHttpRequest.requests[1]!.complete();
+      await delivery;
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).not.toBeNull();
+    },
+  );
+
   it("does not retry for another environment or after the attachment is removed", async () => {
     const image = makeFile("removed");
     startAttachmentUpload({ environmentId: firstEnvironment, image });

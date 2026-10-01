@@ -80,7 +80,7 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
     threadRef === null ||
     thread === null ||
     threadStatus !== "live" ||
-    (environment !== null && environment.connection.phase !== "connected") ||
+    environment?.connection.phase !== "connected" ||
     !serverConfigLoaded ||
     rewinding ||
     sending ||

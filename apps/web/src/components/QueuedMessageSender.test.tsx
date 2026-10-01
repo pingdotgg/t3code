@@ -14,6 +14,8 @@ const io = vi.hoisted(() => ({
   upload: vi.fn(),
   toast: vi.fn(),
   thread: null as unknown,
+  connectionPhase: "connected",
+  threadStatus: "live",
   shell: { runtimeMode: "full-access", interactionMode: "default" } as Record<string, unknown>,
 }));
 const config = {
@@ -24,7 +26,18 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (load) => ({
   runAtomCommand: (...args: unknown[]) => io.run(...args),
 }));
 vi.mock("../rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: () => new Map([["env-a", config]]) },
+  appAtomRegistry: {
+    get: (atom: unknown) =>
+      new Map([
+        [
+          "env-a",
+          atom === "presentations" ? { connection: { phase: io.connectionPhase } } : config,
+        ],
+      ]),
+  },
+}));
+vi.mock("../state/presentation", () => ({
+  environmentPresentations: { presentationsAtom: "presentations" },
 }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../state/threads", () => ({
@@ -36,11 +49,11 @@ vi.mock("../state/threads", () => ({
   },
 }));
 vi.mock("../state/environments", () => ({
-  useEnvironment: () => ({ connection: { phase: "connected" } }),
+  useEnvironment: () => ({ connection: { phase: io.connectionPhase } }),
 }));
 vi.mock("../state/entities", () => ({
   useThread: () => io.thread,
-  useThreadStatus: () => "live",
+  useThreadStatus: () => io.threadStatus,
   useServerConfigs: () => new Map([["env-a", config]]),
   readThreadShell: () => io.shell,
   readThread: () => io.thread,
@@ -48,6 +61,8 @@ vi.mock("../state/entities", () => ({
 vi.mock("./ui/toast", () => ({ toastManager: { add: (...args: unknown[]) => io.toast(...args) } }));
 vi.mock("../lib/attachmentUploadQueue", () => ({
   startAttachmentUpload: vi.fn(),
+  readAttachmentUpload: vi.fn(),
+  retryAttachmentUpload: vi.fn(),
   awaitAttachmentUploads: (...args: unknown[]) => io.upload(...args),
   getUploadedAttachments: () => [
     { type: "image", id: "uploaded", name: "a.png", mimeType: "image/png", sizeBytes: 4 },
@@ -86,6 +101,8 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   useQueuedMessageStore.setState({ queuesByThreadKey: {}, lastDispatchByThreadKey: {} });
   io.thread = null;
+  io.connectionPhase = "connected";
+  io.threadStatus = "live";
   io.run.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   io.upload.mockReset().mockResolvedValue(undefined);
   io.toast.mockReset();
@@ -127,8 +144,75 @@ describe("QueuedMessageSender", () => {
     root = null;
   });
 
+  it("holds offline messages until reconnection and a live thread, then sends once", async () => {
+    enqueue({ queuedWhileDisconnected: true });
+    io.thread = thread("ready");
+    io.connectionPhase = "reconnecting";
+    io.threadStatus = "cached";
+    await render();
+    expect(commandsRun()).toEqual([]);
+    expect(queue()).toHaveLength(1);
+
+    io.connectionPhase = "connected";
+    await render();
+    expect(commandsRun()).toEqual([]);
+
+    io.threadStatus = "live";
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+    expect(queue()).toBeUndefined();
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+  });
+
+  it("does not deliver an offline message canceled before reconnection", async () => {
+    const message = enqueue({ queuedWhileDisconnected: true });
+    io.thread = thread("ready");
+    io.connectionPhase = "reconnecting";
+    await render();
+    await act(() => {
+      useQueuedMessageStore.getState().remove(threadKey, message.id);
+    });
+    io.connectionPhase = "connected";
+    await render();
+    expect(commandsRun()).toEqual([]);
+  });
+
+  it("retries preparation after a second disconnect without sending the turn twice", async () => {
+    enqueue({ queuedWhileDisconnected: true });
+    io.shell = { ...io.shell, runtimeMode: "approval-required" };
+    io.thread = thread("ready");
+    io.run.mockImplementationOnce(async () => {
+      io.connectionPhase = "reconnecting";
+      return { _tag: "Failure", cause: Cause.fail(new Error("disconnected")) };
+    });
+    await render();
+    expect(commandsRun()).toEqual(["runtime"]);
+    expect(queue()?.[0]).toMatchObject({ holdUntilUserAction: false });
+    expect(queue()?.[0]?.sending).toBeUndefined();
+
+    io.connectionPhase = "connected";
+    await render();
+    expect(commandsRun()).toEqual(["runtime", "runtime", "start"]);
+    expect(queue()).toBeUndefined();
+  });
+
+  it("holds an ambiguous turn-start failure for manual retry", async () => {
+    enqueue({ queuedWhileDisconnected: true });
+    io.thread = thread("ready");
+    io.run.mockImplementationOnce(async () => {
+      io.connectionPhase = "reconnecting";
+      return { _tag: "Failure", cause: Cause.fail(new Error("acknowledgment lost")) };
+    });
+    await render();
+    expect(queue()?.[0]).toMatchObject({ holdUntilUserAction: true });
+    io.connectionPhase = "connected";
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+  });
+
   it("sends a queued message when the turn ends, with no chat view open", async () => {
-    enqueue();
+    enqueue({ queuedWhileDisconnected: true });
     io.thread = thread("running");
     await render();
     expect(commandsRun()).toEqual([]);
