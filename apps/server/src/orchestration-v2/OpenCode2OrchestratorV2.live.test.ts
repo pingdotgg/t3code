@@ -633,8 +633,11 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
           ),
         );
 
-        // Background: run 1 ends first, then OpenCode wakes the parent when the
-        // child ends, and T3 opens run 2 for that execution.
+        // Background: when the child ends after run 1, OpenCode wakes the parent
+        // and T3 opens run 2 for that execution. A child that ends while run 1
+        // still runs has its report delivered into run 1 instead, which then
+        // answers it, and no continuation run opens. Either way the subagent
+        // completes and nothing is left running.
         const bgThread = yield* thread("bg");
         yield* send(
           bgThread,
@@ -643,22 +646,31 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         );
         const woke = yield* waitFor(
           bgThread,
-          (projection) => projection.runs.length === 2 && settled(projection),
+          (projection) =>
+            settled(projection) &&
+            projection.subagents[0]?.status === "completed" &&
+            !projection.turnItems.some(
+              (item) => item.status === "running" || item.status === "waiting",
+            ),
         );
-        assert.deepEqual(
-          woke.runs.map((run) => run.status),
-          ["completed", "completed"],
-        );
-        assert.equal(woke.subagents[0]?.status, "completed");
-        const wakeMessage = woke.messages.find(
-          (message) => message.id === woke.runs[1]?.userMessageId,
-        );
-        assert.equal(`${wakeMessage?.createdBy}:${wakeMessage?.creationSource}`, "agent:provider");
+        assert.isTrue(woke.runs.every((run) => run.status === "completed"));
+        const answeredIn = woke.runs.at(-1)!;
+        if (woke.runs.length === 2) {
+          const wakeMessage = woke.messages.find(
+            (message) => message.id === answeredIn.userMessageId,
+          );
+          assert.equal(
+            `${wakeMessage?.createdBy}:${wakeMessage?.creationSource}`,
+            "agent:provider",
+          );
+        } else {
+          assert.lengthOf(woke.runs, 1);
+        }
         assert.isTrue(
           woke.turnItems.some(
-            (item) => item.runId === woke.runs[1]?.id && item.type === "assistant_message",
+            (item) => item.runId === answeredIn.id && item.type === "assistant_message",
           ),
-          "the parent's answer to the report lands in the continuation run",
+          "the parent's answer to the report lands in the run that took it",
         );
 
         // Stop while a background child runs: OpenCode keeps a background

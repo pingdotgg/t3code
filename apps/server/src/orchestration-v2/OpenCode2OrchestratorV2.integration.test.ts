@@ -997,6 +997,105 @@ describe("OpenCode 2 through the orchestrator", () => {
   );
 
   it.effect(
+    "settles a background subagent whose report OpenCode delivers into the launching turn",
+    () =>
+      Effect.gen(function* () {
+        // The recorded background run, reordered as 2.0.18 ran it live when the
+        // child ended first: the parent's execution is still answering when the
+        // child's report is queued and delivered into it, and that one
+        // execution then answers the report and ends. No execution starts on
+        // its own, so no continuation run opens.
+        const cwd = yield* checkpointWorkspace("opencode2-background-in-turn");
+        const recorded = yield* readProviderReplayTranscript(
+          new URL(
+            "./testkit/fixtures/opencode2_background/opencode_transcript.ndjson",
+            import.meta.url,
+          ),
+        );
+        const byLabel = (label: string) => {
+          const entry = recorded.entries.find(
+            (candidate) => candidate.type !== "runtime_exit" && candidate.label === label,
+          );
+          assert.isDefined(entry);
+          return entry!;
+        };
+        const parentEnd = recorded.entries.findIndex(
+          (entry) => entry.type !== "runtime_exit" && entry.label === "session.execution.succeeded",
+        );
+        const childStart = recorded.entries.findIndex(
+          (entry) => entry.type !== "runtime_exit" && entry.label === "session.step.started.3",
+        );
+        const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript({
+          ...recorded,
+          scenario: "opencode2-background-in-turn",
+          entries: [
+            // The launch, up to the parent's answer, without its end.
+            ...recorded.entries.slice(0, parentEnd),
+            // The child runs to its end meanwhile.
+            ...recorded.entries.slice(
+              childStart,
+              recorded.entries.indexOf(byLabel("session.inbox.enqueued.3")),
+            ),
+            // Its report is queued and delivered into the parent's running execution.
+            byLabel("session.inbox.enqueued.3"),
+            byLabel("session.inbox.delivered.3"),
+            // That execution answers the report and ends.
+            byLabel("session.text.ended.3"),
+            byLabel("session.execution.succeeded.3"),
+          ],
+        });
+        const thread = threadCommands({ name: "opencode2-background-in-turn", worktreePath: cwd });
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const result = yield* runOrchestratorV2ProviderReplayScenario(
+          {
+            name: "opencode2-background-in-turn",
+            transcript,
+            commands: [thread.create, thread.message("start", bigPickle, BACKGROUND_PROMPT)],
+            steps: [
+              { type: "dispatch", command: thread.create },
+              { type: "advance_clock", duration: "1 millis" },
+              { type: "dispatch", command: thread.message("start", bigPickle, BACKGROUND_PROMPT) },
+              { type: "advance_clock", duration: "1 millis" },
+              {
+                type: "await_run_status",
+                threadId: thread.threadId,
+                runId: ids.derive.run({ threadId: thread.threadId, ordinal: 1 }),
+                status: "completed",
+              },
+              { type: "await_thread_idle", threadId: thread.threadId },
+            ],
+          },
+          OpenCode2OrchestratorReplayHarness,
+          { runContinuationWorker: true },
+        ).pipe(provideDeterministicTestRuntime);
+        const projection = result.projections.get(thread.threadId);
+        assert.isDefined(projection);
+        // One run took the launch and the report; the subagent completed with
+        // its output, and nothing waits on a follow-up.
+        assert.deepEqual(
+          projection!.runs.map((candidate) => candidate.status),
+          ["completed"],
+        );
+        assert.lengthOf(projection!.subagents, 1);
+        assert.deepInclude(projection!.subagents[0], { status: "completed" });
+        assert.include(projection!.subagents[0]?.result ?? "", "CHILD_OK");
+        assert.isTrue(
+          projection!.turnItems.some(
+            (item) =>
+              item.type === "assistant_message" && item.text.includes("finished and returned"),
+          ),
+        );
+        assert.isFalse(
+          projection!.turnItems.some(
+            (item) => item.status === "running" || item.status === "waiting",
+          ),
+        );
+        const shell = result.shellSnapshot.threads.find((row) => row.id === projection!.thread.id);
+        assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
+  );
+
+  it.effect(
     "runs plan mode as OpenCode's plan agent and switches back before the next prompt",
     () =>
       Effect.gen(function* () {
