@@ -2,6 +2,8 @@ import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import {
   ClipboardList,
+  ChevronLeft,
+  ChevronRight,
   Activity,
   FileDiff,
   Files,
@@ -197,19 +199,57 @@ export function RightPanelTabs({
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const [tabScroll, setTabScroll] = useState({
+    hasOverflow: false,
+    canScrollLeft: false,
+    canScrollRight: false,
+  });
   const activeSurface = surfaces.find((surface) => surface.id === activeSurfaceId);
   useEffect(() => {
     const list = tabListRef.current;
-    if (!list) return;
+    const viewport = list?.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
+    if (!list || !viewport) return;
+    const updateScroll = () => {
+      const hasOverflow = viewport.scrollWidth - viewport.clientWidth > 1;
+      const canScrollLeft = hasOverflow && viewport.scrollLeft > 1;
+      const canScrollRight =
+        hasOverflow && viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - 1;
+      setTabScroll((current) =>
+        current.hasOverflow === hasOverflow &&
+        current.canScrollLeft === canScrollLeft &&
+        current.canScrollRight === canScrollRight
+          ? current
+          : { hasOverflow, canScrollLeft, canScrollRight },
+      );
+    };
     const revealActive = () =>
       list
         .querySelector<HTMLElement>("[data-active-tab='true']")
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     revealActive();
-    const observer = new ResizeObserver(revealActive);
-    observer.observe(list);
-    return () => observer.disconnect();
+    updateScroll();
+    const observer = new ResizeObserver(() => {
+      revealActive();
+      updateScroll();
+    });
+    observer.observe(viewport);
+    if (viewport.firstElementChild) observer.observe(viewport.firstElementChild);
+    viewport.addEventListener("scroll", updateScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scroll", updateScroll);
+    };
   }, [activeSurfaceId, surfaces]);
+  const scrollTabs = (direction: -1 | 1) => {
+    const viewport = tabListRef.current?.querySelector<HTMLElement>(
+      "[data-slot='scroll-area-viewport']",
+    );
+    if (!viewport) return;
+    viewport.scrollBy({
+      left: direction * Math.max(120, viewport.clientWidth * 0.75),
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  };
   const closeOnMiddleClick = (event: MouseEvent, surface: RightPanelSurface) => {
     if (event.button !== 1) return;
     event.preventDefault();
@@ -352,6 +392,34 @@ export function RightPanelTabs({
             ) : null}
           </div>
         </ScrollArea>
+        {tabScroll.hasOverflow ? (
+          <div
+            className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
+            role="group"
+            aria-label="Scroll panel tabs"
+          >
+            <button
+              type="button"
+              aria-label="Scroll tabs left"
+              title="Scroll tabs left"
+              disabled={!tabScroll.canScrollLeft}
+              onClick={() => scrollTabs(-1)}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Scroll tabs right"
+              title="Scroll tabs right"
+              disabled={!tabScroll.canScrollRight}
+              onClick={() => scrollTabs(1)}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ChevronRight className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
         {onToggleTerminal ? (
           <button
             type="button"

@@ -106,6 +106,50 @@ describe("RightPanelTabs", () => {
     }
   });
 
+  it("scrolls overflowing tabs with buttons and disables them at the edges", async () => {
+    const tabs: RightPanelSurface[] = Array.from({ length: 12 }, (_, index) => ({
+      id: `file:src/long-file-name-${index}.ts`,
+      kind: "file",
+      relativePath: `src/long-file-name-${index}.ts`,
+      revealLine: null,
+    }));
+    const { screen } = await mountTabs(tabs, tabs[0]!.id);
+    try {
+      const viewport = document.querySelector<HTMLElement>(
+        "[data-right-panel-tab-list] [data-slot='scroll-area-viewport']",
+      )!;
+      const left = page.getByRole("button", { name: "Scroll tabs left", exact: true });
+      const right = page.getByRole("button", { name: "Scroll tabs right", exact: true });
+      await expect.element(left).toBeDisabled();
+      await expect.element(right).toBeEnabled();
+      for (
+        let index = 0;
+        index < 20 && !(await right.element()).hasAttribute("disabled");
+        index++
+      ) {
+        const target = Math.min(
+          viewport.scrollWidth - viewport.clientWidth,
+          viewport.scrollLeft + Math.max(120, viewport.clientWidth * 0.75),
+        );
+        await right.click();
+        await vi.waitFor(() =>
+          expect(Math.abs(viewport.scrollLeft - target)).toBeLessThanOrEqual(2),
+        );
+      }
+      await expect.element(right).toBeDisabled();
+      await expect.element(left).toBeEnabled();
+      const lastTab = await page.getByTitle("src/long-file-name-11.ts", { exact: true }).element();
+      expect(lastTab.getBoundingClientRect().right).toBeLessThanOrEqual(
+        viewport.getBoundingClientRect().right + 1,
+      );
+      const end = viewport.scrollLeft;
+      await left.click();
+      await vi.waitFor(() => expect(viewport.scrollLeft).toBeLessThan(end - 50));
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("keeps the browser close control in the tab header and uses compact tab text", async () => {
     const { callbacks, screen } = await mountTabs(surfaces, "browser:preview-a");
     try {
@@ -166,6 +210,7 @@ describe("RightPanelTabs", () => {
       const lastTab = (await page.getByTitle("index.ts").element()).parentElement!;
       const tabList = document.querySelector("[data-right-panel-tab-list]");
       expect(tabList?.contains(addButton)).toBe(true);
+      expect(document.querySelector('[aria-label="Scroll panel tabs"]')).toBeNull();
 
       const addRect = addButton.getBoundingClientRect();
       const lastTabRect = lastTab.getBoundingClientRect();
