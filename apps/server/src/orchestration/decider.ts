@@ -11,6 +11,7 @@ import type {
   OrchestrationQueuedTurn,
   OrchestrationReadModel,
   OrchestrationThread,
+  ThreadDelegation,
   ThreadId,
   ThreadNudging,
   TurnId,
@@ -82,6 +83,19 @@ import {
 } from "@t3tools/client-runtime/validation-lifecycle";
 
 const FORK_TITLE_PREFIX = "Forked: ";
+const INITIAL_ASSIGNMENT_REQUIRED_DETAIL =
+  "This child is waiting for its original assignment. Retry the original delegated request or create a separate thread for unrelated work.";
+
+function isInitialDelegationDispatch(delegation: ThreadDelegation | undefined): boolean {
+  return (
+    delegation !== undefined &&
+    delegation.completedAt === null &&
+    delegation.dispatchId !== undefined &&
+    delegation.dispatchTurnId == null &&
+    (delegation.dispatchReason === undefined || delegation.dispatchReason === "assigned")
+  );
+}
+
 const isChildWaitDeadlineAt = Schema.is(ChildWaitDeadlineAt);
 /**
  * Blocked-on-you work must never stay hidden inside a settled row, so these
@@ -3237,6 +3251,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         targetThread.nudging?.delegation?.completedAt === null
           ? targetThread.nudging.delegation
           : undefined;
+      if (
+        isInitialDelegationDispatch(activeDelegation) &&
+        command.message.messageId !== activeDelegation?.assignmentId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: INITIAL_ASSIGNMENT_REQUIRED_DETAIL,
+        });
+      }
       const executionAuthority =
         activeDelegation?.dispatchId !== undefined &&
         activeDelegation.dispatchSequence !== undefined &&
@@ -3686,6 +3709,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const nudging = targetThread.nudging;
       const activeDelegation =
         nudging?.delegation?.completedAt === null ? nudging.delegation : undefined;
+      if (
+        isInitialDelegationDispatch(activeDelegation) &&
+        queuedTurn.message.messageId !== activeDelegation?.assignmentId
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: INITIAL_ASSIGNMENT_REQUIRED_DETAIL,
+        });
+      }
       const responseDispatched = activeDelegation?.pendingResponse?.queuedTurnId === queuedTurn.id;
       if (activeDelegation?.decision && !responseDispatched) {
         return yield* new OrchestrationCommandInvariantError({
@@ -4231,18 +4263,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       const sourceEvents: PlannedOrchestrationEvent[] = [sessionSetEvent];
-      // Execution binding: a new provider turn under an active delegation is
-      // a new execution generation. Adopt the turn when nothing is bound yet
-      // (including legacy delegations, which enter the fenced path here
-      // instead of silently staying legacy); mint a fresh dispatch when the
-      // bound turn is superseded. Retried session updates for the same turn
-      // are no-ops, so replay preserves the dispatch.
+      // Initial fenced executions require the accepted assignment message.
+      // Legacy delegations enter the fenced path here; subsequent provider
+      // turns rotate the dispatch, and retries preserve the existing binding.
       const bindingDelegation = thread.nudging?.delegation;
       const prevActiveTurn = thread.session?.activeTurnId ?? null;
       const nextActiveTurn = command.session?.activeTurnId ?? null;
       if (
         bindingDelegation &&
         bindingDelegation.completedAt === null &&
+        (!isInitialDelegationDispatch(bindingDelegation) ||
+          thread.messages.findLast((message) => message.role === "user")?.id ===
+            bindingDelegation.assignmentId) &&
         nextActiveTurn !== null &&
         nextActiveTurn !== prevActiveTurn
       ) {

@@ -1694,7 +1694,7 @@ describe("child nudging", () => {
       commandId: CommandId.make("start-delegated-turn"),
       threadId: child.id,
       message: {
-        messageId: MessageId.make("delegated-message"),
+        messageId: child.nudging!.delegation!.assignmentId,
         role: "user",
         text: "Continue delegated work",
         attachments: [],
@@ -1713,6 +1713,125 @@ describe("child nudging", () => {
       },
     });
   });
+
+  it.each(["direct", "queued"] as const)(
+    "rejects an unrelated %s prompt in a child whose first assignment never started",
+    async (delivery) => {
+      const child = thread("child", true);
+      child.messages = [];
+      child.latestTurn = null;
+      child.activities = [];
+      child.nudging = {
+        delegation: {
+          ...child.nudging!.delegation!,
+          dispatchId: "pending-dispatch",
+          dispatchSequence: 1,
+          dispatchTurnId: null,
+          dispatchReason: "assigned",
+        },
+      };
+      const message = {
+        messageId: MessageId.make("unrelated-settings-search"),
+        role: "user" as const,
+        text: "Implement settings search",
+        attachments: [],
+      };
+      let state = model(child);
+      if (delivery === "queued") {
+        state = (
+          await apply(state, {
+            type: "thread.queued-turn.create",
+            commandId: CommandId.make("queue-unrelated"),
+            threadId: child.id,
+            queuedTurnId: QueuedTurnId.make("unrelated-queue"),
+            message,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: finished,
+          })
+        ).readModel;
+      }
+      await expect(
+        apply(
+          state,
+          delivery === "direct"
+            ? {
+                type: "thread.turn.start",
+                commandId: CommandId.make("start-unrelated"),
+                threadId: child.id,
+                message,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                createdAt: finished,
+              }
+            : {
+                type: "thread.queued-turn.dispatch",
+                commandId: CommandId.make("dispatch-unrelated"),
+                threadId: child.id,
+                queuedTurnId: QueuedTurnId.make("unrelated-queue"),
+                dispatchedAt: finished,
+              },
+        ),
+      ).rejects.toThrow("original assignment");
+    },
+  );
+
+  it.each([false, true])(
+    "binds an initial dispatch only after its assignment message was accepted (accepted=%s)",
+    async (accepted) => {
+      const child = thread("child", true);
+      child.messages = [];
+      child.latestTurn = null;
+      child.activities = [];
+      child.nudging = {
+        delegation: {
+          ...child.nudging!.delegation!,
+          dispatchId: "pending-dispatch",
+          dispatchSequence: 1,
+          dispatchTurnId: null,
+          dispatchReason: "assigned",
+        },
+      };
+      let state = model(child);
+      if (accepted) {
+        state = (
+          await apply(state, {
+            type: "thread.turn.start",
+            commandId: CommandId.make("accept-assignment"),
+            threadId: child.id,
+            message: {
+              messageId: child.nudging.delegation!.assignmentId,
+              role: "user",
+              text: "Port the upstream fixes",
+              attachments: [],
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt: finished,
+          })
+        ).readModel;
+      }
+      const result = await apply(state, {
+        type: "thread.session.set",
+        commandId: CommandId.make("bind-pending"),
+        threadId: child.id,
+        session: {
+          threadId: child.id,
+          status: "running",
+          providerName: "copilot",
+          providerInstanceId: ProviderInstanceId.make("copilot"),
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.make("new-provider-turn"),
+          lastError: null,
+          updatedAt: finished,
+        },
+        createdAt: finished,
+      });
+      expect(result.readModel.threads[1]!.nudging?.delegation?.dispatchTurnId).toBe(
+        accepted ? "new-provider-turn" : null,
+      );
+    },
+  );
 
   it("settles a stopped delegated turn as blocked exactly once after it becomes idle", async () => {
     const child = thread("child", true);
