@@ -1,9 +1,9 @@
+import { waitUntilDeleted } from "./GraphQL.ts";
 import { createHash } from "node:crypto";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { Unowned } from "../AdoptPolicy.ts";
 import { isResolved } from "../Diff.ts";
@@ -381,7 +381,7 @@ const listVariableMap = (
     })
     .pipe(
       Effect.map(asVariableMap),
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+      railway.catchTags(["RailwayNotFound"], () =>
         Effect.succeed({} as Record<string, string>),
       ),
     );
@@ -403,7 +403,7 @@ const upsertVariable = (input: {
   value: string;
   serviceId?: string;
 }) =>
-  railway.variableUpsert({
+  railway.upsertVariable({
     input: {
       projectId: input.projectId,
       environmentId: input.environmentId,
@@ -418,23 +418,28 @@ const listEnvironmentIds = (project: {
   projectId: string;
   environmentId: string;
 }) =>
-  railway.environments.items({ projectId: project.projectId, first: 50 }).pipe(
-    Stream.filter((env) => env.deletedAt == null),
-    Stream.map((env) => env.id),
-    Stream.runCollect,
-    Effect.map((ids) => {
-      const set = new Set(Array.from(ids));
-      if (project.environmentId.length > 0) {
-        set.add(project.environmentId);
-      }
-      return Array.from(set);
-    }),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed(
-        project.environmentId.length > 0 ? [project.environmentId] : [],
+  railway.environments
+    .items(
+      { projectId: project.projectId, first: 50 },
+      { id: true, deletedAt: true },
+    )
+    .pipe(
+      Stream.filter((env) => env.deletedAt == null),
+      Stream.map((env) => env.id),
+      Stream.runCollect,
+      Effect.map((ids) => {
+        const set = new Set(Array.from(ids));
+        if (project.environmentId.length > 0) {
+          set.add(project.environmentId);
+        }
+        return Array.from(set);
+      }),
+      railway.catchTags(["RailwayNotFound"], () =>
+        Effect.succeed(
+          project.environmentId.length > 0 ? [project.environmentId] : [],
+        ),
       ),
-    ),
-  );
+    );
 
 export const VariableProvider = () =>
   Provider.succeed(Variable, {
@@ -635,7 +640,7 @@ export const VariableProvider = () =>
         return;
       }
       yield* railway
-        .variableDelete({
+        .deleteVariable({
           input: {
             projectId: output.projectId,
             environmentId: output.environmentId,
@@ -645,21 +650,16 @@ export const VariableProvider = () =>
               : {}),
           },
         })
-        .pipe(
-          Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
-        );
-      yield* getValue(
-        output.projectId,
-        output.environmentId,
-        output.name,
-        output.serviceId,
-      ).pipe(
-        Effect.map((value) => value === undefined),
-        Effect.repeat({
-          schedule: Schedule.spaced("1 second"),
-          until: (gone) => gone,
-          times: 8,
-        }),
+        .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
+      yield* waitUntilDeleted(
+        "Variable",
+        `${output.environmentId}/${output.serviceId ?? "shared"}/${output.name}`,
+        getValue(
+          output.projectId,
+          output.environmentId,
+          output.name,
+          output.serviceId,
+        ).pipe(Effect.map((value) => value === undefined)),
       );
     }),
   });

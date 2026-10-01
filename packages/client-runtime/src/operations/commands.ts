@@ -42,6 +42,7 @@ export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
 export type PinThreadInput = CommandInput<"thread.pin">;
 export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
+export type SetThreadAutoSettleInput = CommandInput<"thread.auto-settle.set">;
 export type ReorderActiveThreadInput = CommandInput<"thread.active.reorder">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type LinkThreadPullRequestInput = CommandInput<"thread.pull-request.link">;
@@ -53,7 +54,9 @@ export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type DismissThreadUserInputInput = CommandInput<"thread.user-input.dismiss">;
-export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
+export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert"> & {
+  readonly restoreFiles?: boolean;
+};
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
@@ -224,6 +227,16 @@ export const unpinThread: (input: UnpinThreadInput) => CommandEffect = Effect.fn
   });
 });
 
+export const setThreadAutoSettle: (input: SetThreadAutoSettleInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadAutoSettle",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.auto-settle.set",
+    commandId: yield* commandId(input),
+  });
+});
+
 export const reorderPinnedThread: (input: ReorderPinnedThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.reorderPinnedThread",
 )(function* (input) {
@@ -355,9 +368,10 @@ export const dismissThreadUserInput: (input: DismissThreadUserInputInput) => Com
 export const revertThreadCheckpoint: (input: RevertThreadCheckpointInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.revertThreadCheckpoint")(function* (input) {
     const metadata = yield* timestampedCommandMetadata(input);
+    const { restoreFiles, ...command } = input;
     return yield* dispatch({
-      ...input,
-      type: "thread.checkpoint.revert",
+      ...command,
+      type: restoreFiles === false ? "thread.conversation.revert" : "thread.checkpoint.revert",
       commandId: metadata.commandId,
       createdAt: metadata.createdAt,
     });

@@ -1,6 +1,13 @@
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
-import { WS_METHODS } from "@t3tools/contracts";
+import {
+  WS_METHODS,
+  type EnvironmentId,
+  type OrchestrationShellSnapshot,
+} from "@t3tools/contracts";
+
+import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { canSnooze } from "./threadSettled.ts";
 
 import {
   createAtomCommandScheduler,
@@ -22,6 +29,7 @@ import {
   type PinThreadInput,
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
+  type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -46,6 +54,7 @@ import {
   pinThread,
   reorderPinnedThread,
   reorderActiveThread,
+  setThreadAutoSettle,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -74,6 +83,7 @@ export type {
   PinThreadInput,
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
+  SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -88,6 +98,7 @@ export type {
 
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -95,7 +106,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
-  return {
+  const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
@@ -159,6 +170,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
       execute: (input: ReorderPinnedThreadInput) => reorderPinnedThread(input),
+      scheduler,
+      concurrency,
+    }),
+    setAutoSettle: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-auto-settle",
+      execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
       scheduler,
       concurrency,
     }),
@@ -246,5 +263,80 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+  };
+  const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
+  return {
+    ...commands,
+    snapshotAtom: optimistic.snapshotAtom,
+    settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
+      !accepted &&
+      (!canSnooze(thread, { now }) ||
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running")
+        ? thread
+        : {
+            ...thread,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            settledOverride: "settled",
+            settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+            unsettledAt: null,
+            activeOrderKey: null,
+            pinnedAt: null,
+            pinOrderKey: null,
+            snoozedAt: null,
+            snoozedUntil: null,
+          },
+    ),
+    unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
+      ...thread,
+      settledOverride: input.reason === "user" ? "active" : null,
+      settledAt: null,
+      unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+    })),
+    snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
+      (!accepted && !canSnooze(thread, { now })) ||
+      !(Date.parse(input.snoozedUntil) > Date.parse(now))
+        ? thread
+        : {
+            ...thread,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            snoozedUntil: input.snoozedUntil,
+            snoozedAt: thread.snoozedUntil === input.snoozedUntil ? (thread.snoozedAt ?? now) : now,
+          },
+    ),
+    unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
+      ...thread,
+      snoozedUntil: null,
+      snoozedAt: null,
+    })),
+    pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
+      ...thread,
+      pinnedAt: thread.pinnedAt ?? now,
+      pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+      ...(thread.settledOverride === "settled"
+        ? {
+            settledOverride: "active" as const,
+            settledAt: null,
+            unsettledAt: now,
+          }
+        : {}),
+      snoozedUntil: null,
+      snoozedAt: null,
+    })),
+    unpin: optimistic.wrap(commands.unpin, (thread) => ({
+      ...thread,
+      pinnedAt: null,
+      pinOrderKey: null,
+    })),
+    reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
+      ...thread,
+      pinOrderKey: input.orderKey,
+    })),
+    reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
+      ...thread,
+      activeOrderKey: input.orderKey,
+    })),
   };
 }

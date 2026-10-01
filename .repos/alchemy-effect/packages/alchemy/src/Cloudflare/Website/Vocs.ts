@@ -58,7 +58,7 @@ export interface VocsProps<
  *
  * Input files are content-hashed (respecting `.gitignore` by default), so an
  * unchanged project skips its build and deployment. Vocs' server runtime uses
- * Node APIs, so `nodejs_compat` is included in the Worker's compatibility
+ * Node APIs, enabled by the Worker's compatibility date
  * flags automatically.
  *
  * ### Deploying a Vocs Site
@@ -170,12 +170,8 @@ export const Vocs: {
           Effect.isEffect(propsEff) ? propsEff : Effect.succeed(propsEff),
           (props) => ({
             ...props,
-            compatibility: {
-              ...props?.compatibility,
-              flags: props?.compatibility?.flags?.includes("nodejs_compat")
-                ? props.compatibility.flags
-                : [...(props?.compatibility?.flags ?? []), "nodejs_compat"],
-            },
+            // The Worker compatibility resolver enables Node.js APIs from
+            // the date (or adds the flag when a caller pins an older date).
             assets: {
               htmlHandling: "drop-trailing-slash" as const,
               ...props?.assets,

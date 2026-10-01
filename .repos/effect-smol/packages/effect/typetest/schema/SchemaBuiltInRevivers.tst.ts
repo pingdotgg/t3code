@@ -1,17 +1,98 @@
-import { Schema, type SchemaRepresentation } from "effect"
+import { Schema, SchemaRepresentation } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Schema built-in revivers", () => {
-  it("exports the isPattern and Option revivers with concrete payload types", () => {
-    expect(Schema.isPatternReviver).type.toBe<
-      SchemaRepresentation.FilterReviver<{ readonly source: string; readonly flags: string }>
-    >()
-    expect(Schema.OptionReviver).type.toBe<SchemaRepresentation.DeclarationReviver<null>>()
-
+  it("composes every built-in reviver without casts", () => {
     const revivers: ReadonlyArray<SchemaRepresentation.AnyReviver> = [
-      Schema.isPatternReviver,
-      Schema.OptionReviver
+      SchemaRepresentation.isTrimmedReviver,
+      SchemaRepresentation.isPatternReviver,
+      SchemaRepresentation.isStringFiniteReviver,
+      SchemaRepresentation.isStringBigIntReviver,
+      SchemaRepresentation.isStringSymbolReviver,
+      SchemaRepresentation.isUUIDReviver,
+      SchemaRepresentation.isGUIDReviver,
+      SchemaRepresentation.isULIDReviver,
+      SchemaRepresentation.isBase64Reviver,
+      SchemaRepresentation.isBase64UrlReviver,
+      SchemaRepresentation.isStartsWithReviver,
+      SchemaRepresentation.isEndsWithReviver,
+      SchemaRepresentation.isIncludesReviver,
+      SchemaRepresentation.isUppercasedReviver,
+      SchemaRepresentation.isLowercasedReviver,
+      SchemaRepresentation.isCapitalizedReviver,
+      SchemaRepresentation.isUncapitalizedReviver,
+      SchemaRepresentation.isFiniteReviver,
+      SchemaRepresentation.isGreaterThanReviver,
+      SchemaRepresentation.isGreaterThanOrEqualToReviver,
+      SchemaRepresentation.isLessThanReviver,
+      SchemaRepresentation.isLessThanOrEqualToReviver,
+      SchemaRepresentation.isBetweenReviver,
+      SchemaRepresentation.isMultipleOfReviver,
+      SchemaRepresentation.isIntReviver,
+      SchemaRepresentation.isMinLengthReviver,
+      SchemaRepresentation.isMaxLengthReviver,
+      SchemaRepresentation.isLengthBetweenReviver,
+      SchemaRepresentation.isMinSizeReviver,
+      SchemaRepresentation.isMaxSizeReviver,
+      SchemaRepresentation.isSizeBetweenReviver,
+      SchemaRepresentation.isMinPropertiesReviver,
+      SchemaRepresentation.isMaxPropertiesReviver,
+      SchemaRepresentation.isPropertiesLengthBetweenReviver,
+      SchemaRepresentation.isPropertyNamesReviver,
+      SchemaRepresentation.isUniqueReviver,
+      SchemaRepresentation.isUniqueKeyReviver,
+      SchemaRepresentation.OptionReviver,
+      SchemaRepresentation.ResultReviver,
+      SchemaRepresentation.RedactedReviver,
+      SchemaRepresentation.CauseReasonReviver,
+      SchemaRepresentation.CauseReviver,
+      SchemaRepresentation.ErrorInstanceReviver,
+      SchemaRepresentation.ExitReviver,
+      SchemaRepresentation.ReadonlyMapReviver,
+      SchemaRepresentation.GraphReviver,
+      SchemaRepresentation.HashMapReviver,
+      SchemaRepresentation.ReadonlySetReviver,
+      SchemaRepresentation.HashSetReviver,
+      SchemaRepresentation.ChunkReviver,
+      SchemaRepresentation.RegExpReviver,
+      SchemaRepresentation.URLReviver,
+      SchemaRepresentation.DateReviver,
+      SchemaRepresentation.DurationReviver,
+      SchemaRepresentation.ByteSizeReviver,
+      SchemaRepresentation.BigDecimalReviver,
+      SchemaRepresentation.FileReviver,
+      SchemaRepresentation.FormDataReviver,
+      SchemaRepresentation.URLSearchParamsReviver,
+      SchemaRepresentation.Uint8ArrayReviver,
+      SchemaRepresentation.DateTimeUtcReviver,
+      SchemaRepresentation.TimeZoneOffsetReviver,
+      SchemaRepresentation.TimeZoneNamedReviver,
+      SchemaRepresentation.TimeZoneReviver,
+      SchemaRepresentation.DateTimeZonedReviver,
+      SchemaRepresentation.isGreaterThanDateReviver,
+      SchemaRepresentation.isGreaterThanOrEqualToDateReviver,
+      SchemaRepresentation.isLessThanDateReviver,
+      SchemaRepresentation.isLessThanOrEqualToDateReviver,
+      SchemaRepresentation.isBetweenDateReviver,
+      SchemaRepresentation.isGreaterThanBigIntReviver,
+      SchemaRepresentation.isGreaterThanOrEqualToBigIntReviver,
+      SchemaRepresentation.isLessThanBigIntReviver,
+      SchemaRepresentation.isLessThanOrEqualToBigIntReviver,
+      SchemaRepresentation.isBetweenBigIntReviver,
+      SchemaRepresentation.JsonReviver,
+      SchemaRepresentation.MutableJsonReviver
     ]
+
     expect(revivers).type.toBe<ReadonlyArray<SchemaRepresentation.AnyReviver>>()
+  })
+
+  it("restricts isUniqueKey to arrays of key-value tuples", () => {
+    const check = Schema.isUniqueKey<string, number>()
+
+    Schema.Array(Schema.Tuple([Schema.String, Schema.Number])).check(check)
+    Schema.Array(Schema.String).check(
+      // @ts-expect-error Argument of type
+      check
+    )
   })
 })

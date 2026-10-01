@@ -20,19 +20,11 @@ import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import type { DeviceHubAccess } from "../device/hubAccess.ts";
+
+export { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
 
 const TICKET_TIMEOUT_MS = 8_000;
-
-export interface DeviceHubAccess {
-  /** Absolute origin-relative base, e.g. `https://env.example/api/device-hub`. */
-  readonly httpBase: string;
-  /** Same base with the `ws(s)` scheme. */
-  readonly wsBase: string;
-  /** Query parameters to append to every hub request; empty for cookie sessions. */
-  readonly query: Readonly<Record<string, string>>;
-  /** Whether requests must include cookies (same-origin session). */
-  readonly credentials: boolean;
-}
 
 export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDeviceHubAccess")(
   function* (input: {
@@ -50,10 +42,11 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
       prepared: input.prepared,
       signer,
       remoteAuthorization,
+      group: "auth",
       method: "POST",
       url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/auth/websocket-ticket"),
       timeoutMs: TICKET_TIMEOUT_MS,
-      request: ({ client, headers }) => client.auth.webSocketTicket({ headers }),
+      request: ({ client, headers }) => client.webSocketTicket({ headers }),
     });
     return {
       httpBase,
@@ -63,10 +56,3 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     };
   },
 );
-
-export const withDeviceHubQuery = (url: string, access: DeviceHubAccess): string => {
-  const entries = Object.entries(access.query);
-  if (entries.length === 0) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}${new URLSearchParams(entries).toString()}`;
-};

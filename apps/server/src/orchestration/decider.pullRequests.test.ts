@@ -115,6 +115,49 @@ const snapshot: ThreadPullRequestSnapshot = {
 };
 
 it.layer(NodeServices.layer)("pull request link decider", (it) => {
+  it.effect("links the same Forgejo number on two ports and unlinks an older portless record", () =>
+    Effect.gen(function* () {
+      const existing = makeLink({
+        host: "forge.example",
+        url: "http://forge.example:3000/t3tools/t3code/pulls/42",
+      });
+      let model = makeReadModel([existing]);
+      const command = yield* decodeCommand({
+        type: "thread.pull-request.link",
+        commandId: "link-other-port",
+        threadId: THREAD_ID,
+        host: "forge.example",
+        repository: "t3tools/t3code",
+        number: 42,
+        url: "http://forge.example:4000/t3tools/t3code/pulls/42",
+        source: "manual",
+      });
+      const linked = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command }),
+        "thread.pull-request-linked",
+      );
+      expect(linked.payload.link.host).toBe("forge.example:4000");
+      model = yield* projectEvent(model, { ...linked, sequence: 1 });
+      expect(model.threads[0]!.pullRequests).toHaveLength(2);
+      const unlink = yield* decodeCommand({
+        type: "thread.pull-request.unlink",
+        commandId: "unlink-old-port",
+        threadId: THREAD_ID,
+        host: "forge.example:3000",
+        repository: "t3tools/t3code",
+        number: 42,
+      });
+      const unlinked = expectSingleEvent(
+        yield* decideOrchestrationCommand({ readModel: model, command: unlink }),
+        "thread.pull-request-unlinked",
+      );
+      model = yield* projectEvent(model, { ...unlinked, sequence: 2 });
+      expect(model.threads[0]!.pullRequests.map((link) => link.url)).toEqual([
+        linked.payload.link.url,
+      ]);
+    }),
+  );
+
   it.effect("legacy unlink cannot remove a newer cross-host link", () =>
     Effect.gen(function* () {
       const own = makeLink();
@@ -252,7 +295,7 @@ it.layer(NodeServices.layer)("pull request link decider", (it) => {
         for (const planned of events) {
           const event = { ...planned, sequence: model.snapshotSequence + 1 };
           const encoded = yield* Schema.encodeEffect(OrchestrationEvent)(event);
-          const decoded = yield* Schema.decodeUnknownEffect(OrchestrationEvent)(encoded);
+          const decoded = yield* Schema.decodeEffect(OrchestrationEvent)(encoded);
           // Older detail-event unions must never receive the new PR discriminants.
           expect(isThreadDetailEvent(decoded)).toBe(false);
           model = yield* projectEvent(model, decoded);
