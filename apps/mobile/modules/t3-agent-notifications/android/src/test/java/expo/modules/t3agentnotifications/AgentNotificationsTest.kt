@@ -60,6 +60,7 @@ class AgentNotificationsTest {
     "activity_body" to "Test thread · Working",
     "activity_path" to "/threads/environment/thread",
     "alert_id" to alertId,
+    "alert_group" to "environment/thread",
     "alert_title" to "Test thread",
     "alert_body" to "Done: Test project",
     "alert_path" to "/threads/environment/thread",
@@ -74,6 +75,12 @@ class AgentNotificationsTest {
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("alert-0", false))
     assertEquals("alert-0".hashCode(), manager.activeNotifications.single().id)
+  }
+
+  @Test
+  fun alertsStackByThreadGroup() {
+    AgentNotifications.receive(context, update("grouped", false))
+    assertEquals("environment/thread", manager.activeNotifications.single().notification.group)
   }
 
   @Test
@@ -140,6 +147,22 @@ class AgentNotificationsTest {
     AgentNotifications.receive(context, update("foreground-completion", false))
 
     assertEquals("background-completion".hashCode(), manager.activeNotifications.single().id)
+  }
+
+  @Test
+  fun repeatedThreadAlertsHaveOneSilentSummaryAndClearTogether() {
+    AgentNotifications.receive(context, update("first", false) + ("alert_group" to "thread-group"))
+    AgentNotifications.receive(context, update("second", false) + ("alert_group" to "thread-group"))
+
+    val summary = manager.activeNotifications.single {
+      it.notification.flags and Notification.FLAG_GROUP_SUMMARY != 0
+    }
+    assertEquals("thread-group", summary.notification.group)
+    assertEquals(3, manager.activeNotifications.size)
+    assertEquals(null, summary.notification.sound)
+
+    AgentNotifications.clear(context)
+    assertTrue(manager.activeNotifications.isEmpty())
   }
 
   @Test
@@ -286,11 +309,11 @@ class AgentNotificationsTest {
       context,
       update("older-alert", false) + ("updated_at" to (now - 1000).toString())
     )
-    assertEquals(3, manager.activeNotifications.size)
+    assertEquals(4, manager.activeNotifications.size)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
     shadowOf(manager).setNotificationsEnabled(false)
     AgentNotifications.receive(context, update("revoked-permission", true))
-    assertEquals(3, manager.activeNotifications.size)
+    assertEquals(4, manager.activeNotifications.size)
   }
 
   @Test
@@ -503,7 +526,8 @@ class AgentNotificationsTest {
     AgentNotifications.expire(context, expiresAt + 60_000)
     assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
     AgentNotifications.expire(context, expiresAt + 2 * 60 * 60 * 1000L)
-    assertTrue(manager.activeNotifications.all { it.tag == "t3-agent-alert" })
+    assertEquals(2, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
     assertTrue(alarms.scheduledAlarms.isEmpty())
   }
 

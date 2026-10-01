@@ -84,7 +84,10 @@ object AgentNotifications {
     cancelActivity(context)
     context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().clear().apply()
     val manager = manager(context)
-    manager.activeNotifications.filter { it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG }
+    manager.activeNotifications.filter {
+      it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
+        it.tag?.startsWith("$ALERT_TAG-summary:") == true
+    }
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
@@ -157,13 +160,35 @@ object AgentNotifications {
     // Grouped alerts list up to five 120-character thread titles.
     val body = data["alert_body"].orEmpty().take(608)
     val id = alertId.hashCode()
+    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .setAutoCancel(true)
+      .setGroup(group)
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
       .build()
     manager(context).notify(ALERT_TAG, id, notification)
+    val children = manager(context).activeNotifications.filter {
+      it.tag == ALERT_TAG && it.notification.group == group
+    }
+    if (children.size > 1) {
+      val style = NotificationCompat.InboxStyle()
+      children.forEach {
+        style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
+      }
+      val summary = base(context, ALERT_CHANNEL)
+        .setContentTitle(title)
+        .setContentText(body)
+        .setStyle(style)
+        .setGroup(group)
+        .setGroupSummary(true)
+        .setSilent(true)
+        .setAutoCancel(true)
+        .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
+        .build()
+      manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
+    }
   }
 
   /**
