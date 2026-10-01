@@ -49,6 +49,8 @@ class AgentNotificationsTest {
     )
     AgentNotifications.clear(context)
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    // The fixtures alert for this thread; a resumed app is showing it.
+    AgentNotifications.setThreadOnScreen("/threads/environment/thread")
   }
 
   private fun update(alertId: String, active: Boolean) = mapOf(
@@ -91,6 +93,14 @@ class AgentNotificationsTest {
       "Test thread",
       manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TITLE)
     )
+  }
+
+  @Test
+  fun foregroundAlertsForThreadsThatAreNotOnScreen() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.setThreadOnScreen("/threads/environment/other")
+    AgentNotifications.receive(context, update("elsewhere", false))
+    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
   }
 
   @Test
@@ -187,7 +197,7 @@ class AgentNotificationsTest {
   }
 
   @Test
-  fun foregroundSuppressedGroupCannotAppearOnBackgroundRetry() {
+  fun foregroundGroupForOtherThreadsAlertsOnceAcrossBackgroundRetry() {
     val grouped = update("group-attention", true) + mapOf(
       "alert_title" to "2 agents need attention",
       "alert_body" to "First thread, Second thread",
@@ -195,10 +205,13 @@ class AgentNotificationsTest {
     )
     lifecycle.currentState = Lifecycle.State.RESUMED
     AgentNotifications.receive(context, grouped)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
     lifecycle.currentState = Lifecycle.State.CREATED
     AgentNotifications.receive(context, grouped)
 
-    assertEquals("t3-agent-activity", manager.activeNotifications.single().tag)
+    assertEquals(2, manager.activeNotifications.size)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
   }
 
   @Test

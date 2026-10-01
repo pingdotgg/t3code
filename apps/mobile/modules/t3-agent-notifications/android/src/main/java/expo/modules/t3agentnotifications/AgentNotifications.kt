@@ -91,6 +91,13 @@ object AgentNotifications {
       .forEach { manager.cancel(it.tag, it.id) }
   }
 
+  /** Records the thread route the app is showing, or null when none is open. */
+  @Volatile private var threadOnScreen: String? = null
+
+  fun setThreadOnScreen(path: String?) {
+    threadOnScreen = path
+  }
+
   @Synchronized
   fun dismiss(context: Context) {
     context.getSharedPreferences(
@@ -138,9 +145,13 @@ object AgentNotifications {
     val seen = prefs.getString("seenAlertsOrdered", null)?.split('\n')
       ?: prefs.getStringSet("seenAlerts", emptySet()).orEmpty().toList()
     if (alertId != null && alertId !in seen) {
-      // Match iOS foreground presentation. Consume suppressed alerts as well,
-      // so a delivery retry cannot surface them after the app backgrounds.
-      if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+      // Consume suppressed alerts so retries cannot resurface them later.
+      val resumed = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(
+        Lifecycle.State.RESUMED
+      )
+      val visibleThread = threadOnScreen
+      val onScreen = resumed && visibleThread != null && data["alert_path"] == visibleThread
+      if (!onScreen) {
         postAlert(context, scheme, data, alertId)
       }
       prefs.edit().remove("seenAlerts").putString(
