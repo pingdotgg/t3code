@@ -7,7 +7,7 @@ import * as Path from "effect/Path";
 import {
   databaseBackupBlocker,
   Launcher,
-  type ReadFreeBytes,
+  type BackupSpaceProbe,
   readServiceState,
   writeServiceState,
 } from "./serviceLauncher.ts";
@@ -373,7 +373,7 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  const requestRejectedUpdate = (readFreeBytes: ReadFreeBytes) =>
+  const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -424,7 +424,7 @@ if (context.update?.status === "pending") {
       const launcher = new Launcher(
         root,
         yield* Effect.promise(() => readServiceState(statePath)),
-        { readFreeBytes },
+        { backupSpaceProbe },
       );
       yield* Effect.promise(() =>
         launcher.run().then(
@@ -442,9 +442,10 @@ if (context.update?.status === "pending") {
 
   it.effect("refuses a backup that cannot fit and leaves the server running", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate(() =>
-        Promise.resolve(0),
-      );
+      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+        readFreeBytes: () => Promise.resolve(0),
+        canClone: () => Promise.resolve(true),
+      });
 
       assert.include(reason, "Not enough free disk space");
       assert.include(reason, "The server was not stopped");
@@ -456,11 +457,14 @@ if (context.update?.status === "pending") {
 
   it.effect("refuses the update when free space cannot be checked", () =>
     Effect.gen(function* () {
-      const { reason, trialStarted, state } = yield* requestRejectedUpdate(() =>
-        Promise.reject(new Error("statfs unavailable")),
-      );
+      const { reason, trialStarted, state } = yield* requestRejectedUpdate({
+        readFreeBytes: () => Promise.reject(new Error("statfs unavailable")),
+      });
 
-      assert.include(reason, "Could not check free disk space before updating: statfs unavailable");
+      assert.include(
+        reason,
+        "Could not check that the database backup fits before updating: statfs unavailable",
+      );
       assert.isFalse(trialStarted);
       assert.equal(state.activeVersion, "1.0.0");
       assert.isUndefined(state.update);
@@ -474,43 +478,64 @@ if (context.update?.status === "pending") {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
       const databasePath = path.join(root, "state.sqlite");
       yield* writeSparseFile(databasePath, 10 * 1024 ** 3);
-      const free = (bytes: number) => () => Promise.resolve(bytes);
+      const check = (free: number, cloneable: boolean) =>
+        Effect.promise(() =>
+          databaseBackupBlocker(root, databasePath, {
+            readFreeBytes: () => Promise.resolve(free),
+            canClone: () => Promise.resolve(cloneable),
+          }),
+        );
 
-      assert.isUndefined(
-        yield* Effect.promise(() =>
-          databaseBackupBlocker(root, databasePath, free(64 * 1024 ** 3)),
+      // A full copy fits: no clone needed.
+      assert.isUndefined(yield* check(11 * 1024 ** 3, false));
+      // A clone needs 10% headroom for the trial's writes, at least 1 GiB.
+      assert.isUndefined(yield* check(1.5 * 1024 ** 3, true));
+      assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
+      // A filesystem that cannot clone needs room for the full copy.
+      const blocker = yield* check(8 * 1024 ** 3, false);
+      assert.include(blocker ?? "", "Not enough free disk space");
+      assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
+      assert.include(blocker ?? "", "The server was not stopped");
+    }),
+  );
+
+  it.effect("fails the backup check when the database cannot be inspected", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-blocker-" });
+      const error = yield* Effect.promise(() =>
+        databaseBackupBlocker(root, path.join(root, "missing.sqlite"), {
+          readFreeBytes: () => Promise.resolve(0),
+        }).then(
+          () => undefined,
+          (cause: unknown) => cause,
         ),
       );
-      // Below a clone's minimum headroom nothing can fit, so the probe never
-      // writes to a nearly full disk: free space is read exactly once.
-      let tightReads = 0;
+      assert.equal((error as NodeJS.ErrnoException | undefined)?.code, "ENOENT");
+    }),
+  );
+
+  it.effect("recognizes a clone into the backup directory on this filesystem", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-clone-" });
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* fs.writeFileString(databasePath, "database");
+      // With no free space, the result shows which requirement applied.
       const blocker = yield* Effect.promise(() =>
-        databaseBackupBlocker(root, databasePath, () => {
-          tightReads += 1;
-          return Promise.resolve(1024 ** 2);
-        }),
+        databaseBackupBlocker(root, databasePath, { readFreeBytes: () => Promise.resolve(0) }),
       );
-      assert.include(blocker ?? "", "at least 1.0 GB needed, 0.0 GB free");
-      assert.include(blocker ?? "", "The server was not stopped");
-      assert.equal(tightReads, 1);
-      // A filesystem that clones the probe (free space unchanged) only needs
-      // the clone headroom, even though a full copy would not fit.
-      assert.isUndefined(
-        yield* Effect.promise(() => databaseBackupBlocker(root, databasePath, free(2 * 1024 ** 3))),
-      );
-      // A filesystem that duplicates the probe file (free space drops by its
-      // size once the probe is copied) needs room for a full copy, not just
-      // clone headroom. Reads: the initial check, before the probe copy, after it.
-      let reads = 0;
-      const duplicating = () => {
-        reads += 1;
-        return Promise.resolve(10.2 * 1024 ** 3 - (reads > 2 ? 32 * 1024 ** 2 : 0));
-      };
+      // A tiny database: 1.0 GB is the clone minimum, 0.0 GB the full copy. The
+      // macOS temp directory is on APFS, so the clone requirement applies there.
       assert.include(
-        (yield* Effect.promise(() => databaseBackupBlocker(root, databasePath, duplicating))) ?? "",
-        "Not enough free disk space",
+        blocker ?? "",
+        // oxlint-disable-next-line t3code/no-global-process-runtime -- mirrors the standalone launcher's own platform check.
+        process.platform === "darwin" ? "1.0 GB needed, 0.0 GB free" : "GB needed, 0.0 GB free",
       );
-      // No probe files are left behind in the backup directory.
+      // Linux probes leave nothing behind in the backup directory.
       assert.deepEqual(yield* fs.readDirectory(path.join(root, "runtime", "db-backup")), []);
     }),
   );
