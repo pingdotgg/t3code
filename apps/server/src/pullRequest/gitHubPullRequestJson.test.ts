@@ -1934,5 +1934,43 @@ describe("batched pull request summaries", () => {
       mergeability: "unknown",
       additions: 0,
     });
+    // The document did not ask about stacks, so the summary does not claim an answer.
+    expect(decoded.success.get(0)).not.toHaveProperty("stack");
+  });
+
+  it("reads stack membership only where the document asked for it", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true),
+    ).toContain("stack { number size baseRefName } stackEntry { position }");
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }]),
+    ).not.toContain("stack {");
+    const pullRequest = (number: number, stack: Record<string, unknown>) => ({
+      pullRequest: {
+        number,
+        title: "Stacked",
+        url: `https://github.com/acme/web/pull/${number}`,
+        headRefName: `feat/${number}`,
+        baseRefName: "main",
+        state: "OPEN",
+        updatedAt: "2026-08-24T00:00:00Z",
+        ...stack,
+      },
+    });
+    const decoded = expectSuccess(
+      decodePullRequestSummariesJson(
+        JSON.stringify({
+          data: {
+            s0: pullRequest(7, { stack: null, stackEntry: null }),
+            s1: pullRequest(8, {
+              stack: { number: 3, size: 2, baseRefName: "main" },
+              stackEntry: { position: 2 },
+            }),
+          },
+        }),
+      ),
+    );
+    expect(decoded.get(0)?.stack).toBeNull();
+    expect(decoded.get(1)?.stack).toEqual({ number: 3, size: 2, base: "main", position: 2 });
   });
 });

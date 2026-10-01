@@ -1852,6 +1852,8 @@ export function decodePullRequestStatsJson(
  * shape as the search row where the two overlap: the checks arrive as GitHub's one-word rollup
  * rather than the whole check list `gh pr view` hands back, which is what keeps a batch cheap.
  */
+const STACK_MEMBERSHIP_SELECTION = "stack { number size baseRefName } stackEntry { position }";
+
 const PULL_REQUEST_SUMMARY_SELECTION =
   "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
   "updatedAt mergedAt closedAt headRefName baseRefName " +
@@ -1865,6 +1867,7 @@ const PULL_REQUEST_SUMMARY_SELECTION =
  */
 export function buildPullRequestSummariesGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+  includeStacks = false,
 ): string | null {
   if (changeRequests.length === 0) return null;
   const selections: string[] = [];
@@ -1874,7 +1877,7 @@ export function buildPullRequestSummariesGraphQlQuery(
     if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
     if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
     selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION} } }`,
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""} } }`,
     );
   }
   return `query PullRequestSummaries {\n${selections.join("\n")}\n}`;
@@ -1920,6 +1923,8 @@ export interface GitHubPullRequestSummary {
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly checksState: PullRequestChecksState | null;
   readonly mergeability: PullRequestMergeability;
+  /** Null when GitHub says the pull request is in no stack; absent when the read did not ask. */
+  readonly stack?: PullRequestStackMembership | null;
 }
 
 /**
@@ -1965,6 +1970,7 @@ export function decodePullRequestSummariesJson(
         }),
       ),
       mergeability: toMergeability(pr.mergeable),
+      ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
     });
   }
   return Result.succeed(summaries);
