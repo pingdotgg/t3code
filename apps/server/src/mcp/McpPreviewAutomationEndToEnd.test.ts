@@ -12,8 +12,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
+import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { ManagedPreviewAuth } from "../auth/Services/ManagedPreviewAuth.ts";
+import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -50,6 +53,14 @@ const SupportServicesLive = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(ServerEnvironmentTest),
   Layer.provideMerge(NodeHttpServer.layerTest),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const DeviceServiceTest = Layer.mock(DeviceService.DeviceService)({});
+const DeviceSupportServicesLive = Layer.mergeAll(SupportServicesLive, DeviceServiceTest).pipe(
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-schema-device-test-" }),
+  ),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -198,7 +209,11 @@ it.effect(
 
         // Issued through the same path `ProviderService` uses when a provider
         // session starts, so the credential is provider-scoped.
-        const credential = yield* registry.issue({ threadId, providerInstanceId });
+        const credential = yield* registry.issue({
+          threadId,
+          providerInstanceId,
+          capabilities: new Set(["preview", "terminal"]),
+        });
         expect(credential.config.threadId).toBe(threadId);
         expect(credential.config.providerInstanceId).toBe(providerInstanceId);
         expect(credential.config.endpoint).toContain("/mcp");
@@ -245,6 +260,24 @@ it.effect(
           ),
         });
 
+        const toolsList = yield* httpClient.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            authorization,
+            "mcp-session-id": sessionId!,
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+            "application/json",
+          ),
+        });
+        expect(toolsList.status).toBe(200);
+        const toolsPayload = parseMcpBody(yield* toolsList.text) as {
+          readonly result?: unknown;
+        };
+        const tools = ListToolsResultSchema.parse(toolsPayload.result);
+        expect(tools.tools.every((tool) => tool.inputSchema.type === "object")).toBe(true);
+
         const call = yield* httpClient.post("/mcp", {
           headers: {
             accept: "application/json, text/event-stream",
@@ -252,7 +285,7 @@ it.effect(
             "mcp-session-id": sessionId!,
           },
           body: HttpBody.text(
-            `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"preview_status","arguments":{}}}`,
+            `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"preview_status","arguments":{}}}`,
             "application/json",
           ),
         });
@@ -277,7 +310,7 @@ it.effect(
             "mcp-session-id": sessionId!,
           },
           body: HttpBody.text(
-            `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"preview_preflight","arguments":{"url":"http://example.test/pair?token=secret-token","open":false}}}`,
+            `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"preview_preflight","arguments":{"url":"http://example.test/pair?token=secret-token","open":false}}}`,
             "application/json",
           ),
         });
@@ -297,7 +330,7 @@ it.effect(
             "mcp-session-id": sessionId!,
           },
           body: HttpBody.text(
-            `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"preview_preflight","arguments":{"url":"http://example.test/pair?token=secret-token","open":true}}}`,
+            `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"preview_preflight","arguments":{"url":"http://example.test/pair?token=secret-token","open":true}}}`,
             "application/json",
           ),
         });
@@ -321,7 +354,7 @@ it.effect(
             "mcp-session-id": sessionId!,
           },
           body: HttpBody.text(
-            `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"preview_click","arguments":{"selector":"#example"}}}`,
+            `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"preview_click","arguments":{"selector":"#example"}}}`,
             "application/json",
           ),
         });
@@ -346,4 +379,65 @@ it.effect(
         expect(background.received).toEqual([]);
       }),
     ).pipe(Effect.provide(SupportServicesLive)),
+);
+
+it.effect("advertises SDK-valid tool schemas from the device-enabled MCP HTTP layer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const credential = yield* registry.issue({
+        threadId,
+        providerInstanceId,
+        capabilities: new Set(["preview", "terminal", "device"]),
+      });
+
+      yield* HttpRouter.serve(McpHttpServer.layerWithDevice, {
+        disableListenLog: true,
+        disableLogger: true,
+      }).pipe(Layer.build);
+      const httpClient = yield* HttpClient.HttpClient;
+      const authorization = credential.config.authorizationHeader;
+      const initialize = yield* httpClient.post("/mcp-device", {
+        headers: { accept: "application/json, text/event-stream", authorization },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-e2e","version":"1.0.0"}}}`,
+          "application/json",
+        ),
+      });
+      expect(initialize.status).toBe(200);
+      const sessionId = initialize.headers["mcp-session-id"];
+      expect(sessionId).toBeDefined();
+
+      yield* httpClient.post("/mcp-device", {
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization,
+          "mcp-session-id": sessionId!,
+        },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+          "application/json",
+        ),
+      });
+
+      const toolsList = yield* httpClient.post("/mcp-device", {
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization,
+          "mcp-session-id": sessionId!,
+        },
+        body: HttpBody.text(
+          `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+          "application/json",
+        ),
+      });
+      expect(toolsList.status).toBe(200);
+      const toolsPayload = parseMcpBody(yield* toolsList.text) as {
+        readonly result?: unknown;
+      };
+      const tools = ListToolsResultSchema.parse(toolsPayload.result);
+      expect(tools.tools.some((tool) => tool.name === "device_list")).toBe(true);
+      expect(tools.tools.every((tool) => tool.inputSchema.type === "object")).toBe(true);
+    }),
+  ).pipe(Effect.provide(DeviceSupportServicesLive)),
 );

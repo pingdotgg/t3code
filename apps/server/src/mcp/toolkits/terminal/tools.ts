@@ -32,7 +32,7 @@ export const TerminalToolkit = Toolkit.make(
   Tool.make("terminal_list", {
     description:
       "List this chat's agent-managed terminals without opening or restarting anything. Reuse retained servers before starting replacements. Terminal status describes the shell; hasRunningSubprocess indicates attached work, not service readiness.",
-    parameters: Schema.Struct({}),
+    parameters: Schema.Record(Schema.String, Schema.Never),
     success: Schema.Array(TerminalSummary),
     failure: TerminalToolError,
     dependencies,

@@ -416,7 +416,7 @@
 
 ## MCP schemas and auth bootstrap
 
-- No-argument MCP parameters need an object-only schema, such as `Schema.Record(Schema.String, Schema.Never)`; `Schema.Struct({})` exports an object/array union. Do not add unused parameters to satisfy provider schema checks.
+- No-argument MCP parameters need an object-only schema, such as `Schema.Record(Schema.String, Schema.Never)`; `Schema.Struct({})` exports an object/array union. Strict clients validate the whole tool list and drop the server if any tool has a non-object top-level `inputSchema.type`. Do not add unused parameters to satisfy provider schema checks.
 - Auth bootstrap cache writes must belong to the current in-flight promise so reset cannot be undone by an older completion. Import auth test dependencies before test execution, not inside a timed test or its cleanup.
 - Direct HTTP authorization must use shared token-only renewal, not relay connection establishment; cached reads must mint no socket tickets or depend on relay availability, while rejected-token retries retain single-flight and account-identity guards.
 
