@@ -153,12 +153,6 @@ export function buildAttachmentVideoPreview(
   };
 }
 
-export function expandedImageKey(preview: ExpandedImagePreview): string {
-  const item = preview.images[preview.index];
-  const asset = item?.actionsSource?.asset;
-  return `${item?.src ?? (asset ? JSON.stringify([asset.environmentId, asset.resource]) : "image")}:${preview.index}`;
-}
-
 export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () => void {
   const url = URL.createObjectURL(file);
   video.src = url;
