@@ -25,7 +25,8 @@ const app = yield* Prisma.Compute("api", {
 ```
 
 The server must listen on `PORT` (injected at runtime). Auto-build
-supports Bun, Next.js, Nuxt, Astro, TanStack Start, and NestJS. Use an
+supports Bun, Next.js, Nuxt, Astro, TanStack Start, Vite, and NestJS. Generic
+Vite projects are deployed as static SPAs. Use an
 explicit build object when an app needs a custom command, output
 directory, or entrypoint.
 
@@ -36,6 +37,49 @@ Compute deployments. Leave those keys out of `env`. For a standalone
 outputs explicitly as shown in [Connections](/prisma/data/connections).
 
 `app.url` is the deployed endpoint.
+
+## Static sites
+
+Generic Vite apps work with `build: "auto"`. To deploy a directory that already
+contains static files, set `build.type` to `"static"` and point `outdir` at it.
+Alchemy packages the files with the HTTP entrypoint Prisma Compute requires;
+the application does not need its own server file or runtime dependency:
+
+```typescript
+const site = yield* Prisma.Compute("web", {
+  project,
+  path: "./site",
+  build: {
+    type: "static",
+    outdir: ".",
+  },
+});
+```
+
+Add `command` when the output directory needs to be built first:
+
+```typescript
+const site = yield* Prisma.Compute("web", {
+  project,
+  path: "./app",
+  build: {
+    type: "static",
+    command: "bun run build",
+    outdir: "dist",
+    spa: true,
+  },
+  dev: { command: "bun run dev", port: 5173 },
+});
+```
+
+Set `spa: true` for client-side routers so unmatched paths serve
+`index.html`. Leave it disabled for static sites that should return `404` for
+missing files. Directory indexes redirect to a trailing-slash URL so relative
+asset links resolve correctly.
+
+For static builds, `archiveIgnore` patterns are relative to `outdir`. The
+configured index page must remain in the archive; excluding it rejects the
+deployment.
 
 ## Effect-native apps
 

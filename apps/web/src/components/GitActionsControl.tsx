@@ -39,10 +39,16 @@ import {
   GlobeIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  GitHubIcon,
+  GitLabIcon,
+  ForgejoIcon,
+} from "~/components/Icons";
 import { RadioGroup } from "~/components/ui/radio-group";
 import { Spinner } from "~/components/ui/spinner";
-import { toggleVariants } from "~/components/ui/toggle";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import {
   buildGitActionProgressStages,
@@ -73,7 +79,16 @@ import {
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
 import { Input } from "~/components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuItemLabel,
+  MenuPopup,
+  MenuSub,
+  MenuSubTrigger,
+  MenuSubPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -102,6 +117,7 @@ import { useOpenLink } from "~/browser/useOpenLink";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 
 interface GitActionsControlProps {
+  presentation?: "toolbar" | "menu";
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
@@ -123,7 +139,7 @@ interface PendingDefaultBranchAction {
 
 type PublishProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
 >;
 
 type GitActionToastId = ReturnType<typeof toastManager.add>;
@@ -171,6 +187,14 @@ function requestVcsStatusRefresh(
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
 const PUBLISH_PROVIDER_OPTIONS = [
+  {
+    value: "forgejo",
+    label: "Forgejo / Gitea",
+    description: "Your signed-in server",
+    host: "your server",
+    pathPlaceholder: "owner/repo",
+    Icon: ForgejoIcon,
+  },
   {
     value: "github",
     label: "GitHub",
@@ -360,24 +384,25 @@ function GitActionItemIcon({
 function GitQuickActionIcon({
   quickAction,
   SourceControlIcon,
+  className = "size-3.5",
 }: {
   quickAction: GitQuickAction;
+  className?: string;
   SourceControlIcon: ReturnType<typeof getSourceControlPresentation>["Icon"];
 }) {
-  const iconClassName = "size-3.5";
-  if (quickAction.kind === "open_pr") return <SourceControlIcon className={iconClassName} />;
-  if (quickAction.kind === "open_publish") return <CloudUploadIcon className={iconClassName} />;
-  if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={iconClassName} />;
+  if (quickAction.kind === "open_pr") return <SourceControlIcon className={className} />;
+  if (quickAction.kind === "open_publish") return <CloudUploadIcon className={className} />;
+  if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={className} />;
   if (quickAction.kind === "run_action") {
-    if (quickAction.action === "commit") return <GitCommitIcon className={iconClassName} />;
+    if (quickAction.action === "commit") return <GitCommitIcon className={className} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
-      return <CloudUploadIcon className={iconClassName} />;
+      return <CloudUploadIcon className={className} />;
     }
-    return <SourceControlIcon className={iconClassName} />;
+    return <SourceControlIcon className={className} />;
   }
-  if (quickAction.label === "Commit") return <GitCommitIcon className={iconClassName} />;
-  if (quickAction.label === "Push") return <CloudUploadIcon className={iconClassName} />;
-  return <InfoIcon className={iconClassName} />;
+  if (quickAction.label === "Commit") return <GitCommitIcon className={className} />;
+  if (quickAction.label === "Push") return <CloudUploadIcon className={className} />;
+  return <InfoIcon className={className} />;
 }
 
 interface PublishRepositoryDialogProps {
@@ -425,6 +450,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     const accounts: Record<PublishProviderKind, string | null> = {
       github: null,
       gitlab: null,
+      forgejo: null,
       bitbucket: null,
       "azure-devops": null,
     };
@@ -476,7 +502,14 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
     : "";
   const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
-  const publishHost = currentPublishProvider.host;
+  const publishHost =
+    publishProvider === "forgejo"
+      ? (Option.getOrNull(
+          sourceControlDiscovery.data?.sourceControlProviders.find(
+            (provider) => provider.kind === "forgejo",
+          )?.auth.host ?? Option.none(),
+        ) ?? currentPublishProvider.host)
+      : currentPublishProvider.host;
   const publishPathPlaceholder = currentPublishProvider.pathPlaceholder;
   const publishProviderLabel = currentPublishProvider.label;
   const publishWizardSteps = ["Provider", "Repository", "Summary"] as const;
@@ -594,7 +627,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 setPublishRepositoryOverride(null);
               }}
               aria-labelledby="publish-provider-cards-label"
-              className="grid grid-cols-2 gap-2.5"
+              className="grid grid-cols-2"
             >
               {sortedPublishProviderOptions.map((option) => {
                 const readiness = publishProviderReadiness[option.value];
@@ -603,7 +636,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   return (
                     <div
                       key={option.value}
-                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 dark:border-transparent dark:bg-white/[0.035]"
+                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-64 dark:border-transparent dark:bg-white/[0.035]"
                     >
                       <option.Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -613,9 +646,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                         <TooltipTrigger
                           render={
                             <Button
-                              variant="outline"
-                              size="xs"
-                              className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                              variant="warning-outline"
+                              size="micro"
                               onClick={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
@@ -626,7 +658,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                             </Button>
                           }
                         />
-                        <TooltipPopup side="top" align="end" className="max-w-72">
+                        <TooltipPopup side="top" align="end">
                           {readiness.hint ??
                             "Open Settings -> Source Control to configure this provider."}
                         </TooltipPopup>
@@ -704,7 +736,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 }
                 aria-labelledby="publish-visibility-cards-label"
                 disabled={publishRepositoryAction.isPending}
-                className="grid grid-cols-2 gap-2.5"
+                className="grid grid-cols-2"
               >
                 {[
                   {
@@ -782,10 +814,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     >
                       Protocol
                     </span>
-                    <RadioGroup
-                      className="w-fit flex-row gap-0.5 rounded-lg bg-input/40 p-0.5"
-                      value={publishProtocol}
-                      onValueChange={(protocol) => {
+                    <ToggleGroup
+                      value={[publishProtocol]}
+                      onValueChange={(next) => {
+                        const protocol = next[0];
                         if (protocol === "ssh" || protocol === "https") {
                           setPublishProtocol(protocol);
                         }
@@ -793,20 +825,9 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       aria-labelledby="publish-protocol-label"
                       disabled={publishRepositoryAction.isPending}
                     >
-                      {(["ssh", "https"] as const).map((protocol) => (
-                        <RadioPrimitive.Root
-                          key={protocol}
-                          value={protocol}
-                          data-pressed={publishProtocol === protocol ? "" : undefined}
-                          className={toggleVariants({
-                            variant: "segmented",
-                            size: "segmented",
-                          })}
-                        >
-                          {protocol.toUpperCase()}
-                        </RadioPrimitive.Root>
-                      ))}
-                    </RadioGroup>
+                      <Toggle value="ssh">SSH</Toggle>
+                      <Toggle value="https">HTTPS</Toggle>
+                    </ToggleGroup>
                   </div>
                 </div>
               ) : null}
@@ -818,7 +839,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 aria-live="polite"
                 className="flex items-center gap-2 rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground dark:border-transparent dark:bg-white/[0.035]"
               >
-                <Spinner className="size-3.5" aria-hidden />
+                <Spinner size="sm" aria-hidden />
                 Publishing repository to {publishProviderLabel}...
               </div>
             ) : null}
@@ -905,7 +926,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <Button disabled={!canSubmitPublishRepository} onClick={submitPublishRepository}>
                   {publishRepositoryAction.isPending ? (
                     <>
-                      <Spinner className="size-3.5" aria-hidden />
+                      <Spinner size="sm" aria-hidden />
                       Publishing...
                     </>
                   ) : (
@@ -922,6 +943,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 }
 
 export default function GitActionsControl({
+  presentation = "toolbar",
   gitCwd,
   activeThreadRef,
   draftId,
@@ -1610,33 +1632,161 @@ export default function GitActionsControl({
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
+  const initializeGit = () => {
+    void (async () => {
+      const result = await initAction.run();
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+        return;
+      }
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Git initialization failed",
+          description: error instanceof Error ? error.message : "An error occurred.",
+          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+        }),
+      );
+    })();
+  };
+  const gitItems = (
+    <>
+      {gitActionMenuItems.map((item) => {
+        const disabledReason = getMenuActionDisabledReason({
+          item,
+          gitStatus: gitStatusForActions,
+          isBusy: isGitActionRunning,
+          hasPrimaryRemote,
+        });
+        if (item.disabled && disabledReason && presentation === "menu") {
+          return (
+            <div key={`${item.id}-${item.label}`}>
+              <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
+                <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+                <MenuItemLabel>{item.label}</MenuItemLabel>
+              </MenuItem>
+              <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">{disabledReason}</p>
+            </div>
+          );
+        }
+        if (item.disabled && disabledReason) {
+          return (
+            <Popover key={`${item.id}-${item.label}`}>
+              <PopoverTrigger
+                openOnHover
+                nativeButton={false}
+                render={<span className="block w-max cursor-not-allowed" />}
+              >
+                <MenuItem
+                  density={presentation === "menu" ? "touch" : "default"}
+                  className="w-full"
+                  disabled
+                >
+                  <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+                  <MenuItemLabel>{item.label}</MenuItemLabel>
+                </MenuItem>
+              </PopoverTrigger>
+              <PopoverPopup tooltipStyle side="left" align="center">
+                {disabledReason}
+              </PopoverPopup>
+            </Popover>
+          );
+        }
+
+        return (
+          <MenuItem
+            density={presentation === "menu" ? "touch" : "default"}
+            key={`${item.id}-${item.label}`}
+            disabled={item.disabled}
+            onClick={() => {
+              openDialogForMenuItem(item);
+            }}
+          >
+            <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+            <MenuItemLabel>{item.label}</MenuItemLabel>
+          </MenuItem>
+        );
+      })}
+      {canPublishRepository ? (
+        <MenuItem
+          density={presentation === "menu" ? "touch" : "default"}
+          disabled={isGitActionRunning}
+          onClick={() => {
+            setIsPublishDialogOpen(true);
+          }}
+        >
+          <CloudUploadIcon />
+          <MenuItemLabel>Publish repository...</MenuItemLabel>
+        </MenuItem>
+      ) : null}
+      {gitStatusForActions?.refName === null && (
+        <p className="px-2 py-1.5 text-xs text-warning">
+          Detached HEAD: create and check out a branch to enable push and pull request actions.
+        </p>
+      )}
+      {gitStatusForActions &&
+        gitStatusForActions.refName !== null &&
+        !gitStatusForActions.hasWorkingTreeChanges &&
+        gitStatusForActions.behindCount > 0 &&
+        gitStatusForActions.aheadCount === 0 && (
+          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+        )}
+      {gitStatusError && <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>}
+    </>
+  );
+
   if (!gitCwd) return null;
 
   return (
     <>
-      {!isRepo ? (
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={initAction.isPending}
-          onClick={() => {
-            void (async () => {
-              const result = await initAction.run();
-              if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-                return;
-              }
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: "Git initialization failed",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                  ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-                }),
-              );
-            })();
-          }}
-        >
+      {presentation === "menu" ? (
+        !isRepo ? (
+          <MenuItem
+            density={presentation === "menu" ? "touch" : "default"}
+
+            disabled={initAction.isPending}
+            onClick={initializeGit}
+          >
+            <GitBranchPlusIcon className="size-4" />
+            <MenuItemLabel>
+              {initAction.isPending ? "Initializing..." : "Initialize Git"}
+            </MenuItemLabel>
+          </MenuItem>
+        ) : (
+          <>
+            <MenuItem
+              density={presentation === "menu" ? "touch" : "default"}
+
+              disabled={isGitActionRunning || quickAction.disabled || !!quickActionDisabledReason}
+              onClick={runQuickAction}
+            >
+              <GitQuickActionIcon
+                className="size-4"
+                quickAction={quickAction}
+                SourceControlIcon={SourceControlIcon}
+              />
+              <MenuItemLabel>{quickAction.label}</MenuItemLabel>
+            </MenuItem>
+            {quickActionDisabledReason && (
+              <p className="max-w-64 px-2 py-1.5 text-xs text-warning">
+                {quickActionDisabledReason}
+              </p>
+            )}
+            <MenuSub
+              onOpenChange={(open) => {
+                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+              }}
+            >
+              <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
+                <SourceControlIcon className="size-4" />
+                <MenuItemLabel>Git actions</MenuItemLabel>
+              </MenuSubTrigger>
+              <MenuSubPopup>{gitItems}</MenuSubPopup>
+            </MenuSub>
+          </>
+        )
+      ) : !isRepo ? (
+        <Button variant="outline" size="xs" disabled={initAction.isPending} onClick={initializeGit}>
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
           <span className="ml-0.5">
             {initAction.isPending ? "Initializing..." : "Initialize Git"}
@@ -1648,14 +1798,7 @@ export default function GitActionsControl({
             <Popover>
               <PopoverTrigger
                 openOnHover
-                render={
-                  <Button
-                    aria-disabled="true"
-                    className="cursor-not-allowed rounded-e-none border-e-0 ps-[8.5px] opacity-64 before:rounded-e-none"
-                    size="xs"
-                    variant="outline"
-                  />
-                }
+                render={<Button aria-disabled="true" size="xs" variant="outline" />}
               >
                 <GitQuickActionIcon
                   quickAction={quickAction}
@@ -1673,7 +1816,6 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="xs"
-              className="ps-[8.5px]"
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
             >
@@ -1697,80 +1839,7 @@ export default function GitActionsControl({
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
-            <MenuPopup align="end" className="w-full">
-              {gitActionMenuItems.map((item) => {
-                const disabledReason = getMenuActionDisabledReason({
-                  item,
-                  gitStatus: gitStatusForActions,
-                  isBusy: isGitActionRunning,
-                  hasPrimaryRemote,
-                });
-                if (item.disabled && disabledReason) {
-                  return (
-                    <Popover key={`${item.id}-${item.label}`}>
-                      <PopoverTrigger
-                        openOnHover
-                        nativeButton={false}
-                        render={<span className="block w-max cursor-not-allowed" />}
-                      >
-                        <MenuItem className="w-full" disabled>
-                          <GitActionItemIcon
-                            icon={item.icon}
-                            SourceControlIcon={SourceControlIcon}
-                          />
-                          {item.label}
-                        </MenuItem>
-                      </PopoverTrigger>
-                      <PopoverPopup tooltipStyle side="left" align="center">
-                        {disabledReason}
-                      </PopoverPopup>
-                    </Popover>
-                  );
-                }
-
-                return (
-                  <MenuItem
-                    key={`${item.id}-${item.label}`}
-                    disabled={item.disabled}
-                    onClick={() => {
-                      openDialogForMenuItem(item);
-                    }}
-                  >
-                    <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
-                    {item.label}
-                  </MenuItem>
-                );
-              })}
-              {canPublishRepository ? (
-                <MenuItem
-                  disabled={isGitActionRunning}
-                  onClick={() => {
-                    setIsPublishDialogOpen(true);
-                  }}
-                >
-                  <CloudUploadIcon />
-                  Publish repository...
-                </MenuItem>
-              ) : null}
-              {gitStatusForActions?.refName === null && (
-                <p className="px-2 py-1.5 text-xs text-warning">
-                  Detached HEAD: create and check out a branch to enable push and pull request
-                  actions.
-                </p>
-              )}
-              {gitStatusForActions &&
-                gitStatusForActions.refName !== null &&
-                !gitStatusForActions.hasWorkingTreeChanges &&
-                gitStatusForActions.behindCount > 0 &&
-                gitStatusForActions.aheadCount === 0 && (
-                  <p className="px-2 py-1.5 text-xs text-warning">
-                    Behind upstream. Pull/rebase first.
-                  </p>
-                )}
-              {gitStatusError && (
-                <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError}</p>
-              )}
-            </MenuPopup>
+            <MenuPopup align="end">{gitItems}</MenuPopup>
           </Menu>
         </Group>
       )}
@@ -1791,7 +1860,7 @@ export default function GitActionsControl({
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-4">
+          <DialogPanel>
             <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
                 <span className="text-muted-foreground">Branch</span>
@@ -1837,57 +1906,63 @@ export default function GitActionsControl({
                   <p className="font-medium">none</p>
                 ) : (
                   <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
-                      <div className="space-y-1 p-1">
-                        {allFiles.map((file) => {
-                          const isExcluded = excludedFiles.has(file.path);
-                          return (
-                            <div
-                              key={file.path}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
-                            >
-                              {isEditingFiles && (
-                                <Checkbox
-                                  checked={!excludedFiles.has(file.path)}
-                                  onCheckedChange={() => {
-                                    setExcludedFiles((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(file.path)) {
-                                        next.delete(file.path);
-                                      } else {
-                                        next.add(file.path);
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                                onClick={() => openChangedFileInEditor(file.path)}
+                    <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
+                      <ScrollArea>
+                        <div className="space-y-1 p-1">
+                          {allFiles.map((file) => {
+                            const isExcluded = excludedFiles.has(file.path);
+                            return (
+                              <div
+                                key={file.path}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
                               >
-                                <StartTruncatedPath
-                                  path={file.path}
-                                  className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
-                                />
-                                <span className="shrink-0">
-                                  {isExcluded ? (
-                                    <span className="text-muted-foreground">Excluded</span>
-                                  ) : (
-                                    <>
-                                      <span className="text-diff-addition">+{file.insertions}</span>
-                                      <span className="text-muted-foreground"> / </span>
-                                      <span className="text-diff-deletion">-{file.deletions}</span>
-                                    </>
-                                  )}
-                                </span>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </ScrollArea>
+                                {isEditingFiles && (
+                                  <Checkbox
+                                    checked={!excludedFiles.has(file.path)}
+                                    onCheckedChange={() => {
+                                      setExcludedFiles((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(file.path)) {
+                                          next.delete(file.path);
+                                        } else {
+                                          next.add(file.path);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                                  onClick={() => openChangedFileInEditor(file.path)}
+                                >
+                                  <StartTruncatedPath
+                                    path={file.path}
+                                    className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
+                                  />
+                                  <span className="shrink-0">
+                                    {isExcluded ? (
+                                      <span className="text-muted-foreground">Excluded</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-diff-addition">
+                                          +{file.insertions}
+                                        </span>
+                                        <span className="text-muted-foreground"> / </span>
+                                        <span className="text-diff-deletion">
+                                          -{file.deletions}
+                                        </span>
+                                      </>
+                                    )}
+                                  </span>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </div>
                     <div className="flex justify-end font-mono">
                       <span className="text-diff-addition">
                         +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
@@ -1962,7 +2037,7 @@ export default function GitActionsControl({
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter className="dark:border-transparent dark:bg-transparent sm:flex-wrap sm:items-center">
+          <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
             <Button
               className="w-full sm:mr-auto sm:w-auto"
               variant="outline"
@@ -1972,16 +2047,16 @@ export default function GitActionsControl({
               Abort
             </Button>
             <Button
-              className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
+              className="w-full max-w-full sm:w-auto"
               variant="outline"
-              size="sm"
+              size="sm-multiline"
               onClick={continuePendingDefaultBranchAction}
             >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
             <Button
-              className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
-              size="sm"
+              className="w-full max-w-full sm:w-auto"
+              size="sm-multiline"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
             >
               Check out feature branch & continue

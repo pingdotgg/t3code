@@ -1,13 +1,15 @@
-import {
-  type DirItem,
-  type DirSearchResult,
-  type FileItem,
-  FileFinder,
-  type GrepCursor,
-  type MixedItem,
-  type MixedSearchResult,
-  type Result,
-  type SearchResult,
+import * as NodeModule from "node:module";
+
+import type {
+  DirItem,
+  DirSearchResult,
+  FileItem,
+  FileFinder as FileFinderType,
+  GrepCursor,
+  MixedItem,
+  MixedSearchResult,
+  Result,
+  SearchResult,
 } from "@ff-labs/fff-node";
 import * as Effect from "effect/Effect";
 
@@ -32,6 +34,10 @@ import {
 } from "./WorkspaceSearchIndexService.ts";
 
 export * from "./WorkspaceSearchIndexService.ts";
+
+// The native loader must resolve from disk inside the standalone executable.
+const requireForFff = NodeModule.createRequire(import.meta.url);
+const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
 
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
@@ -244,7 +250,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
 
 const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(function* <E>(
   cwd: string,
-  finder: FileFinder,
+  finder: FileFinderType,
   onFailure: (input: { readonly reason: string; readonly cause?: unknown }) => E,
 ): Effect.fn.Return<void, E | WorkspaceSearchIndexScanTimedOut> {
   const result = yield* Effect.tryPromise({

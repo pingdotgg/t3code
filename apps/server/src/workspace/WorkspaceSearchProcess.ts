@@ -2,7 +2,11 @@
 // Node IPC belongs at this boundary; the index and its callers remain Effects.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
-import { HostProcessEnvironment, HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+} from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -15,8 +19,8 @@ export const WorkspaceSearchWorkerPath = Context.Reference<URL>("t3/workspace/Se
   defaultValue: () =>
     new URL(
       import.meta.url.endsWith(".ts")
-        ? "../workspaceSearchWorker.ts"
-        : "./workspaceSearchWorker.mjs",
+        ? "../workspace-search-worker.ts"
+        : "./workspace-search-worker.mjs",
       import.meta.url,
     ),
 });
@@ -30,8 +34,10 @@ export const startSearchProcess = Effect.fn("WorkspaceSearchProcess.start")(func
   const workerPath = yield* WorkspaceSearchWorkerPath;
   const environment = yield* HostProcessEnvironment;
   const executable = yield* HostProcessExecutablePath;
+  const isExecutable = yield* HostProcessIsExecutable;
+  const args = isExecutable ? ["__workspace-search"] : [NodeURL.fileURLToPath(workerPath)];
   const child = yield* Effect.try(() =>
-    NodeChildProcess.spawn(executable, [NodeURL.fileURLToPath(workerPath)], {
+    NodeChildProcess.spawn(executable, args, {
       env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
       windowsHide: true,

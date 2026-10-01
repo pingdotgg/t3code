@@ -25,6 +25,16 @@ export const useQuestionAttachmentPreparation = create<{ counts: Record<string, 
   counts: {},
 }));
 
+/** Count both staged files and in-flight preparation against the shared question limit. */
+export function countQuestionAttachments(keys: ReadonlyArray<DraftId>): number {
+  const store = useComposerDraftStore.getState();
+  const { counts } = useQuestionAttachmentPreparation.getState();
+  return keys.reduce((total, key) => {
+    const draft = store.getComposerDraft(key);
+    return total + (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + (counts[key] ?? 0);
+  }, 0);
+}
+
 export function changeQuestionAttachmentPreparation(key: DraftId, delta: number): void {
   useQuestionAttachmentPreparation.setState((state) =>
     delta < 0 && !(key in state.counts)

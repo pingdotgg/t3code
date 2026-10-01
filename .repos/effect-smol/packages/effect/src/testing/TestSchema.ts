@@ -10,16 +10,21 @@
  * @since 4.0.0
  */
 import * as assert from "node:assert"
+import { isDeepStrictEqual } from "node:util"
 import type * as Context from "../Context.ts"
 import * as Effect from "../Effect.ts"
 import { pipe } from "../Function.ts"
-import * as Record from "../Record.ts"
 import * as Result from "../Result.ts"
 import * as Schema from "../Schema.ts"
 import * as SchemaAST from "../SchemaAST.ts"
 import * as SchemaIssue from "../SchemaIssue.ts"
 import * as SchemaParser from "../SchemaParser.ts"
-import * as FastCheck from "../testing/FastCheck.ts"
+import * as Arbitrary from "../unstable/arbitrary/Arbitrary.ts"
+
+function assertPropertyPassed<A, E>(result: Arbitrary.CheckResult<A, E>): void {
+  const failure = Arbitrary.formatCheckFailure(result)
+  if (failure !== undefined) assert.fail(failure)
+}
 
 /**
  * Provides schema test assertions for decoding, encoding, make, arbitrary generation, and round-trip verification.
@@ -76,7 +81,10 @@ export class Asserts<S extends Schema.Constraint> {
   static ast = {
     fields: {
       equals: (a: Schema.Struct.Fields, b: Schema.Struct.Fields) => {
-        assert.deepStrictEqual(Record.map(a, SchemaAST.getAST), Record.map(b, SchemaAST.getAST))
+        assert.deepStrictEqual(
+          Object.fromEntries(Reflect.ownKeys(a).map((key) => [key, SchemaAST.getAST(a[key])])),
+          Object.fromEntries(Reflect.ownKeys(b).map((key) => [key, SchemaAST.getAST(b[key])]))
+        )
       }
     },
     elements: {
@@ -153,7 +161,8 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Details**
    *
-   * FastCheck generates arbitrary values matching the schema's `Type`. The assertion fails if any generated value does not round-trip. Pass `options.params` to control FastCheck parameters such as `numRuns`.
+   * The native Schema arbitrary generates values matching the schema's `Type`. The assertion fails with the minimized
+   * shrunk input and replay token if any generated value does not round-trip.
    *
    * **Example** (Verifying round trips)
    *
@@ -162,30 +171,29 @@ export class Asserts<S extends Schema.Constraint> {
    * import { TestSchema } from "effect/testing"
    *
    * const asserts = new TestSchema.Asserts(Schema.String)
-   * await asserts.verifyLosslessTransformation({ params: { seed: 1, numRuns: 20 } }) // => undefined
+   * await asserts.verifyLosslessTransformation({ seed: 1, runs: 20 }) // => undefined
    * ```
    *
    * @see {@link arbitrary} for checking that generated values satisfy the schema
    */
-  verifyLosslessTransformation<S extends Schema.ConstraintCodec<unknown, unknown>>(this: Asserts<S>, options?: {
-    readonly params?: FastCheck.Parameters<[S["Type"]]>
-  }) {
+  verifyLosslessTransformation<S extends Schema.ConstraintCodec<unknown, unknown>>(
+    this: Asserts<S>,
+    options?: Arbitrary.CheckOptions
+  ): Promise<void> {
     const decodeUnknownEffect = SchemaParser.decodeUnknownEffect(this.schema)
     const encodeEffect = SchemaParser.encodeEffect(this.schema)
-    const arbitrary = Schema.toArbitrary(this.schema)(FastCheck)
-    return FastCheck.assert(
-      FastCheck.asyncProperty(arbitrary, async (t) => {
-        const r = await Effect.runPromise(
-          encodeEffect(t).pipe(
-            Effect.flatMapEager((e) => decodeUnknownEffect(e)),
-            Effect.mapErrorEager(SchemaIssue.defaultFormatter),
-            Effect.result
-          )
-        )
-        assert.deepStrictEqual(r, Result.succeed(t))
-      }),
-      options?.params
-    )
+    const arbitrary = Arbitrary.schema(this.schema)
+    return Effect.runPromise(Arbitrary.checkEffect(
+      arbitrary,
+      (value) =>
+        encodeEffect(value).pipe(
+          Effect.flatMapEager((encoded) => decodeUnknownEffect(encoded)),
+          Effect.mapErrorEager(SchemaIssue.defaultFormatter),
+          Effect.result,
+          Effect.mapEager((result) => isDeepStrictEqual(result, Result.succeed(value)))
+        ),
+      options
+    )).then(assertPropertyPassed)
   }
   /**
    * Returns a {@link Decoding} instance for this schema with helpers for decoding assertions.
@@ -258,7 +266,8 @@ export class Asserts<S extends Schema.Constraint> {
    *
    * **Details**
    *
-   * `verifyGeneration()` generates arbitrary values and asserts each value satisfies the schema's `is` predicate. It defaults to 20 runs. Pass `options.params` to override FastCheck parameters.
+   * `verifyGeneration()` generates arbitrary values and asserts each value satisfies the schema's `is` predicate. It
+   * defaults to 20 runs. Native checking options can control generation, shrinking, bounded discards, and replay.
    *
    * **Example** (Verifying arbitrary generation)
    *
@@ -267,7 +276,7 @@ export class Asserts<S extends Schema.Constraint> {
    * import { TestSchema } from "effect/testing"
    *
    * const asserts = new TestSchema.Asserts(Schema.String)
-   * asserts.arbitrary().verifyGeneration({ params: { seed: 1, numRuns: 20 } }) // => undefined
+   * asserts.arbitrary().verifyGeneration({ seed: 1, runs: 20 }) // => undefined
    * ```
    *
    * @see {@link verifyLosslessTransformation} for property-based round-trip checks
@@ -275,13 +284,10 @@ export class Asserts<S extends Schema.Constraint> {
   arbitrary<S extends Schema.ConstraintCodec<unknown, unknown>>(this: Asserts<S>) {
     const schema = this.schema
     return {
-      verifyGeneration(options?: {
-        readonly params?: FastCheck.Parameters<[S["Type"]]> | undefined
-      }) {
-        const params = options?.params
+      verifyGeneration(options?: Arbitrary.CheckOptions): void {
         const is = Schema.is(schema)
-        const arb = Schema.toArbitrary(schema)(FastCheck)
-        FastCheck.assert(FastCheck.property(arb, (a) => is(a)), { numRuns: 20, ...params })
+        const arbitrary = Arbitrary.schema(schema)
+        assertPropertyPassed(Effect.runSync(Arbitrary.checkEffect(arbitrary, is, { runs: 20, ...options })))
       }
     }
   }

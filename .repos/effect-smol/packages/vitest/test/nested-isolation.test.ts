@@ -1,7 +1,7 @@
 import { afterAll, assert, beforeAll, describe, expect, layer } from "@effect/vitest"
 import { Context, Effect, Layer, Ref } from "effect"
 
-describe("nested sibling layers", () => {
+describe("nested sibling layers", { concurrent: false }, () => {
   let nextChildId = 0
   let firstChildId = -1
   let secondChildId = -1
@@ -119,7 +119,7 @@ describe.concurrent("nested sibling layers in concurrent suites", () => {
   })
 })
 
-describe("nested sibling isolation with provided state graph", () => {
+describe("nested sibling isolation with provided state graph", { concurrent: false }, () => {
   interface StateShape {
     readonly id: number
     readonly todos: Ref.Ref<Array<string>>
