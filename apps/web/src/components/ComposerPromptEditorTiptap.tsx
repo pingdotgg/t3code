@@ -56,6 +56,7 @@ import {
   serializeEditorDoc,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
+import { setTypingMarksAfterPaste } from "~/composer-paste-marks";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
@@ -1050,6 +1051,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
               editorInstance.commands.insertContent(content);
             });
+            if (richText) {
+              const resetMarks = setTypingMarksAfterPaste(editorInstance.state);
+              if (resetMarks) editorInstance.view.dispatch(resetMarks);
+            }
             scrollTiptapCaretIntoView(editorInstance);
           }
           return true;
