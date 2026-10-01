@@ -2481,15 +2481,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (command.wakeOn === "run-end") {
         // With no run in progress the condition has already fired, so the
         // snooze would wake at once. Bind to the run so a later one cannot
-        // re-hide the thread.
-        const run = projection.runs.at(-1);
-        if (
-          run === undefined ||
-          (run.status !== "preparing" &&
-            run.status !== "starting" &&
-            run.status !== "running" &&
-            run.status !== "waiting")
-        ) {
+        // re-hide the thread. A cancelled follow-up stays the newest run
+        // while the run before it still works, so look past it.
+        const run = projection.runs.findLast(
+          (candidate) =>
+            candidate.status === "preparing" ||
+            candidate.status === "starting" ||
+            candidate.status === "running" ||
+            candidate.status === "waiting",
+        );
+        if (run === undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,

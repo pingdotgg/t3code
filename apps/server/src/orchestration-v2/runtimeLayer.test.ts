@@ -3518,6 +3518,81 @@ it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
       assert.isNull(awake?.snoozedAt);
     }),
   );
+
+  it.effect("binds a run-end snooze to the working run behind a cancelled follow-up", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-run-end-follow-up-project");
+      const threadId = ThreadId.make("runtime-layer-run-end-follow-up-thread");
+      const sendMessage = (id: string, type: "start_immediately" | "queue_after_active") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-run-end-follow-up-${id}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-run-end-follow-up-${id}`),
+          text: "Work on this.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type },
+        });
+      const snoozeUntilDone = (id: string) =>
+        orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`runtime-layer-run-end-follow-up-snooze-${id}`),
+          threadId,
+          wakeOn: "run-end",
+        });
+
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-run-end-follow-up-project-create"),
+        projectId,
+        title: "Run-end snooze follow-up",
+        workspaceRoot: "/tmp/runtime-layer-run-end-follow-up-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-run-end-follow-up-thread-create"),
+        threadId,
+        projectId,
+        title: "Run-end snooze follow-up",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* sendMessage("active", "start_immediately");
+      yield* sendMessage("queued", "queue_after_active");
+      const queued = yield* orchestrator.getThreadProjection(threadId);
+      const activeRun = queued.runs.find((run) => run.status === "starting");
+      const queuedRun = queued.runs.find((run) => run.status === "queued");
+      assert.isDefined(activeRun);
+      assert.isDefined(queuedRun);
+
+      // A queued run is pending work no snooze may hide.
+      assert.equal(
+        (yield* Effect.flip(snoozeUntilDone("queued")))._tag,
+        "OrchestratorDispatchError",
+      );
+
+      // Cancelled, the follow-up is still the newest run.
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make("runtime-layer-run-end-follow-up-cancel"),
+        threadId,
+        runId: queuedRun.id,
+      });
+      yield* snoozeUntilDone("cancelled");
+      const snoozed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(snoozed.runs.at(-1)?.status, "cancelled");
+      assert.deepEqual(snoozed.thread.snoozeWakeOn, { type: "run-end", runId: activeRun.id });
+    }),
+  );
 });
 
 it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {

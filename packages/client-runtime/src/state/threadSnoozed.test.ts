@@ -238,6 +238,13 @@ describe("run-end snoozes", () => {
     expect(isThreadRunInProgress(makeRunShell({ status: "completed" }))).toBe(false);
     // The server refuses to snooze a queued run, so "Until done" is not offered.
     expect(isThreadRunInProgress(makeRunShell({ status: "queued" }))).toBe(false);
+    // A cancelled follow-up is the latest run while the run before it works.
+    const behindFollowUp = (status: string) => ({
+      ...makeRunShell({ runId: "run-2", status }),
+      runtime: { status: "running", activeRunId: runId },
+    });
+    expect(isThreadRunInProgress(behindFollowUp("cancelled"))).toBe(true);
+    expect(isThreadRunInProgress(behindFollowUp("queued"))).toBe(false);
   });
 });
 

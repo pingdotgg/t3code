@@ -146,19 +146,28 @@ function snoozedRunEnded(shell: ThreadSnoozeShell): boolean {
   if (shell.snoozeWakeOn?.type !== "run-end") return false;
   if (shell.runtime?.activeRunId === shell.snoozeWakeOn.runId) return false;
   const latestRun = shell.latestRun ?? null;
-  return latestRun?.runId !== shell.snoozeWakeOn.runId || !isThreadRunInProgress(shell);
+  return latestRun?.runId !== shell.snoozeWakeOn.runId || !isRunStatusInProgress(latestRun?.status);
 }
 
-/**
- * The latest run is still working: the only time "Until done" is offered.
- * Excludes "queued" to match the run statuses the server binds a run-end
- * snooze to.
- */
-export function isThreadRunInProgress(shell: Pick<QueuedThreadShell, "latestRun">): boolean {
-  const status = shell.latestRun?.status;
+/** The run statuses the server binds a run-end snooze to. Excludes "queued". */
+function isRunStatusInProgress(status: string | undefined): boolean {
   return (
     status === "preparing" || status === "starting" || status === "running" || status === "waiting"
   );
+}
+
+/**
+ * A run is still working: the only time "Until done" is offered. A cancelled
+ * follow-up stays the latest run while the run before it still works, so the
+ * active run counts too. A queued follow-up does not hide the active run
+ * here, but the server refuses to snooze a thread with a queued run.
+ */
+export function isThreadRunInProgress(
+  shell: Pick<QueuedThreadShell, "latestRun" | "runtime">,
+): boolean {
+  const status = shell.latestRun?.status;
+  if (status === "queued") return false;
+  return shell.runtime?.activeRunId != null || isRunStatusInProgress(status);
 }
 
 /**
