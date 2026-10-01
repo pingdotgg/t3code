@@ -4544,7 +4544,11 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         let humanInput: ((event: unknown, signal?: unknown) => void) | undefined;
         const wc = makeTestPreviewWebContents(vi.fn());
-        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc, {
+          isDevToolsOpened: () => false,
+          loadURL: vi.fn(async () => undefined),
+          reload: vi.fn(),
+        });
         Object.assign(wc.ipc, {
           on: vi.fn((channel: string, listener: typeof humanInput) => {
             if (channel === "preview:human-input") humanInput = listener;
@@ -4634,6 +4638,12 @@ describe("PreviewManager", () => {
         releaseEvaluate?.();
         yield* Fiber.await(running);
         expect(Exit.isFailure(yield* Fiber.await(queued))).toBe(true);
+        expect(download()).not.toHaveBeenCalled();
+
+        // URL-bar navigation hands the page back to the human.
+        yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        expect(download()).toHaveBeenCalled();
+        yield* manager.navigate("tab_1", "https://example.com/report.csv");
         expect(download()).not.toHaveBeenCalled();
       }),
     ),
