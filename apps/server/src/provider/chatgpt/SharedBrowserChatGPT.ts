@@ -170,15 +170,31 @@ export class SharedBrowserChatGPT {
         returnByValue: true,
       });
 
-    const ready = await inspect();
+    let ready = await inspect();
+    const composerDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 20_000;
+    while (
+      !ready.composer &&
+      !ready.login &&
+      !ready.challenge &&
+      DateTime.toEpochMillis(DateTime.nowUnsafe()) < composerDeadline
+    ) {
+      signal.throwIfAborted();
+      await NodeTimersPromises.setTimeout(500, undefined, { signal });
+      ready = await inspect();
+    }
     if (ready.challenge)
       throw new ChatGPTInteractionRequiredError(
         "ChatGPT requires verification. Complete it in the visible T3 browser; the request cooldown will apply.",
         true,
       );
-    if (ready.login || !ready.composer)
+    if (ready.login)
       throw new ChatGPTInteractionRequiredError(
         "Sign in to ChatGPT in the visible T3 browser, then retry this turn.",
+        false,
+      );
+    if (!ready.composer)
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT’s message box did not load in the visible T3 browser. Wait for ChatGPT to finish loading, then retry; this did not start a cooldown.",
         false,
       );
 
@@ -187,7 +203,38 @@ export class SharedBrowserChatGPT {
         "ChatGPT’s message box is not available in the visible T3 browser. Sign in there, then retry this turn.",
         false,
       );
-    await invoke("type", { selector: ready.composerSelector, text: prompt, clear: true });
+    try {
+      await invoke("type", { selector: ready.composerSelector, text: prompt, clear: true });
+    } catch {
+      // ChatGPT can expose its ProseMirror textbox before the editor is ready to
+      // accept input. Clear-and-replace makes one retry safe if the first call
+      // inserted text but its acknowledgement was lost.
+      signal.throwIfAborted();
+      await NodeTimersPromises.setTimeout(500, undefined, { signal });
+      const retryState = await inspect();
+      if (retryState.challenge)
+        throw new ChatGPTInteractionRequiredError(
+          "ChatGPT requested verification. Complete it in the visible T3 browser, then retry this turn.",
+          true,
+        );
+      if (!retryState.composer || !retryState.composerSelector)
+        throw new ChatGPTInteractionRequiredError(
+          "The ChatGPT message box disappeared before T3 could enter the prompt. Reload ChatGPT in the visible T3 browser, then retry; this did not start a cooldown.",
+          false,
+        );
+      try {
+        await invoke("type", {
+          selector: retryState.composerSelector,
+          text: prompt,
+          clear: true,
+        });
+      } catch {
+        throw new ChatGPTInteractionRequiredError(
+          "T3 could not enter the prompt in ChatGPT’s visible message box. Click the message box in the T3 browser and retry; this did not start a cooldown.",
+          false,
+        );
+      }
+    }
     signal.throwIfAborted();
     await invoke("press", { key: "Enter", timeoutMs: 15_000 });
     const before = ready.assistantCount;
