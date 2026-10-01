@@ -676,8 +676,16 @@ describe("placeShelf", () => {
   });
 
   it("covers as little as possible when no side fits", () => {
-    const root = { left: 20, top: 80, right: 1260, bottom: 780 };
-    const place = placeShelf(root, size, viewport, ["above", "below"]);
-    expect(place.left).toBe(960);
+    const root = { left: 20, top: 300, right: 1260, bottom: 500 };
+    // Above is preferred but, clamped to the toolbar floor, covers more than below.
+    expect(placeShelf(root, size, viewport, ["above", "below"])).toEqual({ left: 960, top: 358 });
+  });
+
+  it("falls back to above for a thread row in a narrow window", () => {
+    const narrow = { width: 480, height: 800 };
+    const root = { left: 12, top: 600, right: 300, bottom: 678 };
+    expect(
+      placeShelf(root, { width: 272, height: 430 }, narrow, ["right", "left", "below", "above"]),
+    ).toEqual({ left: 28, top: 158 });
   });
 });

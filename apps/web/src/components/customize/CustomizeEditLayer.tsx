@@ -205,7 +205,7 @@ const COMPOSER_PREVIEW_OPTIONS: ReadonlyArray<{ value: ComposerPreview; label: s
  */
 /** Where each surface's shelf prefers to sit, in order. */
 const SHELF_SIDES: Record<EditSurface, ReadonlyArray<ShelfSide>> = {
-  threadRow: ["right", "left", "below"],
+  threadRow: ["right", "left", "below", "above"],
   chatHeader: ["below", "left", "right"],
   composer: ["above", "right", "left", "below"],
 };

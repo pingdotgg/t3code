@@ -274,6 +274,8 @@ export function isMovable(
 
 export type ShelfSide = "above" | "below" | "right" | "left";
 
+const BADGE_OVERHANG = 12;
+
 /**
  * Places the shelf beside the surface being edited: the first side (in
  * preference order) where it fits on screen without covering the surface,
@@ -302,9 +304,19 @@ export function placeShelf(
         return { left: root.left - size.width - gap, top: root.top };
     }
   };
+  // Hide badges overhang their elements, so keep clear of them too.
+  const bounds = {
+    left: root.left - BADGE_OVERHANG,
+    top: root.top - BADGE_OVERHANG,
+    right: root.right + BADGE_OVERHANG,
+    bottom: root.bottom + BADGE_OVERHANG,
+  };
   const overlap = (place: { left: number; top: number }) =>
-    Math.max(0, Math.min(place.left + size.width, root.right) - Math.max(place.left, root.left)) *
-    Math.max(0, Math.min(place.top + size.height, root.bottom) - Math.max(place.top, root.top));
+    Math.max(
+      0,
+      Math.min(place.left + size.width, bounds.right) - Math.max(place.left, bounds.left),
+    ) *
+    Math.max(0, Math.min(place.top + size.height, bounds.bottom) - Math.max(place.top, bounds.top));
   let best: { left: number; top: number } | null = null;
   let bestOverlap = Number.POSITIVE_INFINITY;
   for (const side of sides) {
