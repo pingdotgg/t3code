@@ -851,6 +851,14 @@ const FALLBACK_REASONS: Record<EditSurface, string> = {
 };
 
 /**
+ * One press, one move: when a held Enter reaches the end of the list, focus
+ * recovers to the opposite chevron, and key repeat would bounce the item back.
+ */
+function ignoreRepeatedEnter(event: KeyboardEvent<HTMLButtonElement>) {
+  if (event.key === "Enter" && event.repeat) event.preventDefault();
+}
+
+/**
  * All items stay editable even when the sample row or responsive layout
  * cannot show them. Switches remain mounted while hiding and restoring.
  */
@@ -900,6 +908,9 @@ function FallbackList({
             const definition = definitionOf(layoutSurface, id);
             if (!definition) return null;
             const index = sortable.indexOf(id);
+            const absent = !resolved.hidden.has(id) && !measuredKeys.has(`${layoutSurface}:${id}`);
+            const absentId = absent ? `${descriptionId}-${layoutSurface}-${id}` : undefined;
+            const describedBy = absentId ? `${absentId} ${descriptionId}` : descriptionId;
             return (
               <li
                 key={`${layoutSurface}:${id}`}
@@ -909,10 +920,10 @@ function FallbackList({
               >
                 <span className="min-w-0 flex-1">
                   {definition.label}
-                  {!resolved.hidden.has(id) && !measuredKeys.has(`${layoutSurface}:${id}`) ? (
-                    <span className="block text-2xs text-muted-foreground">
+                  {absent ? (
+                    <span id={absentId} className="block text-2xs text-muted-foreground">
                       {surface === "threadRow" ? "Not in this row" : "Not in this view"}
-                      {canMove(id) || !definition.required ? " · edit here" : ""}
+                      {canMove(id) || !definition.required ? " · arrange it from this list" : ""}
                     </span>
                   ) : null}
                 </span>
@@ -922,8 +933,9 @@ function FallbackList({
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Move ${definition.label} earlier`}
-                      aria-describedby={descriptionId}
+                      aria-describedby={describedBy}
                       disabled={index === 0}
+                      onKeyDown={ignoreRepeatedEnter}
                       onClick={() => onMove(layoutSurface, id, "left")}
                     >
                       <ChevronLeftIcon />
@@ -932,8 +944,9 @@ function FallbackList({
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Move ${definition.label} later`}
-                      aria-describedby={descriptionId}
+                      aria-describedby={describedBy}
                       disabled={index === sortable.length - 1}
+                      onKeyDown={ignoreRepeatedEnter}
                       onClick={() => onMove(layoutSurface, id, "right")}
                     >
                       <ChevronRightIcon />
@@ -949,6 +962,7 @@ function FallbackList({
                   <Switch
                     size="sm"
                     aria-label={`Show ${definition.label}`}
+                    aria-describedby={absentId}
                     checked={!resolved.hidden.has(id)}
                     onCheckedChange={(checked) => onHiddenChange(layoutSurface, id, !checked)}
                   />

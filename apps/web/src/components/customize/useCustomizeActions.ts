@@ -30,6 +30,7 @@ import {
 // queued in one session of the mode never runs in a later one.
 let pendingActions: Promise<void> = Promise.resolve();
 let idleWaiters: Array<() => void> = [];
+let waitingOnPublication = false;
 
 function afterHydration(run: (settingsLoaded: boolean) => void): void {
   const session = useCustomizeInterfaceStore.getState().session;
@@ -48,7 +49,12 @@ function afterHydration(run: (settingsLoaded: boolean) => void): void {
         const waiters = idleWaiters;
         idleWaiters = [];
         for (const resolve of waiters) resolve();
-        await whenClientSettingsPatchesPublished();
+        waitingOnPublication = true;
+        try {
+          await whenClientSettingsPatchesPublished();
+        } finally {
+          waitingOnPublication = false;
+        }
       }
       runInSession(true);
     })
@@ -75,6 +81,7 @@ export function customizeActionsSettled(): Promise<void> {
  * point without waiting on timers.
  */
 export function customizeActionsIdle(): Promise<void> {
+  if (waitingOnPublication) return Promise.resolve();
   return new Promise((resolve) => {
     idleWaiters.push(resolve);
     void pendingActions.then(resolve);

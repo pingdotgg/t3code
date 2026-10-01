@@ -268,6 +268,19 @@ describe("Customize interface history", () => {
     expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal"]);
   });
 
+  it("reports idle to a caller that arrives after an action is already waiting", async () => {
+    const release = await blockStartupWrites();
+
+    actions.commitLayout(hide("terminal"));
+    await customizeActionsIdle();
+    await customizeActionsIdle();
+    expect(store().history).toEqual([]);
+
+    release();
+    await settled();
+    expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal"]);
+  });
+
   it("does not bring back an undone edit while settings writes are deferred", async () => {
     const release = await blockStartupWrites();
 
