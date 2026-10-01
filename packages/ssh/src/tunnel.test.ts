@@ -346,10 +346,12 @@ describe("ssh tunnel scripts", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-login-" });
-        const profile = `${root}/.bash_profile`;
+        // System login profiles may reset HOME. Check login mode in a separate
+        // startup file so the test never needs to change the real user profile.
+        const profile = `${root}/bash-env`;
         yield* fs.writeFileString(
           profile,
-          'function load_login_env() { export T3_TEST_LOGIN="loaded"; }; load_login_env\n',
+          'function load_login_env() { shopt -q login_shell && export T3_TEST_LOGIN="loaded"; }; load_login_env\n',
         );
         let remoteCommand = "";
         const spawner = ChildProcessSpawner.make((command) =>
@@ -369,7 +371,7 @@ describe("ssh tunnel scripts", () => {
         for (const shell of ["/bin/bash", "/bin/sh", "", "/bin/tcsh", "/bin/csh"]) {
           const child = yield* realSpawner.spawn(
             ChildProcess.make("/bin/sh", ["-c", remoteCommand], {
-              env: { SHELL: shell, HOME: root },
+              env: { SHELL: shell, BASH_ENV: profile },
               stdin: {
                 stream: Stream.make(
                   new TextEncoder().encode('printf "%s:%s" "${T3_TEST_LOGIN:-posix}" "$1"'),
