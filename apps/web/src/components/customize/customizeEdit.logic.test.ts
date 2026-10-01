@@ -8,6 +8,7 @@ import {
   isCustomizeAboveModeTarget,
   isCustomizeEditableTarget,
   isMovable,
+  placeShelf,
   moveCustomizeElementByKeyboard,
   preservesNativeCustomizeEscape,
   readingOrder,
@@ -655,5 +656,28 @@ describe("isMovable", () => {
     expect(isMovable("threadRow", "pullRequest", true, false)).toBe(true);
     expect(isMovable("threadRow", "terminal", true, true)).toBe(true);
     expect(isMovable("threadRow", "project", false, false)).toBe(false);
+  });
+});
+
+describe("placeShelf", () => {
+  const viewport = { width: 1280, height: 800 };
+  const size = { width: 300, height: 430 };
+
+  it("uses the preferred side when it fits", () => {
+    const root = { left: 360, top: 600, right: 1200, bottom: 700 };
+    expect(placeShelf(root, size, viewport, ["above", "right"])).toEqual({ left: 900, top: 158 });
+  });
+
+  it("moves to the next side instead of covering the surface", () => {
+    // A draft composer sits mid-screen: no room above, so the shelf goes beside it.
+    const root = { left: 360, top: 370, right: 900, bottom: 470 };
+    const place = placeShelf(root, size, viewport, ["above", "right", "left", "below"]);
+    expect(place).toEqual({ left: 912, top: 358 });
+  });
+
+  it("covers as little as possible when no side fits", () => {
+    const root = { left: 20, top: 80, right: 1260, bottom: 780 };
+    const place = placeShelf(root, size, viewport, ["above", "below"]);
+    expect(place.left).toBe(960);
   });
 });

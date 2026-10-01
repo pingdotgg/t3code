@@ -48,6 +48,8 @@ import {
   hasOpenCustomizePopup,
   isCustomizeAboveModeTarget,
   isMovable,
+  placeShelf,
+  type ShelfSide,
   moveCustomizeElementByKeyboard,
   readingOrder,
   resolveCustomizeFocusTarget,
@@ -201,6 +203,13 @@ const COMPOSER_PREVIEW_OPTIONS: ReadonlyArray<{ value: ComposerPreview; label: s
  * wait in a shelf beside the surface. Everything else is dimmed; Back and
  * Done are explicit exits.
  */
+/** Where each surface's shelf prefers to sit, in order. */
+const SHELF_SIDES: Record<EditSurface, ReadonlyArray<ShelfSide>> = {
+  threadRow: ["right", "left", "below"],
+  chatHeader: ["below", "left", "right"],
+  composer: ["above", "right", "left", "below"],
+};
+
 export function CustomizeEditLayer({
   surface,
   onBack,
@@ -547,22 +556,14 @@ export function CustomizeEditLayer({
     observer.observe(shelf);
     return () => observer.disconnect();
   }, []);
-  const shelfLeft = !root
-    ? (viewportWidth - shelfSize.width) / 2
-    : surface === "threadRow"
-      ? root.right + 12
-      : root.right - shelfSize.width;
-  const shelfTop = !root
-    ? 72
-    : surface === "threadRow"
-      ? root.top
-      : surface === "chatHeader"
-        ? root.bottom + 12
-        : root.top - shelfSize.height - 12;
-  const shelfStyle = {
-    left: Math.max(12, Math.min(shelfLeft, viewportWidth - shelfSize.width - 12)),
-    top: Math.max(72, Math.min(shelfTop, viewportHeight - shelfSize.height - 12)),
-  };
+  const shelfStyle = !root
+    ? { left: Math.max(12, (viewportWidth - shelfSize.width) / 2), top: 72 }
+    : placeShelf(
+        root,
+        shelfSize,
+        { width: viewportWidth, height: viewportHeight },
+        SHELF_SIDES[surface],
+      );
   const [entered, setEntered] = useState(false);
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => setEntered(true));

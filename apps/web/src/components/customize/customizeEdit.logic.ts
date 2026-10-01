@@ -271,3 +271,51 @@ export function isMovable(
 ): boolean {
   return sortable && !(legacySidebar && surface === "threadRow" && id === "pullRequest");
 }
+
+export type ShelfSide = "above" | "below" | "right" | "left";
+
+/**
+ * Places the shelf beside the surface being edited: the first side (in
+ * preference order) where it fits on screen without covering the surface,
+ * otherwise the side that covers the least of it.
+ */
+export function placeShelf(
+  root: Rect,
+  size: { readonly width: number; readonly height: number },
+  viewport: { readonly width: number; readonly height: number },
+  sides: ReadonlyArray<ShelfSide>,
+  { gap = 12, margin = 12, top = 72 }: { gap?: number; margin?: number; top?: number } = {},
+): { readonly left: number; readonly top: number } {
+  const clamp = (left: number, y: number) => ({
+    left: Math.max(margin, Math.min(left, viewport.width - size.width - margin)),
+    top: Math.max(top, Math.min(y, viewport.height - size.height - margin)),
+  });
+  const candidate = (side: ShelfSide) => {
+    switch (side) {
+      case "above":
+        return { left: root.right - size.width, top: root.top - size.height - gap };
+      case "below":
+        return { left: root.right - size.width, top: root.bottom + gap };
+      case "right":
+        return { left: root.right + gap, top: root.top };
+      case "left":
+        return { left: root.left - size.width - gap, top: root.top };
+    }
+  };
+  const overlap = (place: { left: number; top: number }) =>
+    Math.max(0, Math.min(place.left + size.width, root.right) - Math.max(place.left, root.left)) *
+    Math.max(0, Math.min(place.top + size.height, root.bottom) - Math.max(place.top, root.top));
+  let best: { left: number; top: number } | null = null;
+  let bestOverlap = Number.POSITIVE_INFINITY;
+  for (const side of sides) {
+    const wanted = candidate(side);
+    const place = clamp(wanted.left, wanted.top);
+    const covered = overlap(place);
+    if (covered === 0) return place;
+    if (covered < bestOverlap) {
+      best = place;
+      bestOverlap = covered;
+    }
+  }
+  return best ?? clamp((viewport.width - size.width) / 2, top);
+}
