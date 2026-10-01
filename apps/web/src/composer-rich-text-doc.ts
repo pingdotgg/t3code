@@ -11,13 +11,15 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
  *
  * The stored prompt stays markdown (`**bold**`, `@file` chips as canonical
  * links). The Tiptap document holds styled text plus inline atom chips, so
- * this module translates both ways and maps cursor offsets between the three
- * coordinate spaces the composer speaks:
+ * this module translates both ways and maps cursor offsets between the two
+ * coordinate spaces of the document:
  *
  * - flat document offsets (styled markers excluded, chips count 1),
- * - collapsed cursor offsets (markers literal, chips count 1 — the coordinate
- *   the draft store and mention detection use),
  * - markdown offsets (markers literal, chips expand to their source).
+ *
+ * The collapsed cursor the draft store uses is derived from the markdown text
+ * alone (see composer-logic), so it never depends on which tokens the
+ * document happens to render as chips.
  *
  * DOM-free on purpose: unit tests build a real ProseMirror document from the
  * JSON this produces and assert the round trip without a browser.
@@ -99,10 +101,11 @@ interface DocLine {
   inline: InlineJson[];
 }
 
+/** Null for a `$name` that is not one of the provider's skills: it stays editable text. */
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  skillLabelFor: (name: string) => SkillMeta,
-): InlineJson {
+  skillLabelFor: (name: string) => SkillMeta | null,
+): InlineJson | null {
   if (segment.type === "mention") {
     return {
       type: "composer-mention",
@@ -111,6 +114,7 @@ function atomJsonForSegment(
   }
   if (segment.type === "skill") {
     const meta = skillLabelFor(segment.name);
+    if (!meta) return null;
     return {
       type: "composer-skill",
       attrs: {
@@ -173,7 +177,7 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 
 export function buildTiptapContent(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: (name: string) => SkillMeta | null,
   options?: { styling?: boolean },
 ): Record<string, unknown>[] {
   const styling = options?.styling ?? true;
@@ -187,7 +191,9 @@ export function buildTiptapContent(
   const text = splitPromptIntoComposerSegments(value)
     .map((segment) => {
       if (segment.type === "text") return segment.text;
-      atoms.push(atomJsonForSegment(segment, skillLabelFor));
+      const atom = atomJsonForSegment(segment, skillLabelFor);
+      if (!atom) return segment.source;
+      atoms.push(atom);
       return sentinel;
     })
     .join("");
@@ -266,7 +272,7 @@ export function buildTiptapContent(
 
 export function buildDocJson(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: (name: string) => SkillMeta | null,
   options?: { styling?: boolean },
 ) {
   return { type: "doc", content: buildTiptapContent(value, skillLabelFor, options) };
@@ -277,8 +283,6 @@ export interface RichRun {
   /** Flat document offset (atoms count 1, markers excluded). */
   flatStart: number;
   docLen: number;
-  /** Collapsed cursor length (markers literal, tokens count 1). */
-  collapsedLen: number;
   /** Markdown length (tokens expand to their source). */
   mdLen: number;
   /** Marker layout inside text runs. */
@@ -287,7 +291,6 @@ export interface RichRun {
   /** ProseMirror position of the run start. */
   pmPos: number;
   mdStart: number;
-  collapsedStart: number;
   nodeName?: string;
 }
 
@@ -318,7 +321,6 @@ interface RichAccumulator {
   runs: RichRun[];
   value: string;
   flat: number;
-  collapsed: number;
   md: number;
 }
 
@@ -330,17 +332,14 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
     kind: "break",
     flatStart: acc.flat,
     docLen: 1,
-    collapsedLen: 1,
     mdLen: 1,
     openLen: 0,
     closeLen: 0,
     pmPos,
     mdStart: acc.md,
-    collapsedStart: acc.collapsed,
   });
   acc.value += "\n";
   acc.flat += 1;
-  acc.collapsed += 1;
   acc.md += 1;
 }
 
@@ -453,23 +452,19 @@ function appendInlineRuns(
     const source = child.isText ? child.text! : readAtomSource(child);
     const docLen = child.isText ? source.length : 1;
     const mdText = open + source + close;
-    const collapsedLen = open.length + docLen + close.length;
     acc.runs.push({
       kind: child.isText ? "text" : "token",
       flatStart: acc.flat,
       docLen,
-      collapsedLen,
       mdLen: mdText.length,
       openLen: open.length,
       closeLen: close.length,
       pmPos,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
       ...(child.isText ? {} : { nodeName: child.type.name }),
     });
     acc.value += mdText;
     acc.flat += docLen;
-    acc.collapsed += collapsedLen;
     acc.md += mdText.length;
   });
   // Empty paragraphs have an editable position even though they emit no text.
@@ -478,13 +473,11 @@ function appendInlineRuns(
       kind: "text",
       flatStart: acc.flat,
       docLen: 0,
-      collapsedLen: 0,
       mdLen: 0,
       openLen: 0,
       closeLen: 0,
       pmPos: contentStart,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
     });
   }
 }
@@ -515,16 +508,13 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
       kind: "prefix",
       flatStart: acc.flat,
       docLen: 0,
-      collapsedLen: prefix.length,
       mdLen: prefix.length,
       openLen: 0,
       closeLen: 0,
       pmPos: itemContentStart + 1,
       mdStart: acc.md,
-      collapsedStart: acc.collapsed,
     });
     acc.value += prefix;
-    acc.collapsed += prefix.length;
     acc.md += prefix.length;
     let childPos = itemContentStart;
     let firstBlock = true;
@@ -543,7 +533,7 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
 }
 
 export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
-  const acc: RichAccumulator = { runs: [], value: "", flat: 0, collapsed: 0, md: 0 };
+  const acc: RichAccumulator = { runs: [], value: "", flat: 0, md: 0 };
   const blocks: ProseMirrorNode[] = [];
   doc.content.forEach((node) => {
     blocks.push(node);
@@ -568,27 +558,6 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
   };
 }
 
-function lastRunEnd(map: RichDocMap, space: "collapsed" | "md"): number {
-  const last = map.runs[map.runs.length - 1];
-  if (!last) return 0;
-  return space === "collapsed"
-    ? last.collapsedStart + last.collapsedLen
-    : last.mdStart + last.mdLen;
-}
-
-export function flatToCollapsed(map: RichDocMap, flatOffset: number): number {
-  const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
-  for (const run of map.runs) {
-    if (bounded < run.flatStart + run.docLen) {
-      if (run.kind === "text" || run.kind === "token") {
-        return run.collapsedStart + run.openLen + (bounded - run.flatStart);
-      }
-      return run.collapsedStart + (bounded - run.flatStart);
-    }
-  }
-  return lastRunEnd(map, "collapsed");
-}
-
 export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
   const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
   for (const run of map.runs) {
@@ -599,23 +568,27 @@ export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
       return run.mdStart + (bounded - run.flatStart);
     }
   }
-  return lastRunEnd(map, "md");
+  const last = map.runs[map.runs.length - 1];
+  return last ? last.mdStart + last.mdLen : 0;
 }
 
-export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): number {
+export function markdownToFlat(map: RichDocMap, markdownOffset: number): number {
   for (const run of map.runs) {
-    if (collapsedOffset < run.collapsedStart + run.collapsedLen) {
+    if (markdownOffset < run.mdStart + run.mdLen) {
       // Checkbox prefixes and style markers are shown, never edited: every
       // offset inside them clamps to the adjacent document position.
       if (run.kind === "prefix") return run.flatStart;
       if (run.kind === "text" || run.kind === "token") {
-        const within = collapsedOffset - run.collapsedStart;
+        const within = markdownOffset - run.mdStart;
         // Marker characters clamp to the styled edge: they are shown, never edited.
         if (within <= run.openLen) return run.flatStart;
-        if (within >= run.openLen + run.docLen) return run.flatStart + run.docLen;
+        // A chip is one document position however long its source is.
+        if (run.kind === "token" || within >= run.openLen + run.docLen) {
+          return run.flatStart + run.docLen;
+        }
         return run.flatStart + (within - run.openLen);
       }
-      return run.flatStart + (collapsedOffset - run.collapsedStart);
+      return run.flatStart + (markdownOffset - run.mdStart);
     }
   }
   return map.docLength;

@@ -42,16 +42,16 @@ import {
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
+  splitPromptIntoComposerSegments,
 } from "~/composer-editor-mentions";
 import {
   buildDocJson,
   buildTiptapContent,
-  collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
-  flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
   type SkillMeta,
@@ -274,6 +274,20 @@ const ComposerSkillExtension = Node.create({
     return ReactNodeViewRenderer(ComposerSkillNodeView);
   },
 });
+
+/** Chip presentation for `$name`, or null when the provider has no such skill. */
+function composerSkillMeta(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  name: string,
+): SkillMeta | null {
+  const skill = skills.find((candidate) => candidate.name === name);
+  if (!skill) return null;
+  const shortDescription = skill.shortDescription?.trim();
+  return {
+    label: formatProviderSkillDisplayName(skill),
+    description: shortDescription || skill.description?.trim() || null,
+  };
+}
 
 function ComposerSkillNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
@@ -643,25 +657,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useEffect(() => {
     importFragmentRef.current = importContextFragment;
   }, [importContextFragment]);
-  useEffect(() => {
-    skillsRef.current = skills;
-  }, [skills]);
   useLayoutEffect(() => {
     latestValueRef.current = value;
   }, [value]);
 
-  const skillLabelFor = useCallback((name: string): SkillMeta => {
-    const normalized = name.startsWith("$") ? name.slice(1) : name;
-    const skill = skillsRef.current.find((candidate) => candidate.name === normalized);
-    if (!skill) {
-      return { label: formatProviderSkillDisplayName({ name: normalized }), description: null };
-    }
-    const shortDescription = skill.shortDescription?.trim();
-    return {
-      label: formatProviderSkillDisplayName(skill),
-      description: shortDescription || skill.description?.trim() || null,
-    };
-  }, []);
+  const skillLabelFor = useCallback(
+    (name: string) => composerSkillMeta(skillsRef.current, name),
+    [],
+  );
 
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
   const initialExpandedCursor = expandCollapsedComposerCursor(value, initialCursor);
@@ -701,11 +704,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     const fromFlat = pmToFlat(map, from);
     const toFlat = pmToFlat(map, to);
     const nextValue = map.value;
-    const nextCursor = clampCollapsedComposerCursor(map.value, flatToCollapsed(map, fromFlat));
     const nextExpandedCursor = Math.max(
       0,
       Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
     );
+    const nextCursor = collapseExpandedComposerCursor(map.value, nextExpandedCursor);
     const nextSelectionRange = {
       start: Math.min(nextExpandedCursor, flatToMarkdown(map, toFlat)),
       end: Math.max(nextExpandedCursor, flatToMarkdown(map, toFlat)),
@@ -824,25 +827,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             ]
           : []),
       ],
-      content: buildDocJson(
-        value,
-        (name) => {
-          const normalized = name.startsWith("$") ? name.slice(1) : name;
-          const found = skills.find((candidate) => candidate.name === normalized);
-          if (!found) {
-            return {
-              label: formatProviderSkillDisplayName({ name: normalized }),
-              description: null,
-            };
-          }
-          const shortDescription = found.shortDescription?.trim();
-          return {
-            label: formatProviderSkillDisplayName(found),
-            description: shortDescription || found.description?.trim() || null,
-          };
-        },
-        { styling: richText },
-      ),
+      content: buildDocJson(value, (name) => composerSkillMeta(skills, name), {
+        styling: richText,
+      }),
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
@@ -1030,17 +1017,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             : pastedText;
           // Complete chips at paste boundaries just as autocomplete does.
           const tokens = collectComposerPromptInlineTokens(`${text}\n`);
+          const isChip = (token: (typeof tokens)[number] | undefined) =>
+            token?.type === "mention" ||
+            (token?.type === "skill" && skillLabelFor(token.value) !== null);
           const lastToken = tokens.at(-1);
-          if (
-            (lastToken?.type === "mention" || lastToken?.type === "skill") &&
-            lastToken.end === text.length
-          ) {
+          if (isChip(lastToken) && lastToken?.end === text.length) {
             text += " ";
           }
-          if (
-            (tokens[0]?.type === "mention" || tokens[0]?.type === "skill") &&
-            tokens[0].start === 0
-          ) {
+          if (isChip(tokens[0]) && tokens[0]?.start === 0) {
             const map = serializeEditorDoc(view.state.doc);
             const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
             if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
@@ -1090,10 +1074,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     const map = serializeEditorDoc(editor.state.doc);
     const { from, to } = editor.state.selection;
     const fromFlat = pmToFlat(map, from);
+    const expandedCursor = Math.max(0, Math.min(map.value.length, flatToMarkdown(map, fromFlat)));
     const next: typeof snapshot = {
       value: map.value,
-      cursor: clampCollapsedComposerCursor(map.value, flatToCollapsed(map, fromFlat)),
-      expandedCursor: Math.max(0, Math.min(map.value.length, flatToMarkdown(map, fromFlat))),
+      cursor: collapseExpandedComposerCursor(map.value, expandedCursor),
+      expandedCursor,
       contextIds: map.contextIds,
     };
     const toFlat = pmToFlat(map, to);
@@ -1144,7 +1129,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       });
     }
     const map = serializeEditorDoc(editor.state.doc);
-    const flat = collapsedToFlat(map, normalizedCursor);
+    const flat = markdownToFlat(map, normalizedExpandedCursor);
     editor.commands.setTextSelection(flatToPm(map, flat));
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
@@ -1172,6 +1157,41 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     });
   }, [cursor, editor, richText, skillLabelFor, value]);
 
+  // The skill list loads after the editor opens and differs per provider, so
+  // the same prompt can gain or lose skill chips without its text changing.
+  useEffect(() => {
+    const previousSkills = skillsRef.current;
+    skillsRef.current = skills;
+    if (!editor || previousSkills === skills) return;
+    if (previousSkills.length === 0 && skills.length === 0) return;
+    const map = serializeEditorDoc(editor.state.doc);
+    const wanted = splitPromptIntoComposerSegments(map.value).flatMap((segment) =>
+      segment.type === "skill" && composerSkillMeta(skills, segment.name) ? [segment.name] : [],
+    );
+    const chipped: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "composer-skill") chipped.push(String(node.attrs.skillName));
+    });
+    if (wanted.length === chipped.length && wanted.every((name, index) => name === chipped[index]))
+      return;
+    const { from, to } = editor.state.selection;
+    const fromMarkdown = flatToMarkdown(map, pmToFlat(map, from));
+    const toMarkdown = flatToMarkdown(map, pmToFlat(map, to));
+    isApplyingControlledUpdateRef.current = true;
+    editor.commands.setContent(
+      buildDocJson(map.value, (name) => composerSkillMeta(skills, name), { styling: richText }),
+      { emitUpdate: false },
+    );
+    const nextMap = serializeEditorDoc(editor.state.doc);
+    editor.commands.setTextSelection({
+      from: flatToPm(nextMap, markdownToFlat(nextMap, fromMarkdown)),
+      to: flatToPm(nextMap, markdownToFlat(nextMap, toMarkdown)),
+    });
+    queueMicrotask(() => {
+      isApplyingControlledUpdateRef.current = false;
+    });
+  }, [editor, richText, skills]);
+
   const focusAt = useCallback(
     (nextCursor: number) => {
       if (!editor) return;
@@ -1181,15 +1201,18 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       // overwrite that prompt; the pending rewrite places the caret instead.
       if (snapshotRef.current.value !== latestValueRef.current) return;
       const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
+      const expandedCursor = expandCollapsedComposerCursor(
+        snapshotRef.current.value,
+        boundedCursor,
+      );
       const map = serializeEditorDoc(editor.state.doc);
-      const flat = collapsedToFlat(map, boundedCursor);
-      editor.commands.setTextSelection(flatToPm(map, flat));
+      editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, expandedCursor)));
       scrollTiptapCaretIntoView(editor);
       if (boundedCursor === snapshotRef.current.cursor) return;
       snapshotRef.current = {
         value: snapshotRef.current.value,
         cursor: boundedCursor,
-        expandedCursor: expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor),
+        expandedCursor,
         contextIds: snapshotRef.current.contextIds,
       };
       selectionRangeRef.current = {
@@ -1394,7 +1417,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
  */
 function insertMarkdownParagraphs(
   value: string,
-  skillLabelFor: (name: string) => SkillMeta,
+  skillLabelFor: (name: string) => SkillMeta | null,
   options: { styling: boolean },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {

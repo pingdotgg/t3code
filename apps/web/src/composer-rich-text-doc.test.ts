@@ -6,12 +6,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDocJson,
-  collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
-  flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
@@ -194,7 +193,7 @@ describe("composer rich text document model", () => {
       const position = flatToPm(map, flat);
       expect(doc.resolve(position).parent.isTextblock).toBe(true);
       expect(pmToFlat(map, position)).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
   });
 
@@ -305,7 +304,7 @@ describe("composer rich text document model", () => {
     expect(serializeEditorDoc(rebuilt).value).toBe(map.value);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
       expect(pmToFlat(map, flatToPm(map, flat))).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       if (flat < map.docLength && !/\s/.test(doc.textContent[flat]!)) {
         expect(rebuilt.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name)).toEqual(
           doc.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name),
@@ -341,12 +340,12 @@ describe("composer rich text document model", () => {
     expect(roundTripPlain(value).value).toBe(value);
   });
 
-  it("maps every document offset through collapsed coordinates and back", () => {
+  it("maps every document offset through markdown coordinates and back", () => {
     const value = "hi **bold** @README.md bye";
     const map = roundTrip(value);
     expect(map.value).toBe(value);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
   });
 
@@ -357,7 +356,27 @@ describe("composer rich text document model", () => {
     // document text is "a bold c" (flat), markdown has the markers.
     expect(flatToMarkdown(map, 2)).toBe(4);
     expect(flatToMarkdown(map, 6)).toBe(10);
-    expect(collapsedToFlat(map, 3)).toBe(2);
-    expect(collapsedToFlat(map, 9)).toBe(6);
+    expect(markdownToFlat(map, 3)).toBe(2);
+    expect(markdownToFlat(map, 9)).toBe(6);
+  });
+
+  it("chips only the skills the provider has and leaves other $names as text", () => {
+    const value = "run $babysit then echo $HOME and $notaskill done";
+    const known = (name: string) =>
+      name === "babysit" ? { label: "Babysit", description: null } : null;
+    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    doc.check();
+    const map = serializeEditorDoc(doc);
+    expect(map.value).toBe(value);
+    expect(map.runs.filter((run) => run.kind === "token").map((run) => run.nodeName)).toEqual([
+      "composer-skill",
+    ]);
+    expect(doc.textContent).toBe("run  then echo $HOME and $notaskill done");
+    // A caret after `$HOME` sits after the same five characters in the document.
+    const afterHome = value.indexOf("$HOME") + "$HOME".length;
+    const flat = markdownToFlat(map, afterHome);
+    expect(doc.textBetween(flatToPm(map, flat) - 5, flatToPm(map, flat))).toBe("$HOME");
+    // Any offset inside the chip source lands after the chip.
+    expect(markdownToFlat(map, value.indexOf("$babysit") + 3)).toBe("run ".length + 1);
   });
 });
