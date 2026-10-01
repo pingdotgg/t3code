@@ -27,6 +27,23 @@ export class ChatGPTInteractionRequiredError extends Error {
   }
 }
 
+interface ChatGPTReplyObservation {
+  readonly assistantCount: number;
+  readonly answer: string;
+  readonly generating: boolean;
+}
+
+export function isChatGPTReplyComplete(
+  observation: ChatGPTReplyObservation,
+  previousAssistantCount: number,
+): boolean {
+  return (
+    observation.assistantCount > previousAssistantCount &&
+    observation.answer.trim().length > 0 &&
+    !observation.generating
+  );
+}
+
 export class SharedBrowserChatGPT {
   private scope: Scope | undefined;
   private readonly tabs = new Map<string, PreviewTabId>();
@@ -163,7 +180,13 @@ export class SharedBrowserChatGPT {
           const challenge = /checking your browser|verify you are human|cloudflare|security check|just a moment|attention required|turnstile/i.test(title + " " + body.slice(0, 1200));
           const answers = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
           const last = answers.at(-1);
-          const generating = !!document.querySelector('[data-testid="stop-button"], button[aria-label*="Stop"]');
+          // ChatGPT can keep an inactive stop control mounted after a reply. Only
+          // visible generation controls should keep the provider turn open.
+          const generating = [
+            ...document.querySelectorAll(
+              '[data-testid="stop-button"], button[aria-label*="Stop generating" i], button[aria-label*="Stop response" i]',
+            ),
+          ].some(visible);
           return { composer, composerSelector, login, challenge, assistantCount: answers.length, answer: last?.innerText ?? "", generating };
         })()`,
         awaitPromise: true,
@@ -248,8 +271,7 @@ export class SharedBrowserChatGPT {
           "ChatGPT requested verification. Complete it in the visible T3 browser; the request cooldown will apply.",
           true,
         );
-      if (!state.generating && state.assistantCount > before && state.answer.trim())
-        return state.answer.trim();
+      if (isChatGPTReplyComplete(state, before)) return state.answer.trim();
     }
     throw new Error("ChatGPT did not finish a reply within three minutes.");
   }

@@ -12,7 +12,10 @@ import {
   startChatGPTBridge,
 } from "./ChatGPTBridge.ts";
 import { ChatGPTRateLimit } from "./ChatGPTRateLimit.ts";
-import { ChatGPTInteractionRequiredError } from "./SharedBrowserChatGPT.ts";
+import {
+  ChatGPTInteractionRequiredError,
+  isChatGPTReplyComplete,
+} from "./SharedBrowserChatGPT.ts";
 
 const decodeRequestForTest = Schema.decodeUnknownSync(ChatGPTRequest);
 const tools = [
@@ -87,6 +90,21 @@ it("estimates visible UTF-8 text without claiming hidden reasoning", () => {
   expect(estimateChatGPTTokens("")).toBe(0);
   expect(estimateChatGPTTokens("abcdefgh")).toBe(2);
   expect(estimateChatGPTTokens("你好")).toBe(2);
+});
+
+it("settles on a new visible reply only after ChatGPT stops generating", () => {
+  expect(
+    isChatGPTReplyComplete(
+      { assistantCount: 1, answer: '{"type":"final","text":"Test received."}', generating: false },
+      0,
+    ),
+  ).toBe(true);
+  expect(
+    isChatGPTReplyComplete({ assistantCount: 1, answer: "Partial reply", generating: true }, 0),
+  ).toBe(false);
+  expect(isChatGPTReplyComplete({ assistantCount: 0, answer: "Old reply", generating: false }, 0)).toBe(
+    false,
+  );
 });
 
 it("rejects oversized web prompts before opening the shared browser", () => {
