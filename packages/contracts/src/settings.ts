@@ -60,6 +60,9 @@ export const DEFAULT_SIDEBAR_META_FONT_SIZE: FontSize = 10 as FontSize;
     sidebar used before this became a setting. */
 export const DEFAULT_SIDEBAR_ICON_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_INPUT_FONT_SIZE: FontSize = 14 as FontSize;
+/** Under-composer metadata (workspace, branch, pull request). 11px keeps it a
+    deliberate step below the composer's own controls. */
+export const DEFAULT_COMPOSER_META_FONT_SIZE: FontSize = 11 as FontSize;
 
 export const MessagePreviewLineCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(30),
@@ -102,6 +105,7 @@ export const DEFAULT_UI_DENSITY: UiDensity = "default";
 export interface DensityFontSizes {
   readonly chatFontSize: FontSize;
   readonly codeFontSize: FontSize;
+  readonly composerMetaFontSize: FontSize;
   readonly inputFontSize: FontSize;
   readonly sidebarFontSize: FontSize;
   readonly sidebarMetaFontSize: FontSize;
@@ -123,6 +127,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   compact: {
     chatFontSize: 13 as FontSize,
     codeFontSize: 11 as FontSize,
+    composerMetaFontSize: 10 as FontSize,
     inputFontSize: 13 as FontSize,
     sidebarFontSize: 10 as FontSize,
     sidebarMetaFontSize: 9 as FontSize,
@@ -133,6 +138,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   default: {
     chatFontSize: DEFAULT_CHAT_FONT_SIZE,
     codeFontSize: DEFAULT_CODE_FONT_SIZE,
+    composerMetaFontSize: DEFAULT_COMPOSER_META_FONT_SIZE,
     inputFontSize: DEFAULT_INPUT_FONT_SIZE,
     sidebarFontSize: DEFAULT_SIDEBAR_FONT_SIZE,
     sidebarMetaFontSize: DEFAULT_SIDEBAR_META_FONT_SIZE,
@@ -143,6 +149,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   comfortable: {
     chatFontSize: 15 as FontSize,
     codeFontSize: 14 as FontSize,
+    composerMetaFontSize: 12 as FontSize,
     inputFontSize: 15 as FontSize,
     sidebarFontSize: 12 as FontSize,
     sidebarMetaFontSize: 11 as FontSize,
@@ -153,6 +160,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   spacious: {
     chatFontSize: 16 as FontSize,
     codeFontSize: 15 as FontSize,
+    composerMetaFontSize: 13 as FontSize,
     inputFontSize: 16 as FontSize,
     sidebarFontSize: 13 as FontSize,
     sidebarMetaFontSize: 12 as FontSize,
@@ -287,6 +295,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_STATUS_LINE_FONT_SIZE)),
   ),
   codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
+  composerMetaFontSize: FontSize.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_META_FONT_SIZE)),
+  ),
   inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   messagePreviewLineLimits: MessagePreviewLineLimits.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS)),
@@ -855,6 +866,7 @@ export const ClientSettingsPatch = Schema.Struct({
   chatFontSize: Schema.optionalKey(FontSize),
   statusLineFontSize: Schema.optionalKey(FontSize),
   codeFontSize: Schema.optionalKey(FontSize),
+  composerMetaFontSize: Schema.optionalKey(FontSize),
   inputFontSize: Schema.optionalKey(FontSize),
   messagePreviewLineLimits: Schema.optionalKey(MessagePreviewLineLimits),
   sidebarFontSize: Schema.optionalKey(FontSize),

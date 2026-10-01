@@ -1139,6 +1139,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.inputFontSize !== DEFAULT_UNIFIED_SETTINGS.inputFontSize
         ? ["Input font size"]
         : []),
+      ...(settings.composerMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.composerMetaFontSize
+        ? ["Composer metadata font size"]
+        : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
         : []),
@@ -1223,6 +1226,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatFontSize,
       settings.messagePreviewLineLimits,
       settings.codeFontSize,
+      settings.composerMetaFontSize,
       settings.statusLineFontSize,
       settings.inputFontSize,
       settings.confirmThreadArchive,

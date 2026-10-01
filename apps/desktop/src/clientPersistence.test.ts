@@ -62,6 +62,7 @@ const clientSettings: ClientSettings = {
   chatFontSize: 14,
   statusLineFontSize: 14,
   codeFontSize: 12,
+  composerMetaFontSize: 11,
   inputFontSize: 14,
   messagePreviewLineLimits: {
     normal: 10,

@@ -586,7 +586,7 @@ export function BranchToolbarBranchSelector({
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
         className={cn(
-          "min-w-0 max-w-full font-normal text-muted-foreground/70 text-xs! hover:text-foreground/80 active:scale-100",
+          "min-w-0 max-w-full font-normal text-muted-foreground/70 text-[length:var(--app-composer-meta-font-size)]! hover:text-foreground/80 active:scale-100",
           className,
         )}
         disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
