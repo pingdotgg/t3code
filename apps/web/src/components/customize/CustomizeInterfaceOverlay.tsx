@@ -3,7 +3,12 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useState }
 
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
-import { hasOpenCustomizePopup, preservesNativeCustomizeEscape } from "./customizeEdit.logic";
+import {
+  hasOpenCustomizePopup,
+  isCustomizeAboveModeTarget,
+  isCustomizeEditableTarget,
+  preservesNativeCustomizeEscape,
+} from "./customizeEdit.logic";
 import { CustomizeEditLayer } from "./CustomizeEditLayer";
 import { CustomizeHotspots } from "./CustomizeHotspots";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
@@ -47,7 +52,10 @@ function useCustomizeKeys(active: boolean, onEscape: () => void, onUndo: () => v
     if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      if (hasOpenCustomizePopup()) return;
+      const isUndo =
+        event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey) && !event.shiftKey;
+      if (event.key !== "Escape" && !isUndo) return;
+      if (isCustomizeAboveModeTarget(event.target) || hasOpenCustomizePopup()) return;
       if (event.key === "Escape") {
         if (preservesNativeCustomizeEscape(event.target)) return;
         event.preventDefault();
@@ -58,14 +66,10 @@ function useCustomizeKeys(active: boolean, onEscape: () => void, onUndo: () => v
         else onEscape();
         return;
       }
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target?.closest("input:not([type=range]), textarea, select, [contenteditable=true]"))
-        return;
-      if (event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
-        event.preventDefault();
-        event.stopPropagation();
-        onUndo();
-      }
+      if (isCustomizeEditableTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onUndo();
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);

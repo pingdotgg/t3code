@@ -1,3 +1,4 @@
+import type { InterfaceLayout } from "@t3tools/contracts";
 import {
   ArrowLeftIcon,
   ChevronLeftIcon,
@@ -45,11 +46,13 @@ import {
   type PlacedElement,
   type Rect,
   hasOpenCustomizePopup,
+  isCustomizeAboveModeTarget,
   isMovable,
+  moveCustomizeElementByKeyboard,
   readingOrder,
+  resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
-  resolveKeyboardMove,
   unionRect,
 } from "./customizeEdit.logic";
 import {
@@ -244,7 +247,8 @@ export function CustomizeEditLayer({
   // Keep focus on editing controls when a handle disappears or becomes disabled.
   useLayoutEffect(() => {
     const layer = layerRef.current;
-    if (!layer || hasOpenCustomizePopup()) return;
+    if (!layer || isCustomizeAboveModeTarget(document.activeElement) || hasOpenCustomizePopup())
+      return;
     if (
       !lastFocusRef.current ||
       !lastFocusRef.current.isConnected ||
@@ -264,8 +268,8 @@ export function CustomizeEditLayer({
   useEffect(() => {
     const layer = layerRef.current;
     if (!layer) return;
-    const isAboveMode = (target: Element) =>
-      Boolean(target.closest('[data-slot^="toast-"]')) || hasOpenCustomizePopup();
+    const isAboveMode = (target: EventTarget | null) =>
+      isCustomizeAboveModeTarget(target) || hasOpenCustomizePopup();
     const focusInside = () => {
       const target =
         lastFocusRef.current?.isConnected && !lastFocusRef.current.matches(":disabled")
@@ -290,9 +294,8 @@ export function CustomizeEditLayer({
         event.preventDefault();
     };
     const onTab = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Tab" || hasOpenCustomizePopup()) return;
-      const target = event.target;
-      if (target instanceof HTMLElement && isAboveMode(target)) return;
+      if (event.key !== "Tab" || event.defaultPrevented || event.isComposing) return;
+      if (isAboveMode(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       resolveCustomizeTabTarget(layer, document.activeElement, event.shiftKey)?.focus({
@@ -358,15 +361,11 @@ export function CustomizeEditLayer({
         : `Restored ${label} to position ${enabled.indexOf(id) + 1} of ${enabled.length}`,
     );
   };
-  const moveBefore = (
+  const announceMove = (
     layoutSurface: InterfaceSurfaceId,
     id: InterfaceElementId<InterfaceSurfaceId>,
-    beforeId: string | null,
+    next: InterfaceLayout,
   ) => {
-    const current = getClientSettings().interfaceLayout;
-    const next = moveSurfaceElementBefore(current, layoutSurface, id, beforeId);
-    if (next === current) return;
-    commitLayout((current) => moveSurfaceElementBefore(current, layoutSurface, id, beforeId));
     const resolved = resolveSurfaceLayout(layoutSurface, next);
     const hidden = resolved.hidden.has(id);
     const order = hidden
@@ -375,6 +374,17 @@ export function CustomizeEditLayer({
     announce(
       `Moved ${definitionOf(layoutSurface, id)?.label ?? id} to position ${order.indexOf(id) + 1} of ${order.length}${hidden ? ". Item remains hidden." : ""}`,
     );
+  };
+  const moveBefore = (
+    layoutSurface: InterfaceSurfaceId,
+    id: InterfaceElementId<InterfaceSurfaceId>,
+    beforeId: string | null,
+  ) => {
+    commitLayout((current) => {
+      const next = moveSurfaceElementBefore(current, layoutSurface, id, beforeId);
+      if (next !== current) announceMove(layoutSurface, id, next);
+      return next;
+    });
   };
 
   const dragRef = useRef<DragState | null>(null);
@@ -457,19 +467,26 @@ export function CustomizeEditLayer({
     }
     if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && movable(element)) {
       event.preventDefault();
-      // The saved order, not the last measurement, so a second press before
-      // the page re-lays out still steps from the element's new position.
-      const shownIds = new Set(sortableIn(element.surface).map((candidate) => candidate.id));
-      const order = resolveSurfaceLayout(
-        element.surface,
-        getClientSettings().interfaceLayout,
-      ).order.filter((id) => shownIds.has(id));
-      const move = resolveKeyboardMove(
-        order,
-        element.id,
-        event.key === "ArrowLeft" ? "left" : "right",
+      const measuredIds = new Set(
+        measurement.elements
+          .filter((candidate) => candidate.surface === element.surface)
+          .map((candidate) => candidate.id),
       );
-      if (move) moveBefore(element.surface, element.id, move.beforeId);
+      const direction = event.key === "ArrowLeft" ? "left" : "right";
+      // Resolve the destination inside the queue, after earlier edits, even
+      // while their settings writes are still waiting to persist.
+      commitLayout((current) => {
+        const next = moveCustomizeElementByKeyboard(
+          current,
+          element.surface,
+          element.id,
+          direction,
+          measuredIds,
+          legacySidebar,
+        );
+        if (next !== current) announceMove(element.surface, element.id, next);
+        return next;
+      });
     }
   };
 
@@ -538,8 +555,8 @@ export function CustomizeEditLayer({
     >
       <p id={instructionId} className="sr-only">
         Arrow keys move sortable items. Delete hides optional items. Escape cancels a drag or
-        returns to Customize. Tab moves between editing controls. Enter or Space opens the item's
-        shelf controls.
+        returns to Customize. Tab moves between editing controls. Enter or Space moves focus to the
+        item's controls in the list.
       </p>
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         <span key={announcement.sequence}>{announcement.text}</span>
@@ -606,17 +623,13 @@ export function CustomizeEditLayer({
                   onPointerCancel={cancelDrag}
                   onKeyDown={onKeyDown(element)}
                   onClick={(event) => {
-                    // Keyboard and assistive activation open the matching shelf controls.
+                    // Keyboard and assistive activation focus the matching list controls.
                     if (event.detail !== 0) return;
                     const row = [
                       ...(shelfRef.current?.querySelectorAll<HTMLElement>("[data-customize-row]") ??
                         []),
                     ].find((row) => row.dataset.customizeRow === key);
-                    (
-                      row?.querySelector<HTMLElement>(
-                        "button:not(:disabled), input:not(:disabled)",
-                      ) ?? row
-                    )?.focus();
+                    if (row) resolveCustomizeRowTarget(row).focus();
                   }}
                   className={cn(
                     "pointer-events-auto touch-none absolute inset-0 rounded-lg border outline-none transition-[background-color,border-color] duration-100 motion-reduce:transition-none",

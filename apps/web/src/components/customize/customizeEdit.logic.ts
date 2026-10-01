@@ -1,3 +1,13 @@
+import type { InterfaceLayout } from "@t3tools/contracts";
+
+import {
+  INTERFACE_SURFACES,
+  type InterfaceElementDefinition,
+  type InterfaceSurfaceId,
+  moveSurfaceElementBefore,
+  resolveSurfaceLayout,
+} from "../../interfaceLayout";
+
 /**
  * Geometry for editing a surface in place: where a dragged element would
  * land, and where the arrow keys move it. Elements on every editable surface
@@ -73,6 +83,32 @@ export function resolveKeyboardMove(
   return { beforeId: order[index + 2] ?? null };
 }
 
+/** Apply one key press to the latest queued layout, among visible movable controls. */
+export function moveCustomizeElementByKeyboard(
+  layout: InterfaceLayout,
+  surface: InterfaceSurfaceId,
+  activeId: string,
+  direction: "left" | "right",
+  measuredIds: ReadonlySet<string>,
+  legacySidebar: boolean,
+): InterfaceLayout {
+  const resolved = resolveSurfaceLayout(surface, layout);
+  const definitions: ReadonlyArray<InterfaceElementDefinition> = INTERFACE_SURFACES[surface];
+  const order = resolved.order.filter(
+    (id) =>
+      measuredIds.has(id) &&
+      !resolved.hidden.has(id) &&
+      isMovable(
+        surface,
+        id,
+        definitions.find((definition) => definition.id === id)?.sortable === true,
+        legacySidebar,
+      ),
+  );
+  const move = resolveKeyboardMove(order, activeId, direction);
+  return move ? moveSurfaceElementBefore(layout, surface, activeId, move.beforeId) : layout;
+}
+
 /** The smallest rect holding every non-empty rect, or null when all are empty. */
 export function unionRect(rects: ReadonlyArray<Rect>): Rect | null {
   const visible = rects.filter((rect) => rect.right - rect.left > 0 && rect.bottom - rect.top > 0);
@@ -100,43 +136,69 @@ export function readingOrder<T extends PlacedElement>(elements: ReadonlyArray<T>
   return ordered;
 }
 
+function customizeFocusableControls(root: HTMLElement): HTMLElement[] {
+  return [
+    ...root.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, a[href], [tabindex], [role="switch"]',
+    ),
+  ].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.matches(':disabled, [aria-disabled="true"], [data-disabled]') &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+      getComputedStyle(element).visibility !== "hidden" &&
+      element.getClientRects().length > 0,
+  );
+}
+
+/** The first visible control in an item's list row, or the row when it has none. */
+export function resolveCustomizeRowTarget(row: HTMLElement): HTMLElement {
+  return customizeFocusableControls(row)[0] ?? row;
+}
+
 /** The next editing control, with handles ordered as they appear on the canvas. */
 export function resolveCustomizeTabTarget(
   layer: HTMLElement,
   active: Element | null,
   backwards: boolean,
 ): HTMLElement | null {
-  const controls = [
-    ...layer.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]"),
-  ]
-    .filter(
-      (element) =>
-        element.tabIndex >= 0 &&
-        !element.matches(':disabled, [aria-disabled="true"]') &&
-        !element.closest("[hidden], [inert]") &&
-        getComputedStyle(element).visibility !== "hidden" &&
-        element.getClientRects().length > 0,
-    )
-    .sort((a, b) => {
-      const order = (element: HTMLElement) => {
-        const value =
-          element.closest<HTMLElement>("[data-customize-order]")?.dataset.customizeOrder;
-        return value === undefined ? Infinity : Number(value);
-      };
-      return order(a) - order(b);
-    });
+  const controls = customizeFocusableControls(layer).sort((a, b) => {
+    const order = (element: HTMLElement) => {
+      const value = element.closest<HTMLElement>("[data-customize-order]")?.dataset.customizeOrder;
+      return value === undefined ? Infinity : Number(value);
+    };
+    return order(a) - order(b);
+  });
   const index = controls.findIndex((element) => element === active);
   if (index === -1) return (backwards ? controls.at(-1) : controls[0]) ?? null;
   return controls[(index + (backwards ? -1 : 1) + controls.length) % controls.length] ?? null;
+}
+
+/** App fields retain native editing shortcuts, including inherited contenteditable. */
+export function isCustomizeEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("input:not([type=range]), textarea, select")) return true;
+  if (target instanceof HTMLElement && typeof target.isContentEditable === "boolean")
+    return target.isContentEditable;
+  const editor = target.closest<HTMLElement>("[contenteditable]");
+  return (
+    !!editor && (editor.isContentEditable ?? editor.getAttribute("contenteditable") !== "false")
+  );
+}
+
+/** These controls render above the mode and keep their own event handling. */
+export function isCustomizeAboveModeTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest('[data-theme-editor-panel], [data-slot^="toast-"]')
+  );
 }
 
 /** Editing an app field keeps its native Escape behavior; mode controls use Escape to exit. */
 export function preservesNativeCustomizeEscape(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
-    !!target.closest(
-      "input:not([type=range]), textarea, select, [contenteditable]:not([contenteditable=false])",
-    ) &&
+    isCustomizeEditableTarget(target) &&
     !target.closest("[data-customize-popover], [data-customize-edit]")
   );
 }
@@ -145,7 +207,7 @@ export function preservesNativeCustomizeEscape(target: EventTarget | null): bool
 export function hasOpenCustomizePopup(): boolean {
   return [
     ...document.querySelectorAll<HTMLElement>(
-      '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], [data-open][role="menu"], [data-open][role="listbox"], [data-slot$="-popup"]:not([data-slot="tooltip-popup"])',
+      '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], [data-open][role="menu"], [data-open][role="listbox"], [data-slot$="-popup"]:not([data-slot="tooltip-popup"]):not([data-slot="toast-popup"])',
     ),
   ].some((element) => {
     if (element.matches("[data-customize-popover]")) return false;

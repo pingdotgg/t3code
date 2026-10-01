@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { resolveSurfaceLayout } from "../../interfaceLayout";
 import {
   type PlacedElement,
   hasOpenCustomizePopup,
+  isCustomizeAboveModeTarget,
+  isCustomizeEditableTarget,
   isMovable,
+  moveCustomizeElementByKeyboard,
   preservesNativeCustomizeEscape,
   readingOrder,
+  resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
   resolveKeyboardMove,
@@ -55,6 +60,82 @@ describe("resolveKeyboardMove", () => {
   it("stops at either edge", () => {
     expect(resolveKeyboardMove(order, "scripts", "left")).toBeNull();
     expect(resolveKeyboardMove(order, "git", "right")).toBeNull();
+  });
+});
+
+describe("moveCustomizeElementByKeyboard", () => {
+  const measuredIds = new Set([
+    "project",
+    "status",
+    "branch",
+    "terminal",
+    "pullRequest",
+    "environment",
+    "provider",
+  ]);
+  const move = (
+    layout: Parameters<typeof moveCustomizeElementByKeyboard>[0],
+    direction: "left" | "right",
+  ) => moveCustomizeElementByKeyboard(layout, "threadRow", "branch", direction, measuredIds, false);
+
+  it("applies repeated right presses to an evolving layout before settings persist", () => {
+    const first = move({}, "right");
+    const second = move(first, "right");
+    expect(resolveSurfaceLayout("threadRow", second).order).toEqual([
+      "project",
+      "status",
+      "terminal",
+      "pullRequest",
+      "branch",
+      "environment",
+      "provider",
+    ]);
+  });
+
+  it("applies a left press after a right press, even when the original layout was at the left edge", () => {
+    const first = move({}, "right");
+    const second = move(first, "left");
+    expect(resolveSurfaceLayout("threadRow", second).order).toEqual(
+      resolveSurfaceLayout("threadRow", {}).order,
+    );
+  });
+
+  it("filters fixed, unmeasured, hidden and legacy-fixed controls using the current layout", () => {
+    const layout = { threadRow: { order: [], hidden: ["terminal"] } };
+    const next = moveCustomizeElementByKeyboard(
+      layout,
+      "threadRow",
+      "branch",
+      "right",
+      new Set([...measuredIds].filter((id) => id !== "environment")),
+      true,
+    );
+    expect(resolveSurfaceLayout("threadRow", next).order).toEqual([
+      "project",
+      "status",
+      "terminal",
+      "pullRequest",
+      "environment",
+      "provider",
+      "branch",
+    ]);
+    expect(resolveSurfaceLayout("threadRow", next).hidden.has("terminal")).toBe(true);
+    expect(
+      moveCustomizeElementByKeyboard(layout, "threadRow", "terminal", "right", measuredIds, false),
+    ).toBe(layout);
+    expect(
+      moveCustomizeElementByKeyboard(layout, "threadRow", "project", "right", measuredIds, false),
+    ).toBe(layout);
+    expect(
+      moveCustomizeElementByKeyboard(
+        layout,
+        "threadRow",
+        "pullRequest",
+        "right",
+        measuredIds,
+        true,
+      ),
+    ).toBe(layout);
   });
 });
 
@@ -192,6 +273,13 @@ describe("hasOpenCustomizePopup", () => {
     element.setAttribute("data-slot", "tooltip-popup");
     expect(hasOpenCustomizePopup()).toBe(false);
   });
+
+  it("keeps customize shortcuts active while an anchored toast is visible", () => {
+    const element = popup("presentation");
+    element.removeAttribute("data-open");
+    element.setAttribute("data-slot", "toast-popup");
+    expect(hasOpenCustomizePopup()).toBe(false);
+  });
 });
 
 describe("resolveCustomizeTabTarget", () => {
@@ -243,11 +331,90 @@ describe("resolveCustomizeTabTarget", () => {
     add().tabIndex = -1;
     add().style.visibility = "hidden";
     add().setAttribute("aria-disabled", "true");
+    add().setAttribute("aria-hidden", "true");
+    add().setAttribute("data-disabled", "");
     const unpainted = add();
     vi.mocked(unpainted.getClientRects).mockReturnValue(Object.assign([], { item: () => null }));
     expect(resolveCustomizeTabTarget(layer, leftHandle, false)).toBe(leftHandle);
     leftHandle.disabled = true;
     expect(resolveCustomizeTabTarget(layer, document.body, false)).toBeNull();
+  });
+
+  it("focuses a switch-only row's visible switch instead of its hidden checkbox", () => {
+    const row = document.createElement("li");
+    row.tabIndex = -1;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.tabIndex = -1;
+    checkbox.setAttribute("aria-hidden", "true");
+    const toggle = document.createElement("span");
+    toggle.setAttribute("role", "switch");
+    toggle.tabIndex = 0;
+    row.append(checkbox, toggle);
+    document.body.append(row);
+    const rect = new DOMRect(0, 0, 100, 100);
+    for (const element of [checkbox, toggle]) {
+      vi.spyOn(element, "getClientRects").mockReturnValue(
+        Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) }),
+      );
+    }
+    expect(resolveCustomizeRowTarget(row)).toBe(toggle);
+    resolveCustomizeRowTarget(row).focus();
+    expect(document.activeElement).toBe(toggle);
+    expect(resolveCustomizeTabTarget(row, document.body, false)).toBe(toggle);
+    toggle.setAttribute("data-disabled", "");
+    expect(resolveCustomizeRowTarget(row)).toBe(row);
+  });
+});
+
+describe("isCustomizeAboveModeTarget", () => {
+  it("yields only for events inside the theme editor or toast, even when the panel is open", () => {
+    const panel = document.createElement("div");
+    panel.setAttribute("data-theme-editor-panel", "");
+    const button = document.createElement("button");
+    panel.append(button);
+    document.body.append(panel);
+    try {
+      expect(isCustomizeAboveModeTarget(button)).toBe(true);
+      expect(isCustomizeAboveModeTarget(document.createElement("button"))).toBe(false);
+      expect(isCustomizeAboveModeTarget(null)).toBe(false);
+      const toast = document.createElement("div");
+      toast.setAttribute("data-slot", "toast-popup");
+      expect(isCustomizeAboveModeTarget(toast)).toBe(true);
+    } finally {
+      panel.remove();
+    }
+  });
+});
+
+describe("isCustomizeEditableTarget", () => {
+  it.each(["", "true", "plaintext-only"])(
+    "retains editing shortcuts for contenteditable=%s and descendants",
+    (value) => {
+      const editor = document.createElement("div");
+      editor.setAttribute("contenteditable", value);
+      const span = document.createElement("span");
+      editor.append(span);
+      expect(isCustomizeEditableTarget(editor)).toBe(true);
+      expect(isCustomizeEditableTarget(span)).toBe(true);
+      span.setAttribute("contenteditable", "false");
+      expect(isCustomizeEditableTarget(span)).toBe(false);
+    },
+  );
+
+  it("uses the browser's inherited editability when available", () => {
+    const editor = document.createElement("div");
+    Object.defineProperty(editor, "isContentEditable", { value: true });
+    expect(isCustomizeEditableTarget(editor)).toBe(true);
+  });
+
+  it("preserves field shortcuts but allows mode undo from range controls", () => {
+    for (const tag of ["input", "textarea", "select"]) {
+      expect(isCustomizeEditableTarget(document.createElement(tag))).toBe(true);
+    }
+    const range = document.createElement("input");
+    range.type = "range";
+    expect(isCustomizeEditableTarget(range)).toBe(false);
   });
 });
 

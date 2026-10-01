@@ -1,5 +1,6 @@
 import type { ClientSettings, ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
 import * as Struct from "effect/Struct";
+import type { Mutable } from "effect/Types";
 import { useMemo } from "react";
 
 import {
@@ -45,10 +46,43 @@ function afterHydration(run: (settingsLoaded: boolean) => void): void {
 // A write can sit deferred behind an earlier one that is still persisting, so
 // the snapshot may not show it yet. Reads overlay the mode's own unpublished
 // writes, so the next action builds on them rather than on a stale value.
-let unpublished: ClientSettingsPatch = {};
+// Each key is owned by the write that set it and leaves the overlay when that
+// write settles, or at once if the write published synchronously.
+const unpublished: Mutable<ClientSettingsPatch> = {};
+const unpublishedOwners = new Map<keyof ClientSettingsPatch, object>();
 
 function currentSettings(): ClientSettings {
   return { ...getClientSettings(), ...unpublished };
+}
+
+function copyPatchValue<K extends keyof ClientSettingsPatch>(
+  to: Mutable<ClientSettingsPatch>,
+  from: ClientSettingsPatch,
+  key: K,
+) {
+  const value = from[key];
+  if (value !== undefined) to[key] = value;
+}
+
+function trackWrite(patch: ClientSettingsPatch, written: Promise<void>): void {
+  const owner = {};
+  const published = getClientSettings();
+  for (const key of Struct.keys(patch)) {
+    if (JSON.stringify(patch[key]) === JSON.stringify(published[key])) {
+      delete unpublished[key];
+      unpublishedOwners.delete(key);
+    } else {
+      copyPatchValue(unpublished, patch, key);
+      unpublishedOwners.set(key, owner);
+    }
+  }
+  void written.finally(() => {
+    for (const key of Struct.keys(patch)) {
+      if (unpublishedOwners.get(key) !== owner) continue;
+      delete unpublished[key];
+      unpublishedOwners.delete(key);
+    }
+  });
 }
 
 function settingsNotLoaded(): void {
@@ -69,13 +103,7 @@ export function createCustomizeActions(deps: {
 }) {
   const store = () => useCustomizeInterfaceStore.getState();
 
-  const write = (patch: ClientSettingsPatch) => {
-    const pending = { ...unpublished, ...patch };
-    unpublished = pending;
-    void deps.updateSettings(patch).finally(() => {
-      if (unpublished === pending) unpublished = {};
-    });
-  };
+  const write = (patch: ClientSettingsPatch) => trackWrite(patch, deps.updateSettings(patch));
 
   // Writes a step's values back, touching only the keys it holds.
   const restore = (step: CustomizeStep) => {

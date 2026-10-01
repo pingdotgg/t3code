@@ -49,9 +49,10 @@ function createLocalStorageStub(): Storage {
 
 const refreshTheme = vi.fn();
 let writes: Array<Promise<void>> = [];
+let persist = async (): Promise<void> => undefined;
 const actions = createCustomizeActions({
   updateSettings: (patch) => {
-    const write = persistClientSettingsPatch(patch, async () => undefined);
+    const write = persistClientSettingsPatch(patch, () => persist());
     writes.push(write);
     return write;
   },
@@ -90,6 +91,7 @@ beforeEach(() => {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   refreshTheme.mockClear();
   writes = [];
+  persist = async () => undefined;
   store().close();
   store().open();
 });
@@ -272,5 +274,38 @@ describe("Customize interface history", () => {
     await settled();
     expect(getClientSettings().chatWidth).toBe("comfortable");
     expect(store().history).toEqual([]);
+  });
+
+  it("reads a value changed elsewhere once the mode's own write has published", async () => {
+    let saveWidth = () => {};
+    const widthSaved = new Promise<void>((done) => {
+      saveWidth = done;
+    });
+    let release = () => {};
+    const blocked = new Promise<void>((done) => {
+      release = done;
+    });
+    // The width saves only after the layout edit is made; that edit stalls.
+    let saves = 0;
+    persist = () => (++saves === 1 ? widthSaved : blocked);
+    actions.commit({ chatWidth: "wide" });
+    actions.commitLayout(hide("terminal"));
+    await customizeActionsSettled();
+    saveWidth();
+    await writes[0];
+
+    store().close();
+    // Settings publishes at once; its save queues behind the stalled one.
+    writes.push(persistClientSettingsPatch({ chatWidth: "full" }, async () => undefined));
+    store().open();
+    actions.commit({ chatWidth: "comfortable" });
+    await customizeActionsSettled();
+    expect(store().history).toEqual([{ settings: { chatWidth: "full" }, theme: {} }]);
+
+    actions.undo();
+    await customizeActionsSettled();
+    expect(getClientSettings().chatWidth).toBe("full");
+    release();
+    await settled();
   });
 });
