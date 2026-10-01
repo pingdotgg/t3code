@@ -3991,7 +3991,7 @@ describe("ClaudeAdapterLive", () => {
 
       const taskEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.type.startsWith("task.")),
-        Stream.take(2),
+        Stream.take(3),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -4025,24 +4025,27 @@ describe("ClaudeAdapterLive", () => {
         session_id: "sdk-session",
       } as unknown as SDKMessage);
       // The subagent's assistant snapshot carries the authoritative API
-      // model id, which refines the linkage on later rows.
+      // model id. The correction is pushed at once, not on the next task row.
+      // Its tool calls arrive only here, so a task one of them launches must
+      // still resolve to this subagent as owner.
       harness.query.emit({
         type: "assistant",
         parent_tool_use_id: "toolu_agent_m",
         message: {
           model: SYNTHETIC_SUBAGENT_MODEL,
-          content: [],
+          content: [{ type: "tool_use", id: "toolu_nested", name: "Skill", input: {} }],
         },
         uuid: "subagent-snapshot-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
       harness.query.emit({
         type: "system",
-        subtype: "task_progress",
-        task_id: "task-model",
-        description: "Agent M",
-        usage: { total_tokens: 100, tool_uses: 1, duration_ms: 10 },
-        uuid: "task-model-progress-uuid",
+        subtype: "task_started",
+        task_id: "task-nested",
+        description: "Nested",
+        task_type: "local_agent",
+        tool_use_id: "toolu_nested",
+        uuid: "task-nested-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
 
@@ -4053,11 +4056,18 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(started.payload.model, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
         assert.equal(started.payload.effort, "max");
       }
-      const progress = taskEvents[1];
-      assert.equal(progress?.type, "task.progress");
-      if (progress?.type === "task.progress") {
-        assert.equal(progress.payload.model, SYNTHETIC_SUBAGENT_MODEL);
-        assert.equal(progress.payload.effort, "max");
+      const refined = taskEvents[1];
+      assert.equal(refined?.type, "task.updated");
+      if (refined?.type === "task.updated") {
+        assert.equal(refined.payload.taskId, "task-model");
+        assert.equal(refined.payload.model, SYNTHETIC_SUBAGENT_MODEL);
+        assert.equal(refined.payload.status, undefined);
+      }
+      const nested = taskEvents[2];
+      assert.equal(nested?.type, "task.started");
+      if (nested?.type === "task.started") {
+        assert.equal(nested.payload.agentId, "task-model");
+        assert.equal(nested.payload.model, SYNTHETIC_SUBAGENT_MODEL);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
