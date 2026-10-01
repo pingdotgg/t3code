@@ -5,6 +5,8 @@ import {
   type OrchestrationReadModel,
   type ThreadId,
 } from "@t3tools/contracts";
+import path from "node:path";
+
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { sameThreadPullRequest, threadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { Cause, Clock, Effect, Exit, FileSystem, Layer, Option, Schedule, Stream } from "effect";
@@ -20,6 +22,7 @@ import {
   WorktreeCleanupJobRepository,
 } from "../../persistence/Services/WorktreeCleanupJobs.ts";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
+import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { isRemovableArchiveWorktreePath } from "../archiveWorktreeCleanup.ts";
@@ -70,6 +73,11 @@ export function resolvePullRequestFromCwds(
 const MAX_WORKTREE_CLEANUP_ATTEMPTS = 5;
 const CLEANUP_RECONCILIATION_INTERVAL = "5 minutes";
 const CLEANUP_DUE_SWEEP_INTERVAL = "1 minute";
+
+/** Sibling directory that holds detached worktrees until their bytes are deleted. */
+export function worktreeTrashDirectory(canonicalWorktreePath: string): string {
+  return path.join(path.dirname(canonicalWorktreePath), ".t3-worktree-trash");
+}
 
 export function groupOpenPullRequestAssociationRefreshes(
   readModel: OrchestrationReadModel,
@@ -194,6 +202,7 @@ const make = Effect.gen(function* () {
   const checkoutCoordinator = yield* CheckoutCoordinator;
   const gitManager = yield* GitManager;
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+  const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
   const fileSystem = yield* FileSystem.FileSystem;
   const worktreeCleanupJobs = yield* WorktreeCleanupJobRepository;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
@@ -213,6 +222,45 @@ const make = Effect.gen(function* () {
 
   const closeThreadTerminalsEffect = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     terminalManager.close({ threadId, deleteHistory: true });
+
+  // Runs outside every lock: the checkout is already detached from Git, so a
+  // failure only leaves bytes for the startup trash sweep to reclaim.
+  const deleteDetachedWorktree = (detachedPath: string) =>
+    fileSystem.remove(detachedPath, { recursive: true, force: true }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to delete detached worktree; startup sweep will retry", {
+          detachedPath,
+          error: error.message,
+        }),
+      ),
+    );
+
+  const sweepWorktreeTrash = Effect.gen(function* () {
+    const jobs = yield* worktreeCleanupJobs.list();
+    const trashDirectories = new Set(
+      jobs.map((job) => worktreeTrashDirectory(job.canonicalWorktreePath)),
+    );
+    yield* Effect.forEach(
+      trashDirectories,
+      (trashDirectory) =>
+        fileSystem.readDirectory(trashDirectory).pipe(
+          Effect.catch(() => Effect.succeed([] as Array<string>)),
+          // Only entries present now: concurrent cleanups detach under fresh names.
+          Effect.flatMap((entries) =>
+            Effect.forEach(
+              entries,
+              (entry) => deleteDetachedWorktree(path.join(trashDirectory, entry)),
+              { concurrency: 1, discard: true },
+            ),
+          ),
+        ),
+      { concurrency: 1, discard: true },
+    );
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("worktree trash sweep failed", { cause: Cause.pretty(cause) }),
+    ),
+  );
 
   const closeThreadTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -357,85 +405,9 @@ const make = Effect.gen(function* () {
         yield* worktreeCleanupJobs.cancelByThreadId(threadId);
         return false;
       }
-      const pullRequest = cleanupThread.pullRequest;
-      if (pullRequest == null) {
-        yield* worktreeCleanupJobs.markNeedsAttention({
-          threadId,
-          reason: "no-pull-request",
-        });
-        return false;
-      }
-
-      const resolved = yield* gitManager
-        .resolvePullRequest({
-          cwd: cleanup.cwd,
-          reference: String(pullRequest.number),
-        })
-        .pipe(
-          Effect.catch((error) =>
-            deferCleanup(
-              threadId,
-              "pull-request-unavailable",
-              error instanceof Error ? error.message : String(error),
-              cleanup.attemptCount,
-            ).pipe(Effect.as(null)),
-          ),
-        );
-      if (resolved === null) {
-        return false;
-      }
-      if (resolved.pullRequest.state !== "merged") {
-        if (resolved.pullRequest.state === "open") {
-          yield* deferCleanup(threadId, "pull-request-not-merged", undefined, cleanup.attemptCount);
-        } else {
-          yield* worktreeCleanupJobs.markNeedsAttention({
-            threadId,
-            reason: "pull-request-closed-unmerged",
-          });
-        }
-        return false;
-      }
-      if (
-        cleanupThread.branch === null ||
-        resolved.pullRequest.headBranch !== cleanupThread.branch
-      ) {
-        yield* worktreeCleanupJobs.markNeedsAttention({
-          threadId,
-          reason: "pull-request-worktree-branch-mismatch",
-        });
-        return false;
-      }
-      if (
-        pullRequest.state !== resolved.pullRequest.state ||
-        pullRequest.title !== resolved.pullRequest.title ||
-        pullRequest.url !== resolved.pullRequest.url ||
-        pullRequest.baseBranch !== resolved.pullRequest.baseBranch ||
-        pullRequest.headBranch !== resolved.pullRequest.headBranch
-      ) {
-        yield* orchestrationEngine
-          .dispatch({
-            type: "thread.meta.update",
-            commandId: CommandId.make(crypto.randomUUID()),
-            threadId,
-            pullRequest: {
-              ...pullRequest,
-              number: resolved.pullRequest.number,
-              title: resolved.pullRequest.title,
-              url: resolved.pullRequest.url,
-              baseBranch: resolved.pullRequest.baseBranch,
-              headBranch: resolved.pullRequest.headBranch,
-              state: resolved.pullRequest.state,
-            },
-          })
-          .pipe(
-            Effect.catch((error) =>
-              Effect.logDebug("failed to persist refreshed pull request before cleanup", {
-                threadId,
-                error: error instanceof Error ? error.message : String(error),
-              }),
-            ),
-          );
-      }
+      // Pull request state is deliberately irrelevant: removal keeps the
+      // branch ref (so commits survive), refuses dirty or untracked work, and
+      // unarchive restores the checkout from that branch.
     }
 
     const registration = yield* inspectRegisteredWorktree(cleanup);
@@ -597,7 +569,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* checkoutCoordinator.withCheckout(
+      const detachedPath = yield* checkoutCoordinator.withCheckout(
         cleanup.cwd,
         Effect.gen(function* () {
           const registeredWorktrees = yield* git.listRegisteredWorktrees(cleanup.cwd);
@@ -606,7 +578,7 @@ const make = Effect.gen(function* () {
               threadId: cleanup.threadId,
               reason: "repository-unavailable",
             });
-            return;
+            return null;
           }
           const canonicalWorktrees = yield* Effect.forEach(
             registeredWorktrees.worktrees,
@@ -621,24 +593,26 @@ const make = Effect.gen(function* () {
           );
           const registeredWorktree = canonicalWorktrees.find(({ path }) => path === canonicalPath);
           const exists = yield* fileSystem.exists(canonicalPath);
-          if (!exists && registeredWorktree === undefined) {
+          if (!exists) {
+            // Nothing left on disk to lose (including a crash after detaching);
+            // prune drops any stale registration.
             yield* git.pruneWorktrees(cleanup.cwd);
             yield* worktreeCleanupJobs.markCompleted({ threadId: cleanup.threadId });
-            return;
+            return null;
           }
           if (registeredWorktree === undefined) {
             yield* worktreeCleanupJobs.markNeedsAttention({
               threadId: cleanup.threadId,
               reason: "worktree-registration-mismatch",
             });
-            return;
+            return null;
           }
           if (preflight.branch === null || registeredWorktree.branch !== preflight.branch) {
             yield* worktreeCleanupJobs.markNeedsAttention({
               threadId: cleanup.threadId,
               reason: "worktree-branch-mismatch",
             });
-            return;
+            return null;
           }
           const isClean = yield* git.isWorktreeCleanForRemoval(canonicalPath);
           if (!isClean) {
@@ -648,14 +622,19 @@ const make = Effect.gen(function* () {
               undefined,
               cleanup.attemptCount,
             );
-            return;
+            return null;
           }
-          yield* git.removeWorktree({
-            cwd: cleanup.cwd,
-            path: canonicalPath,
-          });
-          yield* worktreeCleanupJobs.markCompleted({ threadId: cleanup.threadId });
+          // Detach with an O(1) rename so the repository checkout lock is not held
+          // while multi-gigabyte dependency trees are deleted. The branch ref is
+          // untouched, so committed work stays reachable.
+          const trashPath = path.join(
+            worktreeTrashDirectory(canonicalPath),
+            `${path.basename(canonicalPath)}-${crypto.randomUUID()}`,
+          );
+          yield* fileSystem.makeDirectory(path.dirname(trashPath), { recursive: true });
+          yield* fileSystem.rename(canonicalPath, trashPath);
           yield* git.pruneWorktrees(cleanup.cwd);
+          yield* worktreeCleanupJobs.markCompleted({ threadId: cleanup.threadId });
           yield* gitStatusBroadcaster
             .refreshStatus(cleanup.cwd)
             .pipe(Effect.ignoreCause({ log: true }));
@@ -663,8 +642,12 @@ const make = Effect.gen(function* () {
             threadId: cleanup.threadId,
             worktreePath: canonicalPath,
           });
+          return trashPath;
         }),
       );
+      if (detachedPath !== null) {
+        yield* deleteDetachedWorktree(detachedPath);
+      }
     });
 
   const processWorktreeCleanup = Effect.fn("processWorktreeCleanup")(function* (
@@ -866,6 +849,55 @@ const make = Effect.gen(function* () {
     const stillExists = yield* fileSystem.exists(canonicalPath);
     if (stillExists) {
       return;
+    }
+
+    // Archive cleanup removes clean checkouts but keeps their branch, so bring
+    // the chat back on the same branch and path instead of losing its workspace.
+    const project = thread
+      ? readModel.projects.find((entry) => entry.id === thread.projectId)
+      : undefined;
+    if (thread?.branch && project !== undefined && project.deletedAt === null) {
+      const restored = yield* checkoutCoordinator
+        .withCheckout(
+          project.workspaceRoot,
+          git.pruneWorktrees(project.workspaceRoot).pipe(
+            Effect.andThen(
+              git.createWorktree({
+                cwd: project.workspaceRoot,
+                branch: thread.branch,
+                path: worktreePath,
+              }),
+            ),
+          ),
+        )
+        .pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("failed to restore archived worktree on unarchive", {
+              threadId,
+              worktreePath: canonicalPath,
+              error: error.message,
+            }).pipe(Effect.as(false)),
+          ),
+        );
+      if (restored) {
+        yield* projectSetupScriptRunner
+          .runForThread({
+            threadId,
+            projectId: project.id,
+            projectCwd: project.workspaceRoot,
+            worktreePath,
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("setup script failed after restoring worktree", {
+                threadId,
+                error: error.message,
+              }),
+            ),
+          );
+        return;
+      }
     }
 
     // Clear the orchestration read model via a domain event so later bindings
@@ -1127,6 +1159,7 @@ const make = Effect.gen(function* () {
 
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
     yield* recoverInterruptedRemovals;
+    yield* Effect.forkScoped(sweepWorktreeTrash);
     yield* discoverArchivedCleanupCandidates();
     yield* enqueueDueWorktreeCleanups();
     yield* Effect.forkScoped(
