@@ -132,6 +132,7 @@ export class SharedBrowserChatGPT {
     const inspect = () =>
       invoke<{
         readonly composer: boolean;
+        readonly composerSelector?: string;
         readonly login: boolean;
         readonly challenge: boolean;
         readonly assistantCount: number;
@@ -141,13 +142,29 @@ export class SharedBrowserChatGPT {
         expression: `(() => {
           const body = document.body?.innerText ?? "";
           const title = document.title ?? "";
-          const composer = !!document.querySelector('[contenteditable="true"][role="textbox"], #prompt-textarea, textarea');
-          const login = !!document.querySelector('[data-testid="login-button"], a[href*="/auth/login"]');
+          const visible = (element) => {
+            const style = getComputedStyle(element);
+            return element.getClientRects().length > 0 && style.display !== "none" && style.visibility !== "hidden";
+          };
+          const composerElement = [
+            document.querySelector("#prompt-textarea"),
+            document.querySelector('[contenteditable="true"][role="textbox"]'),
+            document.querySelector("textarea"),
+          ].find((element) => element && visible(element) && !element.disabled && !element.readOnly);
+          const composer = !!composerElement;
+          const composerSelector = composerElement?.id === "prompt-textarea"
+            ? "#prompt-textarea"
+            : composerElement?.matches('[contenteditable="true"][role="textbox"]')
+              ? '[contenteditable="true"][role="textbox"]'
+              : composerElement instanceof HTMLTextAreaElement
+                ? "textarea"
+                : undefined;
+          const login = [...document.querySelectorAll('[data-testid="login-button"], a[href*="/auth/login"]')].some(visible);
           const challenge = /checking your browser|verify you are human|cloudflare|security check|just a moment|attention required|turnstile/i.test(title + " " + body.slice(0, 1200));
           const answers = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
           const last = answers.at(-1);
           const generating = !!document.querySelector('[data-testid="stop-button"], button[aria-label*="Stop"]');
-          return { composer, login, challenge, assistantCount: answers.length, answer: last?.innerText ?? "", generating };
+          return { composer, composerSelector, login, challenge, assistantCount: answers.length, answer: last?.innerText ?? "", generating };
         })()`,
         awaitPromise: true,
         returnByValue: true,
@@ -165,7 +182,12 @@ export class SharedBrowserChatGPT {
         false,
       );
 
-    await invoke("type", { selector: "#prompt-textarea", text: prompt, clear: true });
+    if (!ready.composerSelector)
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT’s message box is not available in the visible T3 browser. Sign in there, then retry this turn.",
+        false,
+      );
+    await invoke("type", { selector: ready.composerSelector, text: prompt, clear: true });
     signal.throwIfAborted();
     await invoke("press", { key: "Enter", timeoutMs: 15_000 });
     const before = ready.assistantCount;
