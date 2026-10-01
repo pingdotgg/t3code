@@ -2,6 +2,7 @@ import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Encoding from "effect/Encoding";
 import { extendTailwindMerge } from "tailwind-merge";
+import { isMacPlatform } from "@t3tools/ghostty-terminal/platform";
 import { DraftId } from "../composerDraftStore";
 
 // The theme's extra font sizes (index.css). Unregistered, tailwind-merge reads
@@ -12,9 +13,7 @@ export function cn(...inputs: CxOptions) {
   return twMerge(cx(inputs));
 }
 
-export function isMacPlatform(platform: string): boolean {
-  return /mac|iphone|ipad|ipod/i.test(platform);
-}
+export { isMacPlatform };
 
 export function isWindowsPlatform(platform: string): boolean {
   return /^win(dows)?/i.test(platform);

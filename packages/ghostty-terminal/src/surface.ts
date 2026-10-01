@@ -1,21 +1,21 @@
-import { isMacPlatform } from "../../lib/utils";
-import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
-import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
+import { isMacPlatform } from "./platform.ts";
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "./selection.ts";
+import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "./terminal-links.ts";
 import {
   GhosttyTerminalCore,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
-} from "./core";
+} from "./core.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
   type GhosttyCellRange,
   type GhosttyCellMetrics,
-} from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
-import { isMonospaceFamily } from "../../appearanceFonts";
+} from "./renderer.ts";
+import { isMonospaceFamily } from "./monospaceFonts.ts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -59,7 +59,8 @@ let symbolsFontLoad: Promise<void> | null = null;
  * composes with any text face without changing metrics — prompt symbols and
  * devicons render even on machines without a locally installed Nerd Font.
  */
-function ensureTerminalSymbolsFont(): Promise<void> {
+function ensureTerminalSymbolsFont(symbolsFontUrl: string | undefined): Promise<void> {
+  if (symbolsFontUrl === undefined) return Promise.resolve();
   if (symbolsFontLoad !== null) return symbolsFontLoad;
   symbolsFontLoad = (async () => {
     try {
@@ -538,6 +539,14 @@ export interface GhosttySelectionPosition {
 }
 
 export interface GhosttyTerminalSurfaceOptions {
+  /**
+   * The shared libghostty-vt instance; the surface allocates its terminal
+   * inside it. A pending load is awaited after the mount paints its
+   * background, so the canvas never waits on the WASM fetch.
+   */
+  readonly runtime: GhosttyRuntime | Promise<GhosttyRuntime>;
+  /** URL of the bundled symbols-only Nerd Font (`assets/`); skipped when absent. */
+  readonly symbolsFontUrl?: string;
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
   /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
@@ -623,7 +632,14 @@ export class GhosttyTerminalSurface {
   private resizeNotified = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
-  private readonly suppressedKeyCodes = new Set<string>();
+  /**
+   * Codes whose latest press this surface encoded to the PTY. Only those get
+   * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
+   * host dispatcher that stopped the keydown before it reached the input —
+   * must not leak a Kitty report-event-types release the shell never saw
+   * pressed.
+   */
+  private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
@@ -677,6 +693,10 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
+    // Observe a pending runtime load now: a failure while the fonts load must
+    // not surface as an unhandled rejection. It rethrows at the await below.
+    const runtime = Promise.resolve(options.runtime);
+    runtime.catch(() => {});
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
@@ -715,7 +735,7 @@ export class GhosttyTerminalSurface {
     try {
       // Cell metrics must come from the faces that will render; measuring before
       // the bundled webfonts load would size the grid from a fallback font.
-      await ensureTerminalSymbolsFont();
+      await ensureTerminalSymbolsFont(options.symbolsFontUrl);
     } catch {
       // Metrics fall back to whichever faces are already available.
     }
@@ -723,6 +743,7 @@ export class GhosttyTerminalSurface {
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
+      await runtime,
       grid.cols,
       grid.rows,
       metrics.width,
@@ -782,6 +803,42 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  /**
+   * Bracket a whole remount replay (base + retained tail). Terminal queries
+   * inside replayed bytes were already answered by the previous parser, so
+   * the PTY writer stays detached for the bracket — the process is not
+   * re-asking and a duplicate reply confuses the shell.
+   */
+  beginReplay(): void {
+    if (this.disposed) return;
+    this.core.beginReplay();
+  }
+
+  endReplay(): void {
+    if (this.disposed) return;
+    this.core.endReplay();
+    this.synchronizeMouseTrackingState();
+  }
+
+  /**
+   * Host history clear: the server dropped retained output only — the
+   * process and its negotiated modes keep running. ED2+ED3 erase the
+   * viewport and scrollback without the RIS that resetAndWrite performs, so
+   * application-cursor, bracketed-paste, kitty-keyboard, and mouse state
+   * survive and input keeps encoding the way the process expects.
+   */
+  clearScreen(): void {
+    if (this.disposed) return;
+    this.core.clearScreen();
+    this.synchronizeMouseTrackingState();
+    this.cursorOn = true;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    // The scrollback is gone; a scrolled-up viewport would show nothing.
+    this.scrollToBottom();
     this.requestRender();
   }
 
@@ -1053,14 +1110,10 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    // Presses handled outside the terminal must also swallow their release:
-    // beforeKey runs side effects (keybindings, navigation sends), so it cannot
-    // be consulted again on keyup, and Kitty report-event-types sessions would
-    // otherwise receive a release for a press the shell never saw.
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
-      this.suppressedKeyCodes.add(event.code);
-      return;
-    }
+    // Every path that does not encode this press also drops its release (see
+    // encodedKeyCodes); beforeKey runs side effects, so keyup cannot re-ask it.
+    this.encodedKeyCodes.delete(event.code);
+    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     if (isTerminalCopyShortcut(event) && this.hasSelection()) {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
       // onCopyEvent; not preventing the default keeps that path alive. WebKit
@@ -1113,11 +1166,9 @@ export class GhosttyTerminalSurface {
           });
         }
       }
-      this.suppressedKeyCodes.add(event.code);
       return;
     }
     if (isTerminalPasteShortcut(event)) {
-      this.suppressedKeyCodes.add(event.code);
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
         // Race the async clipboard read against the browser's own paste event:
@@ -1148,14 +1199,14 @@ export class GhosttyTerminalSurface {
     this.clearPrimedCopy();
     const data = this.core.encodeKey(event);
     if (data.length === 0) return;
-    this.suppressedKeyCodes.delete(event.code);
+    this.encodedKeyCodes.add(event.code);
     event.preventDefault();
     event.stopPropagation();
     this.options.onData(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    if (this.suppressedKeyCodes.delete(event.code)) return;
+    if (!this.encodedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
     }
@@ -1168,6 +1219,24 @@ export class GhosttyTerminalSurface {
     this.options.onData(data);
   };
 
+  // A release delivered outside the textarea means the shell will never get
+  // one from here; forget the press so a later host-consumed chord on the same
+  // code cannot inherit it. Capture phase sees the keyup even if the focused
+  // element stops it.
+  private readonly onWindowKeyUp = (event: KeyboardEvent) => {
+    if (event.composedPath().includes(this.input)) return;
+    this.encodedKeyCodes.delete(event.code);
+  };
+
+  // A release while another app has focus never reaches the page, but a later
+  // keydown of the same code proves it happened. Retire the press here, in
+  // capture phase before any host dispatcher can stop the event; onKeyDown
+  // re-adds the code when this surface encodes the new press itself. A key
+  // held across a window focus round trip keeps its press and its release.
+  private readonly onWindowKeyDown = (event: KeyboardEvent) => {
+    this.encodedKeyCodes.delete(event.code);
+  };
+
   private readonly onFocus = () => {
     this.focused = true;
     this.cursorOn = true;
@@ -1177,10 +1246,12 @@ export class GhosttyTerminalSurface {
   private readonly onBlur = () => {
     this.focused = false;
     this.refreshHoveredLink();
-    // Suppressions survive blur deliberately: a shortcut that moves focus (for
-    // example terminal-toggle) must still swallow its own keyup if focus comes
-    // back before release. Stale entries are harmless — an encoding keydown
-    // always removes its code first.
+    // Encoded presses survive blur deliberately: a key held across a focus
+    // round trip still owes the shell its release. A press that moved focus
+    // (for example terminal-toggle) was never encoded, so its keyup stays
+    // swallowed if focus comes back before release. Releases that land
+    // elsewhere retire the press in onWindowKeyUp, and unseen ones on the next
+    // keydown of the same code in onWindowKeyDown.
     // The steady unfocused hollow cursor must not inherit an off blink phase.
     this.cursorOn = true;
     this.requestRender();
@@ -1676,6 +1747,8 @@ export class GhosttyTerminalSurface {
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
+    window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.addEventListener("focus", this.onFocus);
     this.input.addEventListener("blur", this.onBlur);
     this.input.addEventListener("input", this.onInput);
@@ -1702,6 +1775,8 @@ export class GhosttyTerminalSurface {
   private removeEvents(): void {
     this.input.removeEventListener("keydown", this.onKeyDown);
     this.input.removeEventListener("keyup", this.onKeyUp);
+    window.removeEventListener("keyup", this.onWindowKeyUp, { capture: true });
+    window.removeEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.removeEventListener("focus", this.onFocus);
     this.input.removeEventListener("blur", this.onBlur);
     this.input.removeEventListener("input", this.onInput);

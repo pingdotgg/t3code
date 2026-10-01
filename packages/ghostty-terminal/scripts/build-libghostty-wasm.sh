@@ -3,10 +3,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WEB_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_DIR="$(cd "${WEB_DIR}/../.." && pwd)"
+PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd "${PACKAGE_DIR}/../.." && pwd)"
 CANONICAL_VENDOR_DIR="${REPO_DIR}/native/libghostty-vt"
-VENDOR_DIR="${WEB_DIR}/src/terminal/ghostty/vendor"
+VENDOR_DIR="${PACKAGE_DIR}/assets"
 
 GHOSTTY_REVISION="$(tr -d '[:space:]' < "${CANONICAL_VENDOR_DIR}/VERSION")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
@@ -120,4 +120,7 @@ cp "${build_root}/bin/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-vt.wasm"
   -rdynamic \
   -femit-bin="${VENDOR_DIR}/ghostty-write-pty.wasm"
 chmod 0644 "${VENDOR_DIR}/ghostty-write-pty.wasm"
+# Hosts redistribute assets/ as a unit, so the pin and license travel with the wasm.
+cp "${CANONICAL_VENDOR_DIR}/VERSION" "${VENDOR_DIR}/libghostty-vt-VERSION.txt"
+cp "${CANONICAL_VENDOR_DIR}/LICENSE" "${VENDOR_DIR}/libghostty-vt-LICENSE.txt"
 log "wrote ${VENDOR_DIR}/ghostty-vt.wasm"

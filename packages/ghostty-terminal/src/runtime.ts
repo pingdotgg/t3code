@@ -1,6 +1,3 @@
-import ghosttyWasmUrl from "./vendor/ghostty-vt.wasm?url";
-import ghosttyWritePtyWasmUrl from "./vendor/ghostty-write-pty.wasm?url&no-inline";
-
 type WasmFunction = (...args: Array<number | bigint>) => number;
 
 interface TypeField {
@@ -18,6 +15,12 @@ interface TypeLayout {
 type TypeLayouts = Readonly<Record<string, TypeLayout>>;
 
 const textDecoder = new TextDecoder();
+
+/** Package-asset bytes for the libghostty-vt closure, supplied by the host. */
+export interface GhosttyWasmSources {
+  readonly vt: BufferSource;
+  readonly writePty: BufferSource;
+}
 
 export class GhosttyRuntime {
   readonly memory: WebAssembly.Memory;
@@ -43,11 +46,7 @@ export class GhosttyRuntime {
     this.layouts = JSON.parse(textDecoder.decode(bytes.subarray(jsonPointer, end))) as TypeLayouts;
   }
 
-  static async load(): Promise<GhosttyRuntime> {
-    const response = await fetch(ghosttyWasmUrl);
-    if (!response.ok) {
-      throw new Error(`Unable to load libghostty-vt (${response.status})`);
-    }
+  static async load(sources: GhosttyWasmSources): Promise<GhosttyRuntime> {
     let instance: WebAssembly.Instance | undefined;
     const imports = {
       env: {
@@ -60,10 +59,10 @@ export class GhosttyRuntime {
         },
       },
     };
-    const result = await WebAssembly.instantiate(await response.arrayBuffer(), imports);
+    const result = await WebAssembly.instantiate(sources.vt, imports);
     instance = result.instance;
     const runtime = new GhosttyRuntime(result.instance);
-    await runtime.installWritePtyTrampoline();
+    await runtime.installWritePtyTrampoline(sources.writePty);
     return runtime;
   }
 
@@ -193,12 +192,8 @@ export class GhosttyRuntime {
     }
   }
 
-  private async installWritePtyTrampoline(): Promise<void> {
-    const response = await fetch(ghosttyWritePtyWasmUrl);
-    if (!response.ok) {
-      throw new Error(`Unable to load the libghostty-vt PTY trampoline (${response.status})`);
-    }
-    const result = await WebAssembly.instantiate(await response.arrayBuffer(), {
+  private async installWritePtyTrampoline(writePty: BufferSource): Promise<void> {
+    const result = await WebAssembly.instantiate(writePty, {
       env: {
         t3_write_pty: (_terminal: number, userdata: number, pointer: number, length: number) => {
           const writer = this.ptyWriters.get(userdata);
@@ -222,12 +217,21 @@ export class GhosttyRuntime {
   }
 }
 
-let runtimePromise: Promise<GhosttyRuntime> | null = null;
+const runtimePromises = new WeakMap<GhosttyWasmSources, Promise<GhosttyRuntime>>();
 
-export function loadGhosttyRuntime(): Promise<GhosttyRuntime> {
-  runtimePromise ??= GhosttyRuntime.load().catch((error) => {
-    runtimePromise = null;
+/**
+ * One runtime per sources object: every surface shares the WASM instance and
+ * allocates its own terminal handle inside it. Pass the same object on every
+ * call; a fresh object instantiates a fresh runtime. A failed load is
+ * forgotten so the next call retries.
+ */
+export function loadGhosttyRuntime(sources: GhosttyWasmSources): Promise<GhosttyRuntime> {
+  const existing = runtimePromises.get(sources);
+  if (existing) return existing;
+  const promise = GhosttyRuntime.load(sources).catch((error) => {
+    if (runtimePromises.get(sources) === promise) runtimePromises.delete(sources);
     throw error;
   });
-  return runtimePromise;
+  runtimePromises.set(sources, promise);
+  return promise;
 }

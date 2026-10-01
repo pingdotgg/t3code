@@ -31,14 +31,16 @@ bound during startup.
 
 Android and web use the same `libghostty-vt` C ABI for terminal behavior. Platform
 adapters own drawing and input integration, and React stays out of terminal frames.
-The web adapter shares one WebAssembly instance per browser tab while each terminal
-owns and frees its own handles. The canonical upstream pin is
+The browser adapter, [`packages/ghostty-terminal`](../../packages/ghostty-terminal/README.md),
+serves the web client and the terminal extension. Each host loads one WebAssembly
+instance per page while each terminal owns and frees its own handles. The canonical upstream pin is
 [`native/libghostty-vt/VERSION`](../../native/libghostty-vt/VERSION); both native and
-web artifacts must be rebuilt when it changes. Web embeds the revision in its build
-info so the ABI check can detect drift without a second pin.
+web artifacts must be rebuilt when it changes. The WASM embeds the revision in its build
+info so the ABI check can detect drift; the notice copy shipped beside it in `assets/` is
+test-checked against the pin.
 
 Restoring scrollback must not send terminal replies to the current shell. Historical
 device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
-[web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
+[browser renderer](../../packages/ghostty-terminal/src/core.ts) detaches its PTY writer
 during replay. Preserve both protections when changing retention or renderer code.

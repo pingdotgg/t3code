@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
+import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core.ts";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -30,14 +30,9 @@ import {
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
-} from "./surface";
-
-vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
-  default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
-}));
-vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
-  default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
-}));
+} from "./surface.ts";
+import { type GhosttyRuntime, loadGhosttyRuntime } from "./runtime.ts";
+import { testWasmSources } from "./testing/wasmSources.ts";
 
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
@@ -97,6 +92,7 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     const canvas = new TerminalTestElement();
     const mount = new TerminalTestElement();
+    let input: TerminalTestElement | undefined;
     const context = {
       canvas,
       beginPath() {},
@@ -116,7 +112,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       }),
     };
     vi.stubGlobal("document", {
-      createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
+      createElement: (tag: string) => {
+        if (tag === "canvas") return canvas;
+        const element = new TerminalTestElement();
+        if (tag === "textarea") input = element;
+        return element;
+      },
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
     });
     vi.stubGlobal(
@@ -135,7 +136,10 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(private readonly callback: () => void) {
+        // No parameter property: the package keeps erasable syntax so Node can strip it.
+        private readonly callback: () => void;
+        constructor(callback: () => void) {
+          this.callback = callback;
           resizeCallbacks.add(callback);
         }
         observe() {}
@@ -150,6 +154,27 @@ describe("GhosttyTerminalSurface visibility", () => {
     return {
       mount,
       frames,
+      get input() {
+        if (!input) throw new Error("The surface has not created its textarea");
+        return input;
+      },
+      key(target: EventTarget, type: "keydown" | "keyup", init: Partial<KeyboardEvent>) {
+        target.dispatchEvent(
+          Object.assign(new Event(type, { cancelable: true }), {
+            key: "",
+            code: "",
+            shiftKey: false,
+            ctrlKey: false,
+            altKey: false,
+            metaKey: false,
+            repeat: false,
+            isComposing: false,
+            keyCode: 0,
+            getModifierState: () => false,
+            ...init,
+          }),
+        );
+      },
       paint,
       requestFrame,
       snapshot,
@@ -167,6 +192,11 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
+      wheel(deltaY: number) {
+        canvas.dispatchEvent(
+          Object.assign(new Event("wheel", { cancelable: true }), { deltaY, deltaMode: 1 }),
+        );
+      },
       pointer(type: string, clientX: number, buttons: number, shiftKey = false, button = 0) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
@@ -181,6 +211,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       },
       async create(options: Partial<GhosttyTerminalSurfaceOptions> = {}) {
         const surface = await GhosttyTerminalSurface.create(mount as unknown as HTMLElement, {
+          runtime: loadGhosttyRuntime(testWasmSources),
           theme: {
             foreground: { r: 255, g: 255, b: 255 },
             background: { r: 0, g: 0, b: 0 },
@@ -305,6 +336,74 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it("paints the mount before a pending runtime resolves and rethrows its failure", async () => {
+    const harness = createHarness();
+    let resolveRuntime: (runtime: GhosttyRuntime) => void = () => {};
+    const created = harness.create({
+      runtime: new Promise<GhosttyRuntime>((resolve) => {
+        resolveRuntime = resolve;
+      }),
+    });
+    expect(harness.paint).toHaveBeenCalledWith("fillRect", [0, 0, 300, 150]);
+    resolveRuntime(await loadGhosttyRuntime(testWasmSources));
+    const surface = await created;
+    surface.write("\x1b[5n");
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+
+    await expect(
+      harness.create({ runtime: Promise.reject(new Error("libghostty-vt unavailable")) }),
+    ).rejects.toThrow("libghostty-vt unavailable");
+  });
+
+  it("registers the symbols font once, from the first surface that supplies its URL", async () => {
+    const harness = createHarness();
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "FontFace",
+      class {
+        constructor(_family: string, source: string) {
+          sources.push(source);
+        }
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    );
+    // A host without the font must not stop a later host from registering it.
+    await harness.create();
+    expect(sources).toEqual([]);
+    await harness.create({ symbolsFontUrl: "/assets/symbols.woff2" });
+    await harness.create({ symbolsFontUrl: "/assets/other.woff2" });
+    expect(sources).toEqual(["url(/assets/symbols.woff2)"]);
+  });
+
+  it("holds PTY replies for a whole replay bracket", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.beginReplay();
+    surface.resetAndWrite("base\x1b[5n");
+    surface.write("tail\x1b[6n");
+    surface.endReplay();
+    expect(harness.onData).not.toHaveBeenCalled();
+    surface.write("\x1b[5n");
+    expect(harness.onData.mock.calls).toEqual([["\x1b[0n"]]);
+  });
+
+  it("clears history in place and returns a scrolled viewport to the bottom", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write(`${"line\r\n".repeat(30)}prompt`);
+    harness.flushFrame();
+    harness.wheel(-3);
+    expect(surface.isAtBottom()).toBe(false);
+
+    surface.clearScreen();
+    harness.flushFrame();
+    expect(surface.isAtBottom()).toBe(true);
+    expect(harness.renderedSnapshot.rowData.every((row) => row.text === "")).toBe(true);
+    expect(harness.onData).not.toHaveBeenCalled();
+  });
+
   it("starts a selection when dragging from a link", async () => {
     const harness = createHarness();
     const onLinkActivate = vi.fn();
@@ -366,6 +465,115 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointerup", 37, 0, true);
     expect(onLinkActivate).not.toHaveBeenCalled();
     expect(surface.getSelection()).toBe("https");
+  });
+
+  // Kitty flags 1|2 (disambiguate + report event types) make releases encode.
+  async function createKittySurface(harness: ReturnType<typeof createHarness>) {
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("\x1b[>3u");
+    return surface;
+  }
+
+  it("retires a press released outside the terminal before a host chord reuses its code", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("blur"));
+    // The release lands on whatever took focus and bubbles to the window.
+    harness.key(window, "keyup", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("focus"));
+    // A host dispatcher consumed the Ctrl+L keydown; only its keyup arrives.
+    harness.key(input, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    expect(harness.onData.mock.calls).toEqual([["l"]]);
+  });
+
+  it("still releases a press whose key comes up after focus returns", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    input.dispatchEvent(new Event("blur"));
+    input.dispatchEvent(new Event("focus"));
+    harness.key(input, "keyup", { code: "KeyL", key: "l" });
+    expect(harness.onData.mock.calls).toEqual([["l"], ["\x1b[108;1:3u"]]);
+  });
+
+  it.each([
+    { code: "KeyL", key: "l", release: "\x1b[108;1:3u" },
+    { code: "ArrowUp", key: "ArrowUp", release: "\x1b[1;1:3A" },
+  ])("releases $code held across a window focus round trip", async ({ code, key, release }) => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code, key });
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    harness.key(input, "keyup", { code, key });
+    expect(harness.onData.mock.calls).toHaveLength(2);
+    expect(harness.onData.mock.calls[1]).toEqual([release]);
+  });
+
+  it("retires a press released while the window was blurred once its code is pressed again", async () => {
+    const harness = createHarness();
+    await createKittySurface(harness);
+    const { input } = harness;
+    harness.key(input, "keydown", { code: "KeyL", key: "l" });
+    // The release happens in another app and never reaches the page.
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    // A host dispatcher stops the Ctrl+L keydown before it reaches the input.
+    harness.key(window, "keydown", { code: "KeyL", key: "l", ctrlKey: true });
+    harness.key(input, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    expect(harness.onData.mock.calls).toEqual([["l"]]);
+  });
+
+  it("keeps held presses per surface and removes its window listeners on dispose", async () => {
+    const harness = createHarness();
+    // Browser semantics: a listener is identified by type, callback, and capture.
+    const live: Array<[string, unknown, boolean]> = [];
+    const capture = (options?: boolean | EventListenerOptions) =>
+      typeof options === "boolean" ? options : options?.capture === true;
+    const add = window.addEventListener.bind(window);
+    const remove = window.removeEventListener.bind(window);
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener, options) => {
+      live.push([type, listener, capture(options)]);
+      add(type, listener, options);
+    });
+    vi.spyOn(window, "removeEventListener").mockImplementation((type, listener, options) => {
+      const index = live.findIndex(
+        ([t, l, c]) => t === type && l === listener && c === capture(options),
+      );
+      if (index !== -1) live.splice(index, 1);
+      remove(type, listener, options);
+    });
+
+    const first = { onData: vi.fn<(data: string) => void>() };
+    const second = { onData: vi.fn<(data: string) => void>() };
+    const firstSurface = await harness.create({ beforeKey: () => true, onData: first.onData });
+    firstSurface.write("\x1b[>3u");
+    const firstInput = harness.input;
+    const secondSurface = await harness.create({ beforeKey: () => true, onData: second.onData });
+    secondSurface.write("\x1b[>3u");
+    const secondInput = harness.input;
+    expect(live.length).toBeGreaterThan(0);
+
+    harness.key(firstInput, "keydown", { code: "KeyL", key: "l" });
+    harness.key(secondInput, "keydown", { code: "ArrowUp", key: "ArrowUp" });
+    // A host-consumed Ctrl+L retires only the surface holding KeyL.
+    harness.key(window, "keydown", { code: "KeyL", key: "l", ctrlKey: true });
+    harness.key(firstInput, "keyup", { code: "KeyL", key: "l", ctrlKey: true });
+    harness.key(secondInput, "keyup", { code: "ArrowUp", key: "ArrowUp" });
+    expect(first.onData.mock.calls).toEqual([["l"]]);
+    expect(second.onData.mock.calls.at(-1)).toEqual(["\x1b[1;1:3A"]);
+
+    firstSurface.dispose();
+    harness.key(secondInput, "keydown", { code: "KeyL", key: "l" });
+    harness.key(secondInput, "keyup", { code: "KeyL", key: "l" });
+    expect(second.onData.mock.calls.slice(-2)).toEqual([["l"], ["\x1b[108;1:3u"]]);
+    secondSurface.dispose();
+    expect(live).toEqual([]);
+    expect(first.onData.mock.calls).toEqual([["l"]]);
   });
 
   it("does not activate a link replaced before pointer release", async () => {
@@ -563,6 +771,8 @@ describe("terminalLinkAtPositionWithRange", () => {
   });
 
   it("uses shared path matching and reconstructs soft-wrapped links", () => {
+    // Joined at runtime so the package source never carries the app-alias literal.
+    const homePath = ["~", "project", "file"].join("/");
     const row = (text: string, isWrapContinuation: boolean, wrapsToNext = false): GhosttyRow => ({
       cells: Array.from(text.padEnd(16), (character) => cell(character)),
       text: text.trimEnd(),
@@ -572,13 +782,13 @@ describe("terminalLinkAtPositionWithRange", () => {
     const rows = [
       row("https://example.", false),
       row("com/reference", true),
-      row("~/project/file", false),
+      row(homePath, false),
       row("C:\\repo\\file.ts", false),
     ];
 
     expect(terminalLinkAtPositionWithRange(rows, 0, 8)?.text).toBe("https://example.com/reference");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)?.text).toBe("https://example.com/reference");
-    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe("~/project/file");
+    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe(homePath);
     expect(terminalLinkAtPositionWithRange(rows, 3, 4)?.text).toBe("C:\\repo\\file.ts");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
       text: "https://example.com/reference",

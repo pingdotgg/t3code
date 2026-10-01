@@ -54,8 +54,9 @@ import {
 import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
-} from "~/terminal/ghostty/surface";
-import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+} from "@t3tools/ghostty-terminal/surface";
+import { type GhosttyColor, type GhosttyTheme } from "@t3tools/ghostty-terminal/core";
+import { GHOSTTY_SYMBOLS_FONT_URL, loadWebGhosttyRuntime } from "~/terminal/ghosttyAssets";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
 import {
@@ -491,6 +492,8 @@ export function TerminalViewport({
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
+        runtime: loadWebGhosttyRuntime(),
+        symbolsFontUrl: GHOSTTY_SYMBOLS_FONT_URL,
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         get visible() {

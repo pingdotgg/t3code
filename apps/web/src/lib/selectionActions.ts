@@ -1,6 +1,6 @@
-export type SelectionActionPoint = { x: number; y: number };
+import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "@t3tools/ghostty-terminal/selection";
 
-export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
+export type SelectionActionPoint = { x: number; y: number };
 
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };

@@ -105,7 +105,7 @@
       "bundles": ["assets", "web"],
       "license": "MIT",
       "name": "Symbols Nerd Font Mono",
-      "noticeFile": "apps/web/src/terminal/ghostty/fonts/LICENSE",
+      "noticeFile": "packages/ghostty-terminal/assets/SymbolsNerdFontMono-LICENSE.txt",
       "sourceUrl": "https://github.com/ryanoasis/nerd-fonts"
     },
     {
