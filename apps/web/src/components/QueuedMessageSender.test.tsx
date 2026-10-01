@@ -28,12 +28,14 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (load) => ({
 vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: {
     get: (atom: unknown) =>
-      new Map([
-        [
-          "env-a",
-          atom === "presentations" ? { connection: { phase: io.connectionPhase } } : config,
-        ],
-      ]),
+      atom === "thread-status"
+        ? io.threadStatus
+        : new Map([
+            [
+              "env-a",
+              atom === "presentations" ? { connection: { phase: io.connectionPhase } } : config,
+            ],
+          ]),
   },
 }));
 vi.mock("../state/presentation", () => ({
@@ -41,6 +43,7 @@ vi.mock("../state/presentation", () => ({
 }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../state/threads", () => ({
+  environmentThreadDetails: { statusAtom: () => "thread-status" },
   threadEnvironment: {
     updateMetadata: "metadata",
     setRuntimeMode: "runtime",
@@ -195,6 +198,29 @@ describe("QueuedMessageSender", () => {
     await render();
     expect(commandsRun()).toEqual(["runtime", "runtime", "start"]);
     expect(queue()).toBeUndefined();
+  });
+
+  it("waits for thread synchronization if preparation spans a reconnect", async () => {
+    enqueue({ queuedWhileDisconnected: true });
+    io.shell = { ...io.shell, runtimeMode: "approval-required" };
+    io.thread = thread("ready");
+    io.run.mockImplementationOnce(async () => {
+      // The socket has reconnected, but the thread stream is not ready yet.
+      io.threadStatus = "synchronizing";
+      return { _tag: "Success", value: undefined };
+    });
+    await render();
+    expect(commandsRun()).toEqual(["runtime"]);
+    expect(queue()?.[0]).toMatchObject({ holdUntilUserAction: false });
+    expect(queue()?.[0]?.sending).toBeUndefined();
+    expect(io.toast).not.toHaveBeenCalled();
+
+    io.threadStatus = "live";
+    await render();
+    expect(commandsRun()).toEqual(["runtime", "runtime", "start"]);
+    expect(queue()).toBeUndefined();
+    await render();
+    expect(commandsRun()).toEqual(["runtime", "runtime", "start"]);
   });
 
   it("holds an ambiguous turn-start failure for manual retry", async () => {

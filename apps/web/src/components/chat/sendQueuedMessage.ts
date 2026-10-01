@@ -24,7 +24,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThread, readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentPresentations } from "../../state/presentation";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -184,6 +184,10 @@ export async function sendQueuedMessage(
     // Stop hands a preparing message back to the composer. Past this point
     // the send can no longer be taken back.
     if (!connected()) throw new Error("Environment disconnected before delivery.");
+    if (appAtomRegistry.get(environmentThreadDetails.statusAtom(threadRef)) !== "live") {
+      queue.failSend(threadKey, message.id, false);
+      return;
+    }
     const thread = readThread(threadRef) ?? undefined;
     if (!queue.markDispatching(threadKey, message.id, createLocalDispatchSnapshot(thread))) return;
     const context = buildMessageContext({
