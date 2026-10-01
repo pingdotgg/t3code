@@ -14,6 +14,8 @@ import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSki
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useNavigation } from "@react-navigation/native";
+import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
+import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/reserved-regions";
 import type {
   ApprovalRequestId,
   EnvironmentId,
@@ -66,6 +68,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
+import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -316,7 +320,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
   }, []);
   const windowHeight = useWindowDimensions().height;
-  const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
+  const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + IOS_NAV_BAR_HEIGHT;
+  const [screenMetrics, setScreenMetrics] = useState<NativeLayoutMetrics | null>(null);
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const nativeMetrics = NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? columnMetrics : screenMetrics;
+  const controlInsets = deriveBottomControlInsets(nativeMetrics);
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
@@ -684,8 +692,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // Assign both layouts explicitly so the dock always follows its current parent.
   const composerWidthStyle = useAnimatedStyle(() =>
     isSplitLayout && workspaceContentWidth !== null
-      ? { width: workspaceContentWidth.value }
-      : { width: "100%" },
+      ? {
+          width: Math.max(
+            0,
+            workspaceContentWidth.value - controlInsets.left - controlInsets.right,
+          ),
+          right: undefined,
+        }
+      : { width: "100%", right: controlInsets.right },
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
@@ -884,6 +898,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   return (
     <View className="flex-1">
+      {!NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? (
+        <NativeLayoutObserver onChange={setScreenMetrics} />
+      ) : null}
       {showContent ? (
         <View
           style={{ flex: 1 }}
@@ -936,6 +953,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
               }
               contentMaxWidth={contentMaxWidth}
+              contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
@@ -967,7 +985,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           <Animated.View
             layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents="box-none"
-            style={[{ position: "absolute", bottom: 0, left: 0 }, composerWidthStyle]}
+            style={[
+              {
+                position: "absolute",
+                bottom: controlInsets.bottom,
+                left: controlInsets.left,
+                right: controlInsets.right,
+              },
+              composerWidthStyle,
+            ]}
           >
             {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer

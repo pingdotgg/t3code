@@ -28,7 +28,7 @@ index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d
        }
        return item;
      }
-+    if (item.type === 'mailSearchToolbar') {
++    if (item.type === 'mailSearchToolbar' || item.type === 'searchBarPlacement') {
 +      return {
 +        ...item,
 +        index
@@ -42,7 +42,7 @@ index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d
        return processedItem;
      }
 -    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom' and 'spacing'.`);
-+    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing' and 'mailSearchToolbar'.`);
++    throw new Error(`Invalid item type: ${JSON.stringify(item)}. Valid types are 'button', 'menu', 'custom', 'spacing', 'mailSearchToolbar' and 'searchBarPlacement'.`);
    }).filter(item => item != null);
  };
  const transformIcon = icon => {
@@ -151,6 +151,12 @@ index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb215
      /**
       * A React Element to display as the item.
       */
+@@ -864,1 +864,5 @@
+     sharesBackground?: boolean;
++    /** Native bar axis preference on iOS 27.1 and later. */
++    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
++    /** Keep this right-side item in UINavigationItem.pinnedTrailingGroup. */
++    pinned?: boolean;
 diff --git a/src/types.tsx b/src/types.tsx
 index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9eb16f1a80 100644
 --- a/src/types.tsx
@@ -169,6 +175,12 @@ index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9e
    /**
     * A React Element to display as the item.
     */
+@@ -920,1 +920,5 @@
+   sharesBackground?: boolean;
++  /** Native bar axis preference on iOS 27.1 and later. */
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred';
++  /** Keep this right-side item in UINavigationItem.pinnedTrailingGroup. */
++  pinned?: boolean;
 diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
 index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51672d7d0e 100644
 --- a/src/views/useHeaderConfigProps.tsx

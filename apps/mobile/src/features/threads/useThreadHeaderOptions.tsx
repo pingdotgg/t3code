@@ -1,6 +1,7 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
@@ -25,12 +26,16 @@ export function useThreadHeaderOptions(props: {
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
-      {
-        // Match Mail's split-view detail toolbar: the first detail action sits
-        // inside the content pane, not flush against the sidebar divider.
-        spacing: 18,
-        type: "spacing" as const,
-      },
+      ...(!NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+        ? [
+            {
+              // Match Mail's split-view detail toolbar: the first detail action sits
+              // inside the content pane, not flush against the sidebar divider.
+              spacing: 18,
+              type: "spacing" as const,
+            },
+          ]
+        : []),
       ...(props.onReturnToThread
         ? [
             withNativeGlassHeaderItem({
@@ -43,6 +48,7 @@ export function useThreadHeaderOptions(props: {
           ]
         : []),
       withNativeGlassHeaderItem({
+        axisBehavior: NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? "horizontalOnly" : undefined,
         accessibilityLabel: panes.primarySidebarVisible
           ? "Maximize content"
           : "Show thread sidebar",
@@ -51,16 +57,22 @@ export function useThreadHeaderOptions(props: {
           type: "sfSymbol" as const,
         },
         identifier: "thread-left-sidebar",
+        label: panes.primarySidebarVisible ? "Maximize content" : "Show thread sidebar",
         onPress: togglePrimarySidebar,
         type: "button" as const,
       }),
-      withNativeGlassHeaderItem({
-        accessibilityLabel: "New task",
-        icon: { name: "square.and.pencil", type: "sfSymbol" as const },
-        identifier: "thread-left-new-task",
-        onPress: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
-        type: "button" as const,
-      }),
+      ...(!NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+        ? [
+            withNativeGlassHeaderItem({
+              accessibilityLabel: "New task",
+              icon: { name: "square.and.pencil", type: "sfSymbol" as const },
+              identifier: "thread-left-new-task",
+              label: "New task",
+              onPress: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
+              type: "button" as const,
+            }),
+          ]
+        : []),
     ],
     [panes.primarySidebarVisible, props.onReturnToThread, navigation, togglePrimarySidebar],
   );
@@ -79,6 +91,23 @@ export function useThreadHeaderOptions(props: {
       }),
     ],
     [navigation],
+  );
+
+  const duoRightHeaderItems = useMemo<NativeHeaderItems>(
+    () => [
+      ...threadCenterHeaderItems,
+      withNativeGlassHeaderItem({
+        type: "button" as const,
+        pinned: true,
+        axisBehavior: "verticalPreferred",
+        identifier: "thread-right-new-task",
+        label: "New task",
+        accessibilityLabel: "New task",
+        icon: { name: "square.and.pencil", type: "sfSymbol" as const },
+        onPress: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
+      }),
+    ],
+    [navigation, threadCenterHeaderItems],
   );
 
   const options: AppNativeStackNavigationOptions = {
@@ -104,12 +133,23 @@ export function useThreadHeaderOptions(props: {
     // the git controls on the RIGHT (no center items — center space is
     // reserved for future breadcrumbs/status).
     unstable_headerRightItems: () =>
-      layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+      NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+        ? duoRightHeaderItems
+        : layout.usesSplitView
+          ? threadCenterHeaderItems
+          : compactRightHeaderItems,
+    unstable_headerToolbarItems: () => [],
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
   return {
     options,
+    optionsVersion: [
+      splitLeftHeaderItems,
+      threadCenterHeaderItems,
+      compactRightHeaderItems,
+      duoRightHeaderItems,
+    ],
     sidebar: false,
     fallback:
       !layout.usesSplitView && !props.usesNativeHeaderGlass ? (

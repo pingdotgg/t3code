@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ColorValue } from "react-native";
+import type { HeaderBarButtonSearchBarPlacementItem } from "react-native-screens";
 
 function useNativeStackNavigation(): NativeStackNavigationProp<ParamListBase> | null {
   return useNavigation<NativeStackNavigationProp<ParamListBase>>();
@@ -34,8 +35,13 @@ function labelFromChildren(children: ReactNode): string {
 type NativeStackHeaderIcon = NonNullable<
   Extract<NativeStackHeaderItem, { type: "button" }>["icon"]
 >;
+type NativeStackHeaderAxisBehavior = Extract<
+  NativeStackHeaderItem,
+  { type: "button" }
+>["axisBehavior"];
+type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
-  unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
+  unstable_headerToolbarItems?: () => NativeToolbarItem[];
 };
 
 function iconFromProp(icon: unknown): NativeStackHeaderIcon | undefined {
@@ -112,20 +118,28 @@ function collectMenuItems(children: ReactNode): NativeStackHeaderItemMenu["menu"
   return items;
 }
 
-function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
+function convertToolbarChild(child: ReactNode): NativeToolbarItem | null {
   if (!isValidElement<ToolbarElementProps>(child)) {
     return null;
   }
 
   const typeName = elementTypeName(child);
+  if (typeName === "NativeHeaderToolbarSearchBarSlot") {
+    return { type: "searchBarPlacement" };
+  }
+
   if (typeName === "NativeHeaderToolbarButton") {
     return {
       type: "button",
-      label: typeof child.props.label === "string" ? child.props.label : "",
+      label:
+        typeof child.props.label === "string"
+          ? child.props.label
+          : String(child.props.accessibilityLabel ?? ""),
       accessibilityLabel:
         typeof child.props.accessibilityLabel === "string"
           ? child.props.accessibilityLabel
           : undefined,
+      axisBehavior: child.props.axisBehavior as NativeStackHeaderAxisBehavior,
       disabled: Boolean(child.props.disabled),
       icon: iconFromProp(child.props.icon),
       onPress:
@@ -169,8 +183,8 @@ function convertToolbarChild(child: ReactNode): NativeStackHeaderItem | null {
   return null;
 }
 
-function collectToolbarItems(children: ReactNode): NativeStackHeaderItem[] {
-  const items: NativeStackHeaderItem[] = [];
+function collectToolbarItems(children: ReactNode): NativeToolbarItem[] {
+  const items: NativeToolbarItem[] = [];
   Children.forEach(children, (child) => {
     const item = convertToolbarChild(child);
     if (item) {
@@ -207,13 +221,17 @@ function NativeHeaderToolbarRoot(props: {
         } as NativeStackOptionsWithToolbar);
       };
     }
+    // UIKit's search placement item belongs to the toolbar, never a header group.
+    const headerItems = items.filter(
+      (item): item is NativeStackHeaderItem => item.type !== "searchBarPlacement",
+    );
     if (props.placement === "left") {
-      navigation.setOptions({ unstable_headerLeftItems: () => items });
+      navigation.setOptions({ unstable_headerLeftItems: () => headerItems });
       return () => {
         navigation.setOptions({ unstable_headerLeftItems: () => [] });
       };
     }
-    navigation.setOptions({ unstable_headerRightItems: () => items });
+    navigation.setOptions({ unstable_headerRightItems: () => headerItems });
     return () => {
       navigation.setOptions({ unstable_headerRightItems: () => [] });
     };
@@ -224,6 +242,7 @@ function NativeHeaderToolbarRoot(props: {
 
 function NativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
+  readonly axisBehavior?: NativeStackHeaderAxisBehavior;
   readonly disabled?: boolean;
   readonly icon?: string;
   readonly label?: string;

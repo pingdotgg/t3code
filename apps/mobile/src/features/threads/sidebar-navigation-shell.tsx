@@ -42,7 +42,7 @@ const SidebarStack = createNativeStackNavigator();
  * Hosts the iPad sidebar pane inside its own single-screen native stack.
  *
  * The stack is navigation-inert — nothing is ever pushed onto it. It exists so
- * the sidebar column owns a real UINavigationBar (large title, native bar
+ * the sidebar column owns a real UINavigationBar (compact title, native bar
  * button items, UISearchController), mirroring how each column of a
  * UISplitViewController has its own UINavigationController. All real
  * navigation still flows through the root stack via callbacks minted in
