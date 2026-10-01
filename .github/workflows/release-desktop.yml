@@ -329,6 +329,7 @@ jobs:
           function Test-Archive {
             (Invoke-RestMethod -Headers $headers -Uri "$run/artifacts?name=$env:ARTIFACT").total_count -gt 0
           }
+          $missingSince = $null
           while ($true) {
             try {
               if (Test-Archive) {
@@ -337,7 +338,16 @@ jobs:
               }
               $jobs = Invoke-RestMethod -Headers $headers -Uri "$run/attempts/$env:GITHUB_RUN_ATTEMPT/jobs?per_page=100"
               $linux = $jobs.jobs | Where-Object { $_.name.EndsWith($env:LINUX_JOB) } | Select-Object -First 1
-              if ($linux.conclusion) {
+              if (-not $linux) {
+                # Both jobs start together, so a Linux job still missing after a
+                # few minutes means a renamed or skipped job, not a slow one.
+                if (-not $missingSince) {
+                  $missingSince = Get-Date
+                } elseif (((Get-Date) - $missingSince).TotalMinutes -ge 5) {
+                  Write-Host "::error::No job named '$env:LINUX_JOB' in this run, so $env:ARTIFACT will not arrive."
+                  exit 1
+                }
+              } elseif ($linux.conclusion) {
                 # The upload may have landed between the two requests above.
                 if (Test-Archive) {
                   Write-Host "$env:ARTIFACT is ready."
