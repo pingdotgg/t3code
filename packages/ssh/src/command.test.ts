@@ -89,6 +89,8 @@ describe("ssh command", () => {
       for (const [alias, hostname, expected] of [
         ["ssh://host.example:2222", "host.example", "alice@host.example"],
         ["ssh://[::1]:2222", "::1", "alice@::1"],
+        ["SSH://host.example:2222", "host.example", "alice@host.example"],
+        ["SsH://[::1]:2222", "::1", "alice@::1"],
       ]) {
         const resolved = parseSshResolveOutput(
           alias!,
@@ -96,6 +98,7 @@ describe("ssh command", () => {
         );
         assert.equal(yield* buildSshHostSpecEffect(resolved), expected);
         assert.include(baseSshArgs(resolved), "2222");
+        assert.include(baseSshArgs({ ...resolved, port: null }), "2222");
       }
     }),
   );

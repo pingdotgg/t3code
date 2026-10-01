@@ -85,10 +85,10 @@ function parseSshDestination(target: DesktopSshEnvironmentTarget) {
   if (destination.length === 0) {
     throw new Error("SSH target is missing its alias/hostname.");
   }
-  if (!destination.startsWith("ssh://")) {
+  if (!/^ssh:\/\//iu.test(destination)) {
     return { hostname: destination, username: target.username, port: target.port };
   }
-  const authority = /^ssh:\/\/(?:([^@/?#:]+)@)?(\[[^\]]+\]|[^:/?#@]+)(?::(\d+))?\/?$/u.exec(
+  const authority = /^ssh:\/\/(?:([^@/?#:]+)@)?(\[[^\]]+\]|[^:/?#@]+)(?::(\d+))?\/?$/iu.exec(
     destination,
   );
   if (!authority?.[2]) throw new Error("SSH URI is invalid.");
