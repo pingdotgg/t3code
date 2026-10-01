@@ -35,6 +35,7 @@ export class WorkspaceSearchHost extends Context.Service<
   }
 >()("t3/workspace/WorkspaceSearchHost") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const semaphore = yield* Semaphore.make(1);
   let current: { process: SearchProcess; indexes: Set<number> } | undefined;
