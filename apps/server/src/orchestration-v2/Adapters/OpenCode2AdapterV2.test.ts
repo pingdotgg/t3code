@@ -1196,6 +1196,32 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves nothing pending once a reconnect drops a subagent's queued report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...nestedLaunch,
+        // The background subagent ends and its report is queued for the middle
+        // session; the stream drops before OpenCode wakes that session.
+        event("session.execution.succeeded", { sessionID: DEEP }),
+        deepReport("completed"),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+      ]);
+      const watch = yield* watchNested(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.deep.at(-1) === "completed");
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      // The reconnect does not read back what the stream carried outside a
+      // turn, so the report's follow-up is not waited on.
+      yield* Effect.repeat(runtime.hasPendingBackgroundWorkForThread!(thread), {
+        while: (pending) => pending,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
   /** A prompt accepted, then a Stop the server never answers, advanced past its timeout. */
   const stopTimedOut: ReadonlyArray<ProviderReplayEntry> = [
     out("session.prompt", { sessionID: SESSION, text: "<any>" }),

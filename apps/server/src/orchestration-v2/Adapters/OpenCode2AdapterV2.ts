@@ -2714,8 +2714,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(call, "interrupted", LOST_BACKGROUND);
           }
         }
-        for (const wake of state.wakes.splice(0)) wake.dropped = true;
-        state.reports.clear();
+        // A subagent's session holds reports of its own background subagents.
+        for (const session of sessionsOf(state)) {
+          for (const wake of session.wakes.splice(0)) wake.dropped = true;
+          session.reports.clear();
+        }
       }
     });
 
