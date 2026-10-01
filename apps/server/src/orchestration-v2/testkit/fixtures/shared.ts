@@ -1195,6 +1195,40 @@ export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2Scen
       );
       if (wokenAfterEnd) {
         assert.notEqual(rootActivity.at(-1), "active", `child ${childThreadId} must end its turns`);
+        // Each extra turn answers a report: one of the child's own subagents
+        // ended before that turn started.
+        const childSubagentIds = new Set(child.subagents.map((nested) => nested.id));
+        const nestedEndIndexes = result.domainEvents.flatMap((event, index) =>
+          event.type === "subagent.updated" &&
+          childSubagentIds.has(event.payload.id) &&
+          !isOrchestrationV2WorkActive(event.payload.status)
+            ? [index]
+            : [],
+        );
+        const subagentEndIndex = result.domainEvents.findLastIndex(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.payload.id === subagent.id &&
+            !isOrchestrationV2WorkActive(event.payload.status),
+        );
+        const wakeStarts = rootEvents.filter(
+          (event, position) =>
+            event.index > subagentEndIndex &&
+            isOrchestrationV2WorkActive(event.status) &&
+            !isOrchestrationV2WorkActive(rootEvents[position - 1]?.status ?? "completed"),
+        );
+        assert.isNotEmpty(wakeStarts, `child ${childThreadId} woke without a new turn`);
+        assert.isAtMost(
+          wakeStarts.length,
+          nestedEndIndexes.length,
+          `child ${childThreadId} woke more often than its subagents ended`,
+        );
+        for (const wake of wakeStarts) {
+          assert.isTrue(
+            nestedEndIndexes.some((endIndex) => endIndex < wake.index),
+            `child ${childThreadId} woke before any of its subagents ended`,
+          );
+        }
       }
     }
   }
