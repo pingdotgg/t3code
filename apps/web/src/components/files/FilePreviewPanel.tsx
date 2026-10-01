@@ -473,7 +473,7 @@ export function FilePreviewPanel({
 
   return (
     <div
-      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-chat-background"
       data-right-panel-files-surface
     >
       {relativePath ? (
@@ -695,7 +695,7 @@ export function FilePreviewPanel({
         {explorerOpen || relativePath === null ? (
           <aside
             className={cn(
-              "flex min-h-0 shrink-0 bg-background",
+              "flex min-h-0 shrink-0 bg-chat-background",
               relativePath
                 ? "w-[min(22rem,46%)] min-w-64 border-l border-border/60"
                 : "min-w-0 flex-1",

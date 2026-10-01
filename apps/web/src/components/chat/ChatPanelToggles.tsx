@@ -103,7 +103,7 @@ export const ChatPanelToggles = memo(function ChatPanelToggles({
         isRail &&
           // `pe` carries the right safe-area inset: as the pane's outermost
           // column the rail has to clear a notch or rounded corner itself.
-          "w-[calc(env(safe-area-inset-right)+--spacing(9))] flex-col border-s border-border py-2 ps-1.5 pe-[calc(env(safe-area-inset-right)+--spacing(1.5))]",
+          "w-[calc(env(safe-area-inset-right)+--spacing(9))] flex-col border-s border-border py-2 ps-1.5 pe-[calc(env(safe-area-inset-right)+--spacing(1.5))] wco:pt-[calc(env(titlebar-area-height)+--spacing(2))]",
         className,
       )}
       data-chat-panel-toggles={orientation}

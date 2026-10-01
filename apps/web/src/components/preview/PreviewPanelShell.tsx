@@ -42,11 +42,11 @@ export function PreviewPanelShell(props: {
   return (
     <div
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-background",
+        "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-chat-background",
         isInline
           ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
+            ? "flex-1 border-l border-border wco:pt-[env(titlebar-area-height)]"
+            : "shrink-0 border-l border-border wco:pt-[env(titlebar-area-height)]"
           : "w-full",
       )}
       style={isInline && !props.maximized ? { width: `${width}px` } : undefined}

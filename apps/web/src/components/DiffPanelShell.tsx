@@ -28,7 +28,7 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        "flex h-full min-w-0 flex-col bg-background",
+        "flex h-full min-w-0 flex-col bg-chat-background",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",

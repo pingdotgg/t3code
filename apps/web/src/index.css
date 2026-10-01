@@ -1041,12 +1041,12 @@ label:has(> select#reasoning-effort) select {
   flex-shrink: 0;
   align-items: center;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  background: color-mix(in srgb, var(--muted) 20%, var(--background));
+  background: var(--chat-background);
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
-  background: color-mix(in srgb, var(--background) 94%, var(--card));
+  background: var(--chat-background);
 }
 
 .diff-render-file {
