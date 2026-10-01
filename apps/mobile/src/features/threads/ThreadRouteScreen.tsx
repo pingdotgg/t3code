@@ -103,15 +103,45 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
   return first === undefined || first.trim().length === 0 ? null : first;
 }
 
+function ThreadPane(props: { readonly children: ReactNode }) {
+  return (
+    <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
+      {props.children}
+    </View>
+  );
+}
+
 function OpeningThreadLoadingScreen() {
-  const content = <LoadingScreen message="Opening thread…" messagePlacement="above-spinner" />;
+  const navigation = useNavigation();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const { themeVariables } = useAppearancePreferences();
+  const content = (
+    <LoadingScreen
+      message="Opening thread…"
+      messagePlacement="above-spinner"
+      embedded={Platform.OS === "android"}
+    />
+  );
 
   if (Platform.OS !== "android") return content;
 
   return (
-    <View className="flex-1 bg-header">
-      <View className="flex-1 overflow-hidden rounded-t-[28px]">{content}</View>
-    </View>
+    <>
+      <ScreenHeader
+        title="Thread"
+        options={{ contentStyle: { backgroundColor: themeVariables["--color-header"] } }}
+        onBack={
+          layout.usesSplitView
+            ? undefined
+            : () => {
+                if (navigation.canGoBack()) navigation.goBack();
+                else navigation.dispatch(StackActions.replace("Home"));
+              }
+        }
+        hideBottomBorder
+      />
+      <ThreadPane>{content}</ThreadPane>
+    </>
   );
 }
 
@@ -939,7 +969,7 @@ function ThreadRouteContent(
     <>
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
-      <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
+      <ThreadPane>
         <ThreadDetailScreen
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
@@ -1031,7 +1061,7 @@ function ThreadRouteContent(
           onSubmitUserInput={requests.onSubmitUserInput}
           onDismissUserInput={requests.onDismissUserInput}
         />
-      </View>
+      </ThreadPane>
     </>
   );
 
