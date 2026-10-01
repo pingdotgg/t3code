@@ -41,7 +41,7 @@ export const AppLoggerLayer = Logger.layer([appLogger]).pipe(
 // Create a logger layer that uses the default logger for development, and the
 // custom logger for production
 export const LoggerLayer = Layer.unwrap(Effect.gen(function*() {
-  const env = yield* Config.string("NODE_ENV").pipe(Config.withDefault("development"))
+  const env = yield* Config.String("NODE_ENV").pipe(Config.withDefault("development"))
   if (env === "production") {
     return AppLoggerLayer
   }

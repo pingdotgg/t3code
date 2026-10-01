@@ -146,11 +146,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-[24px] border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div className="rounded-3xl border border-border/80 bg-card/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">Plan</Badge>
-          <p className="truncate text-sm font-medium text-foreground">{title}</p>
+          {/* Same heading level as the message author headings in the timeline,
+              so a plan's own headings nest beneath it in the outline. */}
+          <h3 className="truncate text-sm font-medium text-foreground">{title}</h3>
         </div>
         <Menu>
           <MenuTrigger
@@ -177,6 +179,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           ) : (
             <ChatMarkdown
@@ -184,6 +187,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               threadRef={threadRef}
               isStreaming={false}
+              headingLevelOffset={3}
             />
           )}
           {canCollapse && !expanded ? (
@@ -219,7 +223,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-3">
+          <DialogPanel>
             <label htmlFor={savePathInputId} className="grid gap-1.5">
               <span className="text-xs font-medium text-foreground">Workspace path</span>
               <Input

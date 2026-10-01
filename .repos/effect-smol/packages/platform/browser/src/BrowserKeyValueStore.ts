@@ -104,6 +104,18 @@ export const layerIndexedDb = (options?: {
             }),
             (found) => found?.value && found.value instanceof Uint8Array ? found.value : undefined
           ),
+        has: (key: string) =>
+          Effect.map(
+            Effect.suspend(() => {
+              const store = getKvsEntriesStore(db, "readonly")
+              return idbRequest<number>({
+                method: "has",
+                message: "Failed to check key in backing store",
+                key
+              }, () => store.count(key))
+            }),
+            (count) => count > 0
+          ),
         set: (key: string, value: string | Uint8Array) =>
           Effect.asVoid(Effect.suspend(() => {
             return idbWriteRequest(

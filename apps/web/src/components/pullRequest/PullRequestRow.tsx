@@ -4,18 +4,22 @@ import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
-import { pullRequestLabelColor, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
+import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
-  PullRequestActorLabel,
+  PULL_REQUEST_ROW_CLASS,
+  PULL_REQUEST_ROW_NUMBER_CLASS,
+  PullRequestRowAuthor,
+  PullRequestRowGlyph,
+  PullRequestRowLines,
+} from "./PullRequestListRow";
+import {
   PullRequestDiffStat,
-  PullRequestMetaLine,
-  PullRequestApprovalGlyph,
-  PullRequestStateGlyph,
+  PullRequestLabelChip,
+  PullRequestReviewDecisionGlyph,
 } from "./pullRequestPresentation";
 
 /**
@@ -23,10 +27,11 @@ import {
  * narrow row shows one label and a "+N" while a wide one spreads out up to three. The "+N"
  * rides on whichever pill is the last visible one, and is hidden as soon as the next slot shows.
  */
+// Each slot's pill appears at a wider row, and its overflow count yields to the next slot.
 const LABEL_SLOTS = [
-  { pill: "", overflow: "@xl/pr-row-meta:hidden" },
-  { pill: "hidden @xl/pr-row-meta:inline-flex", overflow: "@3xl/pr-row-meta:hidden" },
-  { pill: "hidden @3xl/pr-row-meta:inline-flex", overflow: "" },
+  { overflow: "@xl/pr-row-meta:hidden" },
+  { overflow: "@3xl/pr-row-meta:hidden" },
+  { overflow: "" },
 ] as const;
 
 function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry["labels"] }) {
@@ -36,31 +41,35 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
       {LABEL_SLOTS.map((slot, index) => {
         const label = labels[index];
         if (!label) return null;
-        const dot = pullRequestLabelColor(label.color);
         const remaining = labels.length - index - 1;
         return (
-          <span
+          <PullRequestLabelChip
             key={label.name}
-            className={cn(
-              "inline-flex max-w-40 min-w-0 items-center gap-1 rounded-full border border-border/70 bg-muted/40 py-0 pl-1 pr-1.5 text-[10px] leading-3.5 text-muted-foreground",
-              slot.pill,
-            )}
+            label={label}
+            className={
+              index === 0
+                ? ""
+                : index === 1
+                  ? "hidden @xl/pr-row-meta:inline-flex"
+                  : "hidden @3xl/pr-row-meta:inline-flex"
+            }
           >
-            <span
-              aria-hidden
-              className="size-2 shrink-0 rounded-full bg-muted-foreground"
-              {...(dot ? { style: { backgroundColor: dot } } : {})}
-            />
-            <span className="truncate">{label.name}</span>
             {remaining > 0 ? (
               <span className={cn("shrink-0", slot.overflow)}>+{remaining}</span>
             ) : null}
-          </span>
+          </PullRequestLabelChip>
         );
       })}
     </span>
   );
 }
+
+/**
+ * The page row keeps a little more room around the shared lines than the panel, which sits in
+ * a narrow column. The intrinsic size is the content box a skipped row reserves, which is the
+ * two lines without the padding: a 56px row less 20px of `py-2.5`.
+ */
+const PAGE_ROW_CLASS = "px-3 py-2.5 [contain-intrinsic-block-size:36.5px]";
 
 export type PullRequestRowTarget = Pick<
   EnvironmentPullRequestEntry,
@@ -104,84 +113,109 @@ function PullRequestRowImpl({
       aria-current={selected ? "true" : undefined}
       onClick={() => onSelect(entry)}
       className={cn(
-        "@container/pr-row grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        PULL_REQUEST_ROW_CLASS,
+        PAGE_ROW_CLASS,
+        "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         // Offscreen rows are skipped for style, layout and paint: a long list costs what the
         // viewport shows, not what the pages have loaded. The intrinsic size keeps the
         // scrollbar honest while a row is skipped.
-        "[contain-intrinsic-block-size:66px] [content-visibility:auto]",
+        "[content-visibility:auto]",
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
-      <PullRequestStateGlyph
+      <PullRequestRowGlyph
         state={entry.state}
         isDraft={entry.isDraft}
         mergeability={entry.mergeability}
         baseBranch={entry.baseBranch}
+        // On the title line rather than between the lines, as main aligns it.
+        className="mt-0.75 self-start"
       />
-      <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
-        <span className="col-start-1 row-start-1 block truncate text-sm font-medium text-foreground">
-          {entry.title}
-        </span>
-        <span className="col-start-2 row-start-1 flex items-center justify-self-end gap-2 text-xs">
-          {entry.stack ? (
-            <PullRequestStackPopover
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                host: entry.host,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-              membership={entry.stack}
-              onSelect={(target) =>
-                onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
-              }
-            />
-          ) : null}
-          {/* Only a verdict somebody has actually given: "review required" is the absence of
-              one, and saying so on every unreviewed row would say nothing. */}
-          {entry.reviewDecision === "approved" ? (
-            <PullRequestApprovalGlyph />
-          ) : entry.reviewDecision === "changes-requested" ? (
-            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
-              Changes requested
-            </span>
-          ) : null}
-          {entry.checksState === undefined ? null : (
-            <PullRequestChecksPopover
-              checksState={entry.checksState}
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-            />
-          )}
-          <PullRequestDiffStat
-            additions={entry.additions}
-            deletions={entry.deletions}
-            className="shrink-0 whitespace-nowrap text-[11px]"
-          />
-        </span>
-        <PullRequestMetaLine className="@container/pr-row-meta col-start-1 row-start-2 overflow-hidden text-xs text-muted-foreground/70">
-          {matchedElsewhere ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
+      <PullRequestRowLines
+        number={
+          // The number carries the link, here as much as on the detail: a right-click on it
+          // copies the pull request's own address rather than opening the editing menu.
+          <span
+            className={PULL_REQUEST_ROW_NUMBER_CLASS}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void showPullRequestLinkContextMenu({
+                url: entry.url,
+                openLabel: openOnHostLabel(entry.provider),
+                position: { x: event.clientX, y: event.clientY },
+              });
+            }}
+          >
+            #{entry.number}
+          </span>
+        }
+        title={entry.title}
+        signals={
+          <>
+            {entry.checksState === undefined ? null : (
+              <PullRequestChecksPopover
+                checksState={entry.checksState}
+                environmentId={entry.environmentId}
+                reference={{
+                  projectId: entry.projectId,
+                  repository: entry.repository,
+                  number: entry.number,
+                }}
+              />
+            )}
+            {/* Only a verdict the host actually reports: an approval, a request for changes,
+                or a review the branch rules still require. No glyph on the common case of a
+                pull request nobody has reviewed, so a row only wears a person when the person
+                has said something. */}
+            {entry.reviewDecision === undefined ? null : (
+              <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
+            )}
+          </>
+        }
+        status={
+          <>
+            {entry.stack ? (
+              <PullRequestStackPopover
+                environmentId={entry.environmentId}
+                reference={{
+                  projectId: entry.projectId,
+                  host: entry.host,
+                  repository: entry.repository,
+                  number: entry.number,
+                }}
+                membership={entry.stack}
+                onSelect={(target) =>
+                  onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
                 }
-              >
-                <span className="sr-only">matched in the description</span>
-                <SearchIcon aria-hidden className="size-3 shrink-0" />
-                <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                  matched in the description
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">Matched in the description</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <span className="flex shrink-0 items-center gap-1">
+              />
+            ) : null}
+            <PullRequestDiffStat
+              additions={entry.additions}
+              deletions={entry.deletions}
+              className="font-mono"
+            />
+          </>
+        }
+        metaClassName="@container/pr-row-meta"
+        meta={
+          <>
+            {matchedElsewhere ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
+                  }
+                >
+                  <span className="sr-only">matched in the description</span>
+                  <SearchIcon aria-hidden className="size-3 shrink-0" />
+                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+                    matched in the description
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">Matched in the description</TooltipPopup>
+              </Tooltip>
+            ) : null}
             {showProvider ? (
               <Tooltip>
                 <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
@@ -190,39 +224,20 @@ function PullRequestRowImpl({
                 <TooltipPopup>{providerName}</TooltipPopup>
               </Tooltip>
             ) : null}
-            {/* The number carries the link, here as much as on the detail: a right-click on it
-                copies the pull request's own address rather than opening the editing menu. */}
-            <span
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void showPullRequestLinkContextMenu({
-                  url: entry.url,
-                  openLabel: openOnHostLabel(entry.provider),
-                  position: { x: event.clientX, y: event.clientY },
-                });
-              }}
-            >
-              #{entry.number}
-            </span>
-          </span>
-          {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
-          {environmentLabel ? (
-            <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
-          ) : null}
-          <PullRequestActorLabel
-            actor={entry.author}
-            className="min-w-4 max-w-40"
-            labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
-          />
-          {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-        </PullRequestMetaLine>
-        <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
-          <span className="hidden @sm/pr-row:inline">
-            {formatRelativeTimeLabel(entry.updatedAt)}
-          </span>
-        </span>
-      </span>
+            <PullRequestRowAuthor
+              actor={entry.author}
+              className="min-w-3.5 max-w-40"
+              labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
+            />
+            {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
+            {environmentLabel ? (
+              <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
+            ) : null}
+            {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
+          </>
+        }
+        updatedAt={entry.updatedAt}
+      />
     </button>
   );
 }

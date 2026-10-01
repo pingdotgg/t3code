@@ -22,8 +22,8 @@ export class Smtp extends Context.Service<Smtp, {
   static readonly layer = Layer.effect(
     Smtp,
     Effect.gen(function*() {
-      const user = yield* Config.string("SMTP_USER")
-      const pass = yield* Config.redacted("SMTP_PASS")
+      const user = yield* Config.String("SMTP_USER")
+      const pass = yield* Config.Redacted("SMTP_PASS")
 
       // Use `Effect.acquireRelease` to manage the lifecycle of the SMTP
       // transporter.

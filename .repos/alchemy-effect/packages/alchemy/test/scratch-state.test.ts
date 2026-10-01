@@ -26,7 +26,7 @@ describe("test.provider scratch state durability", () => {
   const listRows = (scratch: Core.ScratchStack, stackName: string) =>
     Effect.gen(function* () {
       const state = yield* yield* State;
-      return yield* state.list({ stack: stackName, stage: "test" });
+      return yield* state.list({ stack: stackName, stage: scratch.stage });
     }).pipe(Effect.provide(scratch.state));
 
   test(
@@ -69,6 +69,22 @@ describe("test.provider scratch state durability", () => {
       // the name stays the bare test name — the pre-existing behavior.
       const bare = Core.scratchStack(options, "same name");
       expect(bare.name).toEqual("same-name");
+    }),
+  );
+
+  test(
+    "scratch stacks default to test_${USER}",
+    Effect.sync(() => {
+      const expected = `test_${process.env.USER || process.env.USERNAME || "unknown"}`;
+      expect(Core.defaultStage()).toBe(expected);
+      const scratch = Core.scratchStack(options, NAME, FILE);
+      expect(scratch.stage).toBe(expected);
+      const overridden = Core.scratchStack(
+        { ...options, stage: "custom" },
+        NAME,
+        FILE,
+      );
+      expect(overridden.stage).toBe("custom");
     }),
   );
 });

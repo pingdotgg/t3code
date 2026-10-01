@@ -311,7 +311,7 @@ export function makeParser(onParse: (event: AnyEvent) => void, options?: DecodeO
       let fieldLength = startingFieldLength
       let character: string
 
-      for (let index = startingPosition; lineLength < 0 && index < length; ++index) {
+      for (let index = position + startingPosition; lineLength < 0 && index < length; ++index) {
         character = buffer[index]
         if (character === ":" && fieldLength < 0) {
           fieldLength = index - position

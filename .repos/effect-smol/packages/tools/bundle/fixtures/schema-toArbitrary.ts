@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const schema = Schema.Struct({
   a: Schema.String,
@@ -6,4 +7,4 @@ const schema = Schema.Struct({
   c: Schema.Array(Schema.String)
 })
 
-export const arbitrary = Schema.toArbitrary(schema)
+export const arbitrary = Arbitrary.schema(schema)

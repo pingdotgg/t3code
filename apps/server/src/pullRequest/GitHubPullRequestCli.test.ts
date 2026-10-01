@@ -1,16 +1,51 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
+  data: {
+    repository: {
+      mergeCommitAllowed: true,
+      squashMergeAllowed: false,
+      rebaseMergeAllowed: true,
+      viewerPermission: "WRITE",
+      pullRequest: {
+        number: 7,
+        title: "Pull request 7",
+        url: "https://github.com/acme/web/pull/7",
+        headRefName: "feature",
+        baseRefName: "main",
+        headRefOid: "abc123",
+        state: "OPEN",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        viewerCanUpdate: true,
+        viewerDidAuthor: false,
+        viewerCanUpdateBranch: true,
+        baseRef: { compare: { behindBy: 2 } },
+        reviewRequests: { nodes: [] },
+        labels: { nodes: [] },
+        commits: { nodes: [] },
+        ...pullRequest,
+      },
+    },
+  },
+});
 
 const mockedExecute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
 const mockedStackMemberships = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>(() =>
@@ -29,7 +64,7 @@ const layer = it.layer(
         getPullRequest: mockedGetPullRequest,
       }),
     ),
-    Layer.provide(GitHubGraphQlBudget.layer),
+    Layer.provideMerge(GitHubGraphQlBudget.layer),
   ),
 );
 
@@ -192,78 +227,362 @@ afterEach(() => {
   mockedGetPullRequest.mockReset();
 });
 
-layer("GitHubPullRequestCli.layer", (it) => {
-  it.effect("reads linked pull request status with the overview fields in one request", () =>
+it.effect(
+  "keeps a verified credential through an auth switch and separates token fingerprints",
+  () =>
     Effect.gen(function* () {
+      let activeToken = "broad-credential";
+      const commands: VcsProcess.VcsProcessInput[] = [];
+      const github = yield* GitHubCli.make.pipe(
+        Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer)),
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              commands.push(input);
+              if (input.args[0] === "auth") return output(activeToken);
+              if (input.args[0] === "api") return output('{"id":123,"login":"same-account"}');
+              return output("");
+            }),
+        }),
+      );
+      const cli = yield* GitHubPullRequestCli.make.pipe(
+        Effect.provideService(GitHubCli.GitHubCli, github),
+        Effect.provide(GitHubGraphQlBudget.layer),
+      );
+      const input = { cwd: "/repo", host: "github.com" };
+      const first = yield* cli.withVerifiedCredential(input, (identity) =>
+        Effect.gen(function* () {
+          activeToken = "restricted-credential";
+          expect(yield* cli.getViewerLogin(input)).toBe("same-account");
+          yield* cli.commentOnPullRequest({
+            ...input,
+            repository: "owner/repo",
+            number: 1,
+            body: "comment",
+          });
+          return identity;
+        }),
+      );
+      const second = yield* cli.withVerifiedCredential(input, Effect.succeed);
+      expect(first.accountId).toBe(second.accountId);
+      expect(first.credentialFingerprint).not.toBe(second.credentialFingerprint);
+      expect(encodeJson([first, second])).not.toContain("broad-credential");
+      expect(encodeJson([first, second])).not.toContain("restricted-credential");
+      expect(commands.find((command) => command.args[0] === "pr")?.env).toMatchObject({
+        GH_TOKEN: "broad-credential",
+        GITHUB_TOKEN: "broad-credential",
+        GH_DEBUG: "",
+      });
+      expect(
+        commands
+          .filter((command) => command.args[0] === "api")
+          .map((command) => command.env?.GH_TOKEN),
+      ).toEqual(["broad-credential", "restricted-credential"]);
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "same-account",
+      });
+    }),
+);
+
+layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("admits only one concurrent preview above the reserve and resumes after reset", () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const resetAt = "2099-08-13T14:00:00Z";
+      yield* budget.observe(
+        "preview-budget.example",
+        encodeJson({ data: { rateLimit: { cost: 1, limit: 5_000, remaining: 501, resetAt } } }),
+      );
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Fast previews",
+                    url: "https://preview-budget.example/acme/web/pull/7",
+                    state: "OPEN",
+                    isDraft: false,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    author: null,
+                  },
+                },
+                rateLimit: { cost: 1, limit: 5_000, remaining: 500, resetAt },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "preview-budget.example",
+        number: 7,
+      };
+      const results = yield* Effect.all(
+        Array.from({ length: 20 }, (_, index) =>
+          cli.getPullRequestPreview({ ...input, number: index + 1 }).pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+      for (const result of results) {
+        if (result._tag === "Failure") {
+          expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
+        }
+      }
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      yield* TestClock.setTime(Date.parse(resetAt));
+      yield* cli.getPullRequestPreview(input);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      yield* TestClock.setTime(now);
+    }),
+  );
+
+  it.effect("loads the complete hover card with one GraphQL request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Fast previews",
+                    url: "https://github.example/acme/web/pull/7",
+                    state: "MERGED",
+                    isDraft: false,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    author: {
+                      login: "octocat",
+                      name: "Octo Cat",
+                      avatarUrl: "https://github.example/avatar.png",
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const preview = yield* cli.getPullRequestPreview({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.example",
+        number: 7,
+      });
+      expect(preview).toEqual({
+        number: 7,
+        title: "Fast previews",
+        url: "https://github.example/acme/web/pull/7",
+        state: "merged",
+        isDraft: false,
+        createdAt: "2026-07-01T00:00:00Z",
+        author: {
+          login: "octocat",
+          name: "Octo Cat",
+          avatarUrl: "https://github.example/avatar.png",
+        },
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(callAt(0).args).toEqual(
+        expect.arrayContaining(["api", "graphql", "--hostname", "github.example"]),
+      );
+    }),
+  );
+
+  it.effect("coalesces concurrent identity verification for the same host and credential", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) =>
+        input.args[0] === "auth"
+          ? Effect.succeed(output("shared-credential"))
+          : Effect.yieldNow.pipe(Effect.as(output('{"id":123,"login":"viewer"}'))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const results = yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          cli.getRoutingIdentity({ cwd: "/w", host: "github.identity-flight.test" }),
+        ),
+        { concurrency: 4 },
+      );
+      expect(results).toEqual(
+        Array.from({ length: 4 }, () => ({ accountId: "123", viewer: "viewer" })),
+      );
+      expect(mockedExecute.mock.calls.filter(([input]) => input.args[0] === "api")).toHaveLength(1);
+    }),
+  );
+
+  it.effect(
+    "lets another identity reader continue when the first verification is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const firstStarted = yield* Deferred.make<void>();
+        const secondStarted = yield* Deferred.make<void>();
+        let tokens = 0;
+        let verifications = 0;
+        mockedExecute.mockImplementation((input) =>
+          Effect.gen(function* () {
+            if (input.args[0] === "auth") {
+              if (++tokens === 2) yield* Deferred.succeed(secondStarted, undefined);
+              return output("cancel-credential");
+            }
+            if (++verifications === 1) {
+              yield* Deferred.succeed(firstStarted, undefined);
+              return yield* Effect.never;
+            }
+            return output('{"id":123,"login":"viewer"}');
+          }),
+        );
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const input = { cwd: "/w", host: "github.identity-cancel.test" };
+        const first = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
+        yield* Deferred.await(firstStarted);
+        const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
+        yield* Deferred.await(secondStarted);
+        yield* Fiber.interrupt(first);
+        expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
+        expect(verifications).toBe(2);
+      }),
+  );
+
+  it.effect("reads linked pull requests on one host together, filed back by position", () =>
+    Effect.gen(function* () {
+      const node = (number: number) => ({
+        number,
+        title: `Pull request ${number}`,
+        url: `https://github.com/acme/web/pull/${number}`,
+        author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
+        baseRefName: "main",
+        headRefName: `feat/${number}`,
+        state: "OPEN",
+        isDraft: false,
+        mergeable: "MERGEABLE",
+        reviewDecision: null,
+        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "reviewer" } }] },
+        additions: 12,
+        deletions: 3,
+        changedFiles: 2,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+        mergedAt: null,
+        closedAt: null,
+        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+      });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
-              number: 7,
-              title: "Reuse the summary",
-              url: "https://github.com/acme/web/pull/7",
-              author: { login: "octocat", name: "Octo Cat" },
-              baseRefName: "main",
-              headRefName: "feat/summary",
-              state: "OPEN",
-              isDraft: false,
-              mergeable: "MERGEABLE",
-              reviewDecision: "APPROVED",
-              additions: 12,
-              deletions: 3,
-              changedFiles: 2,
-              createdAt: "2026-08-20T00:00:00.000Z",
-              updatedAt: "2026-08-24T12:34:56.000Z",
-              reviewRequests: [],
-              labels: [],
-              statusCheckRollup: [
-                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "ci" },
-              ],
-              body: "",
+              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
             }),
           ),
         ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const summary = yield* cli.getPullRequestSummary({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+      const reads = yield* Effect.forEach(
+        [7, 8],
+        (number) =>
+          cli.getPullRequestSummary({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const [seven, eight] = yield* Fiber.join(reads);
 
       assert.deepStrictEqual(
         {
-          number: summary.number,
-          state: summary.state,
-          headBranch: summary.headBranch,
-          isDraft: summary.isDraft,
-          author: summary.author?.login,
-          additions: summary.additions,
-          deletions: summary.deletions,
-          changedFiles: summary.changedFiles,
-          reviewDecision: summary.reviewDecision,
-          checksState: summary.checksState,
-          mergeability: summary.mergeability,
+          number: seven?.number,
+          state: seven?.state,
+          headBranch: seven?.headBranch,
+          author: seven?.author?.login,
+          changedFiles: seven?.changedFiles,
+          reviewDecision: seven?.reviewDecision,
+          checksState: seven?.checksState,
+          mergeability: seven?.mergeability,
         },
         {
           number: 7,
           state: "open",
-          headBranch: "feat/summary",
-          isDraft: false,
+          headBranch: "feat/7",
           author: "octocat",
-          additions: 12,
-          deletions: 3,
           changedFiles: 2,
           reviewDecision: "approved",
           checksState: "passing",
           mergeability: "mergeable",
         },
       );
+      assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
-      expect(mockedExecute.mock.calls[0]?.[0]?.args).toEqual([
+      const document = callAt(0).args.at(-1) ?? "";
+      expect(document).toContain(
+        's0: repository(owner: "acme", name: "web") { pullRequest(number: 7)',
+      );
+      expect(document).toContain("pullRequest(number: 8)");
+    }),
+  );
+
+  it.effect("reads a pull request the batch said nothing about on its own", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                number: 7,
+                title: "Reuse the summary",
+                url: "https://github.com/acme/web/pull/7",
+                author: { login: "octocat", name: "Octo Cat" },
+                baseRefName: "main",
+                headRefName: "feat/summary",
+                state: "OPEN",
+                isDraft: false,
+                mergeable: "MERGEABLE",
+                reviewDecision: "APPROVED",
+                additions: 12,
+                deletions: 3,
+                changedFiles: 2,
+                createdAt: "2026-08-20T00:00:00.000Z",
+                updatedAt: "2026-08-24T12:34:56.000Z",
+                reviewRequests: [],
+                labels: [],
+                statusCheckRollup: [
+                  {
+                    __typename: "CheckRun",
+                    status: "COMPLETED",
+                    conclusion: "SUCCESS",
+                    name: "ci",
+                  },
+                ],
+                body: "",
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const read = yield* cli
+        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summary = yield* Fiber.join(read);
+
+      assert.strictEqual(summary.headBranch, "feat/summary");
+      assert.strictEqual(summary.checksState, "passing");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(callAt(1).args).toEqual([
         "pr",
         "view",
         "7",
@@ -272,7 +591,6 @@ layer("GitHubPullRequestCli.layer", (it) => {
         "--json",
         expect.stringContaining("statusCheckRollup"),
       ]);
-      expect(mockedGetPullRequest).not.toHaveBeenCalled();
     }),
   );
 
@@ -1625,19 +1943,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off - canned gh response.
-            JSON.stringify({
-              number: 7,
-              title: "Pull request 7",
-              url: "https://github.com/acme/web/pull/7",
-              headRefName: "feat/page",
-              headRefOid: "abc123",
-              isCrossRepository: false,
-              headRepositoryOwner: { login: "acme" },
-              baseRefName: "main",
-              createdAt: "2026-07-01T00:00:00Z",
-              updatedAt: "2026-07-02T00:00:00Z",
-            }),
+            encodeJson(
+              coreResponse({
+                number: 7,
+                title: "Pull request 7",
+                url: "https://github.com/acme/web/pull/7",
+                headRefName: "feat/page",
+                headRefOid: "abc123",
+                isCrossRepository: false,
+                headRepositoryOwner: { login: "acme" },
+                baseRefName: "main",
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-02T00:00:00Z",
+              }),
+            ),
           ),
         ),
       );
@@ -1658,19 +1977,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
   it.effect("finds and approves every workflow waiting on a maintainer", () =>
     Effect.gen(function* () {
       const detail = output(
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - canned gh response.
-        JSON.stringify({
-          number: 7,
-          title: "Pull request 7",
-          url: "https://github.com/acme/web/pull/7",
-          headRefName: "feat/page",
-          headRefOid: "abc123",
-          isCrossRepository: true,
-          headRepositoryOwner: { login: "octocat" },
-          baseRefName: "main",
-          createdAt: "2026-07-01T00:00:00Z",
-          updatedAt: "2026-07-02T00:00:00Z",
-        }),
+        encodeJson(
+          coreResponse({
+            number: 7,
+            title: "Pull request 7",
+            url: "https://github.com/acme/web/pull/7",
+            headRefName: "feat/page",
+            headRefOid: "abc123",
+            isCrossRepository: true,
+            headRepositoryOwner: { login: "octocat" },
+            baseRefName: "main",
+            createdAt: "2026-07-01T00:00:00Z",
+            updatedAt: "2026-07-02T00:00:00Z",
+          }),
+        ),
       );
       const heads = output(
         // @effect-diagnostics-next-line preferSchemaOverJson:off - canned gh response.
@@ -1786,7 +2106,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         updatedAt: "2026-07-02T00:00:00Z",
       };
       for (const value of [
-        detail,
+        coreResponse(detail),
         [
           {
             number: 7,
@@ -1796,7 +2116,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           },
         ],
         [{ databaseId: 10, workflowName: "build", url: "https://example.com/10" }],
-        { ...detail, headRefOid: "def456" },
+        coreResponse({ ...detail, headRefOid: "def456" }),
       ]) {
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
@@ -1827,8 +2147,47 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads workflow runs and their pull request scope concurrently", () =>
+    Effect.gen(function* () {
+      const headsStarted = yield* Deferred.make<void>();
+      const runsStarted = yield* Deferred.make<void>();
+      mockedExecute.mockImplementation(({ args }) =>
+        args[0] === "pr"
+          ? Deferred.succeed(headsStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(runsStarted)),
+              Effect.as(
+                output(
+                  '[{"number":7,"headRefOid":"abc123","isCrossRepository":true,"headRepositoryOwner":{"login":"octocat"}}]',
+                ),
+              ),
+            )
+          : Deferred.succeed(runsStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(headsStarted)),
+              Effect.as(
+                output('[{"databaseId":10,"workflowName":"build","url":"https://example.com/10"}]'),
+              ),
+            ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const runs = yield* cli.listWorkflowRunsRequiringApproval({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        headSha: "abc123",
+        headBranch: "feat/page",
+        headRepositoryOwner: "octocat",
+        isCrossRepository: true,
+      });
+
+      expect(runs).toEqual([{ id: 10, name: "build", url: "https://example.com/10" }]);
+    }),
+  );
+
   it.effect("refuses workflow approval when one head belongs to several pull requests", () =>
     Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
@@ -1867,7 +2226,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         limit: 1_000,
       });
       expect(error.detail).toContain("instead of uniquely matching #7");
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 
@@ -1876,19 +2235,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off - canned gh response.
-            JSON.stringify({
-              number: 7,
-              title: "Pull request 7",
-              url: "https://github.com/acme/web/pull/7",
-              headRefName: "feat/page",
-              headRefOid: "abc123",
-              isCrossRepository: true,
-              headRepositoryOwner: null,
-              baseRefName: "main",
-              createdAt: "2026-07-01T00:00:00Z",
-              updatedAt: "2026-07-02T00:00:00Z",
-            }),
+            encodeJson(
+              coreResponse({
+                number: 7,
+                title: "Pull request 7",
+                url: "https://github.com/acme/web/pull/7",
+                headRefName: "feat/page",
+                headRefOid: "abc123",
+                isCrossRepository: true,
+                headRepositoryOwner: null,
+                baseRefName: "main",
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-02T00:00:00Z",
+              }),
+            ),
           ),
         ),
       );
@@ -2458,9 +2818,76 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w" }));
+      const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
+    }),
+  );
+
+  it.effect("looks up the authenticated account on the requested enterprise host", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("enterprise-test-credential")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"enterprise-user"}')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
+
+      expect(login).toBe("enterprise-user");
+      expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.acme.com"]);
+      expect(callAt(1).args).toEqual(["api", "user", "--hostname", "github.acme.com"]);
+    }),
+  );
+
+  it.effect("reuses verified credentials offline and refuses an unverified replacement", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = { cwd: "/w", host: "github.identity-cache.test" };
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-a")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "maria-rcks",
+      });
+      expect(callAt(1).env).toMatchObject({
+        GH_ENTERPRISE_TOKEN: "test-credential-a",
+        GH_DEBUG: "",
+      });
+
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("test-credential-a")));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "maria-rcks",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubCli.GitHubCliCommandError({
+              command: "gh",
+              cwd: "/w",
+              cause: new Error("upstream failed with test-credential-b"),
+            }),
+          ),
+        );
+      const failure = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(failure._tag).toBe("GitHubViewerLoginUnavailableError");
+      expect(String(failure)).not.toContain("test-credential-b");
+      expect(callAt(4).env).toMatchObject({
+        GH_ENTERPRISE_TOKEN: "test-credential-b",
+        GH_DEBUG: "",
+      });
+
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "456",
+        viewer: "maria-rcks",
+      });
     }),
   );
 
@@ -2655,11 +3082,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
+      // Its own pull request: a node id looked up once is remembered for the life of the service.
       yield* cli.setReaction({
         cwd: "/w",
         repository: "acme/web",
         host: "github.com",
-        number: 7,
+        number: 21,
         content: "rocket",
         reacted: true,
       });
@@ -2668,7 +3096,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const lookup = callAt(0).args;
       expect(lookup).toContain("owner=acme");
       expect(lookup).toContain("name=web");
-      expect(lookup).toContain("number=7");
+      expect(lookup).toContain("number=21");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const request = JSON.parse(callAt(1).stdin ?? "") as {
         query: string;
@@ -2729,7 +3157,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           cwd: "/w",
           repository: "acme/web",
           host: "github.com",
-          number: 7,
+          number: 22,
           ...fields,
         });
 
@@ -2737,21 +3165,21 @@ layer("GitHubPullRequestCli.layer", (it) => {
       yield* rewrite({ body: "A better description." });
       yield* rewrite({ title: "Both", body: "at once." });
 
-      // Each rewrite looks the pull request's node id up first, then mutates.
+      // One node id lookup for the pull request, then a mutation per rewrite.
       const variablesAt = (index: number) =>
         (JSON.parse(callAt(index).stdin ?? "") as { variables: Record<string, string> }).variables;
       expect(variablesAt(1)).toEqual({ pullRequestId: "PR_kwDOA", title: "A better title" });
-      expect(variablesAt(3)).toEqual({
+      expect(variablesAt(2)).toEqual({
         pullRequestId: "PR_kwDOA",
         body: "A better description.",
       });
-      expect(variablesAt(5)).toEqual({
+      expect(variablesAt(3)).toEqual({
         pullRequestId: "PR_kwDOA",
         title: "Both",
         body: "at once.",
       });
       // The reader's own words, so they travel the way every other body does.
-      expect(callAt(5).args.join(" ")).not.toContain("at once.");
+      expect(callAt(3).args.join(" ")).not.toContain("at once.");
     }),
   );
 
@@ -2857,19 +3285,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              number: 7,
-              title: "Progressive detail",
-              url: "https://github.com/acme/web/pull/7",
-              author: { login: "octocat" },
-              headRefName: "feature",
-              baseRefName: "main",
-              createdAt: "2026-07-01T00:00:00Z",
-              updatedAt: "2026-07-02T00:00:00Z",
-              body: "Core body",
-              changedFiles: 2,
-            }),
+            encodeJson(
+              coreResponse({
+                number: 7,
+                title: "Progressive detail",
+                url: "https://github.com/acme/web/pull/7",
+                author: { login: "octocat" },
+                headRefName: "feature",
+                baseRefName: "main",
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-02T00:00:00Z",
+                body: "Core body",
+                changedFiles: 2,
+              }),
+            ),
           ),
         ),
       );
@@ -2899,10 +3328,213 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       expect(detail.body).toBe("Core body");
       expect(activity.author?.login).toBe("octocat");
-      expect(callAt(0).args.at(-1)).toBe(
-        "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup,body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest",
-      );
+      expect(callAt(0).args).toContain("headRef=refs/pull/7/head");
+      expect(callAt(0).args.at(-1)).toContain("viewerCanUpdateBranch");
+      expect(detail.viewerAccess.mergeCapabilities).toEqual({
+        merge: true,
+        squash: false,
+        rebase: true,
+      });
+      expect(detail.comparison).toEqual({ behindBy: 2, viewerCanUpdate: true });
       expect(callAt(1).args.at(-1)).toBe("author,comments,reviews,commits");
+    }),
+  );
+
+  it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson(
+              coreResponse({
+                baseRef: null,
+                reviewRequests: {
+                  nodes: [
+                    { requestedReviewer: { login: "reviewer" } },
+                    { requestedReviewer: { slug: "maintainers", name: "Maintainers" } },
+                  ],
+                },
+                labels: { nodes: [{ name: "bug", color: "ff0000" }] },
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [
+                              {
+                                __typename: "CheckRun",
+                                name: "build",
+                                status: "COMPLETED",
+                                conclusion: "SUCCESS",
+                                checkSuite: { workflowRun: { workflow: { name: "linux" } } },
+                              },
+                              {
+                                __typename: "CheckRun",
+                                name: "build",
+                                status: "COMPLETED",
+                                conclusion: "FAILURE",
+                                checkSuite: { workflowRun: { workflow: { name: "windows" } } },
+                              },
+                            ],
+                            pageInfo: { hasNextPage: false },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              }),
+            ),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(detail.comparison).toBeNull();
+      expect(detail.reviewRequestLogins).toEqual(["reviewer"]);
+      expect(detail.hasTeamReviewRequest).toBe(true);
+      expect(detail.labels).toEqual([{ name: "bug", color: "ff0000" }]);
+      expect(detail.checks).toHaveLength(2);
+      expect(detail.checksState).toBe("failing");
+    }),
+  );
+
+  it.effect("reads every check when the combined response has another page", () =>
+    Effect.gen(function* () {
+      const response = coreResponse({
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  contexts: {
+                    nodes: [{ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }],
+                    pageInfo: { hasNextPage: true },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              ...response.data.repository.pullRequest,
+              reviewRequests: [],
+              labels: [],
+              statusCheckRollup: [
+                { name: "first", status: "COMPLETED", conclusion: "SUCCESS" },
+                { name: "last", status: "COMPLETED", conclusion: "FAILURE" },
+              ],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const detail = yield* cli.getPullRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect(detail.checks).toHaveLength(2);
+      expect(detail.checksState).toBe("failing");
+      expect(detail.checksTruncated).toBe(false);
+      expect(callAt(1).args.slice(0, 2)).toEqual(["pr", "view"]);
+    }),
+  );
+
+  it.effect("refuses to combine checks from different head revisions", () =>
+    Effect.gen(function* () {
+      const response = coreResponse({
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  contexts: {
+                    nodes: [],
+                    pageInfo: { hasNextPage: true },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      });
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              ...response.data.repository.pullRequest,
+              headRefOid: "new-head",
+              reviewRequests: [],
+              labels: [],
+              statusCheckRollup: [],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+      expect(error._tag).toBe("GitHubPullRequestReadError");
+    }),
+  );
+
+  it.effect("preserves the reserve for automatic detail reads and allows manual checks", () =>
+    Effect.gen(function* () {
+      const response = coreResponse();
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              ...response,
+              data: {
+                ...response.data,
+                rateLimit: {
+                  cost: 1,
+                  limit: 5000,
+                  remaining: 500,
+                  resetAt: "2099-08-13T14:00:00Z",
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.core-reserve.test",
+        number: 7,
+      };
+      yield* cli.getPullRequestDetail(input);
+      const error = yield* Effect.flip(cli.getPullRequestDetail(input));
+      expect(error._tag).toBe("SourceControlRateLimitPausedError");
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      yield* cli
+        .getPullRequestDetail(input)
+        .pipe(Effect.provideService(GitHubCli.AllowGitHubReserve, true));
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 
@@ -3087,6 +3719,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
               JSON.stringify({
                 data: {
                   repository: {
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
                     viewerPermission: "READ",
                     pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
@@ -3107,7 +3742,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
         // One request, because both answers hang off the same repository object.
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(callAt(0).args).toContain("number=7");
+        expect(callAt(0).args.at(-1)).toContain(
+          "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed",
+        );
         expect(access).toEqual({
+          mergeCapabilities: { merge: true, squash: false, rebase: true },
           canWrite: false,
           canTriage: false,
           canUpdate: true,
@@ -3249,6 +3888,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
               JSON.stringify({
                 data: {
                   repository: {
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
                     viewerPermission: "READ",
                     pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
@@ -3276,44 +3918,13 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(access).toEqual({
+        mergeCapabilities: { merge: true, squash: false, rebase: true },
         canWrite: false,
         canTriage: false,
         canUpdate: true,
         didAuthor: true,
       });
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
-    }),
-  );
-
-  it.effect("reads the viewer's role off the same call as the merge settings", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              mergeCommitAllowed: false,
-              squashMergeAllowed: true,
-              rebaseMergeAllowed: true,
-              viewerPermission: "WRITE",
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-
-      const access = yield* cli.getRepositoryAccess({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(callAt(0).args).toContain(
-        "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission",
-      );
-      assert.isTrue(access.canWrite);
-      expect(access.mergeCapabilities).toEqual({ merge: false, squash: true, rebase: true });
     }),
   );
 
@@ -3470,6 +4081,254 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(callAt(0).args).toContain("repos/acme/web/issues/7/labels/good%20first%20issue");
       expect(callAt(0).args).toContain("DELETE");
       expect(callAt(1).args).toContain("repos/acme/web/issues/7/labels/area%2Fweb");
+    }),
+  );
+
+  it.effect("reads every page of viewed files, and says so when there are too many", () =>
+    Effect.gen(function* () {
+      const page = (index: number, hasNextPage: boolean) =>
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage, endCursor: `cursor-${index}` },
+                      nodes: [
+                        { path: `src/file${index}.ts`, viewerViewedState: "VIEWED" },
+                        { path: `src/other${index}.ts`, viewerViewedState: "UNVIEWED" },
+                      ],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      mockedExecute
+        .mockReturnValueOnce(page(0, true))
+        .mockReturnValueOnce(page(1, true))
+        .mockReturnValueOnce(page(2, false));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      // The first page asks from the start; each one after it carries the cursor before it.
+      assert.isFalse(callAt(0).args.some((arg) => arg.startsWith("after=")));
+      expect(callAt(1).args).toContain("after=cursor-0");
+      expect(callAt(2).args).toContain("after=cursor-1");
+      assert.isFalse(viewed.truncated);
+      expect(viewed.files.map((file) => [file.path, file.state])).toEqual([
+        ["src/file0.ts", "viewed"],
+        ["src/other0.ts", "unviewed"],
+        ["src/file1.ts", "viewed"],
+        ["src/other1.ts", "unviewed"],
+        ["src/file2.ts", "viewed"],
+        ["src/other2.ts", "unviewed"],
+      ]);
+    }),
+  );
+
+  it.effect("stops paging viewed files rather than following a change without end", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    files: {
+                      pageInfo: { hasNextPage: true, endCursor: "cursor" },
+                      nodes: [{ path: "src/file.ts", viewerViewedState: "VIEWED" }],
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const viewed = yield* cli.getPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 5);
+      assert.isTrue(viewed.truncated);
+      assert.strictEqual(viewed.files.length, 5);
+    }),
+  );
+
+  it.effect("clears and restores a burst of files in one request", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_1" } } } })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 23,
+        files: [
+          { path: "src/a.ts", viewed: true },
+          { path: "src/b.ts", viewed: false },
+        ],
+      });
+
+      // One request to learn the pull request's node id, one for every press together.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const sent = JSON.parse(callAt(1).stdin ?? "") as {
+        query: string;
+        variables: Record<string, string>;
+      };
+      expect(sent.query).toContain("f0: markFileAsViewed");
+      expect(sent.query).toContain("f1: unmarkFileAsViewed");
+      expect(sent.variables).toEqual({
+        pullRequestId: "PR_1",
+        path0: "src/a.ts",
+        path1: "src/b.ts",
+      });
+    }),
+  );
+
+  it.effect("asks the host nothing when nothing was pressed", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setPullRequestFilesViewed({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        files: [],
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("looks a pull request's node id up once, however often it is written to", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_24" } } } })),
+          ),
+        )
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const pullRequest = { cwd: "/w", repository: "acme/web", host: "github.com", number: 24 };
+
+      yield* cli.setPullRequestFilesViewed({
+        ...pullRequest,
+        files: [{ path: "src/a.ts", viewed: true }],
+      });
+      yield* cli.setPullRequestFilesViewed({
+        ...pullRequest,
+        files: [{ path: "src/b.ts", viewed: true }],
+      });
+      yield* cli.updatePullRequest({ ...pullRequest, title: "Ticked through" });
+
+      // One lookup, then a mutation per write, every one of them addressed by the id it answered.
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      expect(callAt(0).args).toContain("number=24");
+      const idSentAt = (index: number) =>
+        (JSON.parse(callAt(index).stdin ?? "") as { variables: { pullRequestId: string } })
+          .variables.pullRequestId;
+      expect([idSentAt(1), idSentAt(2), idSentAt(3)]).toEqual(["PR_24", "PR_24", "PR_24"]);
+    }),
+  );
+
+  it.effect("does not remember a node id lookup that failed", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output('{"message":"not found"}')))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            output(JSON.stringify({ data: { repository: { pullRequest: { id: "PR_25" } } } })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const write = () =>
+        cli.setPullRequestFilesViewed({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 25,
+          files: [{ path: "src/a.ts", viewed: true }],
+        });
+
+      const error = yield* Effect.flip(write());
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+
+      yield* write();
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      const idSentAt = (index: number) =>
+        (JSON.parse(callAt(index).stdin ?? "") as { variables: { pullRequestId: string } })
+          .variables.pullRequestId;
+      expect(idSentAt(2)).toEqual("PR_25");
+    }),
+  );
+  it.effect("keeps the pull request being ticked through, not the one looked up first", () =>
+    Effect.gen(function* () {
+      // Ordered by insertion alone, a hit does not renew its entry, so the review the reader is
+      // working down is the first thing evicted once a listing has walked a cache's worth of cold
+      // pull requests, and every press after that pays a round trip again.
+      // This block shares one cache, so these numbers are its own and it runs last.
+      const HOT = 9_000;
+      const lookupsOf = new Map<number, number>();
+      mockedExecute.mockImplementation((input) => {
+        const asked = input.args.find((arg) => arg.startsWith("number="));
+        if (asked === undefined) return Effect.succeed(output("{}"));
+        const number = Number(asked.slice("number=".length));
+        lookupsOf.set(number, (lookupsOf.get(number) ?? 0) + 1);
+        return Effect.succeed(
+          output(encodeJson({ data: { repository: { pullRequest: { id: `PR_${number}` } } } })),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const tick = (number: number) =>
+        cli.setPullRequestFilesViewed({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number,
+          files: [{ path: "src/a.ts", viewed: true }],
+        });
+
+      yield* tick(HOT);
+      // A cache's worth of cold pull requests, with the open one pressed in between each of them.
+      for (let filled = 0; filled < GitHubPullRequestCli.NODE_ID_CACHE_CAPACITY; filled += 1) {
+        yield* tick(HOT + 1 + filled);
+        yield* tick(HOT);
+      }
+
+      assert.strictEqual(lookupsOf.get(HOT), 1);
     }),
   );
 });

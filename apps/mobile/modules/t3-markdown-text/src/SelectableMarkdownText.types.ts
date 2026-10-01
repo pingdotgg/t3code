@@ -1,4 +1,6 @@
 export interface NativeMarkdownTextStyle {
+  readonly selectionColor?: string;
+  readonly selectionHandleColor?: string;
   readonly color: string;
   readonly strongColor: string;
   readonly mutedColor: string;
@@ -11,6 +13,7 @@ export interface NativeMarkdownTextStyle {
   readonly skillTextColor: string;
   readonly quoteMarkerColor: string;
   readonly dividerColor: string;
+  readonly contextChipBorderColor?: string;
   readonly fontSize: number;
   readonly lineHeight: number;
   readonly fontFamily: string;
@@ -74,6 +77,8 @@ export interface MarkdownFileContextMenu {
 
 export interface SelectableMarkdownTextProps {
   readonly markdown: string;
+  /** Opaque context payload supplied by the host for native selection copy. */
+  readonly contextClipboardFragment?: string;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;

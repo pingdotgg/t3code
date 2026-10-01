@@ -10,9 +10,6 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const worker = yield* Cloudflare.Website.Vite("Vue", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
       // vue-router runs in history mode, so deep links like /about must
       // fall back to index.html for the client router to resolve them.
       assets: {

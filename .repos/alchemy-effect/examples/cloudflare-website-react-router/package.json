@@ -10,20 +10,20 @@
     "test": "bun test"
   },
   "dependencies": {
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend",
-    "react-router": "catalog:frontend"
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/react": "catalog:frontend",
-    "@vitejs/plugin-react": "catalog:frontend",
-    "@vitejs/plugin-rsc": "catalog:frontend",
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "effect": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"
