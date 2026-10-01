@@ -35,6 +35,7 @@ function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string
 export function ConnectionEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly expanded: boolean;
+  readonly opensDetails?: boolean;
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
@@ -76,19 +77,22 @@ export function ConnectionEnvironmentRow(props: {
   }, [label, url, props]);
 
   return (
-    <Animated.View layout={LinearTransition.duration(250)} className="bg-card">
+    <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
       <Pressable
         className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
+        accessibilityRole="button"
+        accessibilityLabel={
+          props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
+        }
         onPress={props.onToggle}
       >
-        <ConnectionStatusDot
-          state={enabled || unsupported ? props.environment.connectionState : "available"}
-          pulse={isRetrying}
-          size={8}
-        />
-
         <View className="flex-1 gap-0.5">
           <View className="flex-row items-center gap-1.5">
+            <ConnectionStatusDot
+              state={enabled || unsupported ? props.environment.connectionState : "available"}
+              pulse={isRetrying}
+              size={8}
+            />
             <EnvironmentMachineSymbol
               kind={resolveEnvironmentMachineKind(serverConfig)}
               size={14}
@@ -101,9 +105,11 @@ export function ConnectionEnvironmentRow(props: {
               {props.environment.environmentLabel}
             </Text>
           </View>
-          <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {props.environment.displayUrl}
-          </Text>
+          {!props.environment.isRelayManaged && props.environment.displayUrl.trim() ? (
+            <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+              {props.environment.displayUrl}
+            </Text>
+          ) : null}
           {statusLabel ? (
             <Text
               className={cn(
@@ -126,12 +132,13 @@ export function ConnectionEnvironmentRow(props: {
         </View>
 
         <ThemedSwitch
+          style={{ alignSelf: "center" }}
           disabled={unsupported}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
           value={enabled}
         />
         <SymbolView
-          name="chevron.down"
+          name={props.opensDetails ? "chevron.right" : "chevron.down"}
           size={12}
           tintColorClassName="accent-icon-subtle"
           type="monochrome"

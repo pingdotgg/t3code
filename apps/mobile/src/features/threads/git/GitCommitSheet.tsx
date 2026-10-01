@@ -72,7 +72,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   return (
     <View
       collapsable={false}
-      className={Platform.OS === "android" ? "bg-sheet" : "flex-1 bg-sheet"}
+      className="bg-sheet ios:flex-1"
       style={Platform.OS === "android" ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
       {Platform.OS === "android" ? (
@@ -92,35 +92,21 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       ) : null}
       <MaterialScreenContent fitToContents>
         <ScrollView
-          className={Platform.OS === "android" ? "shrink grow-0" : "flex-1"}
+          className="android:shrink android:grow-0 ios:flex-1"
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-          contentContainerClassName={Platform.OS === "android" ? "gap-2 p-2" : "gap-4 px-5 pt-2"}
+          contentContainerClassName="android:gap-2 android:p-2 ios:gap-4 ios:px-5 ios:pt-2"
           contentContainerStyle={
             Platform.OS === "android"
               ? { paddingBottom: Math.max(insets.bottom, 18) + 18 }
               : undefined
           }
         >
-          <View
-            className={cn(
-              "gap-3 bg-card p-4",
-              Platform.OS === "android" ? "rounded-[20px]" : "rounded-[22px] border border-border",
-            )}
-          >
-            <View
-              className={
-                Platform.OS === "android" ? "gap-1" : "flex-row items-center justify-between gap-3"
-              }
-            >
+          <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px] ios:border ios:border-border">
+            <View className="android:gap-1 ios:flex-row ios:items-center ios:justify-between ios:gap-3">
               <Text className="text-foreground-muted text-sm font-medium">Branch</Text>
-              <Text
-                className={cn(
-                  "text-foreground text-base",
-                  Platform.OS === "android" ? "font-t3-medium" : "font-t3-bold",
-                )}
-              >
+              <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
                 {gitStatus.data?.refName ?? "(detached HEAD)"}
               </Text>
             </View>
@@ -131,20 +117,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             ) : null}
           </View>
 
-          <View
-            className={cn(
-              "gap-3 bg-card p-4",
-              Platform.OS === "android" ? "rounded-[20px]" : "rounded-[22px] border border-border",
-            )}
-          >
+          <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px] ios:border ios:border-border">
             <View className="flex-row items-center justify-between gap-3">
               <View className="gap-1">
-                <Text
-                  className={cn(
-                    "text-foreground text-base",
-                    Platform.OS === "android" ? "font-t3-medium" : "font-t3-bold",
-                  )}
-                >
+                <Text className="text-foreground text-base android:font-t3-medium ios:font-t3-bold">
                   Files
                 </Text>
                 <Text className="text-foreground-muted text-xs leading-normal">
@@ -154,39 +130,19 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               <View className="flex-row items-center gap-2">
                 {!allSelected && isEditingFiles ? (
                   <Pressable
-                    className={
-                      Platform.OS === "android"
-                        ? "min-h-12 justify-center rounded-full px-3 active:bg-subtle"
-                        : "bg-subtle rounded-full px-3 py-2"
-                    }
+                    className="rounded-full px-3 android:min-h-12 android:justify-center android:active:bg-subtle ios:bg-subtle ios:py-2"
                     onPress={() => setExcludedFiles(new Set())}
                   >
-                    <Text
-                      className={
-                        Platform.OS === "android"
-                          ? "text-primary text-sm font-t3-medium"
-                          : "text-foreground text-2xs font-t3-bold uppercase"
-                      }
-                    >
+                    <Text className="android:text-primary-text android:text-sm android:font-t3-medium ios:text-foreground ios:text-2xs ios:font-t3-bold ios:uppercase">
                       Reset
                     </Text>
                   </Pressable>
                 ) : null}
                 <Pressable
-                  className={
-                    Platform.OS === "android"
-                      ? "min-h-12 justify-center rounded-full px-3 active:bg-subtle"
-                      : "bg-subtle rounded-full px-3 py-2"
-                  }
+                  className="rounded-full px-3 android:min-h-12 android:justify-center android:active:bg-subtle ios:bg-subtle ios:py-2"
                   onPress={() => setIsEditingFiles((current) => !current)}
                 >
-                  <Text
-                    className={
-                      Platform.OS === "android"
-                        ? "text-primary text-sm font-t3-medium"
-                        : "text-foreground text-2xs font-t3-bold uppercase"
-                    }
-                  >
+                  <Text className="android:text-primary-text android:text-sm android:font-t3-medium ios:text-foreground ios:text-2xs ios:font-t3-bold ios:uppercase">
                     {isEditingFiles ? "Done" : "Edit"}
                   </Text>
                 </Pressable>
@@ -204,10 +160,12 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     <Text className="text-foreground flex-1 text-sm font-medium" numberOfLines={1}>
                       {file.path}
                     </Text>
-                    <Text className="text-xs font-t3-bold text-emerald-500">
+                    <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
                       +{file.insertions}
                     </Text>
-                    <Text className="text-xs font-t3-bold text-rose-500">-{file.deletions}</Text>
+                    <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
+                      -{file.deletions}
+                    </Text>
                   </View>
                 ))}
                 {selectedFiles.length > selectedFilePreview.length ? (
@@ -224,15 +182,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                     <Pressable
                       key={file.path}
                       className={cn(
-                        "px-4 py-3",
-                        Platform.OS === "android"
-                          ? included
-                            ? "rounded-xl bg-subtle"
-                            : "rounded-xl"
-                          : cn(
-                              "rounded-[18px] border",
-                              included ? "border-border" : "border-border-subtle",
-                            ),
+                        "px-4 py-3 android:rounded-xl ios:rounded-[18px] ios:border",
+                        included
+                          ? "android:bg-subtle ios:border-border"
+                          : "ios:border-border-subtle",
                       )}
                       accessibilityRole="checkbox"
                       accessibilityLabel={file.path}
@@ -286,10 +239,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                           ) : null}
                         </View>
                         <View className="items-end gap-1">
-                          <Text className="text-xs font-t3-bold text-emerald-500">
+                          <Text className="text-xs font-t3-bold text-adaptive-emerald-700-300">
                             +{file.insertions}
                           </Text>
-                          <Text className="text-xs font-t3-bold text-rose-500">
+                          <Text className="text-xs font-t3-bold text-adaptive-rose-700-300">
                             -{file.deletions}
                           </Text>
                         </View>
@@ -301,16 +254,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             )}
           </View>
 
-          <View
-            className={Platform.OS === "android" ? "gap-3 rounded-[20px] bg-card p-4" : "gap-2"}
-          >
-            <Text
-              className={
-                Platform.OS === "android"
-                  ? "text-foreground text-base font-t3-medium"
-                  : "text-foreground text-sm font-t3-bold"
-              }
-            >
+          <View className="android:gap-3 android:rounded-[20px] android:bg-card android:p-4 ios:gap-2">
+            <Text className="text-foreground android:text-base android:font-t3-medium ios:text-sm ios:font-t3-bold">
               Commit message
             </Text>
             <TextInput
@@ -320,15 +265,12 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               onChangeText={setDialogCommitMessage}
               placeholder="Leave empty to auto-generate"
               textAlignVertical="top"
-              className={cn(
-                "min-h-[128px] px-4 py-3.5",
-                Platform.OS === "android" ? "rounded-xl bg-sheet-solid" : "rounded-[20px]",
-              )}
+              className="min-h-[128px] px-4 py-3.5 android:rounded-xl android:bg-sheet-solid ios:rounded-[20px]"
             />
           </View>
 
-          <View className={Platform.OS === "android" ? "gap-2" : "flex-row gap-3"}>
-            <View className={Platform.OS === "android" ? undefined : "flex-1"}>
+          <View className="android:gap-2 ios:flex-row ios:gap-3">
+            <View className="ios:flex-1">
               <SheetActionButton
                 icon="arrow.branch"
                 label="Commit on new branch"
@@ -336,7 +278,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 onPress={() => void runCommitAction(true)}
               />
             </View>
-            <View className={Platform.OS === "android" ? undefined : "flex-1"}>
+            <View className="ios:flex-1">
               <SheetActionButton
                 icon="checkmark.circle"
                 label="Commit"
