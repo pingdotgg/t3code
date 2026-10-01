@@ -1874,7 +1874,33 @@ describe("storage cleanup", () => {
                             ? "c".repeat(40)
                             : "a".repeat(40),
                       };
-                    }),
+                    }).pipe(
+                      Effect.tap(() =>
+                        (protection.startsWith("policy-") ||
+                          protection === "project-policy-disabled") &&
+                        headReads > 1
+                          ? settingsService
+                              .updateSettings({
+                                ...(protection === "project-policy-disabled"
+                                  ? {
+                                      projectSettingsOverrides: {
+                                        [PROJECT_ID]: { worktreeCleanup: { mode: "off" as const } },
+                                      },
+                                    }
+                                  : {}),
+                                ...(protection === "project-policy-disabled"
+                                  ? {}
+                                  : {
+                                      storageCleanup: {
+                                        worktreeAfterDays:
+                                          protection === "policy-disabled" ? null : 60,
+                                      },
+                                    }),
+                              })
+                              .pipe(Effect.orDie)
+                          : Effect.void,
+                      ),
+                    ),
                   statusDetailsLocal: (cwd) =>
                     Effect.succeed({
                       isRepo: true,
@@ -1907,33 +1933,7 @@ describe("storage cleanup", () => {
                       stderr: "",
                       stdoutTruncated: false,
                       stderrTruncated: false,
-                    }).pipe(
-                      Effect.tap(() =>
-                        (protection.startsWith("policy-") ||
-                          protection === "project-policy-disabled") &&
-                        headReads > 1
-                          ? settingsService
-                              .updateSettings({
-                                ...(protection === "project-policy-disabled"
-                                  ? {
-                                      projectSettingsOverrides: {
-                                        [PROJECT_ID]: { worktreeCleanup: { mode: "off" as const } },
-                                      },
-                                    }
-                                  : {}),
-                                ...(protection === "project-policy-disabled"
-                                  ? {}
-                                  : {
-                                      storageCleanup: {
-                                        worktreeAfterDays:
-                                          protection === "policy-disabled" ? null : 60,
-                                      },
-                                    }),
-                              })
-                              .pipe(Effect.orDie)
-                          : Effect.void,
-                      ),
-                    ),
+                    }),
                   removeWorktree: (input) => {
                     assert.strictEqual(input.force, false);
                     removals.push(input.path);
@@ -1998,6 +1998,9 @@ describe("storage cleanup", () => {
             yield* cleanup.drain;
           }
           const removed =
+            protection === "ignored" ||
+            protection === "ignored-directory" ||
+            protection === "deleted-ignored" ||
             protection === "project-custom" ||
             protection === "deleted-project-custom" ||
             protection === "none" ||

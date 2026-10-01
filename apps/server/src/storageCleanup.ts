@@ -223,21 +223,6 @@ export const make = Effect.gen(function* () {
         if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
           return;
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const ignored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        // Ignored files can contain secrets or local datasets. Dependency installs
-        // are reproducible; every other ignored path prevents automatic removal.
-        if (
-          ignored.stdoutTruncated ||
-          ignored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-        )
-          return;
         const old =
           !deleted &&
           settings.worktreeAfterDays !== null &&
@@ -326,19 +311,6 @@ export const make = Effect.gen(function* () {
         if (
           (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
           head.commitSha
-        )
-          return;
-        const finalIgnored = yield* git.execute({
-          operation: "StorageCleanup.ignoredFiles",
-          cwd: worktreePath,
-          args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-          maxOutputBytes: 64 * 1024,
-        });
-        if (
-          finalIgnored.stdoutTruncated ||
-          finalIgnored.stdout
-            .split("\0")
-            .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
         )
           return;
         const current = resolveWorktreeCleanup(

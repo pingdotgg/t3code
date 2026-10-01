@@ -2607,6 +2607,52 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    for (const change of ["ignored", "ignored-symlink", "untracked", "tracked"] as const) {
+      it.effect(`worktree cleanup follows Git status for ${change} files`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, ".gitignore", ".env\n.cache/\n");
+          yield* git(cwd, ["add", ".gitignore"]);
+          yield* git(cwd, ["commit", "-m", "ignore local files"]);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "cleanup");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "cleanup",
+          });
+          const fs = yield* FileSystem.FileSystem;
+          const externalFile = pathService.join(cwd, "external.env");
+          yield* writeTextFile(cwd, "external.env", "fixture secret");
+          if (change === "ignored-symlink") {
+            yield* fs.symlink(externalFile, pathService.join(worktreePath, ".env"));
+          } else {
+            yield* writeTextFile(worktreePath, ".env", "fixture secret");
+          }
+          const ignoredOnly = change === "ignored" || change === "ignored-symlink";
+          yield* writeTextFile(worktreePath, ".cache/local-data", "fixture data");
+          if (!ignoredOnly) {
+            yield* writeTextFile(
+              worktreePath,
+              change === "tracked" ? "README.md" : "untracked.txt",
+              "keep",
+            );
+          }
+          const status = yield* driver.statusDetailsLocal(worktreePath);
+          assert.equal(status.hasWorkingTreeChanges, !ignoredOnly);
+          const result = yield* driver
+            .removeWorktree({ cwd, path: worktreePath, force: false })
+            .pipe(Effect.result);
+          assert.equal(Result.isSuccess(result), ignoredOnly);
+          assert.equal(yield* fs.exists(worktreePath), !ignoredOnly);
+          assert.equal(yield* fs.readFileString(externalFile), "fixture secret");
+        }),
+      );
+    }
+
     it.effect("creates and removes a worktree for a new refName", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
