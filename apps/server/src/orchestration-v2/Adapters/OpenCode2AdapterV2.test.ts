@@ -2343,6 +2343,95 @@ describe("OpenCode2 adapter", () => {
     }),
   );
 
+  it.effect(
+    "backfills and ends a subagent's turn whose execution ended while the stream was down",
+    () =>
+      Effect.gen(function* () {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-sub" };
+        // The subagent's own prompt, as OpenCode queues it: its id is the
+        // subagent's first history item, where its turn's history begins.
+        const SUB_PROMPT = "msg_0f73f91e0002lgRNb7FtMzcoQu";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.tool.input.started", { ...tool, name: "subagent" }),
+          event("session.tool.called", {
+            ...tool,
+            name: "subagent",
+            input: { description: "Sleep", prompt: "sleep" },
+            executed: false,
+          }),
+          event("session.created", childCreated(CHILD)),
+          event("session.tool.progress", {
+            ...tool,
+            metadata: { sessionID: CHILD, status: "running" },
+          }),
+          event("session.inbox.enqueued", {
+            inboxID: SUB_PROMPT,
+            sessionID: CHILD,
+            item: { type: "user", payload: { text: "sleep" }, delivery: "steer" },
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          // The stream drops while both run; the subagent ends meanwhile. The
+          // subagent's history is read first: its turn ends before its caller's.
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [SESSION]: { type: "running" } }),
+          out("message.list", { sessionID: CHILD, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [
+              { id: "msg_idle_sub", time: { created: 4 }, type: "idle", outcome: "succeeded" },
+              {
+                id: "msg_assistant_sub",
+                time: { created: 3 },
+                type: "assistant",
+                agent: "general",
+                model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                content: [{ type: "text", text: "Slept while the stream was down." }],
+                finish: "stop",
+              },
+              { id: SUB_PROMPT, time: { created: 2 }, text: "sleep", type: "user" },
+            ],
+            cursor: {},
+          }),
+          out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+          reply("message.list", {
+            data: [{ id: PROMPT_ID, time: { created: 1 }, text: "hi", type: "user" }],
+            cursor: {},
+          }),
+          // The parent goes on after the reconnect and ends its turn.
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ]);
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        const collected = yield* Fiber.join(events);
+        const childTurn = collected.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === `${CHILD}:turn:1`,
+        );
+        // The subagent's missed answer is shown, and its turn ended with its execution.
+        assert.isTrue(
+          collected.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Slept while the stream was down.",
+          ),
+        );
+        assert.equal(
+          childTurn?.type === "provider_turn.updated" ? childTurn.providerTurn.status : undefined,
+          "completed",
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

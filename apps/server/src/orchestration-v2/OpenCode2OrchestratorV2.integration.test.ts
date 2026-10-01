@@ -45,6 +45,8 @@ const FIRST_TURN_END = "first-turn-end";
 const BACKGROUND_HOLD = "background-hold";
 /** The parent session of the recorded background run. */
 const BACKGROUND_PARENT = "ses_f1485cda4ffeXuc6GjAU9vDiRb";
+/** Its background subagent's session. */
+const BACKGROUND_CHILD = "ses_f1485c529ffea4URrYruwEg0Ja";
 const BACKGROUND_PROMPT =
   "Use the subagent tool with background enabled to delegate to the general subagent with the prompt: 'Run the shell command `sleep 20` with the bash tool and then reply exactly CHILD_OK.' As soon as it is launched, reply exactly PARENT_OK and end your turn without waiting for it.";
 const instanceId = ProviderInstanceId.make("opencode");
@@ -935,6 +937,35 @@ describe("OpenCode 2 through the orchestrator", () => {
             // Nothing runs any more: the subagent and the follow-up both ended.
             out("session.active"),
             reply("session.active", { data: {} }),
+            // The subagent's turn was running, so its history since its prompt
+            // is read back: its end, as the recording's later events had it.
+            out("message.list", { sessionID: BACKGROUND_CHILD, order: "desc", limit: "50" }),
+            reply("message.list", {
+              data: [
+                {
+                  id: "msg_0eb7a99b0001idleChildTurn0",
+                  time: { created: 4 },
+                  type: "idle",
+                  outcome: "succeeded",
+                },
+                {
+                  id: "msg_0eb7a916c001NRJQJ5gwIT0QnU",
+                  time: { created: 3 },
+                  type: "assistant",
+                  agent: "general",
+                  model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+                  content: [{ type: "text", text: "CHILD_OK" }],
+                  finish: "stop",
+                },
+                {
+                  id: "msg_0eb7a3aea001Lw1Pav5d4akfEg",
+                  time: { created: 2 },
+                  type: "user",
+                  text: "Run the shell command `sleep 20` with the bash tool and then reply exactly CHILD_OK.",
+                },
+              ],
+              cursor: {},
+            }),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
             reply("session.prompt", {
               data: {

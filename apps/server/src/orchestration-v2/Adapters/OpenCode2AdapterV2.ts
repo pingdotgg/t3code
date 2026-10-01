@@ -231,9 +231,10 @@ interface ActiveTurn {
    * The history item this turn's execution follows, for a turn with no prompt
    * id of T3's: the session's newest item before a `/name` command (null when
    * the history was empty), since `session.command` takes no id and answers
-   * without one; or the report a continuation turn's execution answers. A
-   * reconnect backfills that turn from everything after this. Other turns
-   * backfill from their own prompt's id (`nativeTurnRef`).
+   * without one; the report a continuation turn's execution answers; or, on a
+   * subagent's session, the first item queued for its turn. A reconnect
+   * backfills that turn from everything after this. Other turns backfill from
+   * their own prompt's id (`nativeTurnRef`).
    */
   before: string | null | undefined;
   /** The compaction running in this turn, `/compact` or OpenCode's own when the context fills. */
@@ -356,6 +357,12 @@ interface ThreadState {
         turns: number;
         /** The prompt its next execution answers, shown as that turn's user message. */
         prompt: string | undefined;
+        /**
+         * The first item queued for the session since its last turn began (its
+         * prompt, or a report it answers): where the next turn's history
+         * begins, which a reconnect reads back.
+         */
+        queued: string | undefined;
       }
     | undefined;
   /** Executions OpenCode started on its own, oldest first, each waiting for its turn. */
@@ -1447,6 +1454,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         appThread,
         turns: previous?.subagent?.turns ?? 0,
         prompt: call.prompt,
+        queued: undefined,
       });
       child.agent = info?.agent ?? call.agent ?? previous?.agent ?? child.agent;
       child.grants.push(...(previous?.grants ?? []));
@@ -1546,6 +1554,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerTurn,
         { scope: `${child.sessionId}:`, awaitingStart: false },
       );
+      turn.before = subagent.queued;
+      subagent.queued = undefined;
       child.active = turn;
       yield* emit({
         type: "node.updated",
@@ -2491,6 +2501,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (sessionId === undefined) return;
       const state = threads.get(sessionId);
       if (state === undefined) return;
+      if (
+        event.type === "session.inbox.enqueued" &&
+        state.subagent !== undefined &&
+        state.active === undefined
+      ) {
+        state.subagent.queued ??= event.data.inboxID;
+      }
       if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
         return yield* onReport(state, event.data.inboxID, event.data.item.payload);
       }
@@ -2522,7 +2539,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Each execution of a subagent's session is a turn on its child thread,
       // unless it only answers the reports of nested subagents a Stop ended.
       if (state.subagent !== undefined && state.active === undefined && started) {
-        if ((yield* takeReports(state)).stopped) return;
+        if ((yield* takeReports(state)).stopped) {
+          state.subagent.queued = undefined;
+          return;
+        }
         return yield* startChildTurn(state);
       }
       const turn = state.active;
@@ -2653,9 +2673,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * that already went by.
      */
     const reconcile = Effect.gen(function* () {
-      const running = [...threads].filter(
-        ([, state]) => state.active !== undefined && state.subagent === undefined,
-      );
+      // A subagent's turn ends before the turn that waits on it, so the
+      // deepest sessions are read back first.
+      const running = [...threads]
+        .filter(([, state]) => state.active !== undefined)
+        .toSorted(([left], [right]) => callsAbove(right).length - callsAbove(left).length);
       const background = [...threads.values()].filter(
         (state) => state.subagent === undefined && hasBackground(state),
       );
