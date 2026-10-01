@@ -3604,17 +3604,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         });
 
+      // A selection the provider applies on its next turn restarts the run when
+      // the provider can restart it. Otherwise the steer joins the running turn
+      // and the selection waits for the next one, rather than failing the steer.
+      const turnCapabilities = session.providerSession.capabilities.turns;
+      const selectionMustApplyNow =
+        selectionChanged &&
+        (providerInstanceChanged || selectionTransition?.type !== "apply_on_next_turn");
       const steeringPolicy = yield* enforceCommandPolicy(input.command)(
         commandPolicy.decideSteeringExecution({
           commandId: input.command.commandId,
           threadId: input.command.threadId,
           providerInstanceId: targetRun.providerInstanceId,
           capabilities: session.providerSession.capabilities,
-          forceRestart: input.forceRestart || selectionChanged,
+          forceRestart:
+            input.forceRestart ||
+            selectionMustApplyNow ||
+            (selectionChanged &&
+              turnCapabilities.supportsInterrupt &&
+              turnCapabilities.supportsSteeringByInterruptRestart),
         }),
       );
 
       if (steeringPolicy === "active_steering") {
+        if (
+          selectionChanged &&
+          !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection)
+        ) {
+          yield* emitEvent({
+            type: "thread.model-selection-updated",
+            threadId: input.command.threadId,
+            providerInstanceId: input.modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              ...input.projection.thread,
+              modelSelection: input.modelSelection,
+              updatedAt: now,
+            },
+          });
+        }
         yield* appendSteeringMessage({
           runId: targetRun.id,
           nodeId: rootNodeId,
