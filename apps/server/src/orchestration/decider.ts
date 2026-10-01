@@ -1691,9 +1691,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
-      // Checked before anything else so an automatic archive that no longer qualifies is decided
-      // as nothing: a state-dependent no-op writes no receipt, so the archiver retries it on a
-      // later pass rather than being locked out by this attempt.
+      // A refusal decides as nothing, which writes no receipt, so the archiver can retry later.
       if (
         command.automatic === true &&
         !automaticArchiveIsApproved(automaticArchiveGuards, {

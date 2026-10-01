@@ -27,10 +27,7 @@ type SweepServices =
   | PullRequestService
   | ServerSettingsService;
 
-/**
- * One pass. A merge is only ever observed by polling, so this runs on a timer rather than off a
- * domain event: a missed or crashed pass is corrected by the next one.
- */
+// Nothing observes a merge but the poll loop, so this runs on a timer rather than off an event.
 export const sweepOnce = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
   const monitors = yield* PullRequestMonitorService;
@@ -45,9 +42,7 @@ export const sweepOnce = Effect.gen(function* () {
   const live = liveReviewThreadPullRequests(readModel);
   const mergedPullRequestKeys = new Set<string>();
 
-  // A review thread that already records the merge needs no provider read. Only the rest are
-  // worth asking about, and those are grouped so a project costs one call rather than one per
-  // pull request — the fan-out that a per-pull-request read would create is a rate-limit risk.
+  // Grouped by project so the fallback costs one read per project, not one per pull request.
   const unrecordedProjects = new Set<ProjectId>();
   for (const review of live) {
     if (review.recordedState === "merged") {
@@ -68,8 +63,7 @@ export const sweepOnce = Effect.gen(function* () {
     );
     if (listing === null) continue;
     if (listing.truncated) {
-      // Entries are newest-first, so a recent merge is still on this page; an older one may be
-      // missed until the thread's own state refreshes. Worth saying out loud rather than hiding.
+      // Newest-first, so a recent merge is still here; an older one waits for the thread's state.
       yield* Effect.logWarning(`${LOG_TAG}: merged pull request listing was truncated`, {
         projectId,
       });
@@ -79,8 +73,6 @@ export const sweepOnce = Effect.gen(function* () {
     }
   }
 
-  // A monitored pull request answers from local state, which is cheaper and more current than
-  // the listing above; it only settles the answer for keys the listing did not already carry.
   for (const review of live) {
     if (review.recordedState === "merged") continue;
     if (review.pullRequestKeys.some((key) => mergedPullRequestKeys.has(key))) continue;
@@ -98,11 +90,6 @@ export const sweepOnce = Effect.gen(function* () {
     }
   }
 
-  // The provider reads above took real time, during which the user can settle a thread, start a
-  // turn, or unlink the pull request. The archive decider only refuses a thread that is already
-  // archived, so eligibility is re-read here rather than dispatched on a stale read model. What
-  // remains is ordinary command ordering: a user action dispatched after this point wins, and one
-  // dispatched before it is already reflected above.
   const current = yield* engine.getReadModel();
   for (const candidate of planReviewThreadAutoArchive(current, mergedPullRequestKeys)) {
     yield* engine
@@ -122,9 +109,7 @@ export const sweepOnce = Effect.gen(function* () {
         ),
       );
 
-    // A dispatch that produced no events is the admission guard refusing, which is a normal
-    // deferral rather than a fault. Dispatch carries no event count, so the outcome is read back:
-    // without this a guard that never approves looks exactly like a feature doing nothing.
+    // Dispatch reports no event count, so a refusal is only visible by reading the outcome back.
     const settled = yield* engine.getReadModel();
     if (settled.threads.find((thread) => thread.id === candidate.threadId)?.archivedAt == null) {
       yield* Effect.logDebug(`${LOG_TAG}: archive deferred at admission`, {
@@ -137,10 +122,6 @@ export const sweepOnce = Effect.gen(function* () {
 
 const makeReactor = Effect.gen(function* () {
   const guards = yield* AutomaticArchiveGuardRegistry;
-  // The archive command is marked automatic, so admission asks this guard against the read model
-  // as it stands when the command is decided — later than any read in the sweep. That is what
-  // stops a turn started, a thread settled, or a link swapped while the sweep was reading from
-  // being overridden here.
   yield* guards.register(({ readModel, threadId }) => canAutoArchiveThreadNow(readModel, threadId));
   yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
 });

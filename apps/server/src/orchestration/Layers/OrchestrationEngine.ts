@@ -405,8 +405,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const eventBase = yield* decideOrchestrationCommand({
           command: admittedCommand,
           readModel,
-          // Read here rather than captured at startup: an archiver may register after the worker
-          // is already running, and an unregistered automatic archive decides as nothing.
+          // Read per command: an archiver may register after the worker starts.
           ...(admittedCommand.type === "thread.archive" && admittedCommand.automatic === true
             ? { automaticArchiveGuards: yield* automaticArchiveGuards.guards }
             : {}),
@@ -957,8 +956,6 @@ export const OrchestrationEngineLive = Layer.effect(
   Layer.provideMerge(WorktreeCleanupJobRepositoryLive),
   Layer.provideMerge(CheckoutCoordinatorLive),
   Layer.provideMerge(WorkspaceOwnershipRepositoryLive),
-  // Provided privately: the engine reads the guards while deciding commands but does not export
-  // the registry. Whoever fills it obtains the same instance from the runtime composition, where
-  // the layer value below is memoized once.
+  // Private: the engine reads the guards but does not export the registry.
   Layer.provide(AutomaticArchiveGuardRegistryLayer),
 );
