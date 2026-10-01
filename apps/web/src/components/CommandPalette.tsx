@@ -2161,6 +2161,11 @@ function OpenCommandPaletteDialog(props: {
           ? changeAppearanceItem.groups
           : (currentView?.groups ?? rootGroups);
 
+  const shortcutContext = {
+    modelPickerOpen: false,
+    projectPickerOpen: !isBrowsing && currentView?.groups[0]?.value === "projects",
+  };
+
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
     query: deferredQuery,
@@ -2713,7 +2718,7 @@ function OpenCommandPaletteDialog(props: {
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
-      context: { modelPickerOpen: false },
+      context: shortcutContext,
     });
     if (
       threadJumpIndexFromCommand(command ?? "") !== null ||
@@ -3057,6 +3062,7 @@ function OpenCommandPaletteDialog(props: {
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
+        shortcutContext={shortcutContext}
         onExecuteItem={executeItem}
         {...(addProjectCloneFlow?.step === "repository"
           ? {

@@ -84,7 +84,8 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `modelPickerOpen`, `projectPickerOpen`, `usagePageOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
+`projectPickerOpen` is true in the command palette’s **New thread in...** project picker.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
@@ -123,8 +124,8 @@ through the pages you have visited, like a browser's back and forward buttons.
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
-(`mod+0` on desktop) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
-This default uses `isDesktop` so browsers keep their page-zoom reset shortcut.
+(`mod+0` in the project picker) starts a thread [without a project](./thread-sidebar.md#start-without-a-project)
+on web and desktop. Outside the picker, browsers keep their page-zoom reset shortcut.
 
 ## Reserved shortcuts
 

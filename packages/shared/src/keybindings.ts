@@ -52,7 +52,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   {
     key: "mod+0",
     command: "chat.newWithoutProject",
-    when: "!terminalFocus && !previewFocus && isDesktop",
+    when: "projectPickerOpen && !terminalFocus && !previewFocus",
   },
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+h", command: "composer.host", when: "!terminalFocus" },
