@@ -28,6 +28,7 @@ export {
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
   takePairingTokenFromUrl,
+  waitForPrimaryAuthentication,
   type ServerClientSessionRecord,
   type ServerPairingCredentialRecord,
   type ServerPairingLinkRecord,
