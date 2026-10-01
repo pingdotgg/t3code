@@ -1,7 +1,581 @@
+diff --git a/dist/components/CodeView.d.ts b/dist/components/CodeView.d.ts
+index c499b8b..e3c812f 100644
+--- a/dist/components/CodeView.d.ts
++++ b/dist/components/CodeView.d.ts
+@@ -127,6 +127,12 @@ interface CodeViewOptions<LAnnotation> extends CodeViewPassThroughOptions<LAnnot
+    * with `edit: false`.
+    */
+   onItemEditComplete?(item: CodeViewItem<LAnnotation>, file: FileContents, lineAnnotations?: DiffLineAnnotation<LAnnotation>[]): void;
++  /**
++   * Called when find navigates to a match inside a collapsed item. Folding is
++   * host state, so the host unfolds the item (a controlled update with
++   * `collapsed: false` and a new `version`); the viewer then scrolls to it.
++   */
++  onRevealSearchMatch?(item: CodeViewItem<LAnnotation>): void;
+   /** Render a non-virtualized element at the very start of the scroll content,
+    * before the first item. It is always rendered and scrolls with the content.
+    * Return the same element across calls and mutate it in place to update;
+@@ -234,6 +240,13 @@ declare class CodeView<LAnnotation = undefined> {
+   getSelectedLines(): CodeViewLineSelection | null;
+   clearSelectedLines(options?: SelectionWriteOptions): void;
+   getItem(itemId: string): CodeViewItem<LAnnotation> | undefined;
++  /**
++   * Open the find panel, or refocus it when open. It searches every diff
++   * item's lines (including folded files and virtualized rows), and is also
++   * opened by the primary-modifier+F shortcut while focus is in the viewer.
++   */
++  openSearch(): void;
++  closeSearch(): void;
+   /**
+    * Get the live editor for an item currently in edit mode. Use this to drive
+    * editor APIs CodeView does not wrap (applyEdits, undo, setMarkers, …).
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index dfabd49..69b6166 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -13,6 +13,7 @@ import { prefersReducedMotion } from "../utils/prefersReducedMotion.js";
+ import { roundToDevicePixel } from "../utils/roundToDevicePixel.js";
+ import { VirtualizedFile } from "./VirtualizedFile.js";
+ import { VirtualizedFileDiff } from "./VirtualizedFileDiff.js";
++import { CodeViewSearch } from "./CodeViewSearch.js";
+ //#region src/components/CodeView.ts
+ const CODE_VIEW_DIFF_OPTION_KEYS = [
+ 	"theme",
+@@ -120,6 +121,8 @@ const SCROLL_REBASE_CONTAINER_HEIGHT = 12e6;
+ const SCROLL_REBASE_TRIGGER_TOP = 1e6;
+ const SCROLL_REBASE_TARGET_TOP = 2e6;
+ const SCROLL_REBASE_TARGET_BOTTOM = SCROLL_REBASE_CONTAINER_HEIGHT - SCROLL_REBASE_TARGET_TOP;
++/** Room the find panel covers at the top of the viewport; matches under it get scrolled clear. */
++const SEARCH_PANEL_RESERVED_HEIGHT = 48;
+ const SCROLL_REBASE_THRESHOLD = SCROLL_REBASE_CONTAINER_HEIGHT - SCROLL_REBASE_TRIGGER_TOP;
+ const MOBILE_SAFARI = (() => {
+ 	const { navigator } = globalThis;
+@@ -201,6 +204,8 @@ var CodeView = class CodeView {
+ 	workerManager;
+ 	isReadySubscription;
+ 	isContainerManaged;
++	search = new CodeViewSearch(this);
++	pendingSearchReveal;
+ 	constructor(options = { theme: DEFAULT_THEMES }, workerManager, isContainerManaged = false) {
+ 		this.options = options;
+ 		this.computeMetricsCache(options.itemMetrics);
+@@ -382,6 +387,7 @@ var CodeView = class CodeView {
+ 		this.root.addEventListener("touchstart", this.clearPendingScroll, { passive: true });
+ 		this.root.addEventListener("pointerdown", this.clearPendingScroll, { passive: true });
+ 		this.root.addEventListener("keydown", this.clearPendingScroll, { passive: true });
++		this.root.addEventListener("keydown", this.search.handleKeyDown);
+ 		this.resizeObserver.observe(this.root);
+ 		this.render(true);
+ 		window.__INSTANCE = this;
+@@ -444,6 +450,8 @@ var CodeView = class CodeView {
+ 		this.root?.removeEventListener("touchstart", this.clearPendingScroll);
+ 		this.root?.removeEventListener("pointerdown", this.clearPendingScroll);
+ 		this.root?.removeEventListener("keydown", this.clearPendingScroll);
++		this.root?.removeEventListener("keydown", this.search.handleKeyDown);
++		this.search.cleanUp();
+ 		this.root?.style.removeProperty("overflow-anchor");
+ 		this.container?.remove();
+ 		this.stickyOffset.remove();
+@@ -584,6 +592,85 @@ var CodeView = class CodeView {
+ 	getItem(itemId) {
+ 		return this.idToItem.get(itemId)?.item;
+ 	}
++	/** Open the find panel, or refocus it when it is already open. */
++	openSearch() {
++		this.search.open();
++	}
++	closeSearch() {
++		this.search.close();
++	}
++	getSearchItems() {
++		return this.items.map((item) => item.item);
++	}
++	getFirstVisibleItemIndex() {
++		return this.items.length === 0 ? 0 : this.findFirstVisibleIndex(Math.max(this.getScrollTop() - this.getItemTopOffset(), 0));
++	}
++	/**
++	* Bring a match on screen. A folded file is unfolded by the host through
++	* `onRevealSearchMatch` (folding is host state); the reveal resumes once the
++	* item arrives unfolded. Collapsed context around the line is expanded here.
++	*/
++	revealSearchMatch(match, afterUnfold = false) {
++		const item = this.idToItem.get(match.id);
++		if (item == null || item.type !== "diff") return;
++		if (item.item.collapsed === true) {
++			if (this.options.onRevealSearchMatch == null) {
++				this.scrollTo({
++					type: "item",
++					id: match.id,
++					align: "start"
++				});
++				return;
++			}
++			this.pendingSearchReveal = match;
++			this.options.onRevealSearchMatch(item.item);
++			return;
++		}
++		this.pendingSearchReveal = void 0;
++		const target = {
++			type: "line",
++			id: match.id,
++			lineNumber: match.lineNumber,
++			side: match.side,
++			align: "center"
++		};
++		if (match.side === "additions" && !item.instance.isLineRenderable(match.lineNumber)) item.instance.revealLine(match.lineNumber);
++		else if (!afterUnfold && this.isScrollTargetInView(target)) return;
++		this.scrollTo(target);
++	}
++	/** Whether a line already sits fully below the sticky header and find panel. */
++	isScrollTargetInView(target) {
++		const rect = this.getScrollTargetRect(target);
++		if (rect == null) return false;
++		const top = this.getItemTopOffset() + rect.top;
++		const scrollTop = this.getScrollTop();
++		return top >= scrollTop + this.getStickyHeaderOffset() + SEARCH_PANEL_RESERVED_HEIGHT && top + rect.height <= scrollTop + this.getHeight();
++	}
++	/** Pair each match with its mounted line element; rows outside the window are skipped. */
++	getMountedSearchMatches(entriesByItem) {
++		const mounted = [];
++		const { firstIndex, lastIndex } = this.renderState;
++		if (firstIndex === -1) return mounted;
++		for (let index = firstIndex; index <= lastIndex; index++) {
++			const itemEntries = entriesByItem.get(index);
++			const shadowRoot = itemEntries != null ? this.items[index]?.element?.shadowRoot : void 0;
++			if (shadowRoot == null) continue;
++			const lines = /* @__PURE__ */ new Map();
++			for (const element of shadowRoot.querySelectorAll("[data-line][data-line-index]")) {
++				const unifiedIndex = element.getAttribute("data-line-index").split(",")[0];
++				const column = element.closest("[data-deletions]") != null ? "deletions" : "additions";
++				lines.set(`${column}:${unifiedIndex}`, element);
++			}
++			for (const entry of itemEntries) {
++				const element = lines.get(`${entry.side}:${entry.unifiedLineIndex}`) ?? lines.get(`additions:${entry.unifiedLineIndex}`);
++				if (element != null) mounted.push({
++					entry,
++					element
++				});
++			}
++		}
++		return mounted;
++	}
+ 	/**
+ 	* Get the live editor for an item currently in edit mode. Use this to drive
+ 	* editor APIs CodeView does not wrap (applyEdits, undo, setMarkers, …).
+@@ -604,6 +691,7 @@ var CodeView = class CodeView {
+ 		this.render();
+ 		this.syncSelection();
+ 		this.syncItemEditors();
++		this.search.refresh();
+ 		return true;
+ 	}
+ 	updateItemId(oldId, newId) {
+@@ -647,6 +735,7 @@ var CodeView = class CodeView {
+ 		this.appendItemsInternal(inputs);
+ 		this.syncSelection();
+ 		this.syncItemEditors();
++		this.search.refresh();
+ 	}
+ 	setItems(items) {
+ 		if (items.length === 0) {
+@@ -661,6 +750,7 @@ var CodeView = class CodeView {
+ 		else if (!this.tryAppendItems(items)) this.reconcileItems(items);
+ 		this.syncSelection();
+ 		this.syncItemEditors();
++		this.search.refresh();
+ 	}
+ 	/**
+ 	* Append new records to the viewer while preserving existing layout state.
+@@ -1179,6 +1269,10 @@ var CodeView = class CodeView {
+ 		item.item = nextItem;
+ 		item.version = nextItem.version;
+ 		item.renderedOptionsRevision = -1;
++		const reveal = this.pendingSearchReveal;
++		if (reveal != null && reveal.id === nextItem.id && nextItem.collapsed !== true) queueMicrotask(() => {
++			if (this.pendingSearchReveal === reveal) this.revealSearchMatch(reveal, true);
++		});
+ 		return true;
+ 	}
+ 	getMaxScrollTopForHeight(scrollHeight) {
+@@ -1558,6 +1652,7 @@ var CodeView = class CodeView {
+ 		this.updateStickyPositioning();
+ 		this.validateStickyContainerHeight();
+ 		this.fixContainerFocus();
++		if (updatedItems.size > 0) this.search.repaint();
+ 		if (fitPerfectly || this.scrollAnimation != null) this.render();
+ 	};
+ 	flushManagers(updatedItems) {
+@@ -1646,7 +1741,8 @@ var CodeView = class CodeView {
+ 		this.notifyScroll();
+ 		this.render();
+ 	};
+-	clearPendingScroll = () => {
++	clearPendingScroll = (event) => {
++		if (event != null && this.search.isOpen && this.search.ownsEvent(event)) return;
+ 		this.pendingScrollTarget = void 0;
+ 		this.pendingLayoutAnchor = void 0;
+ 		this.scrollAnimation = void 0;
+@@ -1888,7 +1984,10 @@ var CodeView = class CodeView {
+ 			item.top = runningTop;
+ 			if (item.type === "diff") {
+ 				const fileDiff = item.instance.consumeCodeViewLayoutChanges(item.item.fileDiff);
+-				if (fileDiff != null) Object.assign(item.item.fileDiff, fileDiff);
++				if (fileDiff != null) {
++					Object.assign(item.item.fileDiff, fileDiff);
++					this.search.refresh(true);
++				}
+ 				item.height = item.instance.prepareCodeViewItem(item.item.fileDiff, runningTop, reset, item.item.annotations ?? []);
+ 			} else item.height = item.instance.prepareCodeViewItem(item.item.file, runningTop, reset, item.item.annotations ?? []);
+ 			runningTop += item.height;
+diff --git a/dist/components/CodeViewSearch.js b/dist/components/CodeViewSearch.js
+new file mode 100644
+index 0000000..4f7a0be
+--- /dev/null
++++ b/dist/components/CodeViewSearch.js
+@@ -0,0 +1,338 @@
++import { isPrimaryModifier } from "../editor/platform.js";
++import { resolveFindAgainShortcut } from "../editor/command.js";
++import { SearchPanelWidget } from "../editor/searchPanel.js";
++import { SVGSpriteSheet } from "../editor/sprite.js";
++import editor_default from "../editor/editor2.js";
++import { iterateOverDiff } from "../utils/iterateOverDiff.js";
++//#region src/components/CodeViewSearch.ts
++const MAX_SEARCH_MATCHES = 1e5;
++const WORD_SEPARATORS = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
++const SEARCH_HOST_ATTRIBUTE = "data-diffs-search";
++const SEARCH_PANEL_HOST_CSS = `:host {
++  display: block;
++  position: sticky;
++  z-index: 100;
++  height: 0;
++}
++[data-icon-sprite] {
++  position: absolute;
++}
++[data-search-panel] {
++  position: relative;
++  top: 8px;
++}
++[data-editor-widget] {
++  --diffs-bg: var(--diffs-search-panel-bg, Canvas);
++  --diffs-fg: var(--diffs-search-panel-fg, CanvasText);
++  --diffs-modified-base: var(--diffs-search-panel-accent, light-dark(#009fff, #69b1ff));
++  --diffs-header-font-fallback: var(--diffs-search-panel-font, system-ui, sans-serif);
++}`;
++let sharedHighlights;
++/**
++* Find-in-diff for a CodeView. It searches every diff item's line data rather
++* than the rendered rows, so matches in virtualized rows, expanded context, and
++* folded files are all found, and navigating to one reveals it.
++*
++* Matches are painted with the CSS Custom Highlight API. Ranges are rebuilt for
++* whichever rows a render leaves mounted, so highlighting never touches the
++* rendered DOM or the renderer's caches.
++*/
++var CodeViewSearch = class {
++	#view;
++	#host;
++	#widget;
++	#entries = [];
++	#entriesByItem = /* @__PURE__ */ new Map();
++	#current;
++	#ranges = [];
++	#searchedDiffs = [];
++	constructor(view) {
++		this.#view = view;
++	}
++	get isOpen() {
++		return this.#host != null;
++	}
++	/** Open the panel, or refocus it when it is already open. */
++	open() {
++		if (this.#widget != null) {
++			this.#widget.setMode("find");
++			return;
++		}
++		const root = this.#view.getContainerElement();
++		if (root == null) return;
++		const host = document.createElement("div");
++		host.setAttribute(SEARCH_HOST_ATTRIBUTE, "");
++		host.style.top = `${this.#view.getStickyHeaderOffset()}px`;
++		const shadowRoot = host.attachShadow({ mode: "open" });
++		const style = document.createElement("style");
++		style.textContent = `${editor_default}\n${SEARCH_PANEL_HOST_CSS}`;
++		const sprite = document.createElement("div");
++		sprite.innerHTML = SVGSpriteSheet;
++		const anchor = document.createElement("div");
++		shadowRoot.append(style, ...sprite.children, anchor);
++		root.prepend(host);
++		this.#host = host;
++		const defaultQuery = getSelectionQuery();
++		this.#widget = new SearchPanelWidget({
++			textDocument: { search: (params) => this.#search(params) },
++			containerElement: anchor,
++			defaultQuery,
++			mode: "find",
++			allowReplace: false,
++			initialMatch: defaultQuery !== "" ? [0, 0] : void 0,
++			scrollToMatch: ([offset]) => this.#goTo(offset),
++			applyReplace: () => {},
++			onUpdate: (matches, options) => {
++				if (matches.length === 0) {
++					this.#setEntries([]);
++					return;
++				}
++				if (options?.syncSelection === false) {
++					this.#paint();
++					return this.#current != null ? matches[this.#current] : void 0;
++				}
++				const next = matches[this.#current ?? this.#firstMatchFromViewport()];
++				if (next != null) this.#goTo(next[0]);
++				return next;
++			},
++			onClose: () => this.#teardown(true)
++		});
++		this.#widget.focus();
++	}
++	close() {
++		this.#widget?.close();
++	}
++	/**
++	* Rerun the query after the items change, keeping the current match when it
++	* survives. Updates that keep every diff (folding, annotations) only repaint;
++	* `force` covers diffs whose lines were filled in place.
++	*/
++	refresh(force = false) {
++		if (this.#widget == null) return;
++		if (!force && haveSameDiffs(this.#searchedDiffs, this.#view.getSearchItems())) {
++			this.#paint();
++			return;
++		}
++		this.#widget.updateMatches({ syncSelection: false });
++	}
++	/** Repaint highlights for the rows the last render pass left mounted. */
++	repaint() {
++		if (this.#entries.length > 0) this.#paint();
++	}
++	/** Whether an event came from the panel, which handles its own keys and pointer input. */
++	ownsEvent(event) {
++		return event.composedPath().some((node) => node instanceof Element && node.hasAttribute(SEARCH_HOST_ATTRIBUTE));
++	}
++	handleKeyDown = (event) => {
++		if (event.isComposing) return;
++		if (this.ownsEvent(event)) {
++			if (event.key === "Escape") event.stopPropagation();
++			return;
++		}
++		if (event.defaultPrevented) return;
++		if (isPrimaryModifier(event) && !event.altKey && !event.shiftKey && (event.key.toLowerCase() === "f" || event.code === "KeyF")) {
++			event.preventDefault();
++			this.open();
++			return;
++		}
++		if (this.#widget == null) return;
++		const findAgain = resolveFindAgainShortcut(event);
++		if (findAgain != null) {
++			event.preventDefault();
++			this.#widget.navigate(findAgain === "previous");
++		} else if (event.key === "Escape" && !isEditableTarget(event)) {
++			event.preventDefault();
++			event.stopPropagation();
++			this.close();
++		}
++	};
++	cleanUp() {
++		this.#teardown(false);
++	}
++	#teardown(restoreFocus) {
++		if (this.#host == null) return;
++		this.#widget?.cleanup();
++		this.#widget = void 0;
++		this.#host.remove();
++		this.#host = void 0;
++		this.#searchedDiffs = [];
++		this.#setEntries([]);
++		if (restoreFocus) this.#view.getContainerElement()?.focus({ preventScroll: true });
++	}
++	#search(params) {
++		const previous = this.#current != null ? this.#entries[this.#current] : void 0;
++		const items = this.#view.getSearchItems();
++		this.#searchedDiffs = items.map((item) => item.fileDiff);
++		this.#setEntries(collectMatches(items, params), previous);
++		return this.#entries.map((entry) => entry.range);
++	}
++	#setEntries(entries, previous) {
++		this.#entries = entries;
++		this.#entriesByItem = groupByItem(entries);
++		this.#current = previous != null ? findSameMatch(entries, previous) : void 0;
++		if (entries.length === 0) this.#paint();
++	}
++	#firstMatchFromViewport() {
++		const itemIndex = this.#view.getFirstVisibleItemIndex();
++		const index = this.#entries.findIndex((entry) => entry.itemIndex >= itemIndex);
++		return index === -1 ? 0 : index;
++	}
++	#goTo(offset) {
++		const index = this.#entries.findIndex((entry) => entry.range[0] === offset);
++		if (index === -1) return;
++		this.#current = index;
++		this.#view.revealSearchMatch(this.#entries[index]);
++		this.#paint();
++	}
++	#paint() {
++		const highlights = getSharedHighlights();
++		if (highlights == null) return;
++		for (const range of this.#ranges) {
++			highlights.match.delete(range);
++			highlights.focus.delete(range);
++		}
++		this.#ranges = [];
++		const current = this.#current != null ? this.#entries[this.#current] : void 0;
++		for (const { entry, element } of this.#view.getMountedSearchMatches(this.#entriesByItem)) {
++			const range = createTextRange(element, entry.start, entry.end);
++			if (range == null) continue;
++			(entry === current ? highlights.focus : highlights.match).add(range);
++			this.#ranges.push(range);
++		}
++	}
++};
++/**
++* Collect matches across diff items in render order. Each match gets a
++* synthetic, increasing offset so the panel's offset-based navigation works
++* across files; nothing else reads those offsets.
++*/
++function collectMatches(items, params) {
++	if (params.text === "" || params.text.includes("\n")) return [];
++	let pattern;
++	try {
++		pattern = new RegExp(params.regex ? params.text : escapeRegExp(params.text), params.caseSensitive ? "g" : "gi");
++	} catch {
++		return [];
++	}
++	const entries = [];
++	let offset = 0;
++	for (let itemIndex = 0; itemIndex < items.length && entries.length < MAX_SEARCH_MATCHES; itemIndex++) {
++		const item = items[itemIndex];
++		if (item.type !== "diff") continue;
++		const { fileDiff } = item;
++		iterateOverDiff({
++			diff: fileDiff,
++			diffStyle: "unified",
++			expandedHunks: true,
++			callback: ({ type, deletionLine, additionLine }) => {
++				const isDeletion = type === "change" && deletionLine != null;
++				const line = isDeletion ? deletionLine : additionLine;
++				const text = trimLineBreak((isDeletion ? fileDiff.deletionLines : fileDiff.additionLines)[line.lineIndex] ?? "");
++				pattern.lastIndex = 0;
++				let match;
++				while ((match = pattern.exec(text)) !== null) {
++					const length = match[0].length;
++					if (length === 0) {
++						pattern.lastIndex++;
++						continue;
++					}
++					if (params.wholeWord && !isWholeWord(text, match.index, length)) continue;
++					entries.push({
++						id: item.id,
++						itemIndex,
++						side: isDeletion ? "deletions" : "additions",
++						lineNumber: line.lineNumber,
++						unifiedLineIndex: line.unifiedLineIndex,
++						start: match.index,
++						end: match.index + length,
++						range: [offset + match.index, offset + match.index + length]
++					});
++					if (entries.length >= MAX_SEARCH_MATCHES) return true;
++				}
++				offset += text.length + 1;
++			}
++		});
++	}
++	return entries;
++}
++function haveSameDiffs(searched, items) {
++	return searched.length === items.length && items.every((item, index) => item.fileDiff === searched[index]);
++}
++function groupByItem(entries) {
++	const byItem = /* @__PURE__ */ new Map();
++	for (const entry of entries) {
++		let list = byItem.get(entry.itemIndex);
++		if (list == null) byItem.set(entry.itemIndex, list = []);
++		list.push(entry);
++	}
++	return byItem;
++}
++function findSameMatch(entries, previous) {
++	const index = entries.findIndex((entry) => entry.id === previous.id && entry.side === previous.side && entry.lineNumber === previous.lineNumber && entry.start === previous.start);
++	return index === -1 ? void 0 : index;
++}
++function createTextRange(lineElement, start, end) {
++	const walker = document.createTreeWalker(lineElement, NodeFilter.SHOW_TEXT);
++	let consumed = 0;
++	let startNode;
++	let startOffset = 0;
++	let node;
++	while ((node = walker.nextNode()) != null) {
++		const length = node.data.length;
++		if (startNode == null && start < consumed + length) {
++			startNode = node;
++			startOffset = start - consumed;
++		}
++		if (startNode != null && end <= consumed + length) {
++			const range = document.createRange();
++			range.setStart(startNode, startOffset);
++			range.setEnd(node, end - consumed);
++			return range;
++		}
++		consumed += length;
++	}
++}
++function trimLineBreak(text) {
++	if (text.endsWith("\r\n")) return text.slice(0, -2);
++	if (text.endsWith("\n") || text.endsWith("\r")) return text.slice(0, -1);
++	return text;
++}
++function isWholeWord(text, start, length) {
++	return isSeparator(text, start - 1) && isSeparator(text, start + length);
++}
++function isSeparator(text, index) {
++	if (index < 0 || index >= text.length) return true;
++	const code = text.charCodeAt(index);
++	return code <= 32 || code === 127 || WORD_SEPARATORS.includes(text[index]);
++}
++function escapeRegExp(text) {
++	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
++}
++function isEditableTarget(event) {
++	const target = event.composedPath()[0];
++	return target instanceof HTMLElement && (target.isContentEditable || target.matches("input, textarea, select"));
++}
++function getSelectionQuery() {
++	const text = document.getSelection()?.toString() ?? "";
++	return text.includes("\n") ? "" : text;
++}
++/**
++* Two registry entries shared by every CodeView on the page; each search adds
++* and removes only its own ranges. The `::highlight()` colours live in the core
++* stylesheet, because a highlight rule only styles text in its own tree.
++*/
++function getSharedHighlights() {
++	if (sharedHighlights != null) return sharedHighlights;
++	if (typeof CSS === "undefined" || !("highlights" in CSS) || typeof Highlight === "undefined") return;
++	sharedHighlights = {
++		match: new Highlight(),
++		focus: new Highlight()
++	};
++	CSS.highlights.set("diffs-search-match", sharedHighlights.match);
++	CSS.highlights.set("diffs-search-focus", sharedHighlights.focus);
++	return sharedHighlights;
++}
++//#endregion
++export { CodeViewSearch, collectMatches };
++
++//# sourceMappingURL=CodeViewSearch.js.map
 diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+index 990c155..9cb548f 100644
 --- a/dist/components/VirtualizedFile.d.ts
 +++ b/dist/components/VirtualizedFile.d.ts
-@@ -42,7 +42,7 @@ declare class VirtualizedFile<LAnnotation = undefined> extends File<LAnnotation> {
+@@ -41,7 +41,7 @@ declare class VirtualizedFile<LAnnotation = undefined> extends File<LAnnotation>
    private computeApproximateSize;
    setVisibility(visible: boolean): void;
    rerender(): void;
@@ -11,9 +585,10 @@ diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedF
      fileContainer,
      file,
 diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+index 101e31d..d4a6ce2 100644
 --- a/dist/components/VirtualizedFile.js
 +++ b/dist/components/VirtualizedFile.js
-@@ -20,6 +20,7 @@
+@@ -20,6 +20,7 @@ var VirtualizedFile = class extends File {
  	cache = {
  		heights: /* @__PURE__ */ new Map(),
  		checkpoints: [],
@@ -21,7 +596,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  		fileAnnotationHeight: 0
  	};
  	isVisible = false;
-@@ -31,6 +32,8 @@
+@@ -31,6 +32,8 @@ var VirtualizedFile = class extends File {
  		super(options, workerManager, isContainerManaged);
  		this.virtualizer = virtualizer;
  		this.metrics = metrics;
@@ -30,7 +605,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  	}
  	setMetrics(metrics, force = false) {
  		if (!force && areObjectsEqual(this.metrics, metrics)) return;
-@@ -70,10 +73,12 @@
+@@ -70,10 +73,12 @@ var VirtualizedFile = class extends File {
  		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
  		super.setThemeType(themeType);
  	}
@@ -46,7 +621,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
  		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
  		if (recompute && this.isSimpleMode()) this.computeApproximateSize();
-@@ -91,6 +96,13 @@
+@@ -91,6 +96,13 @@ var VirtualizedFile = class extends File {
  		if (this.code == null) return hasHeightChange;
  		const content = this.code.children[1];
  		if (!(content instanceof HTMLElement)) return hasHeightChange;
@@ -60,7 +635,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  		const hasFileAnnotations = includesFileAnnotations(this.lineAnnotations);
  		if (this.renderRange != null && hasFileAnnotations && shouldRenderFileAnnotations(this.renderRange)) {
  			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
-@@ -287,11 +299,11 @@
+@@ -287,11 +299,11 @@ var VirtualizedFile = class extends File {
  		this.forceRenderOverride = true;
  		this.virtualizer.instanceChanged(this, false);
  	}
@@ -75,7 +650,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  			const windowSpecs = this.virtualizer.getWindowSpecs();
  			const renderRange = this.computeRenderRangeFromWindow(this.file, this.top ?? 0, windowSpecs);
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index ff78e2a..f9df318 100644
+index ff78e2a..836b48d 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -146,14 +146,11 @@ var Editor = class {
@@ -104,12 +679,12 @@ index ff78e2a..f9df318 100644
  				const gutterRow = resolveGutterTarget(e.composedPath()[0]);
  				if (gutterRow?.dataset.lineType === "change-deletion") {
  					const code = gutterRow.closest("[data-code]");
-@@ -1522,6 +1520,12 @@ var Editor = class {
+@@ -1522,7 +1520,13 @@ var Editor = class {
  			if (gutterEl !== void 0) gutterEl.style.gridRow = "span " + gridRow;
  		}
  		fileInstance.updateRenderCache(dirtyLines, tokenizer.themeType, !didLineCountChange, didLineCountChange);
-+		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
 -		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
++		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
 +		if (didLineCountChange) {
 +			const previousLineCount = change.lineCount - change.lineDelta;
 +			// A wider or narrower line-number gutter can rewrap unchanged rows.
@@ -118,7 +693,8 @@ index ff78e2a..f9df318 100644
 +		}
  		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
-@@ -1788,6 +1787,7 @@ var Editor = class {
+ 			this.#lineAnnotations = newLineAnnotations;
+@@ -1788,6 +1792,7 @@ var Editor = class {
  		}
  	}
  	#setSelectedLinesSafe(range, lineNumberOnly = false) {
@@ -126,10 +702,46 @@ index ff78e2a..f9df318 100644
  		try {
  			this.#fileInstance?.setSelectedLines(range, {
  				notify: false,
+diff --git a/dist/editor/searchPanel.d.ts b/dist/editor/searchPanel.d.ts
+index becf1b2..4e71551 100644
+--- a/dist/editor/searchPanel.d.ts
++++ b/dist/editor/searchPanel.d.ts
+@@ -15,6 +15,8 @@ interface SearchPanelOptions {
+   containerElement: HTMLElement;
+   defaultQuery: string;
+   mode?: SearchPanelMode;
++  /** False keeps the panel in find mode, for hosts with nothing to replace into. */
++  allowReplace?: boolean;
+   initialMatch?: MatchRange;
+   scrollToMatch: (nextMatch: MatchRange, retainFocus: boolean) => void;
+   applyReplace: (edits: ResolvedTextEdit[]) => void;
+diff --git a/dist/editor/searchPanel.js b/dist/editor/searchPanel.js
+index 34f9c37..1b64c9f 100644
+--- a/dist/editor/searchPanel.js
++++ b/dist/editor/searchPanel.js
+@@ -12,7 +12,7 @@ var SearchPanelWidget = class {
+ 	#navigate;
+ 	#close;
+ 	constructor(options) {
+-		const { textDocument, containerElement, defaultQuery, mode = "find", initialMatch, scrollToMatch, applyReplace, onUpdate, onClose } = options;
++		const { textDocument, containerElement, defaultQuery, mode = "find", allowReplace = true, initialMatch, scrollToMatch, applyReplace, onUpdate, onClose } = options;
+ 		const searchParams = {
+ 			text: defaultQuery,
+ 			replaceText: "",
+@@ -273,7 +273,7 @@ var SearchPanelWidget = class {
+ 			]
+ 		});
+ 		const applyMode = (next) => {
+-			gridElement.dataset.mode = next;
++			gridElement.dataset.mode = allowReplace ? next : "find";
+ 			this.#inputElement.focus();
+ 			this.#inputElement.select();
+ 		};
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+index 202b6e5..eedaa58 100644
 --- a/dist/managers/ResizeManager.d.ts
 +++ b/dist/managers/ResizeManager.d.ts
-@@ -5,6 +5,8 @@
+@@ -5,6 +5,8 @@ interface ResizeManagerSetupOptions {
    columnVariables?: ResizeManagerColumnVariableMode;
  }
  declare class ResizeManager {
@@ -139,9 +751,10 @@ diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
    private static managersByElement;
    private static getResizeObserver;
 diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+index 9724cb1..14145d8 100644
 --- a/dist/managers/ResizeManager.js
 +++ b/dist/managers/ResizeManager.js
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,7 @@ var ResizeManager = class ResizeManager {
  		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
  	}
  	observedNodes = /* @__PURE__ */ new Map();
@@ -149,7 +762,7 @@ diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
  	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
  		const annotationUpdates = /* @__PURE__ */ new Set();
  		const applyColumnVariables = columnVariables === "apply";
-@@ -212,6 +213,7 @@
+@@ -212,6 +213,7 @@ var ResizeManager = class ResizeManager {
  		this.applyAnnotationUpdates(annotationUpdates);
  		annotationUpdates.clear();
  		this.applyColumnUpdates(codeUpdates);
@@ -157,8 +770,84 @@ diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
  		codeUpdates.clear();
  	}
  	applyAnnotationUpdates(annotationUpdates) {
+diff --git a/dist/react/CodeView.d.ts b/dist/react/CodeView.d.ts
+index cb2f1a2..6e26921 100644
+--- a/dist/react/CodeView.d.ts
++++ b/dist/react/CodeView.d.ts
+@@ -37,6 +37,8 @@ interface CodeViewBaseProps<LAnnotation> {
+    * since the contents changed) along with `edit: false`.
+    */
+   onItemEditComplete?(item: CodeViewItem<LAnnotation>, file: FileContents, lineAnnotations?: DiffLineAnnotation<LAnnotation>[]): void;
++  /** Unfold a collapsed item that holds the find match being navigated to. */
++  onRevealSearchMatch?(item: CodeViewItem<LAnnotation>): void;
+   renderCustomHeader?(item: CodeViewItem<LAnnotation>): ReactNode;
+   renderHeaderPrefix?(item: CodeViewItem<LAnnotation>): ReactNode;
+   renderHeaderFilenameSuffix?(item: CodeViewItem<LAnnotation>): ReactNode;
+diff --git a/dist/react/CodeView.js b/dist/react/CodeView.js
+index a61749a..cfcc37b 100644
+--- a/dist/react/CodeView.js
++++ b/dist/react/CodeView.js
+@@ -22,7 +22,7 @@ function createDefaultCache(controlled) {
+ 	};
+ }
+ function CodeViewInner(props, ref) {
+-	const { className, containerRef, createEditor, disableWorkerPool = false, initialItems, items: controlledItems, onItemEditChange, onItemEditComplete, onScroll, onSelectedLinesChange, options, renderAnnotation, renderCodeViewFooter, renderCodeViewHeader, renderCustomHeader, renderGutterUtility, renderHeaderFilenameSuffix, renderHeaderMetadata, renderHeaderPrefix, selectedLines, style } = props;
++	const { className, containerRef, createEditor, disableWorkerPool = false, initialItems, items: controlledItems, onItemEditChange, onItemEditComplete, onRevealSearchMatch, onScroll, onSelectedLinesChange, options, renderAnnotation, renderCodeViewFooter, renderCodeViewHeader, renderCustomHeader, renderGutterUtility, renderHeaderFilenameSuffix, renderHeaderMetadata, renderHeaderPrefix, selectedLines, style } = props;
+ 	const controlled = controlledItems !== void 0;
+ 	const poolManager = useContext(WorkerPoolContext);
+ 	const cachedDataRef = useRef(createDefaultCache(controlled));
+@@ -44,6 +44,9 @@ function CodeViewInner(props, ref) {
+ 	const emitItemEditComplete = useStableCallback((item, file, lineAnnotations) => {
+ 		onItemEditComplete?.(item, file, lineAnnotations);
+ 	});
++	const emitRevealSearchMatch = useStableCallback((item) => {
++		onRevealSearchMatch?.(item);
++	});
+ 	const managedOptions = useMemo(() => createManagedCodeViewOptions({
+ 		options,
+ 		hasCustomHeader,
+@@ -54,7 +57,8 @@ function CodeViewInner(props, ref) {
+ 		controlledSelection,
+ 		createEditor: createEditor != null ? stableCreateEditor : void 0,
+ 		onItemEditChange: onItemEditChange != null ? emitItemEditChange : void 0,
+-		onItemEditComplete: onItemEditComplete != null ? emitItemEditComplete : void 0
++		onItemEditComplete: onItemEditComplete != null ? emitItemEditComplete : void 0,
++		onRevealSearchMatch: onRevealSearchMatch != null ? emitRevealSearchMatch : void 0
+ 	}), [
+ 		options,
+ 		hasCustomHeader,
+@@ -69,7 +73,9 @@ function CodeViewInner(props, ref) {
+ 		onItemEditChange,
+ 		emitItemEditChange,
+ 		onItemEditComplete,
+-		emitItemEditComplete
++		emitItemEditComplete,
++		onRevealSearchMatch,
++		emitRevealSearchMatch
+ 	]);
+ 	const [slotContentStore] = useState(() => createSlotContentStore());
+ 	const [, forceUpdate] = useState({});
+@@ -282,8 +288,8 @@ function createSlotContentStore() {
+ 		}
+ 	};
+ }
+-function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRenderer, hasCodeViewHeader, hasCodeViewFooter, onSelectedLinesChange, controlledSelection, createEditor, onItemEditChange, onItemEditComplete }) {
+-	if (!hasCustomHeader && !hasGutterRenderer && !hasCodeViewHeader && !hasCodeViewFooter && onSelectedLinesChange == null && !controlledSelection && createEditor == null && onItemEditChange == null && onItemEditComplete == null) return options ?? {};
++function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRenderer, hasCodeViewHeader, hasCodeViewFooter, onSelectedLinesChange, controlledSelection, createEditor, onItemEditChange, onItemEditComplete, onRevealSearchMatch }) {
++	if (!hasCustomHeader && !hasGutterRenderer && !hasCodeViewHeader && !hasCodeViewFooter && onSelectedLinesChange == null && !controlledSelection && createEditor == null && onItemEditChange == null && onItemEditComplete == null && onRevealSearchMatch == null) return options ?? {};
+ 	options = {
+ 		...options,
+ 		controlledSelection,
+@@ -292,6 +298,7 @@ function createManagedCodeViewOptions({ options, hasCustomHeader, hasGutterRende
+ 	if (createEditor != null) options.createEditor = createEditor;
+ 	if (onItemEditChange != null) options.onItemEditChange = onItemEditChange;
+ 	if (onItemEditComplete != null) options.onItemEditComplete = onItemEditComplete;
++	if (onRevealSearchMatch != null) options.onRevealSearchMatch = onRevealSearchMatch;
+ 	if (hasCustomHeader) options.renderCustomHeader = noopRender;
+ 	if (hasGutterRenderer) options.renderGutterUtility = noopRender;
+ 	if (hasCodeViewHeader) options.renderCodeViewHeader = noopRender;
 diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
-index e9f62f5..af82a46 100644
+index e9f62f5..a33006b 100644
 --- a/dist/react/utils/useFileInstance.js
 +++ b/dist/react/utils/useFileInstance.js
 @@ -91,10 +91,7 @@ function mergeFileOptions({ options, controlledSelection, contentEditable, hasCu
@@ -174,9 +863,10 @@ index e9f62f5..af82a46 100644
  	return merged;
  }
 diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
+index 00706ab..95c3efc 100644
 --- a/dist/renderers/FileRenderer.js
 +++ b/dist/renderers/FileRenderer.js
-@@ -107,10 +107,10 @@
+@@ -107,10 +107,10 @@ var FileRenderer = class {
  			result: massiveFile ? void 0 : cache?.result,
  			renderRange: void 0
  		};
@@ -188,7 +878,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			this.initializeHighlighter();
  		}
  	}
-@@ -163,6 +163,8 @@
+@@ -158,6 +158,8 @@ var FileRenderer = class {
  		if (this.renderCache == null) return;
  		const { file, result } = this.renderCache;
  		if (result == null) return;
@@ -197,7 +887,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  		const lineCache = this.lineCache != null && isLineCacheForFile(this.lineCache, file) ? this.lineCache : void 0;
  		for (const [line, tokens] of dirtyLines) {
  			if (lineCache != null && line < lineCache.lines.length) {
-@@ -268,6 +270,7 @@
+@@ -268,6 +270,7 @@ var FileRenderer = class {
  		const forcePlainText = !hasContent || isFilePlainText(file) || isFileMassive(lines.length, this.getTokenizeMaxLength());
  		const newContent = !areFilesEqual(file, this.renderCache.file);
  		const newRenderRange = !areRenderRangesEqual(this.renderCache.renderRange, renderRange);
@@ -205,7 +895,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  		if (this.workerManager?.isWorkingPool() === true) {
  			if (forcePlainText || this.renderCache.result == null || !this.renderCache.highlighted && (newContent || newRenderRange)) {
  				this.renderCache.file = file;
-@@ -278,7 +281,6 @@
+@@ -278,7 +281,6 @@ var FileRenderer = class {
  			}
  			if (!forcePlainText && hasContent && (!this.renderCache.highlighted || forceHighlight)) this.workerManager.highlightFileAST(this, file);
  		} else {
@@ -213,8 +903,19 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			const hasThemes = this.highlighter != null && areThemesAttached(options.theme);
  			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
  			const canHighlight = !forcePlainText && hasLangs;
+diff --git a/dist/style.js b/dist/style.js
+index c328363..fcece21 100644
+--- a/dist/style.js
++++ b/dist/style.js
+@@ -1,5 +1,5 @@
+ //#region src/style.css?inline
+-var style_default = "@layer base {\n  :host {\n    --diffs-font-fallback: \"SF Mono\", Monaco, Consolas, \"Ubuntu Mono\", \"Liberation Mono\",\n      \"Courier New\", monospace;\n    --diffs-header-font-fallback: system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\",\n      \"Noto Sans\", \"Liberation Sans\", Arial, sans-serif;\n    --diffs-mixer: light-dark(#000, #fff);\n    --diffs-gap-fallback: 8px;\n    --diffs-scrollbar-gutter-fallback: 6px;\n    --diffs-scrollbar-gutter: var(--diffs-scrollbar-gutter-override, var(--diffs-scrollbar-gutter-measured, var(--diffs-scrollbar-gutter-fallback)));\n    --diffs-added-light: #0dbe4e;\n    --diffs-added-dark: #5ecc71;\n    --diffs-modified-light: #009fff;\n    --diffs-modified-dark: #69b1ff;\n    --diffs-deleted-light: #ff2e3f;\n    --diffs-deleted-dark: #ff6762;\n    --diffs-warning-light: #d5a910;\n    --diffs-warning-dark: #ffd452;\n    color-scheme: light dark;\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n    font-size: var(--diffs-font-size, 13px);\n    line-height: var(--diffs-line-height, 20px);\n    font-feature-settings: var(--diffs-font-features);\n    --diffs-bg: light-dark(var(--diffs-light-bg, #fff), var(--diffs-dark-bg, #000));\n    --diffs-bg-buffer: var(--diffs-bg-buffer-override, light-dark(color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-mixer))));\n    --diffs-bg-context: var(--diffs-bg-context-override, light-dark(color-mix(in lab, var(--diffs-bg) 98.5%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 92.5%, var(--diffs-mixer))));\n    --diffs-bg-context-gutter: var(--diffs-bg-context-gutter-override, light-dark(color-mix(in lab, var(--diffs-bg-context) 90%, var(--diffs-bg)), color-mix(in lab, var(--diffs-bg-context) 45%, var(--diffs-bg))));\n    --diffs-bg-separator: var(--diffs-bg-separator-override, light-dark(color-mix(in lab, var(--diffs-bg) 96%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 85%, var(--diffs-mixer))));\n    --diffs-fg: light-dark(var(--diffs-light, #000), var(--diffs-dark, #fff));\n    --diffs-fg-number: var(--diffs-fg-number-override, light-dark(color-mix(in lab, var(--diffs-fg) 65%, var(--diffs-bg)), color-mix(in lab, var(--diffs-fg) 65%, var(--diffs-bg))));\n    --diffs-fg-conflict-marker: var(--diffs-fg-conflict-marker-override, var(--diffs-fg-number));\n    --diffs-deletion-base: var(--diffs-deletion-color-override, light-dark(var(--diffs-light-deletion-color, var(--diffs-deletion-color, var(--diffs-deleted-light))), var(--diffs-dark-deletion-color, var(--diffs-deletion-color, var(--diffs-deleted-dark)))));\n    --diffs-addition-base: var(--diffs-addition-color-override, light-dark(var(--diffs-light-addition-color, var(--diffs-addition-color, var(--diffs-added-light))), var(--diffs-dark-addition-color, var(--diffs-addition-color, var(--diffs-added-dark)))));\n    --diffs-modified-base: var(--diffs-modified-color-override, light-dark(var(--diffs-light-modified-color, var(--diffs-modified-color, var(--diffs-modified-light))), var(--diffs-dark-modified-color, var(--diffs-modified-color, var(--diffs-modified-dark)))));\n    --diffs-bg-deletion: var(--diffs-bg-deletion-override, light-dark(color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-deletion-base)), color-mix(in lab, var(--diffs-bg) 80%, var(--diffs-deletion-base))));\n    --diffs-bg-deletion-emphasis: var(--diffs-bg-deletion-emphasis-override, light-dark(rgb(from var(--diffs-deletion-base) r g b / .15), rgb(from var(--diffs-deletion-base) r g b / .2)));\n    --diffs-bg-addition: var(--diffs-bg-addition-override, light-dark(color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-addition-base)), color-mix(in lab, var(--diffs-bg) 80%, var(--diffs-addition-base))));\n    --diffs-bg-addition-emphasis: var(--diffs-bg-addition-emphasis-override, light-dark(rgb(from var(--diffs-addition-base) r g b / .15), rgb(from var(--diffs-addition-base) r g b / .2)));\n    --diffs-selection-base: var(--diffs-modified-base);\n    --diffs-selection-number-fg: light-dark(color-mix(in lab, var(--diffs-selection-base) 65%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-selection-base) 75%, var(--diffs-mixer)));\n    background-color: var(--diffs-bg);\n    color: var(--diffs-fg);\n    display: block;\n  }\n\n  pre, code, [data-error-wrapper] {\n    isolation: isolate;\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    outline: none;\n    margin: 0;\n    padding: 0;\n    display: block;\n  }\n\n  pre, code {\n    background-color: var(--diffs-bg);\n  }\n\n  code {\n    contain: content;\n  }\n\n  input, button {\n    font-family: inherit;\n    font-size: inherit;\n    line-height: inherit;\n  }\n\n  *, :before, :after {\n    box-sizing: border-box;\n  }\n\n  [data-icon-sprite] {\n    display: none;\n  }\n\n  [data-diffs-header], [data-separator] {\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n  }\n\n  [data-diffs-header][data-sticky] {\n    z-index: 1;\n    background-color: var(--diffs-bg);\n    position: sticky;\n    top: 0;\n  }\n\n  [data-file-info] {\n    color: var(--fg);\n    background-color: color-mix(in lab, var(--bg) 98%, var(--fg));\n    border-block: 1px solid color-mix(in lab, var(--bg) 95%, var(--fg));\n    padding: 10px;\n    font-weight: 700;\n  }\n\n  [data-diff], [data-file] {\n    --diffs-grid-number-column-width: minmax(min-content, max-content);\n    --diffs-code-grid: var(--diffs-grid-number-column-width) 1fr;\n\n    &[data-dehydrated] {\n      --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr);\n    }\n\n    &:hover [data-code]::-webkit-scrollbar-thumb {\n      background-color: var(--diffs-bg-context);\n    }\n  }\n\n  @supports (-webkit-touch-callout: none) {\n    :host {\n      --diffs-scrollbar-gutter-fallback: 0px;\n    }\n  }\n\n  [data-line] span {\n    color: light-dark(var(--diffs-token-light, var(--diffs-light)), var(--diffs-token-dark, var(--diffs-dark)));\n    background-color: light-dark(var(--diffs-token-light-bg, inherit), var(--diffs-token-dark-bg, inherit));\n    font-weight: light-dark(var(--diffs-token-light-font-weight, inherit), var(--diffs-token-dark-font-weight, inherit));\n    font-style: light-dark(var(--diffs-token-light-font-style, inherit), var(--diffs-token-dark-font-style, inherit));\n    text-decoration: light-dark(var(--diffs-token-light-text-decoration, inherit), var(--diffs-token-dark-text-decoration, inherit));\n  }\n\n  [data-line], [data-gutter-buffer], [data-column-number], [data-line-annotation], [data-no-newline], [data-merge-conflict], [data-merge-conflict-actions], [data-editor-overlay] {\n    --diffs-computed-decoration-bg: var(--diffs-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-bg);\n    color: var(--diffs-fg);\n    background-color: var(--diffs-line-bg, var(--diffs-bg));\n\n    @media (pointer: fine) {\n      &:where([data-hovered]) {\n        --diffs-computed-hovered-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-selected-line-bg) 97%,\n            var(--diffs-bg-hover-override, var(--diffs-mixer))), color-mix(in lab,\n            var(--diffs-computed-selected-line-bg) 91%,\n            var(--diffs-bg-hover-override, var(--diffs-mixer))));\n        --diffs-line-bg: var(--diffs-computed-hovered-line-bg, inherit);\n      }\n    }\n  }\n\n  [data-line], [data-no-newline] {\n    &[data-decoration-bg] {\n      --mix-deco-light: 92%;\n      --mix-deco-dark: 85%;\n\n      &[data-decoration-bg-depth=\"2\"] {\n        --mix-deco-light: 88%;\n        --mix-deco-dark: 80%;\n      }\n\n      &[data-decoration-bg-depth=\"3\"] {\n        --mix-deco-light: 85%;\n        --mix-deco-dark: 78%;\n      }\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-selected-line]) {\n          --mix-deco-light: 85%;\n          --mix-deco-dark: 85%;\n        }\n\n        &[data-hovered]:not([data-selected-line])[data-decoration-bg-depth=\"2\"] {\n          --mix-deco-light: 83%;\n          --mix-deco-dark: 83%;\n        }\n\n        &[data-hovered]:not([data-selected-line])[data-decoration-bg-depth=\"3\"] {\n          --mix-deco-light: 81%;\n          --mix-deco-dark: 81%;\n        }\n      }\n\n      --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n          var(--diffs-bg) var(--mix-deco-light),\n          var(--diffs-decoration-bg)), color-mix(in lab,\n          var(--diffs-bg) var(--mix-deco-dark),\n          var(--diffs-decoration-bg)));\n      --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n      --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n      --diffs-line-bg: var(--diffs-computed-decoration-bg);\n    }\n  }\n\n  [data-line-annotation], [data-gutter-buffer=\"annotation\"] {\n    --diffs-annotation-bg: var(--diffs-bg-context);\n    --diffs-computed-decoration-bg: var(--diffs-annotation-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-annotation-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-annotation-bg);\n    --diffs-line-bg: var(--diffs-annotation-bg);\n  }\n\n  [data-merge-conflict-actions], [data-gutter-buffer=\"merge-conflict-action\"], [data-gutter-buffer=\"merge-conflict-marker-base\"], [data-gutter-buffer=\"merge-conflict-marker-separator\"], [data-merge-conflict=\"marker-base\"], [data-merge-conflict=\"marker-separator\"] {\n    --diffs-computed-decoration-bg: var(--diffs-bg-context);\n    --diffs-computed-diff-line-bg: var(--diffs-bg-context);\n    --diffs-computed-selected-line-bg: var(--diffs-bg-context);\n    --diffs-line-bg: var(--diffs-bg-context);\n  }\n\n  [data-gutter-buffer=\"merge-conflict-marker-start\"], [data-merge-conflict=\"marker-start\"] {\n    --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n        var(--diffs-bg) 78%,\n        var(--conflict-bg-current-header-override, var(--diffs-addition-base))), color-mix(in lab,\n        var(--diffs-bg) 68%,\n        var(--conflict-bg-current-header-override, var(--diffs-addition-base))));\n    --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-line-bg: var(--diffs-computed-decoration-bg);\n  }\n\n  [data-gutter-buffer=\"merge-conflict-marker-end\"], [data-merge-conflict=\"marker-end\"] {\n    --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n        var(--diffs-bg) 78%,\n        var(--conflict-bg-incoming-header-override, var(--diffs-modified-base))), color-mix(in lab,\n        var(--diffs-bg) 68%,\n        var(--conflict-bg-incoming-header-override, var(--diffs-modified-base))));\n    --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-line-bg: var(--diffs-computed-decoration-bg);\n  }\n\n  [data-has-merge-conflict] [data-line-annotation], [data-has-merge-conflict] [data-gutter-buffer=\"annotation\"] {\n    --diffs-computed-decoration-bg: var(--diffs-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-bg);\n    --diffs-line-bg: var(--diffs-bg);\n  }\n\n  :where([data-background]) {\n    & [data-gutter-buffer], & [data-column-number] {\n      --mix-light: 91%;\n      --mix-dark: 85%;\n    }\n\n    & [data-line], & [data-no-newline] {\n      --mix-light: 88%;\n      --mix-dark: 80%;\n    }\n\n    & [data-gutter-buffer], & [data-column-number], & [data-line], & [data-no-newline] {\n      --diffs-diff-line-mix-target: var(--diffs-bg);\n\n      &[data-line-type=\"change-deletion\"] {\n        --diffs-diff-line-mix-target: var(--diffs-bg-deletion-override, var(--diffs-deletion-base));\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 75%;\n          }\n        }\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-deletion-override, var(--diffs-deletion-base));\n          --diffs-diff-line-mix-target: var(--diffs-bg-deletion-number-override, var(--diffs-deletion-base));\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-line-type=\"change-addition\"] {\n        --diffs-diff-line-mix-target: var(--diffs-bg-addition-override, var(--diffs-addition-base));\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-addition-override, var(--diffs-addition-base));\n          --diffs-diff-line-mix-target: var(--diffs-bg-addition-number-override, var(--diffs-addition-base));\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-merge-conflict=\"current\"] {\n        --diffs-diff-line-mix-target: var(--conflict-bg-current-override, var(--diffs-addition-base));\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-addition-override, var(--diffs-addition-base));\n          --diffs-diff-line-mix-target: var(--conflict-bg-current-number-override, var(--diffs-addition-base));\n        }\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-merge-conflict=\"incoming\"] {\n        --diffs-diff-line-mix-target: var(--conflict-bg-incoming-override, var(--diffs-modified-base));\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-modified-base);\n          --diffs-diff-line-mix-target: var(--conflict-bg-incoming-number-override, var(--diffs-modified-base));\n        }\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n    }\n  }\n\n  [data-gutter-buffer], [data-column-number], [data-line], [data-line-annotation], [data-merge-conflict], [data-merge-conflict-actions], [data-no-newline], [data-editor-overlay] {\n    --diffs-selection-mix-target: var(--diffs-bg-selection-override, var(--diffs-selection-base));\n\n    &:where([data-editor-overlay]), &:where([data-line], [data-line-annotation], [data-merge-conflict], [data-merge-conflict-actions], [data-no-newline])[data-selected-line] {\n      --mix-selection-light: 82%;\n      --mix-selection-dark: 75%;\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-merge-conflict], [data-line-type=\"change-addition\"], [data-line-type=\"change-deletion\"]) {\n          --mix-selection-light: 75%;\n          --mix-selection-dark: 70%;\n        }\n      }\n    }\n\n    &:where([data-gutter-buffer], [data-column-number])[data-selected-line] {\n      --mix-selection-light: 75%;\n      --mix-selection-dark: 60%;\n      --diffs-selection-mix-target: var(--diffs-bg-selection-number-override, var(--diffs-selection-base));\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-merge-conflict], [data-line-type=\"change-addition\"], [data-line-type=\"change-deletion\"]) {\n          --mix-selection-light: 70%;\n          --mix-selection-dark: 55%;\n        }\n      }\n    }\n\n    &:where([data-editor-overlay]), &[data-selected-line] {\n      --diffs-computed-selected-line-bg: light-dark(color-mix(in lab,\n          var(--diffs-computed-diff-line-bg) var(--mix-selection-light),\n          var(--diffs-selection-mix-target)), color-mix(in lab,\n          var(--diffs-computed-diff-line-bg) var(--mix-selection-dark),\n          var(--diffs-selection-mix-target)));\n      --diffs-line-bg: var(--diffs-computed-selected-line-bg, inherit);\n    }\n  }\n\n  [data-gutter-buffer], [data-column-number] {\n    &[data-selected-line] {\n      color: var(--diffs-selection-number-fg);\n    }\n  }\n\n  [data-no-newline] {\n    user-select: none;\n\n    & span {\n      opacity: .6;\n    }\n  }\n\n  [data-diff-type=\"split\"][data-overflow=\"scroll\"] {\n    grid-template-columns: 1fr 1fr;\n    display: grid;\n\n    & [data-additions] {\n      border-left: 1px solid var(--diffs-bg);\n    }\n\n    & [data-deletions] {\n      border-right: 1px solid var(--diffs-bg);\n    }\n  }\n\n  [data-code] {\n    grid-auto-flow: dense;\n    grid-template-columns: var(--diffs-code-grid);\n    overflow: var(--diffs-overflow-override, scroll) clip;\n    overscroll-behavior-x: none;\n    tab-size: var(--diffs-tab-size, 2);\n    padding-top: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    padding-bottom: max(0px,\n      calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) -\n          var(--diffs-scrollbar-gutter)));\n    scrollbar-gutter: stable;\n    align-self: flex-start;\n    display: grid;\n  }\n\n  [data-diffs-scrollbar-measure] {\n    opacity: 0;\n    pointer-events: none;\n    scrollbar-gutter: auto;\n    grid-template-columns: none;\n    width: 100px;\n    height: 100px;\n    padding: 0;\n    position: absolute;\n    top: -200px;\n    left: -200px;\n  }\n\n  [data-container-size] {\n    container-type: inline-size;\n  }\n\n  [data-code]::-webkit-scrollbar {\n    width: 0;\n    height: var(--diffs-scrollbar-gutter);\n  }\n\n  [data-code]::-webkit-scrollbar-track {\n    background: none;\n  }\n\n  [data-code]::-webkit-scrollbar-thumb {\n    background-color: #0000;\n    background-clip: content-box;\n    border: 1px solid #0000;\n    border-radius: 3px;\n  }\n\n  [data-code]::-webkit-scrollbar-corner {\n    background-color: #0000;\n  }\n\n  @supports ((-moz-appearance: none)) {\n    [data-code] {\n      scrollbar-width: thin;\n      scrollbar-color: var(--diffs-bg-context) transparent;\n      padding-bottom: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    }\n  }\n\n  [data-diffs-header] ~ [data-diff], [data-diffs-header] ~ [data-file] {\n    & [data-code], &[data-overflow=\"wrap\"] {\n      padding-top: 0;\n    }\n  }\n\n  [data-gutter] {\n    grid-template-rows: subgrid;\n    grid-template-columns: subgrid;\n    z-index: 3;\n    background-color: var(--diffs-bg);\n    grid-column: 1;\n    display: grid;\n    position: relative;\n\n    & [data-gutter-buffer], & [data-column-number] {\n      border-right: var(--diffs-gap-style, 2px solid var(--diffs-bg));\n    }\n  }\n\n  [data-content] {\n    grid-template-rows: subgrid;\n    grid-template-columns: subgrid;\n    background-color: var(--diffs-bg);\n    grid-column: 2;\n    min-width: 0;\n    display: grid;\n  }\n\n  [data-diff-type=\"split\"][data-overflow=\"wrap\"] {\n    grid-auto-flow: dense;\n    grid-template-columns: repeat(2, var(--diffs-code-grid));\n    padding-block: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    display: grid;\n\n    & [data-deletions] {\n      display: contents;\n\n      & [data-gutter] {\n        grid-column: 1;\n      }\n\n      & [data-content] {\n        border-right: 1px solid var(--diffs-bg);\n        grid-column: 2;\n      }\n    }\n\n    & [data-additions] {\n      display: contents;\n\n      & [data-gutter] {\n        border-left: 1px solid var(--diffs-bg);\n        grid-column: 3;\n      }\n\n      & [data-content] {\n        grid-column: 4;\n      }\n    }\n  }\n\n  [data-overflow=\"scroll\"] [data-gutter] {\n    position: sticky;\n    left: 0;\n  }\n\n  [data-interactive-lines] [data-line] {\n    cursor: pointer;\n  }\n\n  [data-interactive-line-numbers] [data-column-number] {\n    cursor: pointer;\n    touch-action: none;\n  }\n\n  [data-content-buffer], [data-gutter-buffer] {\n    user-select: none;\n    min-height: 1lh;\n    position: relative;\n  }\n\n  [data-gutter-buffer] {\n    padding-left: 2ch;\n    padding-right: 1ch;\n\n    &:before {\n      content: \"\";\n      min-width: var(--diffs-min-number-column-width, var(--diffs-min-number-column-width-default, 3ch));\n      display: block;\n    }\n  }\n\n  [data-gutter-buffer=\"annotation\"] {\n    --diffs-annotation-bg: var(--diffs-bg-context-gutter);\n    min-height: 0;\n  }\n\n  [data-gutter-buffer=\"buffer\"] {\n    --diffs-line-bg: var(--diffs-bg-context-gutter);\n  }\n\n  [data-content-buffer] {\n    background-position: 5px 0;\n    background-size: 8px 8px;\n    background-origin: border-box;\n    background-image: repeating-linear-gradient(-45deg,\n      transparent,\n      transparent calc(3px * 1.414),\n      var(--diffs-bg-buffer) calc(3px * 1.414),\n      var(--diffs-bg-buffer) calc(4px * 1.414));\n    grid-column: 1;\n  }\n\n  [data-separator] {\n    box-sizing: content-box;\n    background-color: var(--diffs-bg);\n  }\n\n  [data-separator=\"simple\"] {\n    min-height: 4px;\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"], [data-separator=\"simple\"] {\n    background-color: var(--diffs-bg-separator);\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"] {\n    height: 32px;\n    position: relative;\n  }\n\n  [data-separator-wrapper] {\n    user-select: none;\n    fill: currentColor;\n    background-color: var(--diffs-bg);\n    align-items: center;\n    height: 100%;\n    display: flex;\n    position: absolute;\n    inset-inline: 0;\n  }\n\n  [data-content] [data-separator-wrapper] {\n    display: none;\n  }\n\n  [data-separator=\"metadata\"] [data-separator-wrapper] {\n    background-color: var(--diffs-bg-separator);\n    height: 100%;\n    color: var(--diffs-fg-number);\n    white-space: nowrap;\n    text-overflow: ellipsis;\n    min-width: min-content;\n    padding-inline: 1ch;\n    inset-inline: 100% auto;\n    overflow: hidden;\n  }\n\n  [data-separator=\"line-info\"] {\n    margin-block: var(--diffs-gap-block, var(--diffs-gap-fallback));\n\n    & [data-separator-wrapper] {\n      min-width: 16px;\n    }\n  }\n\n  [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"] {\n    margin-block: 0;\n  }\n\n  [data-separator=\"line-info\"][data-separator-first] {\n    margin-top: 0;\n  }\n\n  [data-separator=\"line-info\"][data-separator-last] {\n    margin-bottom: 0;\n  }\n\n  [data-expand-index] [data-separator-wrapper] {\n    grid-template-columns: 32px auto;\n    display: grid;\n  }\n\n  [data-expand-index] [data-separator-wrapper][data-separator-multi-button] {\n    grid-template-columns: 32px 32px auto;\n  }\n\n  [data-expand-button], [data-separator-content] {\n    background-color: var(--diffs-bg-separator);\n    flex: none;\n    align-items: center;\n    display: flex;\n  }\n\n  [data-expand-index] [data-separator-content]:hover {\n    cursor: pointer;\n    text-decoration: underline;\n  }\n\n  [data-expand-button] {\n    cursor: pointer;\n    min-width: 32px;\n    color: var(--diffs-fg-number);\n    border-right: 2px solid var(--diffs-bg);\n    flex-shrink: 0;\n    justify-content: center;\n    align-self: stretch;\n\n    &:hover {\n      color: var(--diffs-fg);\n    }\n\n    &[data-expand-all-button] {\n      display: none;\n    }\n  }\n\n  [data-expand-down] [data-icon] {\n    transform: scaleY(-1);\n  }\n\n  [data-separator-content] {\n    height: 100%;\n    color: var(--diffs-fg-number);\n    flex: auto;\n    justify-content: flex-start;\n    padding: 0 1ch;\n    overflow: hidden;\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"] {\n    & [data-separator-content] {\n      user-select: none;\n      height: 100%;\n      overflow: clip;\n    }\n  }\n\n  [data-unmodified-lines] {\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    flex: 0 auto;\n    min-width: 0;\n    display: block;\n    overflow: hidden;\n  }\n\n  @supports (width: 1cqi) {\n    [data-unified] {\n      & [data-separator=\"line-info\"] [data-separator-wrapper] {\n        padding-inline: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n        width: 100cqi;\n\n        & [data-separator-content] {\n          border-radius: 6px;\n        }\n      }\n\n      & [data-separator=\"line-info\"][data-expand-index] [data-separator-wrapper] [data-separator-content] {\n        border-top-left-radius: unset;\n        border-bottom-left-radius: unset;\n      }\n    }\n\n    [data-gutter] {\n      & [data-separator=\"line-info\"] [data-separator-wrapper] {\n        padding-left: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n      }\n\n      & [data-separator=\"line-info\"] [data-separator-content] {\n        border-top-left-radius: 6px;\n        border-bottom-left-radius: 6px;\n      }\n\n      & [data-separator=\"line-info\"][data-expand-index] [data-separator-content] {\n        border-top-left-radius: unset;\n        border-bottom-left-radius: unset;\n      }\n    }\n\n    [data-additions] {\n      & [data-content] [data-separator=\"line-info\"] {\n        background-color: var(--diffs-bg);\n\n        & [data-separator-wrapper] {\n          display: none;\n        }\n      }\n\n      & [data-gutter] [data-separator=\"line-info\"] [data-separator-wrapper] {\n        background-color: var(--diffs-bg-separator);\n        border-top-right-radius: 6px;\n        border-bottom-right-radius: 6px;\n        height: 100%;\n        display: block;\n\n        & [data-separator-content], & [data-expand-button] {\n          display: none;\n        }\n      }\n    }\n\n    [data-overflow=\"scroll\"] [data-additions] [data-gutter] [data-separator=\"line-info\"] [data-separator-wrapper] {\n      width: calc(100cqi - var(--diffs-gap-inline, var(--diffs-gap-fallback)));\n    }\n\n    [data-overflow=\"wrap\"] [data-additions] [data-content] [data-separator=\"line-info\"] [data-separator-wrapper] {\n      background-color: var(--diffs-bg-separator);\n      height: 100%;\n      margin-right: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n      border-top-right-radius: 6px;\n      border-bottom-right-radius: 6px;\n      display: block;\n\n      & [data-separator-content], & [data-expand-button] {\n        display: none;\n      }\n    }\n\n    [data-separator=\"line-info\"] [data-separator-wrapper] {\n      & [data-expand-both], & [data-expand-down], & [data-expand-up] {\n        border-top-left-radius: 6px;\n        border-bottom-left-radius: 6px;\n      }\n    }\n\n    @media (pointer: fine) {\n      [data-separator=\"line-info\"] [data-separator-wrapper] {\n        &[data-separator-multi-button] {\n          & [data-expand-up] {\n            border-top-left-radius: 6px;\n            border-bottom-left-radius: unset;\n          }\n\n          & [data-expand-down] {\n            border-bottom-left-radius: 6px;\n            border-top-left-radius: unset;\n          }\n        }\n      }\n    }\n  }\n\n  @media (pointer: coarse) {\n    [data-separator=\"line-info-basic\"] [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-columns: 34px 34px auto;\n\n      & [data-separator-content] {\n        grid-column: unset;\n        grid-row: unset;\n      }\n    }\n\n    @supports (width: 1cqi) {\n      [data-separator=\"line-info\"] [data-separator-wrapper] {\n        & [data-expand-both], & [data-expand-down], & [data-expand-up] {\n          border-top-left-radius: 6px;\n          border-bottom-left-radius: 6px;\n        }\n\n        &[data-separator-multi-button] {\n          & [data-expand-up] {\n            border-top-left-radius: 6px;\n            border-bottom-left-radius: 6px;\n          }\n\n          & [data-expand-down] {\n            border-bottom-left-radius: unset;\n            border-top-left-radius: unset;\n          }\n        }\n      }\n    }\n  }\n\n  @media (pointer: fine) {\n    [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-rows: 50% 50%;\n      display: grid;\n\n      & [data-separator-content] {\n        grid-area: 1 / 2 / -1;\n        min-width: min-content;\n      }\n\n      & [data-expand-button] {\n        grid-column: 1;\n      }\n    }\n\n    [data-separator=\"line-info\"] [data-separator-wrapper], [data-separator=\"line-info\"] [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-columns: 34px auto;\n    }\n\n    [data-separator=\"line-info-basic\"][data-expand-index] [data-separator-wrapper] {\n      grid-template-columns: 100% auto;\n    }\n\n    [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"] {\n      & [data-separator-multi-button] {\n        & [data-expand-up] {\n          border-bottom: 1px solid var(--diffs-bg);\n          border-right: 2px solid var(--diffs-bg);\n        }\n\n        & [data-expand-down] {\n          border-top: 1px solid var(--diffs-bg);\n          border-right: 2px solid var(--diffs-bg);\n        }\n      }\n    }\n  }\n\n  [data-additions] [data-gutter] [data-separator-wrapper], [data-additions] [data-separator=\"line-info-basic\"] [data-separator-wrapper], [data-content] [data-separator-wrapper] {\n    display: none;\n  }\n\n  [data-line-annotation] {\n    min-height: var(--diffs-annotation-min-height, 0);\n    z-index: 2;\n  }\n\n  [data-merge-conflict-actions] {\n    z-index: 2;\n  }\n\n  [data-separator=\"custom\"] {\n    grid-template-columns: subgrid;\n    display: grid;\n  }\n\n  [data-line], [data-column-number], [data-no-newline] {\n    padding-inline: 1ch;\n    position: relative;\n  }\n\n  [data-indicators=\"classic\"] [data-line] {\n    padding-inline-start: 2ch;\n  }\n\n  [data-indicators=\"classic\"] {\n    & [data-line-type=\"change-addition\"], & [data-line-type=\"change-deletion\"] {\n      &[data-no-newline], &[data-line] {\n        &:before {\n          user-select: none;\n          width: 1ch;\n          height: 1lh;\n          display: inline-block;\n          position: absolute;\n          top: 0;\n          left: 0;\n        }\n      }\n    }\n\n    & [data-line-type=\"change-addition\"] {\n      &[data-line], &[data-no-newline] {\n        &:before {\n          content: \"+\";\n          color: var(--diffs-addition-base);\n        }\n      }\n    }\n\n    & [data-line-type=\"change-deletion\"] {\n      &[data-line], &[data-no-newline] {\n        &:before {\n          content: \"-\";\n          color: var(--diffs-deletion-base);\n        }\n      }\n    }\n  }\n\n  [data-indicators=\"bars\"] {\n    & [data-line-type=\"change-deletion\"], & [data-line-type=\"change-addition\"] {\n      &[data-column-number] {\n        &:before {\n          content: \"\";\n          user-select: none;\n          contain: strict;\n          width: 4px;\n          height: 100%;\n          display: block;\n          position: absolute;\n          top: 0;\n          left: 0;\n        }\n      }\n    }\n\n    & [data-line-type=\"change-deletion\"] {\n      &[data-column-number] {\n        &:before {\n          background-image: linear-gradient(0deg,\n            var(--diffs-bg-deletion) 50%,\n            var(--diffs-deletion-base) 50%);\n          background-repeat: repeat;\n          background-size: 2px 2px;\n          background-size: calc(1lh / round(1lh / 2px))\n            calc(1lh / round(1lh / 2px));\n        }\n      }\n    }\n\n    & [data-line-type=\"change-addition\"] {\n      &[data-column-number] {\n        &:before {\n          background-color: var(--diffs-addition-base);\n        }\n      }\n    }\n  }\n\n  [data-overflow=\"wrap\"] {\n    & [data-line], & [data-annotation-content] {\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n  }\n\n  [data-overflow=\"scroll\"] [data-line] {\n    white-space: pre;\n    min-height: 1lh;\n  }\n\n  [data-column-number] {\n    box-sizing: content-box;\n    text-align: right;\n    user-select: none;\n    color: var(--diffs-fg-number);\n    padding-left: 2ch;\n  }\n\n  [data-line-number-content] {\n    min-width: var(--diffs-min-number-column-width, var(--diffs-min-number-column-width-default, 3ch));\n    z-index: 1;\n    display: inline-block;\n    position: relative;\n  }\n\n  [data-disable-line-numbers] {\n    & [data-gutter-buffer], & [data-column-number] {\n      min-width: 4px;\n      padding: 0;\n\n      &:before {\n        min-width: 0;\n      }\n    }\n\n    & [data-line-number-content] {\n      display: none;\n    }\n\n    & [data-gutter-utility-slot] {\n      right: unset;\n      justify-content: flex-start;\n      left: 0;\n    }\n\n    &[data-indicators=\"bars\"] [data-gutter-utility-slot] {\n      left: 6px;\n    }\n  }\n\n  [data-file][data-disable-line-numbers] {\n    & [data-gutter-buffer], & [data-column-number] {\n      border-right: 0;\n      min-width: 0;\n    }\n  }\n\n  [data-diff-span] {\n    box-decoration-break: clone;\n    border-radius: 3px;\n  }\n\n  [data-line-type=\"change-addition\"] [data-diff-span] {\n    background-color: var(--diffs-bg-addition-emphasis);\n  }\n\n  [data-line-type=\"change-deletion\"] [data-diff-span] {\n    background-color: var(--diffs-bg-deletion-emphasis);\n  }\n\n  [data-merge-conflict=\"marker-start\"], [data-merge-conflict=\"marker-base\"], [data-merge-conflict=\"marker-separator\"], [data-merge-conflict=\"marker-end\"] {\n    color: var(--diffs-fg);\n    padding-left: 1ch;\n  }\n\n  [data-merge-conflict=\"marker-start\"], [data-merge-conflict=\"marker-end\"] {\n    align-items: center;\n    display: flex;\n\n    &:after {\n      color: var(--diffs-fg-conflict-marker);\n      font-size: .75rem;\n      font-style: normal;\n      line-height: 1.25rem;\n      font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n      padding-left: 1ch;\n    }\n  }\n\n  [data-merge-conflict=\"marker-start\"]:after {\n    content: \"(Current Change)\";\n  }\n\n  [data-merge-conflict=\"marker-end\"]:after {\n    content: \"(Incoming Change)\";\n  }\n\n  [data-merge-conflict-actions-content] {\n    min-height: 1.75rem;\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n    color: var(--diffs-fg);\n    align-items: center;\n    gap: .25rem;\n    padding-inline: .5rem;\n    font-size: .75rem;\n    line-height: 1.2;\n    display: flex;\n  }\n\n  [data-merge-conflict-action] {\n    appearance: none;\n    color: var(--diffs-fg-number);\n    font: inherit;\n    cursor: pointer;\n    background: none;\n    border: 0;\n    padding: 0;\n    font-style: normal;\n  }\n\n  [data-merge-conflict-action]:hover {\n    color: var(--diffs-fg);\n  }\n\n  [data-merge-conflict-action=\"current\"]:hover {\n    color: var(--diffs-addition-base);\n  }\n\n  [data-merge-conflict-action=\"incoming\"]:hover {\n    color: var(--diffs-modified-base);\n  }\n\n  [data-merge-conflict-action-separator] {\n    color: var(--diffs-fg-number);\n    opacity: .6;\n    user-select: none;\n  }\n\n  [data-diffs-header=\"default\"] {\n    background-color: var(--diffs-bg);\n    justify-content: space-between;\n    align-items: center;\n    gap: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    min-height: calc(1lh + (var(--diffs-gap-block, var(--diffs-gap-fallback)) * 3));\n    z-index: 2;\n    flex-direction: row;\n    padding-inline: 16px;\n    display: flex;\n    position: relative;\n    top: 0;\n  }\n\n  [data-header-content] {\n    align-items: center;\n    gap: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    white-space: nowrap;\n    flex-direction: row;\n    min-width: 0;\n    display: flex;\n  }\n\n  [data-header-content] [data-prev-name], [data-header-content] [data-title] {\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    direction: rtl;\n    min-width: 0;\n    overflow: hidden;\n  }\n\n  [data-prev-name] {\n    opacity: .7;\n  }\n\n  [data-rename-icon] {\n    fill: currentColor;\n    flex-grow: 0;\n    flex-shrink: 0;\n  }\n\n  [data-diffs-header=\"default\"] [data-metadata] {\n    white-space: nowrap;\n    align-items: center;\n    gap: 1ch;\n    display: flex;\n  }\n\n  [data-diffs-header=\"default\"] [data-additions-count] {\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    color: var(--diffs-addition-base);\n  }\n\n  [data-diffs-header=\"default\"] [data-deletions-count] {\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    color: var(--diffs-deletion-base);\n  }\n\n  [data-change-icon] {\n    fill: currentColor;\n    flex-shrink: 0;\n  }\n\n  [data-change-icon=\"change\"], [data-change-icon=\"rename-pure\"], [data-change-icon=\"rename-changed\"] {\n    color: var(--diffs-modified-base);\n  }\n\n  [data-change-icon=\"new\"] {\n    color: var(--diffs-addition-base);\n  }\n\n  [data-change-icon=\"deleted\"] {\n    color: var(--diffs-deletion-base);\n  }\n\n  [data-change-icon=\"file\"] {\n    opacity: .6;\n  }\n\n  [data-annotation-content] {\n    z-index: 2;\n    isolation: isolate;\n    align-self: flex-start;\n    min-width: 0;\n    display: flow-root;\n    position: relative;\n  }\n\n  [data-overflow=\"scroll\"] [data-annotation-content], [data-overflow=\"scroll\"] [data-merge-conflict-actions-content] {\n    width: var(--diffs-column-content-width, auto);\n    left: var(--diffs-column-number-width, 0);\n    position: sticky;\n  }\n\n  [data-annotation-slot] {\n    text-wrap-mode: wrap;\n    word-break: normal;\n    white-space-collapse: collapse;\n  }\n\n  [data-gutter-utility-slot] {\n    touch-action: none;\n    justify-content: flex-end;\n    display: flex;\n    position: absolute;\n    top: 0;\n    bottom: 0;\n    right: 0;\n  }\n\n  [data-utility-button] {\n    appearance: none;\n    cursor: pointer;\n    width: 1lh;\n    height: 1lh;\n    font-size: var(--diffs-font-size, 13px);\n    line-height: var(--diffs-line-height, 20px);\n    background-color: var(--diffs-modified-base);\n    color: var(--diffs-bg);\n    fill: currentColor;\n    z-index: 4;\n    touch-action: none;\n    border: none;\n    border-radius: 4px;\n    justify-content: center;\n    align-items: center;\n    margin-right: calc(-1lh + 1ch);\n    padding: 0;\n    display: flex;\n    position: relative;\n\n    &:before {\n      content: \"\";\n      display: block;\n      position: absolute;\n      inset: 0 0 0 -4px;\n    }\n  }\n\n  [data-decoration-bar-stack] {\n    pointer-events: none;\n    isolation: isolate;\n    z-index: 1;\n    background-color: var(--diffs-decoration-bar-color, transparent);\n    box-sizing: content-box;\n    border-left: 2px solid var(--diffs-bg);\n    border-right: 2px solid var(--diffs-bg);\n    width: 6px;\n    position: absolute;\n    top: 0;\n    bottom: 0;\n    right: -2px;\n\n    [data-decoration-bar-depth=\"1\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 20%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-depth=\"2\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 45%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-depth=\"3\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 65%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-start] & {\n      border-top-left-radius: 5px;\n      border-top-right-radius: 5px;\n    }\n\n    [data-decoration-bar-end] & {\n      z-index: 3;\n      border-bottom-right-radius: 5px;\n      border-bottom-left-radius: 5px;\n    }\n  }\n\n  [data-placeholder] {\n    contain: strict;\n  }\n\n  [data-error-wrapper] {\n    padding: var(--diffs-gap-block, var(--diffs-gap-fallback))\n      var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    scrollbar-width: none;\n    max-height: 400px;\n    overflow: auto;\n\n    & [data-error-message] {\n      color: var(--diffs-deletion-base);\n      font-size: 18px;\n      font-weight: bold;\n    }\n\n    & [data-error-stack] {\n      color: var(--diffs-fg-number);\n    }\n  }\n}\n\n@layer theme, rendered, unsafe;\n";
++var style_default = "@layer base {\n  :host {\n    --diffs-font-fallback: \"SF Mono\", Monaco, Consolas, \"Ubuntu Mono\", \"Liberation Mono\",\n      \"Courier New\", monospace;\n    --diffs-header-font-fallback: system-ui, -apple-system, \"Segoe UI\", Roboto, \"Helvetica Neue\",\n      \"Noto Sans\", \"Liberation Sans\", Arial, sans-serif;\n    --diffs-mixer: light-dark(#000, #fff);\n    --diffs-gap-fallback: 8px;\n    --diffs-scrollbar-gutter-fallback: 6px;\n    --diffs-scrollbar-gutter: var(--diffs-scrollbar-gutter-override, var(--diffs-scrollbar-gutter-measured, var(--diffs-scrollbar-gutter-fallback)));\n    --diffs-added-light: #0dbe4e;\n    --diffs-added-dark: #5ecc71;\n    --diffs-modified-light: #009fff;\n    --diffs-modified-dark: #69b1ff;\n    --diffs-deleted-light: #ff2e3f;\n    --diffs-deleted-dark: #ff6762;\n    --diffs-warning-light: #d5a910;\n    --diffs-warning-dark: #ffd452;\n    color-scheme: light dark;\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n    font-size: var(--diffs-font-size, 13px);\n    line-height: var(--diffs-line-height, 20px);\n    font-feature-settings: var(--diffs-font-features);\n    --diffs-bg: light-dark(var(--diffs-light-bg, #fff), var(--diffs-dark-bg, #000));\n    --diffs-bg-buffer: var(--diffs-bg-buffer-override, light-dark(color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 92%, var(--diffs-mixer))));\n    --diffs-bg-context: var(--diffs-bg-context-override, light-dark(color-mix(in lab, var(--diffs-bg) 98.5%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 92.5%, var(--diffs-mixer))));\n    --diffs-bg-context-gutter: var(--diffs-bg-context-gutter-override, light-dark(color-mix(in lab, var(--diffs-bg-context) 90%, var(--diffs-bg)), color-mix(in lab, var(--diffs-bg-context) 45%, var(--diffs-bg))));\n    --diffs-bg-separator: var(--diffs-bg-separator-override, light-dark(color-mix(in lab, var(--diffs-bg) 96%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-bg) 85%, var(--diffs-mixer))));\n    --diffs-fg: light-dark(var(--diffs-light, #000), var(--diffs-dark, #fff));\n    --diffs-fg-number: var(--diffs-fg-number-override, light-dark(color-mix(in lab, var(--diffs-fg) 65%, var(--diffs-bg)), color-mix(in lab, var(--diffs-fg) 65%, var(--diffs-bg))));\n    --diffs-fg-conflict-marker: var(--diffs-fg-conflict-marker-override, var(--diffs-fg-number));\n    --diffs-deletion-base: var(--diffs-deletion-color-override, light-dark(var(--diffs-light-deletion-color, var(--diffs-deletion-color, var(--diffs-deleted-light))), var(--diffs-dark-deletion-color, var(--diffs-deletion-color, var(--diffs-deleted-dark)))));\n    --diffs-addition-base: var(--diffs-addition-color-override, light-dark(var(--diffs-light-addition-color, var(--diffs-addition-color, var(--diffs-added-light))), var(--diffs-dark-addition-color, var(--diffs-addition-color, var(--diffs-added-dark)))));\n    --diffs-modified-base: var(--diffs-modified-color-override, light-dark(var(--diffs-light-modified-color, var(--diffs-modified-color, var(--diffs-modified-light))), var(--diffs-dark-modified-color, var(--diffs-modified-color, var(--diffs-modified-dark)))));\n    --diffs-bg-deletion: var(--diffs-bg-deletion-override, light-dark(color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-deletion-base)), color-mix(in lab, var(--diffs-bg) 80%, var(--diffs-deletion-base))));\n    --diffs-bg-deletion-emphasis: var(--diffs-bg-deletion-emphasis-override, light-dark(rgb(from var(--diffs-deletion-base) r g b / .15), rgb(from var(--diffs-deletion-base) r g b / .2)));\n    --diffs-bg-addition: var(--diffs-bg-addition-override, light-dark(color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-addition-base)), color-mix(in lab, var(--diffs-bg) 80%, var(--diffs-addition-base))));\n    --diffs-bg-addition-emphasis: var(--diffs-bg-addition-emphasis-override, light-dark(rgb(from var(--diffs-addition-base) r g b / .15), rgb(from var(--diffs-addition-base) r g b / .2)));\n    --diffs-selection-base: var(--diffs-modified-base);\n    --diffs-selection-number-fg: light-dark(color-mix(in lab, var(--diffs-selection-base) 65%, var(--diffs-mixer)), color-mix(in lab, var(--diffs-selection-base) 75%, var(--diffs-mixer)));\n    background-color: var(--diffs-bg);\n    color: var(--diffs-fg);\n    display: block;\n  }\n\n  pre, code, [data-error-wrapper] {\n    isolation: isolate;\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    outline: none;\n    margin: 0;\n    padding: 0;\n    display: block;\n  }\n\n  pre, code {\n    background-color: var(--diffs-bg);\n  }\n\n  code {\n    contain: content;\n  }\n\n  input, button {\n    font-family: inherit;\n    font-size: inherit;\n    line-height: inherit;\n  }\n\n  *, :before, :after {\n    box-sizing: border-box;\n  }\n\n  [data-icon-sprite] {\n    display: none;\n  }\n\n  [data-diffs-header], [data-separator] {\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n  }\n\n  [data-diffs-header][data-sticky] {\n    z-index: 1;\n    background-color: var(--diffs-bg);\n    position: sticky;\n    top: 0;\n  }\n\n  [data-file-info] {\n    color: var(--fg);\n    background-color: color-mix(in lab, var(--bg) 98%, var(--fg));\n    border-block: 1px solid color-mix(in lab, var(--bg) 95%, var(--fg));\n    padding: 10px;\n    font-weight: 700;\n  }\n\n  [data-diff], [data-file] {\n    --diffs-grid-number-column-width: minmax(min-content, max-content);\n    --diffs-code-grid: var(--diffs-grid-number-column-width) 1fr;\n\n    &[data-dehydrated] {\n      --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr);\n    }\n\n    &:hover [data-code]::-webkit-scrollbar-thumb {\n      background-color: var(--diffs-bg-context);\n    }\n  }\n\n  @supports (-webkit-touch-callout: none) {\n    :host {\n      --diffs-scrollbar-gutter-fallback: 0px;\n    }\n  }\n\n  [data-line] span {\n    color: light-dark(var(--diffs-token-light, var(--diffs-light)), var(--diffs-token-dark, var(--diffs-dark)));\n    background-color: light-dark(var(--diffs-token-light-bg, inherit), var(--diffs-token-dark-bg, inherit));\n    font-weight: light-dark(var(--diffs-token-light-font-weight, inherit), var(--diffs-token-dark-font-weight, inherit));\n    font-style: light-dark(var(--diffs-token-light-font-style, inherit), var(--diffs-token-dark-font-style, inherit));\n    text-decoration: light-dark(var(--diffs-token-light-text-decoration, inherit), var(--diffs-token-dark-text-decoration, inherit));\n  }\n\n  [data-line], [data-gutter-buffer], [data-column-number], [data-line-annotation], [data-no-newline], [data-merge-conflict], [data-merge-conflict-actions], [data-editor-overlay] {\n    --diffs-computed-decoration-bg: var(--diffs-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-bg);\n    color: var(--diffs-fg);\n    background-color: var(--diffs-line-bg, var(--diffs-bg));\n\n    @media (pointer: fine) {\n      &:where([data-hovered]) {\n        --diffs-computed-hovered-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-selected-line-bg) 97%,\n            var(--diffs-bg-hover-override, var(--diffs-mixer))), color-mix(in lab,\n            var(--diffs-computed-selected-line-bg) 91%,\n            var(--diffs-bg-hover-override, var(--diffs-mixer))));\n        --diffs-line-bg: var(--diffs-computed-hovered-line-bg, inherit);\n      }\n    }\n  }\n\n  [data-line], [data-no-newline] {\n    &[data-decoration-bg] {\n      --mix-deco-light: 92%;\n      --mix-deco-dark: 85%;\n\n      &[data-decoration-bg-depth=\"2\"] {\n        --mix-deco-light: 88%;\n        --mix-deco-dark: 80%;\n      }\n\n      &[data-decoration-bg-depth=\"3\"] {\n        --mix-deco-light: 85%;\n        --mix-deco-dark: 78%;\n      }\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-selected-line]) {\n          --mix-deco-light: 85%;\n          --mix-deco-dark: 85%;\n        }\n\n        &[data-hovered]:not([data-selected-line])[data-decoration-bg-depth=\"2\"] {\n          --mix-deco-light: 83%;\n          --mix-deco-dark: 83%;\n        }\n\n        &[data-hovered]:not([data-selected-line])[data-decoration-bg-depth=\"3\"] {\n          --mix-deco-light: 81%;\n          --mix-deco-dark: 81%;\n        }\n      }\n\n      --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n          var(--diffs-bg) var(--mix-deco-light),\n          var(--diffs-decoration-bg)), color-mix(in lab,\n          var(--diffs-bg) var(--mix-deco-dark),\n          var(--diffs-decoration-bg)));\n      --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n      --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n      --diffs-line-bg: var(--diffs-computed-decoration-bg);\n    }\n  }\n\n  [data-line-annotation], [data-gutter-buffer=\"annotation\"] {\n    --diffs-annotation-bg: var(--diffs-bg-context);\n    --diffs-computed-decoration-bg: var(--diffs-annotation-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-annotation-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-annotation-bg);\n    --diffs-line-bg: var(--diffs-annotation-bg);\n  }\n\n  [data-merge-conflict-actions], [data-gutter-buffer=\"merge-conflict-action\"], [data-gutter-buffer=\"merge-conflict-marker-base\"], [data-gutter-buffer=\"merge-conflict-marker-separator\"], [data-merge-conflict=\"marker-base\"], [data-merge-conflict=\"marker-separator\"] {\n    --diffs-computed-decoration-bg: var(--diffs-bg-context);\n    --diffs-computed-diff-line-bg: var(--diffs-bg-context);\n    --diffs-computed-selected-line-bg: var(--diffs-bg-context);\n    --diffs-line-bg: var(--diffs-bg-context);\n  }\n\n  [data-gutter-buffer=\"merge-conflict-marker-start\"], [data-merge-conflict=\"marker-start\"] {\n    --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n        var(--diffs-bg) 78%,\n        var(--conflict-bg-current-header-override, var(--diffs-addition-base))), color-mix(in lab,\n        var(--diffs-bg) 68%,\n        var(--conflict-bg-current-header-override, var(--diffs-addition-base))));\n    --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-line-bg: var(--diffs-computed-decoration-bg);\n  }\n\n  [data-gutter-buffer=\"merge-conflict-marker-end\"], [data-merge-conflict=\"marker-end\"] {\n    --diffs-computed-decoration-bg: light-dark(color-mix(in lab,\n        var(--diffs-bg) 78%,\n        var(--conflict-bg-incoming-header-override, var(--diffs-modified-base))), color-mix(in lab,\n        var(--diffs-bg) 68%,\n        var(--conflict-bg-incoming-header-override, var(--diffs-modified-base))));\n    --diffs-computed-diff-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-computed-decoration-bg);\n    --diffs-line-bg: var(--diffs-computed-decoration-bg);\n  }\n\n  [data-has-merge-conflict] [data-line-annotation], [data-has-merge-conflict] [data-gutter-buffer=\"annotation\"] {\n    --diffs-computed-decoration-bg: var(--diffs-bg);\n    --diffs-computed-diff-line-bg: var(--diffs-bg);\n    --diffs-computed-selected-line-bg: var(--diffs-bg);\n    --diffs-line-bg: var(--diffs-bg);\n  }\n\n  :where([data-background]) {\n    & [data-gutter-buffer], & [data-column-number] {\n      --mix-light: 91%;\n      --mix-dark: 85%;\n    }\n\n    & [data-line], & [data-no-newline] {\n      --mix-light: 88%;\n      --mix-dark: 80%;\n    }\n\n    & [data-gutter-buffer], & [data-column-number], & [data-line], & [data-no-newline] {\n      --diffs-diff-line-mix-target: var(--diffs-bg);\n\n      &[data-line-type=\"change-deletion\"] {\n        --diffs-diff-line-mix-target: var(--diffs-bg-deletion-override, var(--diffs-deletion-base));\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 75%;\n          }\n        }\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-deletion-override, var(--diffs-deletion-base));\n          --diffs-diff-line-mix-target: var(--diffs-bg-deletion-number-override, var(--diffs-deletion-base));\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-line-type=\"change-addition\"] {\n        --diffs-diff-line-mix-target: var(--diffs-bg-addition-override, var(--diffs-addition-base));\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-addition-override, var(--diffs-addition-base));\n          --diffs-diff-line-mix-target: var(--diffs-bg-addition-number-override, var(--diffs-addition-base));\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-merge-conflict=\"current\"] {\n        --diffs-diff-line-mix-target: var(--conflict-bg-current-override, var(--diffs-addition-base));\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-fg-number-addition-override, var(--diffs-addition-base));\n          --diffs-diff-line-mix-target: var(--conflict-bg-current-number-override, var(--diffs-addition-base));\n        }\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n\n      &[data-merge-conflict=\"incoming\"] {\n        --diffs-diff-line-mix-target: var(--conflict-bg-incoming-override, var(--diffs-modified-base));\n\n        &:where([data-gutter-buffer], [data-column-number]) {\n          color: var(--diffs-modified-base);\n          --diffs-diff-line-mix-target: var(--conflict-bg-incoming-number-override, var(--diffs-modified-base));\n        }\n\n        @media (pointer: fine) {\n          &[data-hovered] {\n            --mix-light: 80%;\n            --mix-dark: 70%;\n          }\n        }\n\n        --diffs-computed-diff-line-bg: light-dark(color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-light),\n            var(--diffs-diff-line-mix-target)), color-mix(in lab,\n            var(--diffs-computed-decoration-bg) var(--mix-dark),\n            var(--diffs-diff-line-mix-target)));\n        --diffs-computed-selected-line-bg: var(--diffs-computed-diff-line-bg);\n        --diffs-line-bg: var(--diffs-computed-diff-line-bg, inherit);\n      }\n    }\n  }\n\n  [data-gutter-buffer], [data-column-number], [data-line], [data-line-annotation], [data-merge-conflict], [data-merge-conflict-actions], [data-no-newline], [data-editor-overlay] {\n    --diffs-selection-mix-target: var(--diffs-bg-selection-override, var(--diffs-selection-base));\n\n    &:where([data-editor-overlay]), &:where([data-line], [data-line-annotation], [data-merge-conflict], [data-merge-conflict-actions], [data-no-newline])[data-selected-line] {\n      --mix-selection-light: 82%;\n      --mix-selection-dark: 75%;\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-merge-conflict], [data-line-type=\"change-addition\"], [data-line-type=\"change-deletion\"]) {\n          --mix-selection-light: 75%;\n          --mix-selection-dark: 70%;\n        }\n      }\n    }\n\n    &:where([data-gutter-buffer], [data-column-number])[data-selected-line] {\n      --mix-selection-light: 75%;\n      --mix-selection-dark: 60%;\n      --diffs-selection-mix-target: var(--diffs-bg-selection-number-override, var(--diffs-selection-base));\n\n      @media (pointer: fine) {\n        &[data-hovered]:not([data-merge-conflict], [data-line-type=\"change-addition\"], [data-line-type=\"change-deletion\"]) {\n          --mix-selection-light: 70%;\n          --mix-selection-dark: 55%;\n        }\n      }\n    }\n\n    &:where([data-editor-overlay]), &[data-selected-line] {\n      --diffs-computed-selected-line-bg: light-dark(color-mix(in lab,\n          var(--diffs-computed-diff-line-bg) var(--mix-selection-light),\n          var(--diffs-selection-mix-target)), color-mix(in lab,\n          var(--diffs-computed-diff-line-bg) var(--mix-selection-dark),\n          var(--diffs-selection-mix-target)));\n      --diffs-line-bg: var(--diffs-computed-selected-line-bg, inherit);\n    }\n  }\n\n  [data-gutter-buffer], [data-column-number] {\n    &[data-selected-line] {\n      color: var(--diffs-selection-number-fg);\n    }\n  }\n\n  [data-no-newline] {\n    user-select: none;\n\n    & span {\n      opacity: .6;\n    }\n  }\n\n  [data-diff-type=\"split\"][data-overflow=\"scroll\"] {\n    grid-template-columns: 1fr 1fr;\n    display: grid;\n\n    & [data-additions] {\n      border-left: 1px solid var(--diffs-bg);\n    }\n\n    & [data-deletions] {\n      border-right: 1px solid var(--diffs-bg);\n    }\n  }\n\n  [data-code] {\n    grid-auto-flow: dense;\n    grid-template-columns: var(--diffs-code-grid);\n    overflow: var(--diffs-overflow-override, scroll) clip;\n    overscroll-behavior-x: none;\n    tab-size: var(--diffs-tab-size, 2);\n    padding-top: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    padding-bottom: max(0px,\n      calc(var(--diffs-gap-block, var(--diffs-gap-fallback)) -\n          var(--diffs-scrollbar-gutter)));\n    scrollbar-gutter: stable;\n    align-self: flex-start;\n    display: grid;\n  }\n\n  [data-diffs-scrollbar-measure] {\n    opacity: 0;\n    pointer-events: none;\n    scrollbar-gutter: auto;\n    grid-template-columns: none;\n    width: 100px;\n    height: 100px;\n    padding: 0;\n    position: absolute;\n    top: -200px;\n    left: -200px;\n  }\n\n  [data-container-size] {\n    container-type: inline-size;\n  }\n\n  [data-code]::-webkit-scrollbar {\n    width: 0;\n    height: var(--diffs-scrollbar-gutter);\n  }\n\n  [data-code]::-webkit-scrollbar-track {\n    background: none;\n  }\n\n  [data-code]::-webkit-scrollbar-thumb {\n    background-color: #0000;\n    background-clip: content-box;\n    border: 1px solid #0000;\n    border-radius: 3px;\n  }\n\n  [data-code]::-webkit-scrollbar-corner {\n    background-color: #0000;\n  }\n\n  @supports ((-moz-appearance: none)) {\n    [data-code] {\n      scrollbar-width: thin;\n      scrollbar-color: var(--diffs-bg-context) transparent;\n      padding-bottom: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    }\n  }\n\n  [data-diffs-header] ~ [data-diff], [data-diffs-header] ~ [data-file] {\n    & [data-code], &[data-overflow=\"wrap\"] {\n      padding-top: 0;\n    }\n  }\n\n  [data-gutter] {\n    grid-template-rows: subgrid;\n    grid-template-columns: subgrid;\n    z-index: 3;\n    background-color: var(--diffs-bg);\n    grid-column: 1;\n    display: grid;\n    position: relative;\n\n    & [data-gutter-buffer], & [data-column-number] {\n      border-right: var(--diffs-gap-style, 2px solid var(--diffs-bg));\n    }\n  }\n\n  [data-content] {\n    grid-template-rows: subgrid;\n    grid-template-columns: subgrid;\n    background-color: var(--diffs-bg);\n    grid-column: 2;\n    min-width: 0;\n    display: grid;\n  }\n\n  [data-diff-type=\"split\"][data-overflow=\"wrap\"] {\n    grid-auto-flow: dense;\n    grid-template-columns: repeat(2, var(--diffs-code-grid));\n    padding-block: var(--diffs-gap-block, var(--diffs-gap-fallback));\n    display: grid;\n\n    & [data-deletions] {\n      display: contents;\n\n      & [data-gutter] {\n        grid-column: 1;\n      }\n\n      & [data-content] {\n        border-right: 1px solid var(--diffs-bg);\n        grid-column: 2;\n      }\n    }\n\n    & [data-additions] {\n      display: contents;\n\n      & [data-gutter] {\n        border-left: 1px solid var(--diffs-bg);\n        grid-column: 3;\n      }\n\n      & [data-content] {\n        grid-column: 4;\n      }\n    }\n  }\n\n  [data-overflow=\"scroll\"] [data-gutter] {\n    position: sticky;\n    left: 0;\n  }\n\n  [data-interactive-lines] [data-line] {\n    cursor: pointer;\n  }\n\n  [data-interactive-line-numbers] [data-column-number] {\n    cursor: pointer;\n    touch-action: none;\n  }\n\n  [data-content-buffer], [data-gutter-buffer] {\n    user-select: none;\n    min-height: 1lh;\n    position: relative;\n  }\n\n  [data-gutter-buffer] {\n    padding-left: 2ch;\n    padding-right: 1ch;\n\n    &:before {\n      content: \"\";\n      min-width: var(--diffs-min-number-column-width, var(--diffs-min-number-column-width-default, 3ch));\n      display: block;\n    }\n  }\n\n  [data-gutter-buffer=\"annotation\"] {\n    --diffs-annotation-bg: var(--diffs-bg-context-gutter);\n    min-height: 0;\n  }\n\n  [data-gutter-buffer=\"buffer\"] {\n    --diffs-line-bg: var(--diffs-bg-context-gutter);\n  }\n\n  [data-content-buffer] {\n    background-position: 5px 0;\n    background-size: 8px 8px;\n    background-origin: border-box;\n    background-image: repeating-linear-gradient(-45deg,\n      transparent,\n      transparent calc(3px * 1.414),\n      var(--diffs-bg-buffer) calc(3px * 1.414),\n      var(--diffs-bg-buffer) calc(4px * 1.414));\n    grid-column: 1;\n  }\n\n  [data-separator] {\n    box-sizing: content-box;\n    background-color: var(--diffs-bg);\n  }\n\n  [data-separator=\"simple\"] {\n    min-height: 4px;\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"], [data-separator=\"simple\"] {\n    background-color: var(--diffs-bg-separator);\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"] {\n    height: 32px;\n    position: relative;\n  }\n\n  [data-separator-wrapper] {\n    user-select: none;\n    fill: currentColor;\n    background-color: var(--diffs-bg);\n    align-items: center;\n    height: 100%;\n    display: flex;\n    position: absolute;\n    inset-inline: 0;\n  }\n\n  [data-content] [data-separator-wrapper] {\n    display: none;\n  }\n\n  [data-separator=\"metadata\"] [data-separator-wrapper] {\n    background-color: var(--diffs-bg-separator);\n    height: 100%;\n    color: var(--diffs-fg-number);\n    white-space: nowrap;\n    text-overflow: ellipsis;\n    min-width: min-content;\n    padding-inline: 1ch;\n    inset-inline: 100% auto;\n    overflow: hidden;\n  }\n\n  [data-separator=\"line-info\"] {\n    margin-block: var(--diffs-gap-block, var(--diffs-gap-fallback));\n\n    & [data-separator-wrapper] {\n      min-width: 16px;\n    }\n  }\n\n  [data-separator=\"line-info-basic\"], [data-separator=\"metadata\"] {\n    margin-block: 0;\n  }\n\n  [data-separator=\"line-info\"][data-separator-first] {\n    margin-top: 0;\n  }\n\n  [data-separator=\"line-info\"][data-separator-last] {\n    margin-bottom: 0;\n  }\n\n  [data-expand-index] [data-separator-wrapper] {\n    grid-template-columns: 32px auto;\n    display: grid;\n  }\n\n  [data-expand-index] [data-separator-wrapper][data-separator-multi-button] {\n    grid-template-columns: 32px 32px auto;\n  }\n\n  [data-expand-button], [data-separator-content] {\n    background-color: var(--diffs-bg-separator);\n    flex: none;\n    align-items: center;\n    display: flex;\n  }\n\n  [data-expand-index] [data-separator-content]:hover {\n    cursor: pointer;\n    text-decoration: underline;\n  }\n\n  [data-expand-button] {\n    cursor: pointer;\n    min-width: 32px;\n    color: var(--diffs-fg-number);\n    border-right: 2px solid var(--diffs-bg);\n    flex-shrink: 0;\n    justify-content: center;\n    align-self: stretch;\n\n    &:hover {\n      color: var(--diffs-fg);\n    }\n\n    &[data-expand-all-button] {\n      display: none;\n    }\n  }\n\n  [data-expand-down] [data-icon] {\n    transform: scaleY(-1);\n  }\n\n  [data-separator-content] {\n    height: 100%;\n    color: var(--diffs-fg-number);\n    flex: auto;\n    justify-content: flex-start;\n    padding: 0 1ch;\n    overflow: hidden;\n  }\n\n  [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"] {\n    & [data-separator-content] {\n      user-select: none;\n      height: 100%;\n      overflow: clip;\n    }\n  }\n\n  [data-unmodified-lines] {\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    flex: 0 auto;\n    min-width: 0;\n    display: block;\n    overflow: hidden;\n  }\n\n  @supports (width: 1cqi) {\n    [data-unified] {\n      & [data-separator=\"line-info\"] [data-separator-wrapper] {\n        padding-inline: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n        width: 100cqi;\n\n        & [data-separator-content] {\n          border-radius: 6px;\n        }\n      }\n\n      & [data-separator=\"line-info\"][data-expand-index] [data-separator-wrapper] [data-separator-content] {\n        border-top-left-radius: unset;\n        border-bottom-left-radius: unset;\n      }\n    }\n\n    [data-gutter] {\n      & [data-separator=\"line-info\"] [data-separator-wrapper] {\n        padding-left: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n      }\n\n      & [data-separator=\"line-info\"] [data-separator-content] {\n        border-top-left-radius: 6px;\n        border-bottom-left-radius: 6px;\n      }\n\n      & [data-separator=\"line-info\"][data-expand-index] [data-separator-content] {\n        border-top-left-radius: unset;\n        border-bottom-left-radius: unset;\n      }\n    }\n\n    [data-additions] {\n      & [data-content] [data-separator=\"line-info\"] {\n        background-color: var(--diffs-bg);\n\n        & [data-separator-wrapper] {\n          display: none;\n        }\n      }\n\n      & [data-gutter] [data-separator=\"line-info\"] [data-separator-wrapper] {\n        background-color: var(--diffs-bg-separator);\n        border-top-right-radius: 6px;\n        border-bottom-right-radius: 6px;\n        height: 100%;\n        display: block;\n\n        & [data-separator-content], & [data-expand-button] {\n          display: none;\n        }\n      }\n    }\n\n    [data-overflow=\"scroll\"] [data-additions] [data-gutter] [data-separator=\"line-info\"] [data-separator-wrapper] {\n      width: calc(100cqi - var(--diffs-gap-inline, var(--diffs-gap-fallback)));\n    }\n\n    [data-overflow=\"wrap\"] [data-additions] [data-content] [data-separator=\"line-info\"] [data-separator-wrapper] {\n      background-color: var(--diffs-bg-separator);\n      height: 100%;\n      margin-right: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n      border-top-right-radius: 6px;\n      border-bottom-right-radius: 6px;\n      display: block;\n\n      & [data-separator-content], & [data-expand-button] {\n        display: none;\n      }\n    }\n\n    [data-separator=\"line-info\"] [data-separator-wrapper] {\n      & [data-expand-both], & [data-expand-down], & [data-expand-up] {\n        border-top-left-radius: 6px;\n        border-bottom-left-radius: 6px;\n      }\n    }\n\n    @media (pointer: fine) {\n      [data-separator=\"line-info\"] [data-separator-wrapper] {\n        &[data-separator-multi-button] {\n          & [data-expand-up] {\n            border-top-left-radius: 6px;\n            border-bottom-left-radius: unset;\n          }\n\n          & [data-expand-down] {\n            border-bottom-left-radius: 6px;\n            border-top-left-radius: unset;\n          }\n        }\n      }\n    }\n  }\n\n  @media (pointer: coarse) {\n    [data-separator=\"line-info-basic\"] [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-columns: 34px 34px auto;\n\n      & [data-separator-content] {\n        grid-column: unset;\n        grid-row: unset;\n      }\n    }\n\n    @supports (width: 1cqi) {\n      [data-separator=\"line-info\"] [data-separator-wrapper] {\n        & [data-expand-both], & [data-expand-down], & [data-expand-up] {\n          border-top-left-radius: 6px;\n          border-bottom-left-radius: 6px;\n        }\n\n        &[data-separator-multi-button] {\n          & [data-expand-up] {\n            border-top-left-radius: 6px;\n            border-bottom-left-radius: 6px;\n          }\n\n          & [data-expand-down] {\n            border-bottom-left-radius: unset;\n            border-top-left-radius: unset;\n          }\n        }\n      }\n    }\n  }\n\n  @media (pointer: fine) {\n    [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-rows: 50% 50%;\n      display: grid;\n\n      & [data-separator-content] {\n        grid-area: 1 / 2 / -1;\n        min-width: min-content;\n      }\n\n      & [data-expand-button] {\n        grid-column: 1;\n      }\n    }\n\n    [data-separator=\"line-info\"] [data-separator-wrapper], [data-separator=\"line-info\"] [data-separator-wrapper][data-separator-multi-button] {\n      grid-template-columns: 34px auto;\n    }\n\n    [data-separator=\"line-info-basic\"][data-expand-index] [data-separator-wrapper] {\n      grid-template-columns: 100% auto;\n    }\n\n    [data-separator=\"line-info\"], [data-separator=\"line-info-basic\"] {\n      & [data-separator-multi-button] {\n        & [data-expand-up] {\n          border-bottom: 1px solid var(--diffs-bg);\n          border-right: 2px solid var(--diffs-bg);\n        }\n\n        & [data-expand-down] {\n          border-top: 1px solid var(--diffs-bg);\n          border-right: 2px solid var(--diffs-bg);\n        }\n      }\n    }\n  }\n\n  [data-additions] [data-gutter] [data-separator-wrapper], [data-additions] [data-separator=\"line-info-basic\"] [data-separator-wrapper], [data-content] [data-separator-wrapper] {\n    display: none;\n  }\n\n  [data-line-annotation] {\n    min-height: var(--diffs-annotation-min-height, 0);\n    z-index: 2;\n  }\n\n  [data-merge-conflict-actions] {\n    z-index: 2;\n  }\n\n  [data-separator=\"custom\"] {\n    grid-template-columns: subgrid;\n    display: grid;\n  }\n\n  [data-line], [data-column-number], [data-no-newline] {\n    padding-inline: 1ch;\n    position: relative;\n  }\n\n  [data-indicators=\"classic\"] [data-line] {\n    padding-inline-start: 2ch;\n  }\n\n  [data-indicators=\"classic\"] {\n    & [data-line-type=\"change-addition\"], & [data-line-type=\"change-deletion\"] {\n      &[data-no-newline], &[data-line] {\n        &:before {\n          user-select: none;\n          width: 1ch;\n          height: 1lh;\n          display: inline-block;\n          position: absolute;\n          top: 0;\n          left: 0;\n        }\n      }\n    }\n\n    & [data-line-type=\"change-addition\"] {\n      &[data-line], &[data-no-newline] {\n        &:before {\n          content: \"+\";\n          color: var(--diffs-addition-base);\n        }\n      }\n    }\n\n    & [data-line-type=\"change-deletion\"] {\n      &[data-line], &[data-no-newline] {\n        &:before {\n          content: \"-\";\n          color: var(--diffs-deletion-base);\n        }\n      }\n    }\n  }\n\n  [data-indicators=\"bars\"] {\n    & [data-line-type=\"change-deletion\"], & [data-line-type=\"change-addition\"] {\n      &[data-column-number] {\n        &:before {\n          content: \"\";\n          user-select: none;\n          contain: strict;\n          width: 4px;\n          height: 100%;\n          display: block;\n          position: absolute;\n          top: 0;\n          left: 0;\n        }\n      }\n    }\n\n    & [data-line-type=\"change-deletion\"] {\n      &[data-column-number] {\n        &:before {\n          background-image: linear-gradient(0deg,\n            var(--diffs-bg-deletion) 50%,\n            var(--diffs-deletion-base) 50%);\n          background-repeat: repeat;\n          background-size: 2px 2px;\n          background-size: calc(1lh / round(1lh / 2px))\n            calc(1lh / round(1lh / 2px));\n        }\n      }\n    }\n\n    & [data-line-type=\"change-addition\"] {\n      &[data-column-number] {\n        &:before {\n          background-color: var(--diffs-addition-base);\n        }\n      }\n    }\n  }\n\n  [data-overflow=\"wrap\"] {\n    & [data-line], & [data-annotation-content] {\n      white-space: pre-wrap;\n      word-break: break-word;\n    }\n  }\n\n  [data-overflow=\"scroll\"] [data-line] {\n    white-space: pre;\n    min-height: 1lh;\n  }\n\n  [data-column-number] {\n    box-sizing: content-box;\n    text-align: right;\n    user-select: none;\n    color: var(--diffs-fg-number);\n    padding-left: 2ch;\n  }\n\n  [data-line-number-content] {\n    min-width: var(--diffs-min-number-column-width, var(--diffs-min-number-column-width-default, 3ch));\n    z-index: 1;\n    display: inline-block;\n    position: relative;\n  }\n\n  [data-disable-line-numbers] {\n    & [data-gutter-buffer], & [data-column-number] {\n      min-width: 4px;\n      padding: 0;\n\n      &:before {\n        min-width: 0;\n      }\n    }\n\n    & [data-line-number-content] {\n      display: none;\n    }\n\n    & [data-gutter-utility-slot] {\n      right: unset;\n      justify-content: flex-start;\n      left: 0;\n    }\n\n    &[data-indicators=\"bars\"] [data-gutter-utility-slot] {\n      left: 6px;\n    }\n  }\n\n  [data-file][data-disable-line-numbers] {\n    & [data-gutter-buffer], & [data-column-number] {\n      border-right: 0;\n      min-width: 0;\n    }\n  }\n\n  [data-diff-span] {\n    box-decoration-break: clone;\n    border-radius: 3px;\n  }\n\n  [data-line-type=\"change-addition\"] [data-diff-span] {\n    background-color: var(--diffs-bg-addition-emphasis);\n  }\n\n  [data-line-type=\"change-deletion\"] [data-diff-span] {\n    background-color: var(--diffs-bg-deletion-emphasis);\n  }\n\n  [data-merge-conflict=\"marker-start\"], [data-merge-conflict=\"marker-base\"], [data-merge-conflict=\"marker-separator\"], [data-merge-conflict=\"marker-end\"] {\n    color: var(--diffs-fg);\n    padding-left: 1ch;\n  }\n\n  [data-merge-conflict=\"marker-start\"], [data-merge-conflict=\"marker-end\"] {\n    align-items: center;\n    display: flex;\n\n    &:after {\n      color: var(--diffs-fg-conflict-marker);\n      font-size: .75rem;\n      font-style: normal;\n      line-height: 1.25rem;\n      font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n      padding-left: 1ch;\n    }\n  }\n\n  [data-merge-conflict=\"marker-start\"]:after {\n    content: \"(Current Change)\";\n  }\n\n  [data-merge-conflict=\"marker-end\"]:after {\n    content: \"(Incoming Change)\";\n  }\n\n  [data-merge-conflict-actions-content] {\n    min-height: 1.75rem;\n    font-family: var(--diffs-header-font-family, var(--diffs-header-font-fallback));\n    color: var(--diffs-fg);\n    align-items: center;\n    gap: .25rem;\n    padding-inline: .5rem;\n    font-size: .75rem;\n    line-height: 1.2;\n    display: flex;\n  }\n\n  [data-merge-conflict-action] {\n    appearance: none;\n    color: var(--diffs-fg-number);\n    font: inherit;\n    cursor: pointer;\n    background: none;\n    border: 0;\n    padding: 0;\n    font-style: normal;\n  }\n\n  [data-merge-conflict-action]:hover {\n    color: var(--diffs-fg);\n  }\n\n  [data-merge-conflict-action=\"current\"]:hover {\n    color: var(--diffs-addition-base);\n  }\n\n  [data-merge-conflict-action=\"incoming\"]:hover {\n    color: var(--diffs-modified-base);\n  }\n\n  [data-merge-conflict-action-separator] {\n    color: var(--diffs-fg-number);\n    opacity: .6;\n    user-select: none;\n  }\n\n  [data-diffs-header=\"default\"] {\n    background-color: var(--diffs-bg);\n    justify-content: space-between;\n    align-items: center;\n    gap: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    min-height: calc(1lh + (var(--diffs-gap-block, var(--diffs-gap-fallback)) * 3));\n    z-index: 2;\n    flex-direction: row;\n    padding-inline: 16px;\n    display: flex;\n    position: relative;\n    top: 0;\n  }\n\n  [data-header-content] {\n    align-items: center;\n    gap: var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    white-space: nowrap;\n    flex-direction: row;\n    min-width: 0;\n    display: flex;\n  }\n\n  [data-header-content] [data-prev-name], [data-header-content] [data-title] {\n    text-overflow: ellipsis;\n    white-space: nowrap;\n    direction: rtl;\n    min-width: 0;\n    overflow: hidden;\n  }\n\n  [data-prev-name] {\n    opacity: .7;\n  }\n\n  [data-rename-icon] {\n    fill: currentColor;\n    flex-grow: 0;\n    flex-shrink: 0;\n  }\n\n  [data-diffs-header=\"default\"] [data-metadata] {\n    white-space: nowrap;\n    align-items: center;\n    gap: 1ch;\n    display: flex;\n  }\n\n  [data-diffs-header=\"default\"] [data-additions-count] {\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    color: var(--diffs-addition-base);\n  }\n\n  [data-diffs-header=\"default\"] [data-deletions-count] {\n    font-family: var(--diffs-font-family, var(--diffs-font-fallback));\n    color: var(--diffs-deletion-base);\n  }\n\n  [data-change-icon] {\n    fill: currentColor;\n    flex-shrink: 0;\n  }\n\n  [data-change-icon=\"change\"], [data-change-icon=\"rename-pure\"], [data-change-icon=\"rename-changed\"] {\n    color: var(--diffs-modified-base);\n  }\n\n  [data-change-icon=\"new\"] {\n    color: var(--diffs-addition-base);\n  }\n\n  [data-change-icon=\"deleted\"] {\n    color: var(--diffs-deletion-base);\n  }\n\n  [data-change-icon=\"file\"] {\n    opacity: .6;\n  }\n\n  [data-annotation-content] {\n    z-index: 2;\n    isolation: isolate;\n    align-self: flex-start;\n    min-width: 0;\n    display: flow-root;\n    position: relative;\n  }\n\n  [data-overflow=\"scroll\"] [data-annotation-content], [data-overflow=\"scroll\"] [data-merge-conflict-actions-content] {\n    width: var(--diffs-column-content-width, auto);\n    left: var(--diffs-column-number-width, 0);\n    position: sticky;\n  }\n\n  [data-annotation-slot] {\n    text-wrap-mode: wrap;\n    word-break: normal;\n    white-space-collapse: collapse;\n  }\n\n  [data-gutter-utility-slot] {\n    touch-action: none;\n    justify-content: flex-end;\n    display: flex;\n    position: absolute;\n    top: 0;\n    bottom: 0;\n    right: 0;\n  }\n\n  [data-utility-button] {\n    appearance: none;\n    cursor: pointer;\n    width: 1lh;\n    height: 1lh;\n    font-size: var(--diffs-font-size, 13px);\n    line-height: var(--diffs-line-height, 20px);\n    background-color: var(--diffs-modified-base);\n    color: var(--diffs-bg);\n    fill: currentColor;\n    z-index: 4;\n    touch-action: none;\n    border: none;\n    border-radius: 4px;\n    justify-content: center;\n    align-items: center;\n    margin-right: calc(-1lh + 1ch);\n    padding: 0;\n    display: flex;\n    position: relative;\n\n    &:before {\n      content: \"\";\n      display: block;\n      position: absolute;\n      inset: 0 0 0 -4px;\n    }\n  }\n\n  [data-decoration-bar-stack] {\n    pointer-events: none;\n    isolation: isolate;\n    z-index: 1;\n    background-color: var(--diffs-decoration-bar-color, transparent);\n    box-sizing: content-box;\n    border-left: 2px solid var(--diffs-bg);\n    border-right: 2px solid var(--diffs-bg);\n    width: 6px;\n    position: absolute;\n    top: 0;\n    bottom: 0;\n    right: -2px;\n\n    [data-decoration-bar-depth=\"1\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 20%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-depth=\"2\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 45%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-depth=\"3\"] & {\n      background-color: color-mix(in lab,\n        var(--diffs-bg) 65%,\n        var(--diffs-decoration-bar-color, transparent));\n    }\n\n    [data-decoration-bar-start] & {\n      border-top-left-radius: 5px;\n      border-top-right-radius: 5px;\n    }\n\n    [data-decoration-bar-end] & {\n      z-index: 3;\n      border-bottom-right-radius: 5px;\n      border-bottom-left-radius: 5px;\n    }\n  }\n\n  [data-placeholder] {\n    contain: strict;\n  }\n\n  [data-error-wrapper] {\n    padding: var(--diffs-gap-block, var(--diffs-gap-fallback))\n      var(--diffs-gap-inline, var(--diffs-gap-fallback));\n    scrollbar-width: none;\n    max-height: 400px;\n    overflow: auto;\n\n    & [data-error-message] {\n      color: var(--diffs-deletion-base);\n      font-size: 18px;\n      font-weight: bold;\n    }\n\n    & [data-error-stack] {\n      color: var(--diffs-fg-number);\n    }\n  }\n}\n\n@layer base {\n  ::highlight(diffs-search-match) {\n    background-color: var(--diffs-search-match-bg, light-dark(#ff963288, #ff963266));\n  }\n\n  ::highlight(diffs-search-focus) {\n    background-color: var(--diffs-search-focus-bg, color-mix(in lab, var(--diffs-modified-base) 45%, transparent));\n  }\n}\n\n@layer theme, rendered, unsafe;\n";
+ //#endregion
+ export { style_default as default };
+ 
 diff --git a/package.json b/package.json
-index ff61c90..1e170e5 100644
+index ff61c90..213b06a 100644
 --- a/package.json
 +++ b/package.json
 @@ -55,6 +55,18 @@
