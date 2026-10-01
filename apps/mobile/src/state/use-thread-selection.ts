@@ -49,6 +49,7 @@ function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["
   return null;
 }
 
+/** Build a navigation fallback from detail state, preserving pending lifecycle intents. */
 function threadDetailToShell(
   environmentId: EnvironmentId,
   thread: OrchestrationThread,

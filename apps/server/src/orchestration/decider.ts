@@ -176,6 +176,7 @@ interface ThreadEventInput<Fields extends keyof OrchestrationThread> {
   readonly occurredAt: string;
 }
 
+/** Give companion lifecycle events the originating command and timestamp. */
 const threadEventBase = (input: ThreadEventInput<never>) =>
   withEventBase({
     aggregateKind: "thread",
@@ -539,8 +540,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // The auto-settle opt-out does not cover a settle the user asked for.
       if (
         command.type === "thread.auto-settle" &&
-        (thread.settledOverride !== null ||
-          (thread.autoSettleDisabledAt != null && thread.settleWhenIdleAt == null))
+        (thread.settledOverride === "settled" ||
+          ((thread.settledOverride === "active" || thread.autoSettleDisabledAt != null) &&
+            thread.settleWhenIdleAt == null))
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,

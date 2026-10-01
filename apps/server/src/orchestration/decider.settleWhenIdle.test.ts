@@ -184,4 +184,44 @@ it.layer(NodeServices.layer)("thread.settle-when-idle decider", (it) => {
       }
     }),
   );
+
+  it.effect("finishes an explicit settle after un-settle and re-settle during one turn", () =>
+    Effect.gen(function* () {
+      const unsettled = yield* run(
+        {
+          type: "thread.unsettle",
+          commandId: commandId("unsettle"),
+          threadId: THREAD_ID,
+          reason: "user",
+        },
+        armed(),
+      );
+      expect(unsettled.thread.settledOverride).toBe("active");
+      const rearmed = yield* run(settleWhenIdle, readModel(unsettled.thread));
+      expect(rearmed.thread.settleWhenIdleAt).not.toBeNull();
+      expect(rearmed.types).not.toContain("thread.settled");
+      const ready = yield* run(sessionSet("ready"), readModel(rearmed.thread));
+      const command = {
+        type: "thread.auto-settle",
+        commandId: commandId("finish-rearmed"),
+        threadId: THREAD_ID,
+        snapshotSequence: 0,
+        settledAt: NOW,
+      } as const;
+      const settled = yield* run(command, readModel(ready.thread));
+      expect(settled.thread.settledOverride).toBe("settled");
+      expect(settled.thread.settleWhenIdleAt).toBeNull();
+      // A cancelled intent cannot override keep-active, and an already-settled thread stays guarded.
+      for (const thread of [
+        { ...ready.thread, settleWhenIdleAt: null },
+        { ...ready.thread, settledOverride: "settled" as const },
+      ]) {
+        const error = yield* decideOrchestrationCommand({
+          command,
+          readModel: readModel(thread),
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }
+    }),
+  );
 });

@@ -128,6 +128,8 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getShellSnapshot: (options?: {
     readonly unsettledOnly?: boolean;
+    /** Recover explicit deferred intents without reading unrelated thread state. */
+    readonly settleWhenIdleOnly?: boolean;
   }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
 
   /**

@@ -1,4 +1,4 @@
-﻿import * as Crypto from "effect/Crypto";
+import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 import {
   WS_METHODS,
@@ -96,6 +96,7 @@ export type {
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
+/** Serialize environment commands and project optimistic lifecycle changes until server confirmation. */
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,

@@ -3721,6 +3721,31 @@ it.effect("reads a full sweep from unsettled threads and every project", () => {
     const unsettled = yield* query.getShellSnapshot({ unsettledOnly: true });
     assert.deepStrictEqual(unsettled.threads, sweep.threads);
     assert.strictEqual(unsettled.updatedAt, "2026-09-04T00:00:00Z");
+
+    // Recovery reads only persisted intents, including keep-active threads. Unrelated
+    // malformed thread/session/turn/link rows must never be hydrated by this query.
+    yield* sql`UPDATE projection_threads SET settle_when_idle_at = '2026-09-02T00:00:00Z'
+      WHERE thread_id IN ('t-open', 't-resumed', 't-branch', 't-archived')`;
+    yield* sql`UPDATE projection_threads SET deleted_at = '2026-09-03T00:00:00Z' WHERE thread_id = 't-branch'`;
+    yield* sql`UPDATE projection_threads SET model_selection_json = 'invalid-json' WHERE thread_id = 't-settled'`;
+    yield* sql`UPDATE projection_thread_sessions SET status = 'invalid' WHERE thread_id = 't-settled'`;
+    yield* sql`UPDATE projection_turns SET checkpoint_files_json = 'invalid-json' WHERE thread_id = 't-settled'`;
+    const recovery = yield* query.getShellSnapshot({ settleWhenIdleOnly: true });
+    assert.strictEqual(recovery.snapshotSequence, full.snapshotSequence);
+    assert.deepStrictEqual(
+      recovery.threads.map((thread) => thread.id),
+      ["t-open", "t-resumed"],
+    );
+    assert.strictEqual(recovery.threads[0]?.session?.status, "ready");
+    assert.strictEqual(recovery.threads[0]?.latestTurn?.turnId, asTurnId("turn-open"));
+    assert.strictEqual(recovery.threads[0]?.pullRequests[0]?.number, 7);
+    assert.strictEqual(recovery.threads[1]?.settledOverride, "active");
+    assert.strictEqual(recovery.updatedAt, "2026-09-04T00:00:00Z");
+    yield* sql`UPDATE projection_threads SET settle_when_idle_at = NULL WHERE thread_id IN ('t-open', 't-resumed')`;
+    assert.deepStrictEqual(
+      (yield* query.getShellSnapshot({ settleWhenIdleOnly: true })).threads,
+      [],
+    );
   }).pipe(Effect.provide(layer));
 });
 

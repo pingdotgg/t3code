@@ -24,7 +24,7 @@ import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
-import { isThreadIdleForSettlement } from "./ThreadSettlementPolicy.ts";
+import { isThreadWorkingForSettlement } from "./ThreadSettlementPolicy.ts";
 
 export const canonicalizeClientCommandTimestamps = (
   command: ClientOrchestrationCommand,
@@ -77,6 +77,7 @@ const removeClaimedAttachmentPaths = Effect.fn("Normalizer.removeClaimedAttachme
   },
 );
 
+/** Canonicalize client commands, claim attachments, and defer settlement only while work is live. */
 export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
@@ -141,7 +142,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       const thread = yield* snapshots
         .getThreadShellById(canonicalCommand.threadId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(thread) && !isThreadIdleForSettlement(thread.value, receivedAt)) {
+      if (Option.isSome(thread) && isThreadWorkingForSettlement(thread.value, receivedAt)) {
         return {
           ...canonicalCommand,
           type: "thread.settle-when-idle",

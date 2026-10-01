@@ -337,6 +337,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   };
 }
 
+/** Reduce a persisted event into orchestration state without running lifecycle side effects. */
 export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,

@@ -114,12 +114,26 @@ export function resolveAutoSettlementAt(input: {
     : null;
 }
 
-/** Settling stops the session, so nothing may be running, including background work. */
+/** Work that manual settlement must defer rather than interrupt. */
+export function isThreadWorkingForSettlement(
+  thread: OrchestrationThreadShell,
+  now: string,
+): boolean {
+  return (
+    thread.session?.status === "starting" ||
+    thread.session?.status === "running" ||
+    thread.backgroundLiveness != null ||
+    threadHasQueuedTurnStart(thread, now)
+  );
+}
+
+/** Deferred and automatic settlement must also wait for every pending request. */
 export function isThreadIdleForSettlement(thread: OrchestrationThreadShell, now: string): boolean {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
-  if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
-  if (thread.backgroundLiveness != null) return false;
-  return !threadHasQueuedTurnStart(thread, now);
+  return (
+    !thread.hasPendingApprovals &&
+    !thread.hasPendingUserInput &&
+    !isThreadWorkingForSettlement(thread, now)
+  );
 }
 
 /** Cheap checks that run before any source control lookup. */

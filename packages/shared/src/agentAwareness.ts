@@ -52,6 +52,7 @@ function buildAgentAwarenessDeepLink(input: {
   return `/threads/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
 }
 
+/** Publish agent attention and progress while suppressing successful completions for filed threads. */
 export function projectThreadAwareness(
   input: ProjectThreadAwarenessInput,
 ): AgentAwarenessState | null {

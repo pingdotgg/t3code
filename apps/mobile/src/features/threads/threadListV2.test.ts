@@ -393,24 +393,33 @@ describe("buildThreadListV2Items", () => {
     expect(layout.items[0]?.variant).toBe("slim");
   });
 
-  it("files a thread waiting to settle when idle with the settled threads", () => {
-    const thread = makeThread({
-      id: ThreadId.make("settles-when-idle"),
-      title: "Still working",
-      settleWhenIdleAt: NOW,
-    });
-    const layout = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
+  it.each(["working", "monitoring"] as const)(
+    "shows background %s on the settled shelf until it ends",
+    (backgroundLiveness) => {
+      const thread = makeThread({
+        id: ThreadId.make("settles-when-idle"),
+        title: "Still working",
+        settleWhenIdleAt: NOW,
+        backgroundLiveness,
+      });
+      const layout = buildThreadListV2Items({
+        threads: [thread],
+        environmentId: null,
+        searchQuery: "",
+        now: NOW,
+      });
 
-    expect(layout.settledCount).toBe(1);
-    expect(
-      getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
-    ).toEqual([]);
-  });
+      expect(layout.settledCount).toBe(1);
+      expect(layout.items[0]?.variant).toBe("slim");
+      expect(resolveThreadListV2Status(thread)).toBe("working");
+      expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+      expect(resolveThreadListV2Status({ ...thread, hasPendingUserInput: true })).toBe("input");
+      expect(resolveThreadListV2Status({ ...thread, backgroundLiveness: null })).toBe("ready");
+      expect(
+        getThreadListV2OrderedSection({ threads: [thread], section: "active", now: NOW }),
+      ).toEqual([]);
+    },
+  );
 
   it("hides snoozed threads and counts them — visibility parity with web", () => {
     const layout = buildThreadListV2Items({

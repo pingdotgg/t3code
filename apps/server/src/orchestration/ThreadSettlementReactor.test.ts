@@ -654,19 +654,22 @@ describe("ThreadSettlementReactor", () => {
           yield* Queue.take(fixture.settingsReads);
           yield* Deferred.succeed(fixture.activation, undefined);
           yield* Queue.take(fixture.settingsReads);
+          yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
           yield* TestClock.adjust("1 minute");
           yield* Queue.take(fixture.settingsReads);
+          yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
           yield* fixture.publishMerge;
           yield* Queue.take(fixture.settingsReads);
+          yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
 
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.invalidatedCwds), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 0);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 3);
 
           yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
           yield* Queue.take(fixture.snapshotReads);
@@ -681,84 +684,151 @@ describe("ThreadSettlementReactor", () => {
     ),
   );
 
-  it.effect("settles a thread marked to settle when idle once its background work ends", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(NOW));
-        // The turn ended, but a watch loop still runs: settling now would stop it.
-        const thread = makeThread("watching", {
-          settleWhenIdleAt: NOW,
-          backgroundLiveness: "monitoring",
-        });
-        const fixture = yield* makeHarness({
-          snapshot: makeSnapshot([thread]),
-          // Works with auto-settle off, and still without full reads.
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
-            sidebarAutoSettleAfterDays: null,
-            sidebarAutoSettleOnMerge: false,
-          },
-        });
-        const eventBase = {
-          sequence: 2,
-          eventId: EventId.make("settle-when-idle"),
-          aggregateKind: "thread" as const,
-          aggregateId: thread.id,
-          occurredAt: NOW,
-          commandId: null,
-          causationEventId: null,
-          correlationId: null,
-          metadata: {},
-        };
-        yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
-          yield* reactor.start();
-          yield* Deferred.succeed(fixture.activation, undefined);
-          yield* fixture.publishEvent({
-            ...eventBase,
-            type: "thread.settle-when-idle-set",
-            payload: { threadId: thread.id, settleWhenIdleAt: NOW, updatedAt: NOW },
+  for (const completionKind of ["task.completed", "task.updated"] as const) {
+    it.effect(`settles an armed thread when background work ends through ${completionKind}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          // The turn ended, but a watch loop still runs: settling now would stop it.
+          const thread = makeThread("watching", {
+            settleWhenIdleAt: NOW,
+            backgroundLiveness: "monitoring",
           });
-          assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
-          yield* reactor.drain;
-          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-
-          yield* Ref.update(fixture.snapshots, (snapshot) => ({
-            ...snapshot,
-            threads: [{ ...thread, backgroundLiveness: null }],
-          }));
-          yield* fixture.publishEvent({
-            ...eventBase,
-            type: "thread.activity-appended",
-            payload: {
-              threadId: thread.id,
-              activity: {
-                id: EventId.make("task-completed"),
-                tone: "info",
-                kind: "task.completed",
-                summary: "Task completed",
-                payload: { taskId: "watch" },
-                turnId: null,
-                createdAt: NOW,
-              },
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([thread]),
+            // Automatic settlement stays off; events only read this thread after startup recovery.
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              sidebarAutoSettleAfterDays: null,
+              sidebarAutoSettleOnMerge: false,
             },
           });
-          assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
-          yield* reactor.drain;
-          // Auto-settle carries the read's sequence, so a change after it
-          // (un-settle, a new message) rejects the settle.
-          assert.deepStrictEqual(
-            (yield* Ref.get(fixture.commands)).map(({ threadId, snapshotSequence }) => ({
-              threadId,
-              snapshotSequence,
-            })),
-            [{ threadId: thread.id, snapshotSequence: 1 }],
-          );
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 0);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
+          const eventBase = {
+            sequence: 2,
+            eventId: EventId.make("settle-when-idle"),
+            aggregateKind: "thread" as const,
+            aggregateId: thread.id,
+            occurredAt: NOW,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+          };
+          yield* Effect.gen(function* () {
+            const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+            yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            yield* fixture.publishEvent({
+              ...eventBase,
+              type: "thread.settle-when-idle-set",
+              payload: { threadId: thread.id, settleWhenIdleAt: NOW, updatedAt: NOW },
+            });
+            assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
+            yield* reactor.drain;
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+            yield* Ref.update(fixture.snapshots, (snapshot) => ({
+              ...snapshot,
+              threads: [{ ...thread, backgroundLiveness: null }],
+            }));
+            yield* fixture.publishEvent({
+              ...eventBase,
+              type: "thread.activity-appended",
+              payload: {
+                threadId: thread.id,
+                activity: {
+                  id: EventId.make("task-completed"),
+                  tone: "info",
+                  kind: completionKind,
+                  summary: "Task completed",
+                  payload: { taskId: "watch", status: "idle" },
+                  turnId: null,
+                  createdAt: NOW,
+                },
+              },
+            });
+            assert.strictEqual(yield* Queue.take(fixture.snapshotReads), thread.id);
+            yield* reactor.drain;
+            // Auto-settle carries the read's sequence, so a change after it
+            // (un-settle, a new message) rejects the settle.
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map(({ threadId, snapshotSequence }) => ({
+                threadId,
+                snapshotSequence,
+              })),
+              [{ threadId: thread.id, snapshotSequence: 1 }],
+            );
+            assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 1);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+    );
+  }
+
+  for (const failure of ["none", "stale", "transient"] as const) {
+    it.effect(
+      `recovers persisted intents with automatic settlement off (${failure} initial dispatch)`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            yield* TestClock.setTime(Date.parse(NOW));
+            const thread = makeThread("persisted-intent", {
+              settleWhenIdleAt: NOW,
+              autoSettleDisabledAt: NOW,
+            });
+            const reads: Parameters<ProjectionSnapshotQueryShape["getShellSnapshot"]>[0][] = [];
+            let attempts = 0;
+            let snapshot = { ...makeSnapshot([thread]), snapshotSequence: 42 };
+            const fixture = yield* makeHarness({
+              snapshot,
+              settings: {
+                ...DEFAULT_SERVER_SETTINGS,
+                sidebarAutoSettleAfterDays: null,
+                sidebarAutoSettleOnMerge: false,
+              },
+              getShellSnapshot: (options) =>
+                Effect.sync(() => {
+                  reads.push(options);
+                  return snapshot;
+                }),
+              onDispatch: (command) =>
+                Effect.suspend(() => {
+                  attempts++;
+                  if (attempts > 1 || failure === "none") return Effect.void;
+                  return failure === "stale"
+                    ? Effect.fail(
+                        new OrchestrationCommandInvariantError({
+                          commandType: command.type,
+                          detail: "newer thread event",
+                        }),
+                      )
+                    : Effect.die(new Error("transient dispatch failure"));
+                }),
+            });
+            yield* Effect.gen(function* () {
+              const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+              yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+              assert.strictEqual(attempts, 1);
+              if (failure !== "none") {
+                snapshot = { ...snapshot, snapshotSequence: 43 };
+                yield* TestClock.adjust("1 minute");
+                yield* Queue.take(fixture.snapshotReads);
+                yield* reactor.drain;
+                assert.strictEqual(attempts, 2);
+              }
+              const commands = yield* Ref.get(fixture.commands);
+              assert.isTrue(commands.every((command) => command.threadId === thread.id));
+              assert.deepStrictEqual(
+                commands.map((command) => command.snapshotSequence),
+                failure === "none" ? [42] : [42, 43],
+              );
+              assert.isTrue(reads.every((options) => options?.settleWhenIdleOnly === true));
+              assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+              assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+            }).pipe(Effect.provide(fixture.layer));
+          }),
+        ),
+    );
+  }
 
   it.effect("a project override settles only that project's inactive threads", () =>
     Effect.scoped(
@@ -1162,7 +1232,7 @@ describe("ThreadSettlementReactor", () => {
           yield* Queue.take(fixture.settingsReads);
           yield* reactor.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 1);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
 
           yield* Ref.set(state, "closed");
           yield* fixture.updateSettings({ enableAgentBrowserAccess: false });
@@ -1171,7 +1241,7 @@ describe("ThreadSettlementReactor", () => {
           yield* Deferred.succeed(releaseLaterLookup, undefined);
           yield* reactor.drain;
 
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 3);
           assert.strictEqual(yield* Ref.get(lookupCount), 2);
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),

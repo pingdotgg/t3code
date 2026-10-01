@@ -88,6 +88,7 @@ export function ThreadNotificationCoordinator() {
   ));
 }
 
+/** Notify on attention and completion transitions, keeping filed-thread completions quiet. */
 function EnvironmentNotifications({
   environmentId,
   onNotification,

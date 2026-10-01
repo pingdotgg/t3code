@@ -70,6 +70,7 @@ function hasImportedHistory(thread: OrchestrationThread): boolean {
   return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
 }
 
+/** Prevent transcript imports from overwriting user activity or pending lifecycle choices. */
 function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,

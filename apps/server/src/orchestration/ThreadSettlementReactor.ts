@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -88,9 +89,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // Settle on a working thread asks for this once it is idle. Settling stops
-  // the session, so background work such as a watch loop has to end first.
-  // Auto-settle is rejected when the thread changed after this read.
+  /** Complete an explicit intent using the snapshot guard; failed attempts retry on the next sweep. */
   const settleWhenIdle = Effect.fn("ThreadSettlementReactor.settleWhenIdle")(
     function* (threadId: ThreadId, snapshotSequence: number, settledAt: string) {
       const uuid = yield* crypto.randomUUIDv4;
@@ -121,11 +120,10 @@ export const make = Effect.gen(function* () {
   ) {
     const settings = yield* settingsService.getSettings;
     const configured = autoSettlementConfigured(settings);
-    // Settle when idle needs only the one-thread checks its events queue.
-    if (!configured && threadId === undefined) {
-      return;
-    }
-    const snapshot = yield* readSweepSnapshot(snapshots, threadId ?? null);
+    // Explicit intents survive restarts and rejected dispatches even with automatic settlement off.
+    const snapshot = yield* !configured && threadId === undefined
+      ? snapshots.getShellSnapshot({ settleWhenIdleOnly: true })
+      : readSweepSnapshot(snapshots, threadId ?? null);
     const now = DateTime.formatIso(yield* DateTime.now);
     yield* Effect.forEach(
       snapshot.threads.filter(
@@ -371,6 +369,7 @@ export const make = Effect.gen(function* () {
     runSweep(null, threadId),
   );
 
+  /** Recheck one thread when its intent, session, background work, or PR state changes. */
   const processEvent = (event: OrchestrationEvent) => {
     switch (event.type) {
       case "thread.pull-request-linked":
@@ -386,7 +385,10 @@ export const make = Effect.gen(function* () {
           : worker.enqueue(event.payload.threadId);
       case "thread.activity-appended":
         // Background work (a subagent, a watch loop) can end after the turn.
-        return event.payload.activity.kind === "task.completed"
+        return event.payload.activity.kind === "task.completed" ||
+          (event.payload.activity.kind === "task.updated" &&
+            Predicate.isObject(event.payload.activity.payload) &&
+            event.payload.activity.payload.status === "idle")
           ? worker.enqueue(event.payload.threadId)
           : Effect.void;
       case "thread.session-set":
