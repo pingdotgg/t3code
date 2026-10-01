@@ -63,7 +63,11 @@ const CHECKPOINT_DIFF_FILES_CACHE_TTL = Duration.minutes(5);
  */
 const BASE_MOVEMENT_MAX_COMMITS = 1000;
 const BASE_PROJECTION_CACHE_MAX_ENTRIES = 128;
-const BASE_PROJECTION_CACHE_TTL = Duration.minutes(5);
+// Short TTL: the projection also reads mutable state outside the cache key
+// (HEAD reflog, ref tips, current branch), so a longer TTL would replay a
+// stale projected base after refs move. Repeat reads stay cheap through the
+// content-addressed diff and file-stats caches below.
+const BASE_PROJECTION_CACHE_TTL = Duration.seconds(5);
 
 /** Reflog subjects for operations that move a workspace onto history it did not author.
  *
@@ -994,10 +998,11 @@ const makeCheckpointStore = Effect.gen(function* () {
     key: CheckpointDiffFilesCacheKey,
   ) => {
     const pathArgs = key.paths.length > 0 ? ["--", ...key.paths] : [];
-    // File stats only need rename detection: copy tracing
-    // (--find-copies-harder) is quadratic and does not change per-file
-    // line counts. The patch path keeps full copy detection.
-    const similarityArgs = ["--find-renames"];
+    // File stats keep rename and copy detection like the patch path, but
+    // omit --find-copies-harder: it is quadratic (it also traces copies
+    // from unmodified files) while --find-copies alone classifies pure
+    // copies the same way. The patch path keeps full copy detection.
+    const similarityArgs = ["--find-renames", "--find-copies"];
     return Effect.all(
       [
         git.execute({

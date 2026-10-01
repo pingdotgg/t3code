@@ -1303,6 +1303,46 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
       }),
     );
 
+    it.effect("reports copies from a modified source as copied rather than added", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-copy-summary");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        const pristine = buildNumberedLines(30);
+        yield* writeTextFile(path.join(tmp, "README.md"), pristine);
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "expand readme"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* writeTextFile(path.join(tmp, "README.md"), replaceLine(pristine, 5, "changed"));
+        yield* writeTextFile(path.join(tmp, "copied.md"), pristine);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: toCheckpointRef,
+        });
+
+        const files = yield* checkpointStore.diffCheckpointFiles({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(files.find((file) => file.path === "copied.md")).toEqual({
+          path: "copied.md",
+          previousPath: "README.md",
+          kind: "copied",
+          additions: 0,
+          deletions: 0,
+        });
+      }),
+    );
+
     it.effect(
       "returns file summaries for checkpoint diffs whose patch exceeds the output limit",
       () =>
