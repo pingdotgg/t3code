@@ -533,11 +533,11 @@ const make = (options?: StartupOptions) =>
       // back) can never finish. Settle it instead of leaving it working.
       yield* providerSessions.idleReleases.pipe(
         Stream.runForEach(({ providerSessionId, threadIds }) =>
-          Effect.gen(function* () {
-            yield* Effect.forEach(
-              threadIds,
-              (threadId) =>
-                providerRuntimeRecovery.reconcileReleasedSession({
+          Effect.forEach(
+            threadIds,
+            (threadId) =>
+              providerRuntimeRecovery
+                .reconcileReleasedSession({
                   threadId,
                   providerSessionId,
                   isSessionLive: providerSessions.get(providerSessionId).pipe(
@@ -545,16 +545,18 @@ const make = (options?: StartupOptions) =>
                     // When unsure, treat it as live and leave the thread alone.
                     Effect.orElseSucceed(() => true),
                   ),
-                }),
-              { discard: true },
-            );
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("V2 orchestration idle-release reconciliation failed", {
-                providerSessionId,
-                cause: Cause.pretty(cause),
-              }),
-            ),
+                })
+                .pipe(
+                  // One thread failing must not skip the rest of the batch.
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("V2 orchestration idle-release reconciliation failed", {
+                      providerSessionId,
+                      threadId,
+                      cause: Cause.pretty(cause),
+                    }),
+                  ),
+                ),
+            { discard: true },
           ),
         ),
         Effect.forkScoped,
