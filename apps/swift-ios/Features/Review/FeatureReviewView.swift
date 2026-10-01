@@ -219,10 +219,7 @@ private struct FeatureDiffView: View {
     let file: FeatureReviewFile
     let sendMessage: (FeatureMessageSubmission) async -> Bool
 
-    @State private var renderedLines: [FeatureDiffLine]
-    @State private var isHydrating = false
-    @State private var hydrationError: String?
-    @State private var hydrationGeneration = FeatureAsyncGeneration()
+    @State private var hydration: FeatureDiffHydration
     @State private var selectedLine: FeatureReviewLineSelection?
     @State private var isCommenting = false
     @State private var comment = ""
@@ -240,15 +237,15 @@ private struct FeatureDiffView: View {
         self.threadID = threadID
         self.file = file
         self.sendMessage = sendMessage
-        _renderedLines = State(initialValue: file.lines)
+        _hydration = State(initialValue: FeatureDiffHydration(lines: file.lines))
     }
 
     var body: some View {
         Group {
-            if renderedLines.isEmpty, isHydrating {
+            if hydration.lines.isEmpty, hydration.isLoading {
                 ProgressView("Loading full diff…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let hydrationError, renderedLines.isEmpty {
+            } else if let hydrationError = hydration.errorMessage, hydration.lines.isEmpty {
                 ContentUnavailableView {
                     Label("Couldn’t load this diff", systemImage: "exclamationmark.circle")
                 } description: {
@@ -257,7 +254,7 @@ private struct FeatureDiffView: View {
                     Button("Try again") { Task { await hydrate() } }
                         .buttonStyle(.borderedProminent)
                 }
-            } else if renderedLines.isEmpty {
+            } else if hydration.lines.isEmpty {
                 ContentUnavailableView(
                     file.change == .binary ? "Binary file" : "Diff unavailable",
                     systemImage: file.change == .binary ? "doc.richtext" : "doc.text.magnifyingglass",
@@ -267,7 +264,7 @@ private struct FeatureDiffView: View {
                 GeometryReader { proxy in
                     ScrollView([.horizontal, .vertical]) {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(renderedLines) { line in
+                            ForEach(hydration.lines) { line in
                                 FeatureDiffLineRow(
                                     line: line,
                                     isSelected: selection(for: line) == selectedLine,
@@ -305,7 +302,7 @@ private struct FeatureDiffView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if let hydrationError, !renderedLines.isEmpty {
+            if let hydrationError = hydration.errorMessage, !hydration.lines.isEmpty {
                 FeatureRefreshFailureRow(message: hydrationError) {
                     Task { await hydrate() }
                 }
@@ -445,32 +442,23 @@ private struct FeatureDiffView: View {
     }
 
     private func hydrate() async {
-        let generation = hydrationGeneration.begin()
-        hydrationError = nil
-        isHydrating = true
-        defer {
-            if hydrationGeneration.accepts(generation) { isHydrating = false }
-        }
+        let attempt = hydration.begin()
         do {
-            guard let contents = try await client.loadReviewFileContents(
-                threadID: threadID,
-                file: file
-            ) else {
-                return
-            }
-            guard hydrationGeneration.accepts(generation) else { return }
-            renderedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+            let contents = try await client.loadReviewFileContents(threadID: threadID, file: file)
+            hydration.succeed(
+                attempt,
+                lines: contents.map { FeatureFullDiffHydrator.lines(for: file, contents: $0) }
+            )
         } catch is CancellationError {
-            return
+            hydration.cancel(attempt)
         } catch {
-            guard hydrationGeneration.accepts(generation) else { return }
-            hydrationError = error.localizedDescription
+            hydration.fail(attempt, message: error.localizedDescription)
         }
     }
 
     private func sendComment() {
         guard !trimmedComment.isEmpty, !isSending else { return }
-        let record = reviewDraft.contextRecord(lines: renderedLines)
+        let record = reviewDraft.contextRecord(lines: hydration.lines)
         let prompt = reviewDraft.submissionText(contextRecord: record)
         isSending = true
         commentError = nil
