@@ -15,8 +15,8 @@ import {
   type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
-import { useMemo, type MouseEvent } from "react";
-import { buttonVariants, InlineButton } from "./ui/button";
+import { useRender } from "@base-ui/react/use-render";
+import { useMemo, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -76,15 +76,24 @@ export function useLinkedThreadPullRequest(
   );
   const fallback =
     current === null ? ((!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest) : null;
-  const host = fallback == null ? undefined : parseChangeRequestUrl(fallback.url)?.host;
-  const reference =
-    fallback == null ? null : { ...fallback, ...(host === undefined ? {} : { host }) };
+  // Stable per link: the shared summary effect keys on this object, and a sidebar row must not
+  // touch the cache on every render.
+  const reference = useMemo(() => {
+    if (fallback == null) return null;
+    const host = parseChangeRequestUrl(fallback.url)?.host;
+    return { ...fallback, ...(host === undefined ? {} : { host }) };
+  }, [fallback]);
   const queried = useEnvironmentQuery(
     !enabled || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),
-  ).data;
-  const detail = useSharedPullRequestSummary(environmentId, reference, queried);
+  );
+  const detail = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    queried.data,
+    queried.dataUpdatedAt,
+  );
 
   return useMemo(() => {
     if (current !== null) return linkedPullRequestSnapshotStatus(current);
@@ -182,71 +191,93 @@ export function resolveThreadPullRequestBadgePresentation({
   };
 }
 
-/** The complete linked-PR control shared by the sidebar and composer footer. */
+/**
+ * The linked-PR badge shared by the sidebar and composer footer. The badge owns what it shows:
+ * the state glyph and number at the meta size, in the state's color. The caller owns the control
+ * it sits in through `render` (an inline link in a sidebar row, a toolbar control in the
+ * composer), and the badge fills in the behavior: a single PR is a link to it, while a stack or
+ * several linked PRs is a button that opens the thread's pull requests tab.
+ */
 export function ThreadPullRequestBadgeControl({
-  variant,
+  render,
   badge,
   number,
   url,
   status,
-  onOpenStack,
+  onOpenList,
   onOpenPullRequest,
 }: {
-  variant: "underline" | "ghost";
+  render: ReactElement<{ render?: useRender.RenderProp }>;
   badge: ThreadPullRequestBadge | null;
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
-  onOpenStack: () => void;
-  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onOpenList: () => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
   if (presentation === null) return null;
-  const isStack = badge?.kind === "stack";
-  const className = cn(
-    variant === "ghost"
-      ? buttonVariants({ variant: "ghost", size: "xs" })
-      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
-    "text-xs tabular-nums",
-    variant === "ghost" &&
-      "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
-    presentation.toneClassName,
+  return (
+    <PullRequestBadge
+      render={render}
+      presentation={presentation}
+      opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
+      url={url}
+      onOpenList={onOpenList}
+      onOpenPullRequest={onOpenPullRequest}
+    />
   );
-  const content = (
-    <>
-      <presentation.Icon aria-hidden className="size-3 shrink-0" />
-      {presentation.text}
-    </>
+}
+
+function PullRequestBadge({
+  render,
+  presentation,
+  opensList,
+  url,
+  onOpenList,
+  onOpenPullRequest,
+}: {
+  render: ReactElement<{ render?: useRender.RenderProp }>;
+  presentation: NonNullable<ReturnType<typeof resolveThreadPullRequestBadgePresentation>>;
+  opensList: boolean;
+  url: string | undefined;
+  onOpenList: () => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLElement>) => void;
+}) {
+  const onClick = opensList
+    ? (event: MouseEvent<HTMLElement>) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenList();
+      }
+    : onOpenPullRequest;
+  const element = opensList ? (
+    <button type="button" />
+  ) : (
+    <a href={url} target="_blank" rel="noopener noreferrer" />
   );
+  // The caller's control (InlineButton, ComposerControl) renders as the link or stack button
+  // through its own render prop; useRender merges the badge's behavior into it.
+  const control = useRender({
+    render,
+    props: {
+      render: element,
+      "aria-label": presentation.label,
+      onPointerDown: (event: MouseEvent<HTMLElement>) => event.stopPropagation(),
+      onClick,
+    },
+  });
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          isStack ? (
-            <InlineButton
-              className={className}
-              aria-label={presentation.label}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onOpenStack();
-              }}
-            />
-          ) : (
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={className}
-              aria-label={presentation.label}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={onOpenPullRequest}
-            />
-          )
-        }
-      >
-        {content}
+      <TooltipTrigger render={control}>
+        <span
+          className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
+        >
+          <presentation.Icon aria-hidden className="size-3 shrink-0" />
+          {/* An element, not bare text: bare text takes its line box from the control, which
+              inherits the row's size, so beside a text-sm title it sat below the other meta. */}
+          <span>{presentation.text}</span>
+        </span>
       </TooltipTrigger>
       <TooltipPopup side="top">{presentation.label}</TooltipPopup>
     </Tooltip>
@@ -300,7 +331,7 @@ export function ThreadPullRequestsMiniList({
               {snapshot?.title ?? line.link.repository}
             </span>
             {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-[10px]">
+              <span className="ml-auto shrink-0 pl-1 text-3xs">
                 {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
               </span>
             ) : null}
@@ -364,6 +395,17 @@ export function terminalStatusFromRunningIds(
     colorClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
+}
+
+/** Align newly started pulses with the document clock without a timer or frame loop. */
+export function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
+  if (event.animationName !== "status-pulse") return;
+
+  for (const animation of event.currentTarget.getAnimations()) {
+    if ("animationName" in animation && animation.animationName === "status-pulse") {
+      animation.startTime = 0;
+    }
+  }
 }
 
 export function ThreadWorktreeIndicator({
@@ -435,7 +477,7 @@ export function ThreadStatusLabel({
         render={
           <span
             aria-label={status.label}
-            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+            className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
           />
         }
       >
@@ -554,7 +596,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
             }
           >
             <TerminalIcon
-              className={`size-3 ${terminalStatus.pulse ? "animate-status-pulse" : ""}`}
+              className={`size-3 ${terminalStatus.pulse ? "motion-safe:animate-status-pulse" : ""}`}
+              onAnimationStart={synchronizeTerminalPulse}
             />
           </TooltipTrigger>
           <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
