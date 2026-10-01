@@ -61,7 +61,8 @@ import {
   nativeHeaderScrollEdgeEffects,
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
-import { serverEnvironment } from "../../state/server";
+import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -158,9 +159,8 @@ function ProviderHeader(props: {
         accessibilityLabel={`${props.label}, ${props.modelCount} models`}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
-        className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"
+        className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60 android:min-h-12"
         onPress={props.onToggle}
-        style={Platform.OS === "android" ? { minHeight: 48 } : undefined}
       >
         {content}
       </Pressable>
@@ -185,9 +185,8 @@ function DisclosureRow(props: {
     <Pressable
       accessibilityRole="button"
       onPress={props.onPress}
-      style={Platform.OS === "android" ? { minHeight: 56 } : undefined}
       className={cn(
-        "min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle",
+        "min-h-11 flex-row items-center gap-2 bg-card px-4 py-2 active:bg-subtle android:min-h-14",
         !props.isLast && "border-b border-border-subtle",
       )}
     >
@@ -685,6 +684,12 @@ function ThreadSettingsOptionsItem(props: {
 }) {
   const insets = useSafeAreaInsets();
   const session = useThreadSettingsSession();
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const selectedProvider = session.environmentId
+    ? (configs
+        .get(session.environmentId)
+        ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
+    : null;
   const bottomToolbarInset =
     Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
       ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
@@ -692,6 +697,7 @@ function ThreadSettingsOptionsItem(props: {
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
+      <ChatGptSharingStatus provider={selectedProvider} />
       <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">Options</Text>
       <Animated.View
         className="mx-4 overflow-hidden rounded-2xl bg-card"
@@ -1373,6 +1379,7 @@ export function NewTaskThreadSettingsRouteScreen() {
   return (
     <ThreadSettingsSessionProvider
       environmentId={flow.selectedEnvironmentId}
+      {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
       onSelectModel={(option) => flow.setSelectedModelKey(option.key, option.selection.options)}

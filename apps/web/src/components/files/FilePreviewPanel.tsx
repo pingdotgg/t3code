@@ -81,6 +81,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 import {
   isMarkdownPreviewFile,
+  resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
@@ -907,7 +908,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
-  relativePath,
+  relativePath: requestedPath,
   attachment,
   threadRef,
   composerDraftTarget,
@@ -920,6 +921,8 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const relativePath =
+    attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const { resolvedTheme } = useTheme();
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -945,7 +948,12 @@ export default function FilePreviewPanel({
   // shown. The read still runs: a folder named `assets.png` is only knowable as a
   // folder from the read failure, and the server stats before reading, so a folder
   // costs an open and a stat and returns no body.
-  const file = useProjectFileQuery(environmentId, cwd, relativePath, attachment === undefined);
+  const file = useProjectFileQuery(
+    environmentId,
+    cwd,
+    relativePath,
+    attachment === undefined && relativePath !== null,
+  );
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
@@ -1090,10 +1098,11 @@ export default function FilePreviewPanel({
       {relativePath && attachment === undefined ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea
+            radius="none"
             ref={breadcrumbRef}
             hideScrollbars
             scrollFade
-            className="min-w-0 flex-1 rounded-none"
+            className="min-w-0 flex-1"
             data-file-breadcrumbs
           >
             <div className="flex h-full w-max min-w-full items-center text-xs">
@@ -1171,7 +1180,7 @@ export default function FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated ? (
-        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-[11px] text-warning-foreground">
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
