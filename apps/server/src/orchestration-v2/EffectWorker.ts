@@ -354,13 +354,10 @@ export const executorLayer: Layer.Layer<
                           requestId: effect.request.requestId,
                         })
                         .pipe(
-                          Effect.catchCause((reopenCause) =>
+                          Effect.catchCause(() =>
                             Effect.logWarning(
                               "Failed to record undelivered runtime request answer",
-                              {
-                                effectId: effect.id,
-                                cause: reopenCause,
-                              },
+                              { effectId: effect.id },
                             ),
                           ),
                         ),
