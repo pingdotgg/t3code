@@ -10,6 +10,17 @@ import type {
   SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 
+export interface SourceControlLinkSubject {
+  readonly title: string;
+  readonly body: string | null;
+}
+
+/** Return undefined synchronously for unsupported URLs, without starting a lookup. */
+export type ResolveSourceControlLink = (input: {
+  readonly cwd: string;
+  readonly url: URL;
+}) => Effect.Effect<SourceControlLinkSubject, SourceControlProviderError> | undefined;
+
 export interface SourceControlProviderContext {
   readonly provider: SourceControlProviderInfo;
   readonly remoteName: string;
@@ -85,6 +96,8 @@ export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
     readonly kind: SourceControlProviderKind;
+    /** Optional capability for issue and change-request subjects. */
+    readonly resolveLink?: ResolveSourceControlLink;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

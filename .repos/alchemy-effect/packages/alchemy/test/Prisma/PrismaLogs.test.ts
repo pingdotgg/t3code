@@ -1,8 +1,8 @@
-import type { PrismaManagementClient } from "@/Prisma/Client";
 import {
   parseDeploymentLogRecord,
   tailDeploymentLogs,
 } from "@/Prisma/PrismaLogs";
+import { Credentials } from "@/Prisma/Credentials";
 import { createServer, type Server, type Socket } from "node:net";
 import { describe, expect, it } from "alchemy-test";
 import * as Deferred from "effect/Deferred";
@@ -132,20 +132,7 @@ describe("Prisma deployment logs", () => {
           );
         });
 
-        const client = {
-          getDeploymentLogsRequest: (
-            deploymentId: string,
-            query: { tail?: number } | undefined,
-          ) =>
-            Effect.succeed({
-              url: `${url}/v1/deployments/${deploymentId}/logs?tail=${query?.tail}`,
-              headers: {
-                Authorization: Redacted.make("Bearer test-token"),
-              },
-            }),
-        } as unknown as PrismaManagementClient;
-
-        const lines = yield* tailDeploymentLogs(client, "deployment-1", {
+        const lines = yield* tailWith(url, "deployment-1", {
           tail: 2,
         }).pipe(Stream.runCollect);
 
@@ -164,10 +151,10 @@ describe("Prisma deployment logs", () => {
           socket.send(marker.repeat(60_000));
         });
 
-        const error = yield* tailDeploymentLogs(
-          logsClient(url),
-          "deployment-1",
-        ).pipe(Stream.runCollect, Effect.flip);
+        const error = yield* tailWith(url, "deployment-1").pipe(
+          Stream.runCollect,
+          Effect.flip,
+        );
 
         expect(String(error)).toContain("exceeds the 1048576-byte frame limit");
         expect(String(error)).not.toContain(marker);
@@ -199,10 +186,7 @@ describe("Prisma deployment logs", () => {
             );
           });
 
-          const error = yield* tailDeploymentLogs(
-            logsClient(url),
-            "deployment-1",
-          ).pipe(
+          const error = yield* tailWith(url, "deployment-1").pipe(
             Stream.runForEach(() => Effect.yieldNow),
             Effect.flip,
           );
@@ -251,10 +235,9 @@ describe("Prisma deployment logs", () => {
           );
         });
 
-        const lines = yield* tailDeploymentLogs(
-          logsClient(url),
-          "deployment-1",
-        ).pipe(Stream.runCollect);
+        const lines = yield* tailWith(url, "deployment-1").pipe(
+          Stream.runCollect,
+        );
 
         expect(lines.map((line) => line.message)).toEqual(["first", "second"]);
         expect(connections).toBe(2);
@@ -279,10 +262,10 @@ describe("Prisma deployment logs", () => {
           );
         });
 
-        const error = yield* tailDeploymentLogs(
-          logsClient(url),
-          "deployment-1",
-        ).pipe(Stream.runCollect, Effect.flip);
+        const error = yield* tailWith(url, "deployment-1").pipe(
+          Stream.runCollect,
+          Effect.flip,
+        );
 
         expect(error).toBeInstanceOf(Error);
         expect(String(error)).toContain("permission_denied");
@@ -313,10 +296,9 @@ describe("Prisma deployment logs", () => {
           );
         });
 
-        const lines = yield* tailDeploymentLogs(
-          logsClient(url),
-          "deployment-1",
-        ).pipe(Stream.runCollect);
+        const lines = yield* tailWith(url, "deployment-1").pipe(
+          Stream.runCollect,
+        );
 
         expect(lines.map((line) => line.message)).toEqual(["partial"]);
         expect(connections).toBe(2);
@@ -357,10 +339,9 @@ describe("Prisma deployment logs", () => {
             );
           });
 
-          const lines = yield* tailDeploymentLogs(
-            logsClient(url),
-            "deployment-1",
-          ).pipe(Stream.runCollect);
+          const lines = yield* tailWith(url, "deployment-1").pipe(
+            Stream.runCollect,
+          );
 
           expect(lines.map((line) => line.message)).toEqual(["first"]);
           expect(cursors).toEqual([null, "5"]);
@@ -387,10 +368,10 @@ describe("Prisma deployment logs", () => {
             );
           });
 
-          const error = yield* tailDeploymentLogs(
-            logsClient(url),
-            "deployment-1",
-          ).pipe(Stream.runCollect, Effect.flip);
+          const error = yield* tailWith(url, "deployment-1").pipe(
+            Stream.runCollect,
+            Effect.flip,
+          );
 
           expect(connections).toBe(4);
           expect(String(error)).toContain("made no progress after 3 reconnect");
@@ -401,8 +382,7 @@ describe("Prisma deployment logs", () => {
   it.effect("times out a WebSocket that never completes its handshake", () =>
     withSilentTcpServer((url, connected) =>
       Effect.gen(function* () {
-        const client = logsClient(url);
-        const fiber = yield* tailDeploymentLogs(client, "deployment-1").pipe(
+        const fiber = yield* tailWith(url, "deployment-1").pipe(
           Stream.runCollect,
           Effect.flip,
           Effect.forkChild({ startImmediately: true }),
@@ -424,10 +404,10 @@ describe("Prisma deployment logs", () => {
   it.effect("interrupts cleanly while a WebSocket is still connecting", () =>
     withSilentTcpServer((url, connected) =>
       Effect.gen(function* () {
-        const fiber = yield* tailDeploymentLogs(
-          logsClient(url),
-          "deployment-1",
-        ).pipe(Stream.runDrain, Effect.forkChild({ startImmediately: true }));
+        const fiber = yield* tailWith(url, "deployment-1").pipe(
+          Stream.runDrain,
+          Effect.forkChild({ startImmediately: true }),
+        );
 
         yield* connected;
         yield* Fiber.interrupt(fiber);
@@ -439,22 +419,24 @@ describe("Prisma deployment logs", () => {
   );
 });
 
-const logsClient = (baseUrl: string) =>
-  ({
-    getDeploymentLogsRequest: (
-      deploymentId: string,
-      query: { cursor?: string } | undefined,
-    ) => {
-      const url = new URL(`/v1/deployments/${deploymentId}/logs`, baseUrl);
-      if (query?.cursor !== undefined) {
-        url.searchParams.set("cursor", query.cursor);
-      }
-      return Effect.succeed({
-        url: url.toString(),
-        headers: { Authorization: Redacted.make("Bearer test-token") },
-      });
-    },
-  }) as unknown as PrismaManagementClient;
+/**
+ * The credentials the carved-out logs client resolves its request from: the
+ * test WebSocket server as the API base, and a fixed service token.
+ */
+const tailWith = (
+  baseUrl: string,
+  deploymentId: string,
+  query?: Parameters<typeof tailDeploymentLogs>[1],
+) =>
+  tailDeploymentLogs(deploymentId, query).pipe(
+    Stream.provideService(
+      Credentials,
+      Effect.succeed({
+        apiToken: Redacted.make("test-token"),
+        apiBaseUrl: baseUrl,
+      }),
+    ),
+  );
 
 const logRecord = (text: string, byteStart = 0) =>
   JSON.stringify({
@@ -506,7 +488,7 @@ const listenUrl = (server: WebSocketServer) =>
       cleanup();
       const address = server.address();
       if (address && typeof address === "object") {
-        resume(Effect.succeed(`ws://127.0.0.1:${address.port}`));
+        resume(Effect.succeed(`http://127.0.0.1:${address.port}`));
       } else {
         resume(Effect.fail(new Error("WebSocket server has no TCP address")));
       }
@@ -570,7 +552,7 @@ const withSilentTcpServer = <A, E, R>(
             Effect.succeed({
               server,
               sockets,
-              url: `ws://127.0.0.1:${address.port}`,
+              url: `http://127.0.0.1:${address.port}`,
             }),
           );
         };

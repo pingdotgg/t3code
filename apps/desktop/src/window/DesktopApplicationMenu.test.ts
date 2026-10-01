@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
@@ -41,7 +40,6 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   setAboutPanelOptions: () => Effect.void,
   setAppUserModelId: () => Effect.void,
   getAppMetrics: Effect.succeed([]),
-  isDefaultProtocolClient: () => Effect.succeed(false),
   setAsDefaultProtocolClient: () => Effect.succeed(true),
   setDesktopName: () => Effect.void,
   setDockIcon: () => Effect.void,
@@ -52,7 +50,7 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
 } satisfies ElectronApp.ElectronApp["Service"]);
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
-  pickFolder: () => Effect.succeed(Option.none()),
+  pickFolder: () => Effect.succeedNone,
   pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
@@ -64,7 +62,7 @@ const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   isInstallActive: Effect.succeed(false),
   subscribe: Effect.die("unexpected subscribe"),
   emitState: Effect.void,
-  disabledReason: Effect.succeed(Option.none()),
+  disabledReason: Effect.succeedNone,
   configure: Effect.void,
   setChannel: () => Effect.die("unexpected setChannel"),
   check: () => Effect.die("unexpected check"),
@@ -99,7 +97,7 @@ const makeElectronMenuLayer = (
     setApplicationMenu: (template) =>
       Deferred.succeed(applicationMenuTemplate, template).pipe(Effect.asVoid),
     popupTemplate: () => Effect.void,
-    showContextMenu: () => Effect.succeed(Option.none()),
+    showContextMenu: () => Effect.succeedNone,
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const configureMenu = (
@@ -180,6 +178,37 @@ describe("DesktopApplicationMenu", () => {
         {} as KeyboardEvent,
       );
       assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
+    }),
+  );
+
+  // Chromium pastes as plain text for the accelerator on its own. Dispatching
+  // the action as well injects a second paste, which doubles the pasted text.
+  it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      if (!Array.isArray(editMenu?.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      if (typeof pasteAsTextItem?.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {
+          triggeredByAccelerator: true,
+        } as unknown as KeyboardEvent,
+      );
+      assert.isFalse(yield* Deferred.isDone(selectedAction));
     }),
   );
 

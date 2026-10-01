@@ -1,8 +1,8 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import type { Secret } from "./Secret.ts";
 import {
   type SecretAuth,
@@ -35,7 +35,10 @@ export const WriteSecretHttp = Layer.effect(
       makeClient: secretWriteClient,
     }),
   ),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialsFromEnv));
+).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CredentialsFromAmbientOrEnv),
+);
 
 /** Build the write client over an injectable auth and App name. */
 export const secretWriteClient = (

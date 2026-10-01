@@ -106,7 +106,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
               ? emitStage(desktopUpdateProgressStage(report.state)).pipe(
                   Effect.as(Option.none<DesktopUpdateStatusReport>()),
                 )
-              : Effect.succeed(Option.some(report)),
+              : Effect.succeedSome(report),
         ),
         Stream.filterMap(
           Option.match({
