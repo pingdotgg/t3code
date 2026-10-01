@@ -61,6 +61,27 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
+      fileSearch.mockReturnValueOnce({
+        ok: true,
+        value: { items: [fileItem("src/source.ts")], scores: [], totalMatched: 2, totalFiles: 2 },
+      });
+      expect(yield* searchIndex.search("", 1, "file", true)).toEqual({
+        entries: [],
+        truncated: true,
+      });
+      fileSearch.mockReturnValueOnce({
+        ok: true,
+        value: {
+          items: [fileItem("public/one.png"), fileItem("public/two.png")],
+          scores: [],
+          totalMatched: 2,
+          totalFiles: 2,
+        },
+      });
+      expect(yield* searchIndex.search("", 1, "file", true)).toEqual({
+        entries: [{ kind: "file", path: "public/one.png" }],
+        truncated: true,
+      });
     }),
   ),
 );

@@ -43,6 +43,7 @@ const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const CONTENT_SEARCH_MAX_CANDIDATES = 25_000;
 
 function toPosixPath(input: string): string {
   return input.replaceAll("\\", "/");
@@ -397,46 +398,72 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance by file, so whole-word post-filtering needs enough
     // raw candidates from the current file before moving to the next one.
-    const rawPageSize = input.wholeWord
+    let rawPageSize = input.wholeWord
       ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
       : input.limit;
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
+    let candidateLimitReached = false;
 
-    do {
+    while (true) {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
       const result = yield* runSearch(input.query, input.limit, "grep", () =>
         finder.grep(searchQuery, {
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
-          // A single dense file must not consume the whole result page.
-          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
+          // Whole-word filtering needs the full candidate page from a dense file.
+          maxMatchesPerFile: input.wholeWord
+            ? rawPageSize
+            : Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
           pageSize: rawPageSize,
           cursor: nextCursor,
           timeBudgetMs: remainingTimeBudgetMs,
         }),
       );
 
+      regexFallbackError ??= result.regexFallbackError;
+      const pageMatches: Array<ProjectSearchContentsResult["matches"][number]> = [];
       for (const match of result.items) {
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
         if (matchRanges.length === 0) continue;
-        matches.push({
+        pageMatches.push({
           path: toPosixPath(match.relativePath),
           lineNumber: match.lineNumber,
           lineContent: match.lineContent,
           matchRanges,
         });
       }
+      // Cursors advance by file. Retry a full raw page before skipping a file
+      // whose later lines may contain the first whole-word match.
+      if (input.wholeWord && result.items.length >= rawPageSize) {
+        if (
+          matches.length + pageMatches.length < input.limit &&
+          rawPageSize < CONTENT_SEARCH_MAX_CANDIDATES &&
+          performance.now() < deadline
+        ) {
+          rawPageSize = Math.min(CONTENT_SEARCH_MAX_CANDIDATES, rawPageSize * 2);
+          continue;
+        }
+        candidateLimitReached = true;
+      }
+      matches.push(...pageMatches);
       nextCursor = result.nextCursor;
-      regexFallbackError ??= result.regexFallbackError;
-    } while (matches.length < input.limit && nextCursor !== null && performance.now() < deadline);
+      if (
+        candidateLimitReached ||
+        matches.length >= input.limit ||
+        nextCursor === null ||
+        performance.now() >= deadline
+      ) {
+        break;
+      }
+    }
 
     return {
       matches: matches.slice(0, input.limit),
-      truncated: matches.length > input.limit || nextCursor !== null,
+      truncated: candidateLimitReached || matches.length > input.limit || nextCursor !== null,
       ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
     };
   });

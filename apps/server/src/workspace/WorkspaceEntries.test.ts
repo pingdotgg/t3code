@@ -542,7 +542,7 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     it.effect("finds later whole-word matches in a file after rejected raw matches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-late-whole-word-" });
-        yield* writeTextFile(cwd, "src/words.ts", `${"afoo\n".repeat(10)}foo\n`);
+        yield* writeTextFile(cwd, "src/words.ts", `${"afoo\n".repeat(150)}foo\n`);
 
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* workspaceEntries.searchContents({
@@ -557,10 +557,64 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.matches).toEqual([
           expect.objectContaining({
             path: "src/words.ts",
-            lineNumber: 11,
+            lineNumber: 151,
             matchRanges: [{ start: 0, end: 3 }],
           }),
         ]);
+      }),
+    );
+
+    it.effect("retries raw pages without duplicating earlier whole-word matches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-retry-" });
+        yield* writeTextFile(cwd, "src/words.ts", `foo\n${"afoo\n".repeat(150)}foo\n`);
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo",
+          limit: 2,
+          caseSensitive: true,
+          wholeWord: true,
+          useRegex: false,
+        });
+        expect(result.matches.map((match) => match.lineNumber)).toEqual([1, 152]);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("reports an incomplete raw page when the whole-word result limit is reached", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-full-page-" });
+        yield* writeTextFile(cwd, "src/words.ts", `foo\n${"afoo\n".repeat(150)}foo\n`);
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo",
+          limit: 1,
+          caseSensitive: true,
+          wholeWord: true,
+          useRegex: false,
+        });
+        expect(result.matches.map((match) => match.lineNumber)).toEqual([1]);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("reports incomplete whole-word results at the candidate bound", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-bounded-" });
+        yield* writeTextFile(cwd, "src/words.ts", `${"afoo\n".repeat(26_000)}foo\n`);
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* workspaceEntries.searchContents({
+          cwd,
+          query: "foo",
+          limit: 1,
+          caseSensitive: true,
+          wholeWord: true,
+          useRegex: false,
+        });
+        expect(result.matches).toEqual([]);
+        expect(result.truncated).toBe(true);
       }),
     );
 
