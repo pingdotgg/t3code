@@ -5,6 +5,9 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -104,6 +107,10 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const isDesktopBuildManifestRestoreError = Schema.is(DesktopBuildManifestRestoreError);
+const encodeModuleUrl = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const decodePackageVersion = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ version: Schema.String })),
+);
 
 // A minimal stand-in for the Linux CLI release archive: one top-level
 // directory named after the archive stem holding the executable, the web
@@ -259,6 +266,135 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
+  for (const buildFails of [false, true]) {
+    it.effect(
+      `rejects overlapping builds until restoration finishes (buildFails=${buildFails})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-concurrent-build-" });
+          yield* fs.writeFileString(
+            path.join(root, "package.json"),
+            '{ "scripts": { "build:desktop": "node build.cjs" } }',
+          );
+          const original = '{ "version": "0.0.42", "private": true }\n';
+          for (const relativePath of releasePackageFiles) {
+            const filePath = path.join(root, relativePath);
+            yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+            yield* fs.writeFileString(filePath, original);
+          }
+          yield* fs.writeFileString(
+            path.join(root, "build.cjs"),
+            `require("node:fs").writeFileSync("version.txt", require("./apps/server/package.json").version);
+           if (${buildFails} && process.env.APP_VERSION === "0.0.43") process.exit(1);`,
+          );
+          const restoring = yield* Deferred.make<void>();
+          const resume = yield* Deferred.make<void>();
+          const contenderPath = path.join(root, "contender.mjs");
+          yield* fs.writeFileString(
+            contenderPath,
+            `import * as Effect from ${yield* encodeModuleUrl(import.meta.resolve("effect/Effect"))};
+           import * as NodeServices from ${yield* encodeModuleUrl(import.meta.resolve("@effect/platform-node/NodeServices"))};
+           import { buildDesktopBundles } from ${yield* encodeModuleUrl(import.meta.resolve("./build-desktop-artifact.ts"))};
+           const result = await Effect.runPromise(buildDesktopBundles(process.argv[2], "0.0.44", false).pipe(
+             Effect.as("success"), Effect.catch(error => Effect.succeed(error._tag)),
+             Effect.provide(NodeServices.layer)));
+           process.stdout.write(result);`,
+          );
+          const first = yield* Effect.forkChild(
+            Effect.exit(buildDesktopBundles(root, "0.0.43", false)).pipe(
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fs,
+                writeFileString: (filePath, contents, options) =>
+                  filePath === path.join(root, releasePackageFiles[0]) && contents === original
+                    ? Deferred.succeed(restoring, undefined).pipe(
+                        Effect.andThen(Deferred.await(resume)),
+                        Effect.andThen(fs.writeFileString(filePath, contents, options)),
+                      )
+                    : fs.writeFileString(filePath, contents, options),
+              }),
+            ),
+          );
+          yield* Deferred.await(restoring);
+          const overlapping = yield* Effect.gen(function* () {
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            const child = yield* spawner.spawn(
+              ChildProcess.make(process.execPath, [contenderPath, root]),
+            );
+            const [stdout, stderr, exitCode] = yield* Effect.all(
+              [
+                child.stdout.pipe(Stream.decodeText, Stream.mkString),
+                child.stderr.pipe(Stream.decodeText, Stream.mkString),
+                child.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            );
+            assert.equal(Number(exitCode), 0, stderr);
+            assert.equal(stdout, "DesktopBuildAlreadyRunningError");
+            return yield* buildDesktopBundles(root, "0.0.44", false).pipe(
+              Effect.as("success"),
+              Effect.catch((error) => Effect.succeed(error._tag)),
+            );
+          }).pipe(Effect.ensuring(Deferred.succeed(resume, undefined)));
+          const firstExit = yield* Fiber.join(first);
+          assert.equal(overlapping, "DesktopBuildAlreadyRunningError");
+          assert.equal(Exit.isFailure(firstExit), buildFails);
+          assert.equal(yield* fs.readFileString(path.join(root, "version.txt")), "0.0.43");
+          for (const relativePath of releasePackageFiles) {
+            assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);
+          }
+          yield* buildDesktopBundles(root, "0.0.44", false);
+          assert.equal(yield* fs.readFileString(path.join(root, "version.txt")), "0.0.44");
+          for (const relativePath of releasePackageFiles) {
+            assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);
+          }
+        }),
+    );
+  }
+
+  it.effect("restores manifests and releases the checkout lock after interruption", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-interrupted-build-" });
+      const original = '{ "version": "0.0.42", "private": true }\n';
+      for (const relativePath of releasePackageFiles) {
+        const filePath = path.join(root, relativePath);
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFileString(filePath, original);
+      }
+      const started = yield* Deferred.make<void>();
+      const build = yield* Effect.forkChild(
+        buildDesktopBundles(root, "0.0.43", false).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+          ),
+        ),
+      );
+      yield* Deferred.await(started);
+      const aligned = yield* decodePackageVersion(
+        yield* fs.readFileString(path.join(root, releasePackageFiles[0])),
+      );
+      assert.equal(aligned.version, "0.0.43");
+      yield* Fiber.interrupt(build);
+      assert.isFalse(yield* fs.exists(path.join(root, ".desktop-build.lock")));
+      for (const relativePath of releasePackageFiles) {
+        assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);
+      }
+      yield* buildDesktopBundles(root, "0.0.44", false).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(mockProcess(0))),
+        ),
+      );
+      assert.isFalse(yield* fs.exists(path.join(root, ".desktop-build.lock")));
+    }),
+  );
+
   it.effect(
     "aligns client and server build versions and restores manifests after success or failure",
     () =>

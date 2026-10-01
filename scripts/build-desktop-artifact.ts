@@ -1706,9 +1706,45 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
-// Match the release workflow's version alignment for every bundled package.
-// Restore the caller's manifests even if alignment or compilation fails.
-export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(function* (
+export class DesktopBuildAlreadyRunningError extends Schema.TaggedError<DesktopBuildAlreadyRunningError>()(
+  "DesktopBuildAlreadyRunningError",
+  { lockPath: Schema.String },
+) {
+  override get message(): string {
+    return `Another desktop build owns '${this.lockPath}'. Wait for it to finish. If a build was killed, remove this lock only after confirming no desktop build is running.`;
+  }
+}
+
+const withDesktopBuildLock = <A, E, R>(repoRoot: string, build: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const lockPath = path.join(repoRoot, ".desktop-build.lock");
+    return yield* Effect.acquireUseRelease(
+      fs
+        .makeDirectory(lockPath)
+        .pipe(
+          Effect.mapError((error) =>
+            error.reason._tag === "AlreadyExists"
+              ? new DesktopBuildAlreadyRunningError({ lockPath })
+              : error,
+          ),
+        ),
+      () => build,
+      (_, exit) =>
+        fs
+          .remove(lockPath, { recursive: true })
+          .pipe(
+            Effect.catch((error) =>
+              Exit.isFailure(exit) ? Effect.logError(error) : Effect.fail(error),
+            ),
+          ),
+    );
+  });
+
+// The artifact entry point holds the checkout lock through staging/packaging,
+// so it calls this implementation without reacquiring its own lock.
+const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(function* (
   repoRoot: string,
   appVersion: string,
   verbose: boolean,
@@ -1757,6 +1793,11 @@ export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(function* (
       }),
   );
 });
+
+export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(
+  (repoRoot: string, appVersion: string, verbose: boolean) =>
+    withDesktopBuildLock(repoRoot, buildDesktopBundlesUnlocked(repoRoot, appVersion, verbose)),
+);
 
 const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
   command: ChildProcess.Command,
@@ -3386,7 +3427,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
 
-const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
   const repoRoot = yield* RepoRoot;
@@ -3481,7 +3522,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    yield* buildDesktopBundles(repoRoot, appVersion, options.verbose);
+    yield* buildDesktopBundlesUnlocked(repoRoot, appVersion, options.verbose);
   }
 
   const requiredBuildInputs = [
@@ -3914,6 +3955,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log("[desktop-artifact] Done. Artifacts:").pipe(
     Effect.annotateLogs({ artifacts: copiedArtifacts }),
   );
+});
+
+const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+  options: ResolvedBuildOptions,
+) {
+  const repoRoot = yield* RepoRoot;
+  return yield* withDesktopBuildLock(repoRoot, buildDesktopArtifactUnlocked(options));
 });
 
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
