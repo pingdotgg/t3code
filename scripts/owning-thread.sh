@@ -1,22 +1,16 @@
 #!/usr/bin/env bash
-#
-# Print the owning chain for a line of code: blame commit -> introducing PR -> T3 thread.
-#
-# Usage:
-#   scripts/owning-thread.sh <file> <line> [--rev <git-rev>] [--main <ref>] [--json]
-#
-# Examples:
-#   scripts/owning-thread.sh apps/web/src/components/settings/SettingsPanels.tsx 2062
-#   scripts/owning-thread.sh apps/web/src/components/settings/SettingsPanels.tsx 119 --rev e526392f00 --json
-#
-# The introducing PR is the first-parent merge M on <main> with the commit in
-# M but not in M^1, which stays correct when branches merge main into
-# themselves. Found with binary search, so ~log(merges) git calls.
-
 set -euo pipefail
 
 usage() {
-  sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+  printf '%s\n' \
+    "Print the owning chain for a line of code: blame commit -> introducing PR -> T3 thread." \
+    "" \
+    "Usage:" \
+    "  scripts/owning-thread.sh <file> <line> [--rev <git-rev>] [--main <ref>] [--json]" \
+    "" \
+    "Examples:" \
+    "  scripts/owning-thread.sh apps/web/src/components/settings/SettingsPanels.tsx 2062" \
+    "  scripts/owning-thread.sh apps/web/src/components/settings/SettingsPanels.tsx 119 --rev e526392f00 --json"
 }
 
 rev="HEAD"
@@ -70,7 +64,6 @@ while IFS= read -r h; do merges+=("$h"); done < <(git log --first-parent --forma
 if [[ ${#merges[@]} -eq 0 ]] || ! contains "${merges[0]}"; then
   note="commit is not on $main; owner is the commit author"
 else
-  # Binary search, oldest containing first-parent merge (predicate is monotonic).
   lo=0; hi=$((${#merges[@]} - 1))
   while [[ $lo -lt $hi ]]; do
     mid=$(((lo + hi + 1) / 2))
@@ -90,11 +83,9 @@ else
   fi
 fi
 
-# Thread lookup: exact branch match, owner thread before workflow workers.
 thread_id=""; thread_title=""; thread_status=""; thread_archived=""
 if [[ -n "$branch" ]] && command -v t3 >/dev/null && command -v python3 >/dev/null; then
   for src in "t3 chat list" "t3 chat archived"; do
-    # shellcheck disable=SC2086
     chats="$($src 2>/dev/null || true)"
     [[ -n "$chats" ]] || continue
     picked="$(BRANCH="$branch" python3 -c '
