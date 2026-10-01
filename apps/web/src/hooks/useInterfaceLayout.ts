@@ -26,5 +26,5 @@ export function usePreviewedLayoutSetting<K extends keyof PresetSettings>(
   const previewId = useCustomizeInterfaceStore((store) =>
     store.active ? store.previewPresetId : null,
   );
-  return resolvePresetPreview(key, current, true, previewId);
+  return useMemo(() => resolvePresetPreview(key, current, previewId), [key, current, previewId]);
 }

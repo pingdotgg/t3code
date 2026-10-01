@@ -19,10 +19,19 @@ export interface InterfaceElementDefinition {
 export const INTERFACE_SURFACES = {
   threadRow: [
     { id: "project", label: "Project", description: "Icon and name above the title" },
-    { id: "status", label: "Status and time", description: "Working, approval, or last activity" },
+    {
+      id: "status",
+      label: "Last activity time",
+      description: "Attention states like Working or Approval always show",
+    },
     { id: "branch", label: "Branch", sortable: true },
     { id: "terminal", label: "Terminal activity", sortable: true },
-    { id: "pullRequest", label: "Pull request", sortable: true },
+    {
+      id: "pullRequest",
+      label: "Pull request",
+      description: "Badge and change counts",
+      sortable: true,
+    },
     { id: "environment", label: "Remote machine", sortable: true },
     { id: "provider", label: "Provider", sortable: true },
   ],
@@ -140,21 +149,54 @@ function writeSurface(
   next: InterfaceSurfaceLayout,
 ): InterfaceLayout {
   const { [surface]: _previous, ...rest } = layout;
-  // A surface back at its defaults is removed, keeping the stored value sparse.
-  if (isDefaultSurfaceLayout(surface, { [surface]: next })) return rest;
+  // A surface back at its defaults is removed, keeping the stored value sparse,
+  // unless it still carries ids this build ignores (see `currentSurface`).
+  const definitions = surfaceDefinitions(surface);
+  const carriesIgnoredIds =
+    next.order.some(
+      (id) => !definitions.some((element) => element.id === id && element.sortable),
+    ) ||
+    next.hidden.some(
+      (id) => !definitions.some((element) => element.id === id && !element.required),
+    );
+  if (!carriesIgnoredIds && isDefaultSurfaceLayout(surface, { [surface]: next })) return rest;
   return { ...rest, [surface]: next };
 }
 
+/**
+ * The editable form of a surface: its sortable elements in order, its hidden
+ * ids, and `stored`, which turns an edited order back into the stored one.
+ * Ids this build ignores, such as elements a newer build added, pass through
+ * so an edit here doesn't erase that build's layout: an unknown ordered id
+ * stays right after the known element it followed, and unknown hidden ids
+ * stay hidden.
+ */
 function currentSurface(layout: InterfaceLayout, surface: InterfaceSurfaceId) {
   const resolved = resolveSurfaceLayout(surface, layout);
+  const saved = layout[surface];
   const sortable = new Set(
     surfaceDefinitions(surface)
       .filter((element) => element.sortable)
       .map((element) => element.id),
   );
+
+  const leading: string[] = [];
+  const following = new Map<string, string[]>();
+  let anchor: string | null = null;
+  for (const id of new Set(saved?.order ?? [])) {
+    if (sortable.has(id)) anchor = id;
+    else if (anchor === null) leading.push(id);
+    else following.set(anchor, [...(following.get(anchor) ?? []), id]);
+  }
+
   return {
     order: resolved.order.filter((id) => sortable.has(id)) as string[],
-    hidden: [...resolved.hidden] as string[],
+    // Saved hidden ids are the resolved ones plus the ids this build ignores.
+    hidden: [...new Set(saved?.hidden ?? [])],
+    stored: (order: ReadonlyArray<string>) => [
+      ...leading,
+      ...order.flatMap((id) => [id, ...(following.get(id) ?? [])]),
+    ],
   };
 }
 
@@ -168,7 +210,10 @@ export function setSurfaceElementHidden(
   const nextHidden = hidden
     ? [...new Set([...current.hidden, elementId])]
     : current.hidden.filter((id) => id !== elementId);
-  return writeSurface(layout, surface, { order: current.order, hidden: nextHidden });
+  return writeSurface(layout, surface, {
+    order: current.stored(current.order),
+    hidden: nextHidden,
+  });
 }
 
 /** Moves a sortable element to the position currently held by `overId`. */
@@ -185,7 +230,7 @@ export function moveSurfaceElement(
   const order = [...current.order];
   order.splice(from, 1);
   order.splice(to, 0, activeId);
-  return writeSurface(layout, surface, { order, hidden: current.hidden });
+  return writeSurface(layout, surface, { order: current.stored(order), hidden: current.hidden });
 }
 
 /**
@@ -206,7 +251,7 @@ export function moveSurfaceElementBefore(
   if (index === -1) return layout;
   order.splice(index, 0, activeId);
   if (order.every((id, position) => id === current.order[position])) return layout;
-  return writeSurface(layout, surface, { order, hidden: current.hidden });
+  return writeSurface(layout, surface, { order: current.stored(order), hidden: current.hidden });
 }
 
 export function resetSurfaceLayout(

@@ -1,45 +1,15 @@
-import type { ClientSettings } from "@t3tools/contracts";
+import type { ClientSettings, ClientSettingsPatch } from "@t3tools/contracts";
+import * as Struct from "effect/Struct";
+import type { Mutable } from "effect/Types";
 import { create } from "zustand";
 
 import { THEME_PREFERENCE_STORAGE_KEY } from "../../hooks/useTheme";
-import { getClientSettings } from "../../hooks/useSettings";
 import {
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   THEME_HALVES_STORAGE_KEY,
 } from "../../themePalette";
 import type { PresetId } from "./customizePresets";
-
-/**
- * Every client setting a Customize interface palette can change. Revert
- * restores exactly these, so a model picked in the composer or anything else
- * written while the mode is open is left alone.
- */
-const CUSTOMIZE_SETTING_KEYS = [
-  "interfaceLayout",
-  "composerCollapseOnScroll",
-  "contextWindowMeterEnabled",
-  "timestampFormat",
-  "chatWidth",
-  "fontSizeInterface",
-  "fontSizePrompt",
-  "fontSizeCode",
-  "fontSizeTerminal",
-  "fontFamilySans",
-  "fontFamilyCode",
-  "fontFamilyComposer",
-  "fontFamilyTerminal",
-  "fontSmoothing",
-  "wordWrap",
-  "appearanceContrast",
-  "glassOpacity",
-  "panelAnimationDurationMs",
-  "diffColorScheme",
-  "environmentIdentificationMode",
-] as const satisfies ReadonlyArray<keyof ClientSettings>;
-
-export type CustomizeSettingKey = (typeof CUSTOMIZE_SETTING_KEYS)[number];
-export type CustomizeSettingsSnapshot = Pick<ClientSettings, CustomizeSettingKey>;
 
 /** The theme lives in local storage, outside client settings. */
 export const THEME_STORAGE_KEYS = [
@@ -48,18 +18,20 @@ export const THEME_STORAGE_KEYS = [
   THEME_HALVES_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
 ] as const;
-export type ThemeStorageSnapshot = Record<(typeof THEME_STORAGE_KEYS)[number], string | null>;
+export type ThemeStorageKey = (typeof THEME_STORAGE_KEYS)[number];
+export type ThemeStorageSnapshot = Record<ThemeStorageKey, string | null>;
 
-export interface CustomizeSnapshot {
-  readonly settings: CustomizeSettingsSnapshot;
-  readonly theme: ThemeStorageSnapshot;
+/**
+ * The values a change replaced, for only the keys the mode wrote. Restoring a
+ * step writes just these, so a font or theme changed elsewhere while the mode
+ * is open survives Undo and Revert.
+ */
+export interface CustomizeStep {
+  readonly settings: ClientSettingsPatch;
+  readonly theme: Partial<ThemeStorageSnapshot>;
 }
 
-export function pickCustomizeSettings(settings: ClientSettings): CustomizeSettingsSnapshot {
-  return Object.fromEntries(
-    CUSTOMIZE_SETTING_KEYS.map((key) => [key, settings[key]]),
-  ) as CustomizeSettingsSnapshot;
-}
+const EMPTY_STEP: CustomizeStep = { settings: {}, theme: {} };
 
 export function readThemeStorageSnapshot(): ThemeStorageSnapshot {
   const read = (key: string) => {
@@ -69,19 +41,59 @@ export function readThemeStorageSnapshot(): ThemeStorageSnapshot {
       return null;
     }
   };
-  return Object.fromEntries(
-    THEME_STORAGE_KEYS.map((key) => [key, read(key)]),
-  ) as ThemeStorageSnapshot;
+  const [preference, appearanceMode, halves, followSystem] = THEME_STORAGE_KEYS;
+  return {
+    [preference]: read(preference),
+    [appearanceMode]: read(appearanceMode),
+    [halves]: read(halves),
+    [followSystem]: read(followSystem),
+  };
 }
 
-/** Keys whose value differs from the snapshot, compared structurally. */
-export function changedCustomizeSettingKeys(
-  snapshot: CustomizeSettingsSnapshot,
-  current: CustomizeSettingsSnapshot,
-): CustomizeSettingKey[] {
-  return CUSTOMIZE_SETTING_KEYS.filter(
-    (key) => JSON.stringify(snapshot[key]) !== JSON.stringify(current[key]),
-  );
+function setPatchValue<K extends keyof ClientSettingsPatch>(
+  patch: Mutable<ClientSettingsPatch>,
+  key: K,
+  value: ClientSettings[K],
+) {
+  patch[key] = value;
+}
+
+/** The current values `patch` would replace, for the keys it changes. */
+export function settingsReplacedBy(
+  patch: ClientSettingsPatch,
+  current: ClientSettings,
+): ClientSettingsPatch {
+  const replaced: Mutable<ClientSettingsPatch> = {};
+  for (const key of Struct.keys(patch)) {
+    if (JSON.stringify(patch[key]) !== JSON.stringify(current[key])) {
+      setPatchValue(replaced, key, current[key]);
+    }
+  }
+  return replaced;
+}
+
+/** The current theme values `target` would replace, for the keys it changes. */
+export function themeReplacedBy(
+  target: Partial<ThemeStorageSnapshot>,
+  current: ThemeStorageSnapshot,
+): Partial<ThemeStorageSnapshot> {
+  const replaced: Partial<ThemeStorageSnapshot> = {};
+  for (const key of Struct.keys(target)) {
+    if (target[key] !== current[key]) replaced[key] = current[key];
+  }
+  return replaced;
+}
+
+export function isEmptyStep(step: CustomizeStep): boolean {
+  return Struct.keys(step.settings).length === 0 && Struct.keys(step.theme).length === 0;
+}
+
+/** Joins two steps; for a key in both, the older step's value wins. */
+function mergeSteps(older: CustomizeStep, newer: CustomizeStep): CustomizeStep {
+  return {
+    settings: { ...newer.settings, ...older.settings },
+    theme: { ...newer.theme, ...older.theme },
+  };
 }
 
 /**
@@ -94,22 +106,17 @@ export type ComposerPreview = "live" | "expanded" | "collapsed";
 /** A surface edited in place; the composer covers its toolbar and context bar. */
 export type EditSurface = "threadRow" | "chatHeader" | "composer";
 
-function captureCustomizeSnapshot(): CustomizeSnapshot {
-  return {
-    settings: pickCustomizeSettings(getClientSettings()),
-    theme: readThemeStorageSnapshot(),
-  };
-}
-
 /** Repeated edits of one control within this window undo as a single step. */
 const COALESCE_MS = 1000;
+/** Undo steps kept. Older ones drop off; Revert still reaches past them. */
+export const CUSTOMIZE_HISTORY_LIMIT = 100;
 
 type CustomizeInterfaceStore = {
   active: boolean;
-  /** What the app looked like when the mode opened; Revert returns here. */
-  snapshot: CustomizeSnapshot | null;
-  /** The state before each change, newest last; Undo steps back through it. */
-  history: CustomizeSnapshot[];
+  /** Each key's value before the mode first wrote it; Revert returns here. */
+  baseline: CustomizeStep;
+  /** What each change replaced, newest last; Undo steps back through it. */
+  history: CustomizeStep[];
   lastRecord: { key: string; at: number } | null;
   composerPreview: ComposerPreview;
   /** The surface being edited in place, or null while the presets popover shows. */
@@ -119,10 +126,12 @@ type CustomizeInterfaceStore = {
   open: () => void;
   close: () => void;
   toggle: () => void;
-  /** Call before a change so Undo can return to the state it replaces. */
-  record: (key?: string) => void;
-  popHistory: () => CustomizeSnapshot | null;
-  clearHistory: () => void;
+  /**
+   * Adds what a change replaced to the history. An empty step is ignored, so
+   * a change that changes nothing never leaves a dead Undo.
+   */
+  record: (step: CustomizeStep, key?: string) => void;
+  popHistory: () => CustomizeStep | null;
   setComposerPreview: (preview: ComposerPreview) => void;
   setEditing: (surface: EditSurface | null) => void;
   setPreviewPresetId: (id: PresetId | null) => void;
@@ -130,7 +139,7 @@ type CustomizeInterfaceStore = {
 
 const CLOSED_STATE = {
   active: false,
-  snapshot: null,
+  baseline: EMPTY_STEP,
   history: [],
   lastRecord: null,
   composerPreview: "live",
@@ -143,20 +152,26 @@ export const useCustomizeInterfaceStore = create<CustomizeInterfaceStore>((set, 
   history: [],
   open: () => {
     if (get().active) return;
-    set({ ...CLOSED_STATE, history: [], active: true, snapshot: captureCustomizeSnapshot() });
+    set({ ...CLOSED_STATE, history: [], active: true });
   },
   close: () => set({ ...CLOSED_STATE, history: [] }),
   toggle: () => (get().active ? get().close() : get().open()),
-  record: (key) => {
+  record: (step, key) => {
+    if (isEmptyStep(step)) return;
     const now = Date.now();
-    const last = get().lastRecord;
-    if (key && last?.key === key && now - last.at < COALESCE_MS) {
-      set({ lastRecord: { key, at: now } });
-      return;
-    }
+    const { baseline, history, lastRecord } = get();
+    const last = history.at(-1);
+    const coalesce =
+      key !== undefined &&
+      last !== undefined &&
+      lastRecord?.key === key &&
+      now - lastRecord.at < COALESCE_MS;
     set({
-      history: [...get().history, captureCustomizeSnapshot()],
-      lastRecord: key ? { key, at: now } : null,
+      baseline: mergeSteps(baseline, step),
+      history: coalesce
+        ? [...history.slice(0, -1), mergeSteps(last, step)]
+        : [...history, step].slice(-CUSTOMIZE_HISTORY_LIMIT),
+      lastRecord: key === undefined ? null : { key, at: now },
     });
   },
   popHistory: () => {
@@ -165,7 +180,6 @@ export const useCustomizeInterfaceStore = create<CustomizeInterfaceStore>((set, 
     if (previous) set({ history: history.slice(0, -1), lastRecord: null });
     return previous;
   },
-  clearHistory: () => set({ history: [], lastRecord: null }),
   setComposerPreview: (composerPreview) => set({ composerPreview }),
   setEditing: (editing) =>
     set({

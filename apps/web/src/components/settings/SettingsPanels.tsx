@@ -607,6 +607,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
+      // The stored layout is sparse: any surface entry means it differs from the defaults.
+      ...(Object.keys(settings.interfaceLayout).length > 0 ? ["Interface layout"] : []),
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -677,6 +679,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.interfaceLayout,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -785,6 +788,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      interfaceLayout: DEFAULT_UNIFIED_SETTINGS.interfaceLayout,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -1162,7 +1166,11 @@ function CustomizeInPlaceCard() {
   const navigateToMainApp = useNavigateToMainApp();
   const openCustomize = useCustomizeInterfaceStore((store) => store.open);
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card/60 px-4 py-3">
+    <div
+      id="customize-interface"
+      tabIndex={-1}
+      className="flex flex-wrap items-center gap-3 rounded-xl border bg-card/60 px-4 py-3"
+    >
       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary ring-1 ring-primary/20 ring-inset">
         <SlidersHorizontalIcon className="size-4" />
       </span>

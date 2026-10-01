@@ -3,6 +3,7 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useState }
 
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
+import { hasOpenCustomizePopup } from "./customizeEdit.logic";
 import { CustomizeEditLayer } from "./CustomizeEditLayer";
 import { CustomizeHotspots } from "./CustomizeHotspots";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
@@ -36,33 +37,33 @@ function popoverPlacement(anchors: ReturnType<typeof measureAnchors>): CSSProper
 }
 
 /** Escape steps back out of editing, then closes; ⌘Z undoes the last change. */
-function useCustomizeKeys(onEscape: () => void, onUndo: () => void) {
+function useCustomizeKeys(active: boolean, onEscape: () => void, onUndo: () => void) {
   useEffect(() => {
+    if (!active) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input:not([type=range]), textarea, select, [contenteditable=true]"))
-        return;
+      if (hasOpenCustomizePopup()) return;
       if (event.key === "Escape") {
-        // Some menus stay mounted while closed, so only an open popup counts.
-        if (
-          document.querySelector(
-            '[role="listbox"][data-open], [role="menu"][data-open], [role="dialog"][data-open]',
-          )
-        ) {
-          return;
-        }
-        onEscape();
+        event.preventDefault();
+        event.stopPropagation();
+        // The edit layer cancels an active drag before stepping back.
+        const layer = document.querySelector<HTMLElement>("[data-customize-edit][data-dragging]");
+        if (layer) layer.dispatchEvent(new Event("customize-cancel-drag"));
+        else onEscape();
         return;
       }
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target?.closest("input:not([type=range]), textarea, select, [contenteditable=true]"))
+        return;
       if (event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
         event.preventDefault();
+        event.stopPropagation();
         onUndo();
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onEscape, onUndo]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [active, onEscape, onUndo]);
 }
 
 /**
@@ -83,18 +84,18 @@ export function CustomizeInterfaceOverlay({
   const setEditing = useCustomizeInterfaceStore((store) => store.setEditing);
   const navigate = useNavigate();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const anchors = useLiveMeasure(measureAnchors, active ? "anchors" : null);
+  const anchors = useLiveMeasure(measureAnchors, active && !editing ? "anchors" : null);
   const { undo } = useCustomizeActions();
 
   // Enter on the frame after mount so the transition has a start state;
   // leave by fading out, then unmount.
-  const [entered, setEntered] = useState(false);
+  const [entered, setEntered] = useState<EditSurface | null>();
   useLayoutEffect(() => {
     if (!active) return;
-    const frame = window.requestAnimationFrame(() => setEntered(true));
+    const frame = window.requestAnimationFrame(() => setEntered(editing));
     return () => window.cancelAnimationFrame(frame);
-  }, [active]);
-  const visible = active && entered;
+  }, [active, editing]);
+  const visible = active && entered === editing;
   useEffect(() => {
     if (active) return;
     const timer = window.setTimeout(onExited, prefersReducedMotion ? 0 : ENTER_DURATION_MS);
@@ -130,7 +131,7 @@ export function CustomizeInterfaceOverlay({
     () => (useCustomizeInterfaceStore.getState().editing ? back() : close()),
     [back, close],
   );
-  useCustomizeKeys(handleEscape, undo);
+  useCustomizeKeys(active, handleEscape, undo);
 
   const openSettings = useCallback(() => {
     close();
@@ -161,7 +162,7 @@ export function CustomizeInterfaceOverlay({
         onOpenSettings={openSettings}
         onFineTuneHover={setHighlighted}
         className={cn(
-          "transition-[opacity,scale,translate] duration-200 ease-out motion-reduce:transition-opacity",
+          "transition-[opacity,scale,translate] duration-200 ease-out motion-reduce:transition-none [-webkit-app-region:no-drag]",
           sheet
             ? "inset-x-2 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] max-h-[min(40rem,75dvh)] origin-bottom"
             : "origin-top-left",

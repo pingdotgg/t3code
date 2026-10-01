@@ -22,8 +22,12 @@ export function CustomizeInterfaceHost() {
   const handleExited = useCallback(() => setMounted(false), []);
   if (!mounted) return null;
   return (
-    <Suspense fallback={null}>
-      <CustomizeInterfaceOverlay active={active} onExited={handleExited} />
-    </Suspense>
+    // One stacking context keeps even nested handles below app dialogs (z-50)
+    // while staying above the composer and other app content (z-40).
+    <div className="pointer-events-none fixed inset-0 z-[49] isolate [-webkit-app-region:no-drag]">
+      <Suspense fallback={null}>
+        <CustomizeInterfaceOverlay active={active} onExited={handleExited} />
+      </Suspense>
+    </div>
   );
 }

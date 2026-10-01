@@ -73,7 +73,7 @@ export function CustomizeHotspots({
   const rects = useLiveMeasure(measureHotspots, "hotspots");
   return (
     <>
-      {HOTSPOTS.map(({ surface, label, align }, index) => {
+      {HOTSPOTS.map(({ surface, label, align }) => {
         const rect = rects[surface];
         if (!rect) return null;
         const labelBelow = rect.top - PAD < LABEL_CLEARANCE;
@@ -83,7 +83,7 @@ export function CustomizeHotspots({
             type="button"
             data-customize-hotspot={surface}
             data-highlighted={highlighted === surface || undefined}
-            aria-label={`Edit ${label.toLowerCase()}`}
+            aria-label={`Edit ${label}`}
             onClick={() => onEdit(surface)}
             onWheel={scrollUnderneath}
             style={{
@@ -91,14 +91,13 @@ export function CustomizeHotspots({
               top: rect.top - PAD,
               width: rect.right - rect.left + PAD * 2,
               height: rect.bottom - rect.top + PAD * 2,
-              transitionDelay: visible ? `${60 + index * 50}ms` : "0ms",
             }}
             className={cn(
-              "group/hotspot pointer-events-auto fixed z-[104] cursor-pointer rounded-xl border-2 border-dashed border-primary/60 bg-primary/[0.04] outline-none",
-              "transition-[opacity,scale,background-color,border-color] duration-200 ease-out motion-reduce:transition-opacity",
+              "group/hotspot pointer-events-auto fixed z-10 [-webkit-app-region:no-drag] cursor-pointer rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 outline-none",
+              "transition-[opacity,scale,background-color,border-color] duration-200 ease-out motion-reduce:transition-none",
               "hover:border-solid hover:border-primary hover:bg-primary/10 focus-visible:border-solid focus-visible:border-primary focus-visible:bg-primary/10",
               "data-highlighted:border-solid data-highlighted:border-primary data-highlighted:bg-primary/10",
-              visible ? "scale-100 opacity-100" : "pointer-events-none scale-[1.02] opacity-0",
+              visible ? "scale-100 opacity-100" : "pointer-events-none scale-102 opacity-0",
             )}
           >
             <span

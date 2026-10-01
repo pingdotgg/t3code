@@ -21,22 +21,22 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
-## Customize the interface
+## Customize interface
 
-On web and desktop, choose **Customize interface** at the bottom of the sidebar, in the command
-palette, or under **Settings → Appearance**. Pick a layout to start from: **Balanced**, **Minimal**,
-**Focus**, or **Detailed**. Hovering a layout marks what it would hide before you choose it. The same
-panel changes the theme, light or dark mode, text size, and chat width.
+On web and desktop, open **Customize interface** from the sidebar, command palette, or
+**Settings → Appearance** to change your theme, appearance, text size, chat width, and which
+interface details appear. Preview a layout by hovering or focusing it, then select it to apply.
+Choose **Balanced**, **Minimal**, **Focus**, or **Detailed** for different levels of detail.
+All layouts preserve your ordering, chat width, and context window indicator preference.
 
-To fine-tune, choose **Thread rows**, **Header**, or **Composer**. That part of the app stays lit
-while you edit it in place: drag an item to move it, or use its minus button to hide it. Hidden
-items wait beside it, ready to bring back. With the keyboard, Tab to an item, use the arrow keys to
-move it, and press Delete to hide it. For the composer, hold it **Expanded** or **Collapsed** to
-arrange both layouts.
+Choose **Thread rows**, **Header**, or **Composer** to arrange its controls. Drag to reorder,
+or use Tab and the arrow keys. Use the hide control or Delete to hide an item, and Restore to
+bring it back. For the composer, select **Expanded** or **Collapsed** to edit either arrangement.
 
-Changes apply immediately. **Undo** (⌘Z or Ctrl+Z) steps back one change, **Revert** returns to how
-things looked when you started, and **Done** or Escape keeps your changes. The arrangement is saved
-on each device or browser. Mobile does not have this mode.
+Changes save immediately on this device or browser. **Undo** (⌘Z or Ctrl+Z) steps back one
+change; **Revert all changes** undoes the changes made since opening the mode. Escape cancels
+a drag, returns from editing to Customize interface, or closes the mode. **Done** closes it
+and keeps your changes. Mobile does not have this mode.
 
 ## Motion
 

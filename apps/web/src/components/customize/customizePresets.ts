@@ -7,7 +7,7 @@ import {
   setSurfaceElementHidden,
 } from "../../interfaceLayout";
 
-/** The settings a preset decides. Everything else is left as the user set it. */
+/** Settings read by clients during a layout preview. */
 export type PresetSettings = Pick<
   ClientSettings,
   "interfaceLayout" | "chatWidth" | "contextWindowMeterEnabled"
@@ -19,7 +19,7 @@ export interface Preset {
   readonly id: PresetId;
   readonly label: string;
   readonly description: string;
-  readonly settings: PresetSettings;
+  readonly settings: Pick<PresetSettings, "interfaceLayout">;
 }
 
 type HiddenBySurface = Partial<Record<InterfaceSurfaceId, ReadonlyArray<string>>>;
@@ -38,8 +38,8 @@ export const PRESETS: ReadonlyArray<Preset> = [
   {
     id: "balanced",
     label: "Balanced",
-    description: "The standard layout",
-    settings: { interfaceLayout: {}, chatWidth: "comfortable", contextWindowMeterEnabled: false },
+    description: "Everyday details",
+    settings: { interfaceLayout: layoutHiding({ threadRow: ["terminal", "environment"] }) },
   },
   {
     id: "minimal",
@@ -51,8 +51,6 @@ export const PRESETS: ReadonlyArray<Preset> = [
         chatHeader: ["scripts"],
         composerToolbar: ["traits"],
       }),
-      chatWidth: "comfortable",
-      contextWindowMeterEnabled: false,
     },
   },
   {
@@ -61,42 +59,65 @@ export const PRESETS: ReadonlyArray<Preset> = [
     description: "Quiet chrome",
     settings: {
       interfaceLayout: layoutHiding({
-        threadRow: ["project", "branch", "terminal", "pullRequest", "environment"],
-        chatHeader: ["scripts", "openIn"],
+        threadRow: [
+          "project",
+          "status",
+          "branch",
+          "terminal",
+          "pullRequest",
+          "environment",
+          "provider",
+        ],
+        chatHeader: ["scripts", "openIn", "git"],
+        composerToolbar: ["traits", "mode"],
+        composerContextBar: ["workspace", "branch"],
       }),
-      chatWidth: "comfortable",
-      contextWindowMeterEnabled: false,
     },
   },
   {
     id: "detailed",
     label: "Detailed",
-    description: "Everything, full width",
-    settings: { interfaceLayout: {}, chatWidth: "full", contextWindowMeterEnabled: true },
+    description: "All details",
+    settings: { interfaceLayout: {} },
   },
 ];
 
 const SURFACE_IDS = Object.keys(INTERFACE_SURFACES) as InterfaceSurfaceId[];
 
-function sameLayout(a: InterfaceLayout, b: InterfaceLayout): boolean {
+/** Apply preset visibility while keeping saved order and unknown future elements. */
+export function applyPresetLayout(
+  current: InterfaceLayout,
+  preset: InterfaceLayout,
+): InterfaceLayout {
+  if (sameVisibility(current, preset)) return current;
+  const next = { ...current };
+  for (const surface of SURFACE_IDS) {
+    const knownIds = new Set<string>(INTERFACE_SURFACES[surface].map((element) => element.id));
+    const hidden = [
+      ...(current[surface]?.hidden ?? []).filter((id) => !knownIds.has(id)),
+      ...resolveSurfaceLayout(surface, preset).hidden,
+    ];
+    const order = current[surface]?.order ?? [];
+    if (order.length === 0 && hidden.length === 0) delete next[surface];
+    else next[surface] = { ...current[surface], order, hidden };
+  }
+  return next;
+}
+
+function sameVisibility(a: InterfaceLayout, b: InterfaceLayout): boolean {
   return SURFACE_IDS.every((surface) => {
     const left = resolveSurfaceLayout(surface, a);
     const right = resolveSurfaceLayout(surface, b);
     return (
-      left.order.every((id, index) => id === right.order[index]) &&
-      left.hidden.size === right.hidden.size &&
-      [...left.hidden].every((id) => right.hidden.has(id))
+      left.hidden.size === right.hidden.size && [...left.hidden].every((id) => right.hidden.has(id))
     );
   });
 }
 
-/** The preset the settings currently match, or null for a custom arrangement. */
-export function matchPreset(settings: PresetSettings): PresetId | null {
-  const match = PRESETS.find(
-    (preset) =>
-      preset.settings.chatWidth === settings.chatWidth &&
-      preset.settings.contextWindowMeterEnabled === settings.contextWindowMeterEnabled &&
-      sameLayout(preset.settings.interfaceLayout, settings.interfaceLayout),
+/** Match only choices the preset makes; user ordering and meters are independent. */
+export function matchPreset(settings: Pick<PresetSettings, "interfaceLayout">): PresetId | null {
+  const match = PRESETS.find((preset) =>
+    sameVisibility(preset.settings.interfaceLayout, settings.interfaceLayout),
   );
   return match?.id ?? null;
 }
@@ -105,12 +126,17 @@ export function matchPreset(settings: PresetSettings): PresetId | null {
 export function resolvePresetPreview<K extends keyof PresetSettings>(
   key: K,
   current: PresetSettings[K],
-  active: boolean,
   previewId: PresetId | null,
 ): PresetSettings[K] {
-  return active
-    ? (PRESETS.find((preset) => preset.id === previewId)?.settings[key] ?? current)
-    : current;
+  const preset = PRESETS.find((candidate) => candidate.id === previewId);
+  if (!preset) return current;
+  if (key === "interfaceLayout") {
+    return applyPresetLayout(
+      current as InterfaceLayout,
+      preset.settings.interfaceLayout,
+    ) as PresetSettings[K];
+  }
+  return current;
 }
 
 /** Shown and total element counts for a surface, for the fine-tune summaries. */

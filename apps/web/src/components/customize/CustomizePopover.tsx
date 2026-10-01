@@ -28,6 +28,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
 import {
+  applyPresetLayout,
   matchPreset,
   type Preset,
   type PresetId,
@@ -51,7 +52,7 @@ function Segmented<T extends string>({
     <ToggleGroup
       aria-label={label}
       size="sm"
-      className="w-44 *:flex-1"
+      className="w-fit"
       value={[value]}
       onValueChange={(next) => {
         const selected = options.find((option) => option.value === next[0]);
@@ -70,14 +71,16 @@ function Segmented<T extends string>({
 function Row({
   label,
   htmlFor,
+  style,
   children,
 }: {
   label: string;
   htmlFor?: string;
+  style?: CSSProperties;
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-9 items-center gap-3 px-4">
+    <div className="flex min-h-9 items-center gap-3 px-4" style={style}>
       <label htmlFor={htmlFor} className="min-w-0 flex-1 truncate text-sm">
         {label}
       </label>
@@ -90,52 +93,50 @@ function Row({
 
 /** A schematic of the app: sidebar rows, the chat column, and the composer. */
 function PresetThumbnail({ id }: { id: PresetId }) {
-  const sidebarWidth = id === "focus" ? 12 : id === "detailed" ? 38 : 32;
-  const rows = id === "detailed" ? 5 : 4;
+  const sidebarWidth = 32;
+  const rows = 4;
   const rowGap = 44 / rows;
-  const composerLeft = id === "focus" ? 44 : sidebarWidth + 10;
-  const composerRight = id === "focus" ? 88 : id === "detailed" ? 124 : 116;
+  const composerLeft = sidebarWidth + 10;
+  const composerRight = 116;
   return (
     <svg aria-hidden viewBox="0 0 132 56" className="h-14 w-full text-foreground">
       <rect x="0" y="0" width="132" height="56" rx="6" className="fill-background" />
       <rect x="0" y="0" width={sidebarWidth} height="56" className="fill-foreground/5" />
-      {id === "focus"
-        ? null
-        : Array.from({ length: rows }, (_, index) => {
-            const y = 7 + index * rowGap;
-            return (
-              <g key={index}>
-                <rect
-                  x="5"
-                  y={y}
-                  width={sidebarWidth - 11}
-                  height="3"
-                  rx="1.5"
-                  className="fill-foreground/35"
-                />
-                {id === "minimal" ? null : (
-                  <rect
-                    x="5"
-                    y={y + 5}
-                    width={sidebarWidth - 17}
-                    height="2"
-                    rx="1"
-                    className="fill-foreground/18"
-                  />
-                )}
-                {id === "detailed" ? (
-                  <rect
-                    x={sidebarWidth - 9}
-                    y={y + 5}
-                    width="4"
-                    height="2"
-                    rx="1"
-                    className="fill-primary/60"
-                  />
-                ) : null}
-              </g>
-            );
-          })}
+      {Array.from({ length: rows }, (_, index) => {
+        const y = 7 + index * rowGap;
+        return (
+          <g key={index}>
+            <rect
+              x="5"
+              y={y}
+              width={sidebarWidth - 11}
+              height="3"
+              rx="1.5"
+              className="fill-foreground/35"
+            />
+            {id === "minimal" || id === "focus" ? null : (
+              <rect
+                x="5"
+                y={y + 5}
+                width={sidebarWidth - 17}
+                height="2"
+                rx="1"
+                className="fill-foreground/18"
+              />
+            )}
+            {id === "detailed" ? (
+              <rect
+                x={sidebarWidth - 9}
+                y={y + 5}
+                width="4"
+                height="2"
+                rx="1"
+                className="fill-primary/60"
+              />
+            ) : null}
+          </g>
+        );
+      })}
       <rect
         x={composerLeft}
         y="40"
@@ -152,7 +153,7 @@ function PresetThumbnail({ id }: { id: PresetId }) {
         rx="1.25"
         className="fill-foreground/30"
       />
-      {id === "minimal" || id === "focus" ? null : (
+      {id === "focus" ? null : (
         <rect
           x={composerLeft + 22}
           y="44"
@@ -180,6 +181,21 @@ function PresetCard({
 }) {
   const setPreview = useCustomizeInterfaceStore((store) => store.setPreviewPresetId);
   const previewing = useCustomizeInterfaceStore((store) => store.previewPresetId === preset.id);
+  const hoverTimer = useRef<number | null>(null);
+  const cancelHover = () => {
+    if (hoverTimer.current !== null) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+  };
+  const clearPreview = () => {
+    cancelHover();
+    if (useCustomizeInterfaceStore.getState().previewPresetId === preset.id) setPreview(null);
+  };
+  useEffect(
+    () => () => {
+      if (hoverTimer.current !== null) window.clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
   return (
     <button
       type="button"
@@ -187,13 +203,25 @@ function PresetCard({
       data-preset={preset.id}
       aria-pressed={selected}
       onClick={() => {
+        cancelHover();
         onApply();
         setPreview(null);
       }}
-      onPointerEnter={() => setPreview(preset.id)}
-      onPointerLeave={() => setPreview(null)}
-      onFocus={() => setPreview(preset.id)}
-      onBlur={() => setPreview(null)}
+      onPointerEnter={(event) => {
+        if (event.pointerType === "touch") return;
+        cancelHover();
+        hoverTimer.current = window.setTimeout(() => {
+          hoverTimer.current = null;
+          setPreview(preset.id);
+        }, 180);
+      }}
+      onPointerLeave={clearPreview}
+      onFocus={(event) => {
+        if (!event.currentTarget.matches(":focus-visible")) return;
+        cancelHover();
+        setPreview(preset.id);
+      }}
+      onBlur={clearPreview}
       className={cn(
         "group/preset cursor-pointer rounded-xl border p-1.5 pb-2 text-left outline-none transition-[border-color,background-color,box-shadow] duration-150 motion-reduce:transition-none",
         "hover:border-primary/60 focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/20",
@@ -273,7 +301,7 @@ function ThemeSwatches() {
       <Row label="Theme">
         <TooltipProvider>
           <div
-            role="radiogroup"
+            role="group"
             aria-label="Theme"
             className="-me-1 flex max-w-56 flex-wrap justify-end gap-1"
           >
@@ -283,16 +311,25 @@ function ThemeSwatches() {
                 swatch.card.previews[0];
               if (!preview) return null;
               const checked = selection.pickedModesFor(swatch.themeId).includes(resolvedTheme);
+              const switchesAppearance = preview.mode !== resolvedTheme;
+              const label = switchesAppearance
+                ? `${swatch.card.label} · switches to ${preview.mode} appearance`
+                : swatch.card.label;
               return (
                 <Tooltip key={swatch.key}>
                   <TooltipTrigger
                     render={
                       <button
                         type="button"
-                        role="radio"
-                        aria-checked={checked}
-                        aria-label={swatch.card.label}
-                        onClick={() => withRecord(swatch.apply, "theme")}
+                        aria-pressed={checked}
+                        aria-label={label}
+                        onClick={() => {
+                          if (checked && !switchesAppearance) return;
+                          withRecord(() => {
+                            if (switchesAppearance) selection.setMode(preview.mode);
+                            swatch.apply();
+                          }, "theme");
+                        }}
                         className={cn(
                           "flex size-7 cursor-pointer items-center justify-center rounded-full outline-none transition-transform hover:scale-110 focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                           checked && "ring-2 ring-primary ring-offset-1 ring-offset-popover",
@@ -306,7 +343,7 @@ function ThemeSwatches() {
                       className="size-5 border"
                     />
                   </TooltipTrigger>
-                  <TooltipPopup side="top">{swatch.card.label}</TooltipPopup>
+                  <TooltipPopup side="top">{label}</TooltipPopup>
                 </Tooltip>
               );
             })}
@@ -318,7 +355,7 @@ function ThemeSwatches() {
           label="Appearance"
           value={appearanceMode}
           options={[
-            { value: "system", label: "Auto" },
+            { value: "system", label: "System" },
             { value: "light", label: "Light" },
             { value: "dark", label: "Dark" },
           ]}
@@ -341,27 +378,31 @@ function TextSizeSlider() {
     "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
   } as CSSProperties;
   return (
-    <Row label="Text size" htmlFor={id}>
-      <div className="flex w-44 items-center gap-2">
-        <span aria-hidden className="text-2xs text-muted-foreground">
+    <Row label="Interface font size" htmlFor={id} style={{ paddingInline: 16, gap: 12 }}>
+      <div className="flex shrink-0 items-center" style={{ width: 176, gap: 8 }}>
+        <span aria-hidden className="shrink-0 text-2xs text-muted-foreground" style={{ width: 16 }}>
           A
         </span>
         <input
           id={id}
           type="range"
-          className="settings-slider min-w-0 flex-1"
+          className="settings-slider shrink-0"
           min={min}
           max={max}
           step={1}
           value={value}
-          style={style}
+          style={{ ...style, width: 128 }}
           aria-valuetext={`${value} pixels`}
           onChange={(event) => {
             const next = Number(event.currentTarget.value);
             if (Number.isFinite(next)) commit({ fontSizeInterface: next }, "fontSizeInterface");
           }}
         />
-        <span aria-hidden className="text-base text-muted-foreground">
+        <span
+          aria-hidden
+          className="shrink-0 text-base text-muted-foreground"
+          style={{ width: 16 }}
+        >
           A
         </span>
       </div>
@@ -376,28 +417,24 @@ const FINE_TUNE: ReadonlyArray<{
   label: string;
   icon: ReactNode;
   layoutSurfaces: ReadonlyArray<InterfaceSurfaceId>;
-  noun: string;
 }> = [
   {
     surface: "threadRow",
     label: "Thread rows",
     icon: <PanelLeftIcon />,
     layoutSurfaces: ["threadRow"],
-    noun: "details",
   },
   {
     surface: "chatHeader",
     label: "Header",
     icon: <PanelTopIcon />,
     layoutSurfaces: ["chatHeader"],
-    noun: "actions",
   },
   {
     surface: "composer",
     label: "Composer",
     icon: <MessageSquareTextIcon />,
     layoutSurfaces: ["composerToolbar", "composerContextBar"],
-    noun: "controls",
   },
 ];
 
@@ -431,8 +468,7 @@ export function CustomizePopover({
       const target =
         (returnFocusTo &&
           section?.querySelector<HTMLElement>(`[data-fine-tune="${returnFocusTo}"]`)) ??
-        section?.querySelector<HTMLElement>('[data-preset][aria-pressed="true"]') ??
-        section?.querySelector<HTMLElement>("[data-preset]");
+        section;
       target?.focus({ preventScroll: true });
     });
     return () => {
@@ -443,63 +479,47 @@ export function CustomizePopover({
   const presetSettings = useClientSettings((settings) => ({
     interfaceLayout: settings.interfaceLayout,
     chatWidth: settings.chatWidth,
-    contextWindowMeterEnabled: settings.contextWindowMeterEnabled,
   }));
   const chatWidth = presetSettings.chatWidth;
   const matched = matchPreset(presetSettings);
   const historyLength = useCustomizeInterfaceStore((store) => store.history.length);
   const setEditing = useCustomizeInterfaceStore((store) => store.setEditing);
   const hasChanges = useHasCustomizeChanges();
-  const { commit, undo, revert } = useCustomizeActions();
+  const { commit, commitLayout, undo, revert } = useCustomizeActions();
   return (
     <section
       ref={sectionRef}
+      role="dialog"
       aria-label="Customize interface"
+      tabIndex={-1}
       data-customize-popover
       className={cn(
-        "dialog-glass pointer-events-auto fixed z-[106] flex flex-col overflow-hidden rounded-2xl border text-popover-foreground shadow-lg/10",
+        "dialog-glass pointer-events-auto fixed z-20 flex flex-col overflow-hidden rounded-2xl border text-popover-foreground shadow-lg/10 [-webkit-app-region:no-drag]",
         className,
       )}
-      style={style}
+      style={{
+        ...style,
+        maxHeight:
+          style?.maxHeight === undefined
+            ? "min(640px, 75dvh)"
+            : `min(${typeof style.maxHeight === "number" ? `${style.maxHeight}px` : style.maxHeight}, calc(100dvh - 24px))`,
+      }}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="px-4 pt-4 pb-3">
           <div className="flex items-baseline gap-2">
-            <h2 className="flex-1 text-sm font-semibold">Customize</h2>
+            <h2 className="flex-1 text-sm font-semibold">Customize interface</h2>
             <span className="text-xs text-muted-foreground">
-              {matched === null ? "Custom layout" : "Start from a layout"}
+              {matched === null
+                ? "Custom layout"
+                : `${PRESETS.find((preset) => preset.id === matched)?.label} layout`}
             </span>
           </div>
-          <div role="group" aria-label="Layouts" className="mt-3 grid grid-cols-2 gap-2">
-            {PRESETS.map((preset) => (
-              <PresetCard
-                key={preset.id}
-                preset={preset}
-                selected={matched === preset.id}
-                onApply={() => {
-                  if (matched !== preset.id) commit(preset.settings);
-                }}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="border-t border-border/70 py-1.5">
-          <ThemeSwatches />
-          <TextSizeSlider />
-          <Row label="Chat width">
-            <Segmented
-              label="Chat width"
-              value={chatWidth}
-              options={[
-                { value: "comfortable", label: "Comfy" },
-                { value: "wide", label: "Wide" },
-                { value: "full", label: "Full" },
-              ]}
-              onChange={(next) => commit({ chatWidth: next })}
-            />
-          </Row>
         </div>
         <nav aria-label="Fine-tune" className="border-t border-border/70 py-1.5">
+          <p className="px-4 pt-1 pb-2 text-xs text-muted-foreground">
+            Choose a part of the interface to move or hide its controls.
+          </p>
           {FINE_TUNE.map((entry) => {
             const counts = entry.layoutSurfaces
               .map((surface) => surfaceVisibility(surface, presetSettings.interfaceLayout))
@@ -517,20 +537,62 @@ export function CustomizePopover({
                 onPointerLeave={() => onFineTuneHover(null)}
                 onFocus={() => onFineTuneHover(entry.surface)}
                 onBlur={() => onFineTuneHover(null)}
-                className="flex h-9 w-full cursor-pointer items-center gap-3 px-4 text-left text-sm outline-none hover:bg-accent/50 focus-visible:bg-accent/60 [&_svg]:size-4 [&_svg]:shrink-0"
+                className="flex h-9 w-full cursor-pointer items-center gap-3 px-4 text-left text-sm outline-none hover:bg-accent/50 focus-visible:bg-accent/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0"
               >
                 <span className="text-muted-foreground">{entry.icon}</span>
                 <span className="flex-1">{entry.label}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {counts.shown} of {counts.total} {entry.noun}
+                  {counts.shown} of {counts.total} enabled
                 </span>
                 <ChevronRightIcon className="text-muted-foreground/70" />
               </button>
             );
           })}
         </nav>
+        <div className="border-t border-border/70 px-4 pt-3 pb-3">
+          <div role="group" aria-label="Layout presets" className="grid grid-cols-2 gap-2">
+            {PRESETS.map((preset) => (
+              <PresetCard
+                key={preset.id}
+                preset={preset}
+                selected={matched === preset.id}
+                onApply={() =>
+                  commitLayout((current) =>
+                    applyPresetLayout(current, preset.settings.interfaceLayout),
+                  )
+                }
+              />
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-border/70 py-1.5">
+          <ThemeSwatches />
+          <TextSizeSlider />
+          <Row label="Chat width">
+            <Segmented
+              label="Chat width"
+              value={chatWidth}
+              options={[
+                { value: "comfortable", label: "Comfortable" },
+                { value: "wide", label: "Wide" },
+                { value: "full", label: "Full" },
+              ]}
+              onChange={(next) => commit({ chatWidth: next })}
+            />
+          </Row>
+        </div>
+        <div className="border-t border-border/70 px-4 py-2">
+          <button
+            type="button"
+            disabled={!hasChanges}
+            onClick={revert}
+            className="cursor-pointer text-xs text-muted-foreground outline-none hover:text-destructive focus-visible:underline focus-visible:text-destructive disabled:cursor-default disabled:opacity-50"
+          >
+            Revert all changes
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1.5 border-t border-border/70 px-3 py-2.5">
+      <div className="flex shrink-0 items-center gap-1.5 border-t border-border/70 px-3 py-2.5">
         <Button
           size="icon-sm"
           variant="ghost"
@@ -547,9 +609,6 @@ export function CustomizePopover({
         >
           Fonts and more in Settings
         </button>
-        <Button size="sm" variant="ghost" disabled={!hasChanges} onClick={revert}>
-          Revert
-        </Button>
         <Button size="sm" onClick={onDone}>
           Done
         </Button>

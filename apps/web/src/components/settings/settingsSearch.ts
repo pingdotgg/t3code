@@ -192,6 +192,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance",
   },
   {
+    id: "customize-interface",
+    title: "Customize interface",
+    to: "/settings/appearance",
+    searchTerms: [
+      "customize in place layout arrange reorder hide show thread list rows composer header presets",
+    ],
+  },
+  {
     // Prefixed because the slider control already owns the `appearance-contrast` id.
     id: "setting-appearance-contrast",
     title: "Contrast",

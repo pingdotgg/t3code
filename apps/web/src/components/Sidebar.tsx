@@ -716,6 +716,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onDiscard: (draftId: DraftId) => void;
 }) {
   const { composer, draftId, onDiscard, onNavigate, session } = props;
+  // Follows the thread cards: without the project line the prompt moves up
+  // beside the pen and the row loses a line.
+  const showsProjectLine = !useInterfaceLayout("threadRow").hidden.has("project");
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -776,15 +779,29 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         onKeyDown={handleKeyDown}
       >
         <span className="sr-only">{preview}</span>
-        <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
+        <div
+          className={cn(
+            "relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+            showsProjectLine ? "h-[4.875rem]" : "h-[3.375rem]",
+          )}
+        >
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
-            {props.project ? (
+            {showsProjectLine && props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
-              {props.projectDisplayName}
-            </span>
+            {showsProjectLine ? (
+              <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+                {props.projectDisplayName}
+              </span>
+            ) : (
+              <span
+                aria-hidden
+                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/90"
+              >
+                {preview}
+              </span>
+            )}
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
               <Tooltip>
                 <TooltipTrigger
@@ -803,9 +820,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               </Tooltip>
             </span>
           </div>
-          <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
-            {preview}
-          </div>
+          {showsProjectLine ? (
+            <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
+              {preview}
+            </div>
+          ) : null}
         </div>
       </div>
     </li>
@@ -1862,7 +1881,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
                   <span
-                    data-customize-element="threadRow:status"
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"
@@ -1871,7 +1889,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {!showsDetail("status") && !isWokeStatus ? null : topStatus ? (
+                    {/* Only the idle time fallback is customizable: attention
+                      states (Working, Approval, Input, Failed, Woke) always show. */}
+                    {topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
                           <TooltipTrigger
@@ -1923,9 +1943,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           ) : null}
                         </span>
                       )
-                    ) : (
-                      threadTimeLabel(thread)
-                    )}
+                    ) : showsDetail("status") ? (
+                      <span data-customize-element="threadRow:status">
+                        {threadTimeLabel(thread)}
+                      </span>
+                    ) : null}
                   </span>
                   {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span
@@ -2069,7 +2091,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         className="contents"
                       >
                         {prBadge}
-                        {diff ? (
+                        {/* Change counts are part of the pull request detail, so
+                          hiding it hides both. */}
+                        {diff && showsDetail("pullRequest") ? (
                           <span className="shrink-0 font-mono">
                             <span className="text-diff-addition-foreground">
                               +{diff.insertions}

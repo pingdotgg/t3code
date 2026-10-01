@@ -199,6 +199,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
+import { useInterfaceLayout } from "~/hooks/useInterfaceLayout";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
@@ -435,6 +436,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? (remoteEnvLabel ?? (isDesktopLocalThread ? "Local" : "Remote"))
     : null;
   const isHighlighted = isActive || isSelected;
+  // Honors the thread-row details hidden in Customize interface. This row keeps
+  // its own fixed order, and attention states are never hidden.
+  const rowLayout = useInterfaceLayout("threadRow");
+  const showsDetail = (id: (typeof rowLayout.order)[number]) => !rowLayout.hidden.has(id);
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       const port = discoveredPorts[0];
@@ -732,7 +737,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && pr && (
+          {prStatus && pr && showsDetail("pullRequest") && (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -758,7 +763,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
-          {!pr && currentLinkedPr ? (
+          {!pr && currentLinkedPr && showsDetail("pullRequest") ? (
             <a
               href={currentLinkedPr.url}
               target="_blank"
@@ -820,8 +825,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
-          <ThreadWorktreeIndicator thread={thread} />
-          {terminalStatus && (
+          {showsDetail("branch") ? <ThreadWorktreeIndicator thread={thread} /> : null}
+          {terminalStatus && showsDetail("terminal") && (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -898,7 +903,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
-                {isRemoteThread && !isDesktopLocalThread && (
+                {isRemoteThread && !isDesktopLocalThread && showsDetail("environment") && (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -930,7 +935,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     </TooltipTrigger>
                     <TooltipPopup side="top">{jumpLabel}</TooltipPopup>
                   </Tooltip>
-                ) : (
+                ) : showsDetail("status") ? (
                   <span
                     className={`text-3xs tabular-nums ${
                       isHighlighted ? "text-foreground" : "text-secondary-label"
@@ -940,7 +945,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
                     )}
                   </span>
-                )}
+                ) : null}
               </span>
             </span>
           </div>

@@ -4740,7 +4740,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerInputSubmissionError !== null ||
     hasImageAttachmentAttention;
   const isComposerResting = shouldUseRestingComposerLayout({
-    isExistingThread: routeKind === "server" && activeThreadId !== null,
+    // A forced Collapsed preview also applies on a draft, so the collapsed
+    // layout can be customized from any thread.
+    isExistingThread:
+      (routeKind === "server" && activeThreadId !== null) || composerPreview === "collapsed",
     isMobileViewport,
     isScrollCollapsed:
       composerPreview === "live" ? isComposerScrollCollapsed : composerPreview === "collapsed",

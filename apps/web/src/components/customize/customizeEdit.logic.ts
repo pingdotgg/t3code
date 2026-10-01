@@ -84,3 +84,36 @@ export function unionRect(rects: ReadonlyArray<Rect>): Rect | null {
     bottom: Math.max(...visible.map((rect) => rect.bottom)),
   };
 }
+
+/** Group near-aligned controls into rows before sorting each row left to right. */
+export function readingOrder<T extends PlacedElement>(elements: ReadonlyArray<T>): T[] {
+  const pending = [...elements].sort(
+    (a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left,
+  );
+  const ordered: T[] = [];
+  while (pending.length > 0) {
+    const top = pending[0]!.rect.top;
+    const end = pending.findIndex((element) => element.rect.top > top + 8);
+    const row = pending.splice(0, end === -1 ? pending.length : end);
+    ordered.push(...row.sort((a, b) => a.rect.left - b.rect.left));
+  }
+  return ordered;
+}
+
+/** Popups own their keyboard and focus handling, including portaled Select menus. */
+export function hasOpenCustomizePopup(): boolean {
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+    ),
+  ].some((element) => {
+    if (element.matches("[data-customize-popover]")) return false;
+    if (element.closest('[hidden], [inert], [data-closed], [aria-hidden="true"]')) return false;
+    const style = getComputedStyle(element);
+    return (
+      style.display !== "none" &&
+      style.visibility !== "hidden" &&
+      element.getClientRects().length > 0
+    );
+  });
+}

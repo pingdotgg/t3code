@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   type PlacedElement,
+  hasOpenCustomizePopup,
+  readingOrder,
   resolveDropTarget,
   resolveKeyboardMove,
   unionRect,
@@ -65,5 +68,106 @@ describe("unionRect", () => {
 
   it("is null when nothing is visible", () => {
     expect(unionRect([{ left: 0, top: 0, right: 0, bottom: 0 }])).toBeNull();
+  });
+});
+
+describe("readingOrder", () => {
+  const positioned = (id: string, left: number, top: number) => ({
+    id,
+    rect: { left, top, right: left + 20, bottom: top + 20 },
+  });
+
+  it("reads near-aligned controls left to right despite small height differences", () => {
+    const elements = [
+      positioned("right", 80, 10),
+      positioned("left", 0, 15),
+      positioned("middle", 40, 12),
+    ];
+    expect(readingOrder(elements).map((element) => element.id)).toEqual([
+      "left",
+      "middle",
+      "right",
+    ]);
+  });
+
+  it("reads separate rows top to bottom before comparing horizontal positions", () => {
+    const elements = [
+      positioned("bottom-left", 0, 40),
+      positioned("top-right", 80, 10),
+      positioned("top-left", 40, 14),
+    ];
+    expect(readingOrder(elements).map((element) => element.id)).toEqual([
+      "top-left",
+      "top-right",
+      "bottom-left",
+    ]);
+  });
+
+  it("anchors tolerance to the row, so staggered controls cannot merge distant rows", () => {
+    const elements = [
+      positioned("third", 0, 18),
+      positioned("second", 20, 9),
+      positioned("first", 40, 0),
+    ];
+    expect(readingOrder(elements).map((element) => element.id)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+  });
+
+  it("does not mutate the definition order used to keep handle nodes stable", () => {
+    const elements = [positioned("right", 80, 10), positioned("left", 0, 15)];
+    readingOrder(elements);
+    expect(elements.map((element) => element.id)).toEqual(["right", "left"]);
+    expect(readingOrder([])).toEqual([]);
+  });
+});
+
+describe("hasOpenCustomizePopup", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+  });
+
+  const popup = (role: string) => {
+    const element = document.createElement("div");
+    element.setAttribute("role", role);
+    document.body.append(element);
+    const rect = new DOMRect(0, 0, 100, 100);
+    vi.spyOn(element, "getClientRects").mockReturnValue(
+      Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) }),
+    );
+    return element;
+  };
+
+  it.each(["dialog", "alertdialog", "menu", "listbox"])("yields to an open %s", (role) => {
+    popup(role);
+    expect(hasOpenCustomizePopup()).toBe(true);
+  });
+
+  it("ignores mounted closed menus and dialogs hidden by an ancestor", () => {
+    popup("menu").setAttribute("data-closed", "");
+    const parent = document.createElement("div");
+    parent.hidden = true;
+    parent.append(popup("dialog"));
+    document.body.append(parent);
+    expect(hasOpenCustomizePopup()).toBe(false);
+  });
+
+  it("ignores a popup with no painted box or hidden by CSS", () => {
+    const menu = popup("menu");
+    menu.style.display = "none";
+    const listbox = popup("listbox");
+    vi.mocked(listbox.getClientRects).mockReturnValue(Object.assign([], { item: () => null }));
+    expect(hasOpenCustomizePopup()).toBe(false);
+  });
+
+  it("ignores the mode's own dialog but yields to its nested Select", () => {
+    const customize = popup("dialog");
+    customize.setAttribute("data-customize-popover", "");
+    expect(hasOpenCustomizePopup()).toBe(false);
+    customize.append(popup("listbox"));
+    expect(hasOpenCustomizePopup()).toBe(true);
   });
 });

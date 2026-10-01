@@ -96,6 +96,50 @@ describe("interface layout edits", () => {
   });
 });
 
+describe("layouts from a newer build", () => {
+  // `voice` stands in for an element only a newer build knows about.
+  const newer = {
+    chatHeader: { order: ["git", "voice", "scripts", "openIn"], hidden: ["voice"] },
+  };
+
+  it("keeps unknown ids through a hide and unhide", () => {
+    const hidden = setSurfaceElementHidden(newer, "chatHeader", "openIn", true);
+    expect(hidden.chatHeader).toEqual({
+      order: ["git", "voice", "scripts", "openIn"],
+      hidden: ["voice", "openIn"],
+    });
+    const restored = setSurfaceElementHidden(hidden, "chatHeader", "openIn", false);
+    expect(restored.chatHeader).toEqual({
+      order: ["git", "voice", "scripts", "openIn"],
+      hidden: ["voice"],
+    });
+  });
+
+  it("keeps an unknown id after the known element it followed when moving", () => {
+    const moved = moveSurfaceElementBefore(newer, "chatHeader", "openIn", "git");
+    expect(moved.chatHeader?.order).toEqual(["openIn", "git", "voice", "scripts"]);
+    const movedGit = moveSurfaceElementBefore(newer, "chatHeader", "git", null);
+    expect(movedGit.chatHeader?.order).toEqual(["scripts", "openIn", "git", "voice"]);
+  });
+
+  it("keeps the surface stored while it carries unknown ids at known defaults", () => {
+    const layout = {
+      chatHeader: { order: ["scripts", "openIn", "git"], hidden: ["voice", "openIn"] },
+    };
+    expect(setSurfaceElementHidden(layout, "chatHeader", "openIn", false)).toEqual({
+      chatHeader: { order: ["scripts", "openIn", "git"], hidden: ["voice"] },
+    });
+  });
+
+  it("keeps surfaces this build does not know", () => {
+    const layout = { futureSurface: { order: ["a"], hidden: ["b"] } };
+    expect(setSurfaceElementHidden(layout, "chatHeader", "git", true)).toEqual({
+      futureSurface: { order: ["a"], hidden: ["b"] },
+      chatHeader: { order: ["scripts", "openIn", "git"], hidden: ["git"] },
+    });
+  });
+});
+
 describe("groupAdjacentElements", () => {
   const icons = new Set(["environment", "provider"]);
 

@@ -564,6 +564,14 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "customizeInterface.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        setOpen(false);
+        useCustomizeInterfaceStore.getState().toggle();
+        return;
+      }
       if (command === "usage.open") {
         event.preventDefault();
         event.stopPropagation();
@@ -667,11 +675,7 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
-        // Customize interface opened from here takes focus for its own keys.
-        const customize =
-          document.querySelector<HTMLElement>(
-            '[data-customize-popover] [data-preset][aria-pressed="true"]',
-          ) ?? document.querySelector<HTMLElement>("[data-customize-popover] [data-preset]");
+        const customize = document.querySelector<HTMLElement>("[data-customize-popover]");
         if (customize) return customize;
         composerHandleRef?.current?.focusAtEnd();
         return false;
@@ -2018,6 +2022,7 @@ function OpenCommandPaletteDialog(props: {
     ],
     title: "Customize interface",
     icon: <SlidersHorizontalIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "customizeInterface.toggle",
     run: async () => {
       useCustomizeInterfaceStore.getState().open();
     },
