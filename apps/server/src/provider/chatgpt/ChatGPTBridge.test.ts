@@ -1,6 +1,7 @@
 // Native HTTP client exercises disconnect semantics against the loopback transport.
 // @effect-diagnostics globalFetch:off
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { ChatGPTWebSettings } from "@t3tools/contracts";
 import {
@@ -11,6 +12,7 @@ import {
   startChatGPTBridge,
 } from "./ChatGPTBridge.ts";
 import { ChatGPTRateLimit } from "./ChatGPTRateLimit.ts";
+import { ChatGPTInteractionRequiredError } from "./SharedBrowserChatGPT.ts";
 
 const decodeRequestForTest = Schema.decodeUnknownSync(ChatGPTRequest);
 const tools = [
@@ -167,6 +169,36 @@ it("persists cooldown after a service failure and never retries it", async () =>
     expect(second.status).toBe(400);
     expect(await second.text()).toContain("ChatGPT cooldown until");
     expect(calls).toBe(1);
+  } finally {
+    await bridge.close();
+  }
+});
+
+it("does not cool down after a recoverable shared-browser input failure", async () => {
+  const limiter = new ChatGPTRateLimit(":memory:", limits);
+  const bridge = await startChatGPTBridge({
+    limiter,
+    browser: {
+      complete: async () => {
+        throw new ChatGPTInteractionRequiredError(
+          "T3 could not enter the prompt in ChatGPT’s visible message box.",
+          false,
+        );
+      },
+      close: async () => {},
+    },
+  });
+  try {
+    const response = await fetch(`${bridge.url}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bridge.key}` },
+      body: JSON.stringify(requestBody),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("could not enter the prompt");
+    expect(limiter.reserve(DateTime.toEpochMillis(DateTime.nowUnsafe()) + 60_000)).toEqual({
+      waitMs: 0,
+    });
   } finally {
     await bridge.close();
   }
