@@ -68,6 +68,7 @@ import {
   CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_background_subagent_lifecycle/input.ts";
 import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_monitor_wake/input.ts";
+import { CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
 import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
 import {
@@ -236,6 +237,12 @@ const CLAUDE_RECORDINGS = {
     enableTools: true,
     interruptAfter: "tool_use",
     interruptAfterToolUses: 2,
+  },
+  claude_nested_subagent_model: {
+    prompts: [CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_nested_subagent_model/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
   },
   subagent: {
     prompts: [SUBAGENT_PROMPT],

@@ -2519,7 +2519,7 @@ interface ActiveClaudeTurnContext {
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
-  readonly pendingSubagentModelsByToolUseId: Map<string, string>;
+  readonly pendingSubagentLaunchesByToolUseId: Map<string, PendingClaudeSubagentLaunch>;
   // Set on turns that offered a prompt. Claude runs a wake turn it queued
   // for background work before the next prompt's turn, and only the
   // prompt's turn echoes this uuid (see handleSdkMessage).
@@ -2539,6 +2539,9 @@ interface ActiveClaudeProviderRetry {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  // The launch run's root node. task.parentNodeId is that same node, or the
+  // owning subagent's node for a subagent another subagent started.
+  readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly childThreadId: ThreadId;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
@@ -2580,17 +2583,25 @@ interface ActiveClaudeToolCall {
   readonly startedAt: DateTime.Utc;
 }
 
-const PENDING_CLAUDE_SUBAGENT_MODEL_CAP = 64;
+// What is known about a subagent before its task_started registers it,
+// keyed by the tool_use_id that launches it.
+interface PendingClaudeSubagentLaunch {
+  readonly model?: string;
+  // parent_tool_use_id of the subagent whose own Agent call launches this one.
+  readonly ownerToolUseId?: string;
+}
+
+const PENDING_CLAUDE_SUBAGENT_CAP = 64;
 // Per-subagent bound on frames held while waiting for task_started.
 const PENDING_CLAUDE_SUBAGENT_FRAME_CAP = 256;
 
-function rememberPendingClaudeSubagentModel(
-  pending: Map<string, string>,
+function rememberPendingClaudeSubagentLaunch(
+  pending: Map<string, PendingClaudeSubagentLaunch>,
   toolUseId: string,
-  model: string,
+  launch: PendingClaudeSubagentLaunch,
 ): void {
-  pending.set(toolUseId, model);
-  if (pending.size <= PENDING_CLAUDE_SUBAGENT_MODEL_CAP) {
+  pending.set(toolUseId, { ...pending.get(toolUseId), ...launch });
+  if (pending.size <= PENDING_CLAUDE_SUBAGENT_CAP) {
     return;
   }
   const oldest = pending.keys().next();
@@ -2599,24 +2610,37 @@ function rememberPendingClaudeSubagentModel(
   }
 }
 
-/** Agent calls carry model overrides even when the SDK omits child assistant snapshots. */
-function rememberClaudeSubagentRequestedModel(
+/**
+ * Agent calls carry model overrides even when the SDK omits child assistant
+ * snapshots. A subagent's own Agent call arrives only in its snapshot, so the
+ * owner recorded here is all that links the subagent it starts back to it.
+ */
+function rememberClaudeSubagentLaunch(
   context: ActiveClaudeTurnContext,
   toolUseId: string,
   input: ClaudeNativeToolInput,
+  ownerToolUseId: string | null,
 ): void {
-  const model = firstStringInputField(input, ["model"]);
-  if (
-    model === undefined ||
-    context.subagentsByToolUseId.has(toolUseId) ||
-    context.pendingSubagentModelsByToolUseId.has(toolUseId)
-  )
-    return;
-  rememberPendingClaudeSubagentModel(
-    context.pendingSubagentModelsByToolUseId,
-    toolUseId,
-    model === "inherit" ? context.input.modelSelection.model : model,
-  );
+  if (context.subagentsByToolUseId.has(toolUseId)) return;
+  const pending = context.pendingSubagentLaunchesByToolUseId;
+  const requested = firstStringInputField(input, ["model"]);
+  // "inherit" is the caller's model: the session's here, an owner's once
+  // task_started resolves it.
+  const model =
+    requested !== "inherit"
+      ? requested
+      : ownerToolUseId === null
+        ? context.input.modelSelection.model
+        : undefined;
+  // A model already known (a snapshot's, or an earlier sighting of this
+  // call) wins over the requested one.
+  const launch: PendingClaudeSubagentLaunch = {
+    ...(model === undefined || pending.get(toolUseId)?.model !== undefined ? {} : { model }),
+    ...(ownerToolUseId === null ? {} : { ownerToolUseId }),
+  };
+  if (launch.model !== undefined || launch.ownerToolUseId !== undefined) {
+    rememberPendingClaudeSubagentLaunch(pending, toolUseId, launch);
+  }
 }
 
 type PendingClaudeRuntimeRequest =
@@ -2862,7 +2886,7 @@ export function makeClaudeAdapterV2(
         // their subagent through this index into sessionSubagentsByTaskId.
         const sessionSubagentTaskIdsByToolUseId = yield* Ref.make(new Map<string, string>());
         // Subagent frames can precede the task_started that registers their
-        // subagent (the same race rememberPendingClaudeSubagentModel covers).
+        // subagent (the same race rememberPendingClaudeSubagentLaunch covers).
         // They wait here and replay once task_started registers the owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -3735,6 +3759,7 @@ export function makeClaudeAdapterV2(
               completedAt: now,
               updatedAt: now,
             },
+            rootNodeId: resume.context.input.rootNodeId,
             childThreadId: ids.childThreadId,
             childRootNodeId: ids.childRootNodeId,
             turnItemId: ids.turnItemId,
@@ -3763,6 +3788,9 @@ export function makeClaudeAdapterV2(
           readonly prompt?: string;
           readonly title?: string;
           readonly model?: string;
+          // The subagent whose own Agent call started this one; read only
+          // when this call registers the subagent.
+          readonly owner?: ActiveClaudeSubagent;
           readonly progress?: string;
           readonly result?: string;
           readonly status: Extract<
@@ -3848,7 +3876,7 @@ export function makeClaudeAdapterV2(
               id: nodeId,
               threadId: input.context.input.threadId,
               runId: input.context.input.runId,
-              parentNodeId: input.context.input.rootNodeId,
+              parentNodeId: input.owner?.task.id ?? input.context.input.rootNodeId,
               origin: "provider_native" as const,
               createdBy: "agent" as const,
               driver: CLAUDE_PROVIDER,
@@ -3890,6 +3918,7 @@ export function makeClaudeAdapterV2(
           } satisfies OrchestrationV2Subagent;
           const subagent = {
             task,
+            rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
             childThreadId,
             childRootNodeId,
             turnItemId: existingSubagent?.turnItemId ?? derivedIds.turnItemId,
@@ -3972,13 +4001,14 @@ export function makeClaudeAdapterV2(
               driver: CLAUDE_PROVIDER,
               node: {
                 id: nodeId,
-                // Parenting stays with the launch run's root node even on
-                // wake-replay; runId follows task.runId, which a reopen
-                // re-attributes to the resuming run (see task construction).
+                // Parenting stays with the launch run's root node (or the
+                // owning subagent) even on wake-replay; runId follows
+                // task.runId, which a reopen re-attributes to the resuming run
+                // (see task construction).
                 threadId: task.threadId,
                 runId: task.runId,
                 parentNodeId: task.parentNodeId,
-                rootNodeId: task.parentNodeId,
+                rootNodeId: subagent.rootNodeId,
                 kind: "subagent",
                 status: input.status,
                 countsForRun: false,
@@ -5520,10 +5550,10 @@ export function makeClaudeAdapterV2(
             if (parentToolUseId !== null && model !== undefined) {
               const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
               if (subagent === undefined) {
-                rememberPendingClaudeSubagentModel(
-                  context.pendingSubagentModelsByToolUseId,
+                rememberPendingClaudeSubagentLaunch(
+                  context.pendingSubagentLaunchesByToolUseId,
                   parentToolUseId,
-                  model,
+                  { model },
                 );
               } else if (subagent.task.status === "running" && subagent.task.model !== model) {
                 yield* updateClaudeSubagentNode({
@@ -5553,7 +5583,7 @@ export function makeClaudeAdapterV2(
                 }
                 const next = new Map(current).set(frameParentToolUseId, [...frames, message]);
                 const oldest = next.keys().next();
-                if (next.size > PENDING_CLAUDE_SUBAGENT_MODEL_CAP && !oldest.done) {
+                if (next.size > PENDING_CLAUDE_SUBAGENT_CAP && !oldest.done) {
                   next.delete(oldest.value);
                   return [oldest.value, next] as const;
                 }
@@ -5587,13 +5617,20 @@ export function makeClaudeAdapterV2(
                 activeContext: context,
               });
             } else {
-              const model =
+              const launch =
                 message.tool_use_id === undefined
                   ? undefined
-                  : context.pendingSubagentModelsByToolUseId.get(message.tool_use_id);
+                  : context.pendingSubagentLaunchesByToolUseId.get(message.tool_use_id);
               if (message.tool_use_id !== undefined) {
-                context.pendingSubagentModelsByToolUseId.delete(message.tool_use_id);
+                context.pendingSubagentLaunchesByToolUseId.delete(message.tool_use_id);
               }
+              const owner =
+                launch?.ownerToolUseId === undefined
+                  ? undefined
+                  : yield* resolveSubagentByToolUseId(context, launch.ownerToolUseId);
+              // With no model of its own, a nested subagent runs on its
+              // owner's (the SDK's default for a subagent's Agent call).
+              const model = launch?.model ?? owner?.task.model ?? undefined;
               if (message.is_backgrounded === true) {
                 yield* Ref.update(backgroundedSubagentTaskIds, (current) =>
                   new Set(current).add(message.task_id),
@@ -5612,6 +5649,7 @@ export function makeClaudeAdapterV2(
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
+                ...(owner === undefined ? {} : { owner }),
                 title: message.description,
                 status: "running",
                 reopen: true,
@@ -5710,7 +5748,12 @@ export function makeClaudeAdapterV2(
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
-              rememberClaudeSubagentRequestedModel(context, toolUse.id, nativeToolInput);
+              rememberClaudeSubagentLaunch(
+                context,
+                toolUse.id,
+                nativeToolInput,
+                parentToolUseIdFromSdkMessage(message),
+              );
               continue;
             }
             if (toolUse.name === "TodoWrite" && parentToolUseIdFromSdkMessage(message) === null) {
@@ -6219,7 +6262,7 @@ export function makeClaudeAdapterV2(
           // ExitPlanMode plan) in whichever run it is released to.
           const heldForEcho = context.heldRootFrames.length > 0;
           if (toolName === "Agent") {
-            rememberClaudeSubagentRequestedModel(context, nativeRequestId, nativeToolInput);
+            rememberClaudeSubagentLaunch(context, nativeRequestId, nativeToolInput, null);
           } else if (!heldForEcho) {
             yield* ensureToolCallStarted({
               context,
@@ -6709,7 +6752,7 @@ export function makeClaudeAdapterV2(
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
-              pendingSubagentModelsByToolUseId: new Map(),
+              pendingSubagentLaunchesByToolUseId: new Map(),
               promptUuid: isClaudeProviderContinuationTurn(turnInput)
                 ? null
                 : claudePromptUuid(turnInput.attemptId),

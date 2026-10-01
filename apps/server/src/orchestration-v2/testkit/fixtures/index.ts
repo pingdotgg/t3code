@@ -20,6 +20,8 @@ import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
+import { claudeNestedSubagentModelInput } from "./claude_nested_subagent_model/input.ts";
+import { assertClaudeNestedSubagentModelOutput } from "./claude_nested_subagent_model/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
@@ -320,6 +322,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeLocalBashTaskOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_nested_subagent_model",
+    buildInput: claudeNestedSubagentModelInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_nested_subagent_model/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeNestedSubagentModelOutput,
       },
     ],
   },
