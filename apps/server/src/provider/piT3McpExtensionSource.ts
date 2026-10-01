@@ -344,6 +344,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           description,
           promptSnippet: description.split("\\n")[0] ?? name,
           promptGuidelines: [
+            ...(name === "delegate_work"
+              ? [
+                  "Use this tool when delegated work should appear as a nested T3 child thread. Pi's local subagent tool creates a separate Pi child run instead; keep using it for transient internal assistance that does not need a T3 thread.",
+                ]
+              : []),
             \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
           ],
           parameters: jsonSchemaToTypebox(normalizeToolInputSchema(tool.inputSchema)),
