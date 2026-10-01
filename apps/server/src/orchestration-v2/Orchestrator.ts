@@ -50,7 +50,7 @@ import {
   RunId,
   ThreadLinkedPullRequest,
   ThreadId,
-  type TurnItemId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
@@ -7232,8 +7232,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getRuntimeResponseContext(command.threadId, command.requestId)
         .pipe(mapDispatchError(command));
       const requestNode = context.node;
+      if (context.request === undefined || requestNode === undefined) return;
+      // The session may already be detached; the failure is recorded either way.
       const providerSession = context.session;
-      if (context.request === undefined || requestNode === undefined || !providerSession) return;
       const thread = yield* projectionStore
         .getThread(command.threadId)
         .pipe(mapDispatchError(command));
@@ -7246,14 +7247,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         ...(requestNode.runId === null ? {} : { runId: requestNode.runId }),
         nodeId: requestNode.id,
-        driver: providerSession.driver,
-        providerInstanceId: providerSession.providerInstanceId,
+        ...(providerSession === undefined
+          ? {}
+          : {
+              driver: providerSession.driver,
+              providerInstanceId: providerSession.providerInstanceId,
+            }),
         occurredAt: now,
         payload: {
-          id: idAllocator.derive.turnItemFromProviderItem({
-            driver: providerSession.driver,
-            nativeItemId: `runtime-request-delivery-failure:${command.commandId}`,
-          }),
+          id: TurnItemId.make(`turn-item:runtime-request-delivery-failure:${command.commandId}`),
           threadId: command.threadId,
           runId: requestNode.runId,
           nodeId: requestNode.id,
