@@ -10,7 +10,7 @@ import {
   LoaderCircle,
   TextWrapIcon,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { ensureEnvironmentApi } from "~/environmentApi";
@@ -26,12 +26,12 @@ import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { projectFileCacheKey } from "./fileContentRevision";
 import { collapseBreadcrumbs, fileBreadcrumbs } from "./filePath";
+import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { getProjectFileSaveSession } from "./projectFileSaveSession";
-import { useProjectFileQuery } from "./projectFilesQueryState";
-
-const ChatMarkdown = lazy(() => import("~/components/ChatMarkdown"));
+import { resolveProjectFileQueryData, useProjectFileQuery } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
   cwd: string;
@@ -189,6 +189,44 @@ function EditableFileSurface({
         </Virtualizer>
       </EditorProvider>
     </div>
+  );
+}
+
+function RenderedMarkdownSurface({
+  environmentId,
+  cwd,
+  relativePath,
+  contents,
+  threadRef,
+}: {
+  environmentId: ScopedThreadRef["environmentId"];
+  cwd: string;
+  relativePath: string;
+  contents: string;
+  threadRef: ScopedThreadRef;
+}) {
+  const saveSession = useMemo(
+    () => getProjectFileSaveSession(environmentId, cwd, relativePath),
+    [cwd, environmentId, relativePath],
+  );
+
+  return (
+    <ScrollArea className="min-h-0 flex-1">
+      <FileMarkdownPreview
+        text={contents}
+        cwd={cwd}
+        relativePath={relativePath}
+        threadRef={threadRef}
+        onTaskListChange={({ markerOffset, checked }) => {
+          const current =
+            resolveProjectFileQueryData(environmentId, cwd, relativePath, null)?.contents ??
+            contents;
+          const next = setMarkdownTaskChecked(current, markerOffset, checked);
+          if (next === current) return;
+          saveSession.change(next);
+        }}
+      />
+    </ScrollArea>
   );
 }
 
@@ -614,17 +652,17 @@ export function FilePreviewPanel({
                 This binary file cannot be previewed or edited as text.
               </div>
             ) : showMarkdownToggle && renderMarkdown ? (
-              <div className="min-h-0 flex-1 overflow-auto">
-                <Suspense
-                  fallback={
-                    <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-                      <LoaderCircle className="size-5 animate-spin" />
-                    </div>
-                  }
-                >
-                  <ChatMarkdown text={file.data.contents} cwd={cwd} threadRef={threadRef} />
-                </Suspense>
-              </div>
+              // Markdown reconciles in place across text updates, so a file
+              // switch needs a new key or the previous file's disclosure and
+              // task state carries into the next document.
+              <RenderedMarkdownSurface
+                key={relativePath}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                contents={file.data.contents}
+                threadRef={threadRef}
+              />
             ) : file.data.truncated ? (
               <Virtualizer
                 key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}

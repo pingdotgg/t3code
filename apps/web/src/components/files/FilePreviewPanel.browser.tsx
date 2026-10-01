@@ -321,6 +321,53 @@ describe("FilePreviewPanel", () => {
     }
   });
 
+  it("renders file markdown like upstream: constrained container, file-dir links, persistent tasks", async () => {
+    readFileMock.mockResolvedValueOnce({
+      relativePath: "docs/notes.md",
+      contents: "# Notes\n\n- [ ] Ship it\n\nSee [guide](guide.md).\n",
+    });
+    const screen = await render(
+      <FilePreviewPanel
+        cwd="/repo/markdown-upstream"
+        relativePath="docs/notes.md"
+        threadRef={threadRef}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(page.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+        },
+        { timeout: 10000 },
+      );
+      // Upstream centers file markdown in a constrained, padded container.
+      expect(document.querySelector(".chat-markdown.mx-auto.max-w-4xl")).not.toBeNull();
+      // Relative links anchor at the file's own directory, not the workspace root.
+      const guideLink = document.querySelector(
+        '.chat-markdown a[href="/repo/markdown-upstream/docs/guide.md"]',
+      );
+      expect(guideLink).not.toBeNull();
+
+      // Task checkboxes persist through the file save session.
+      const checkbox = page.getByRole("checkbox", { name: "Toggle task" });
+      await expect.element(checkbox).toBeInTheDocument();
+      await checkbox.click();
+      await vi.waitFor(
+        () => {
+          expect(writeFileMock).toHaveBeenCalledWith({
+            cwd: "/repo/markdown-upstream",
+            relativePath: "docs/notes.md",
+            contents: "# Notes\n\n- [x] Ship it\n\nSee [guide](guide.md).\n",
+          });
+        },
+        { timeout: 10000 },
+      );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("renders text files and promotes HTML/PDF files into the browser", async () => {
     const screen = await render(
       <FilePreviewPanel
