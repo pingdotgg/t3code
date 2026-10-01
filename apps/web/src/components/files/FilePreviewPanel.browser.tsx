@@ -291,10 +291,39 @@ describe("FilePreviewPanel", () => {
       expect(host).not.toBeNull();
       collect(host!, "pre", pres);
       expect(pres.length).toBeGreaterThan(0);
-      // Settings default codeFontSize is 12px; the Pierre default is 13px.
+      // Settings default codeFontSize is 13px; the Pierre default is 13px.
       for (const pre of pres) {
-        expect(getComputedStyle(pre).fontSize).toBe("12px");
+        expect(getComputedStyle(pre).fontSize).toBe("13px");
       }
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("wraps long lines by default like upstream", async () => {
+    readFileMock.mockResolvedValueOnce({
+      relativePath: "wrap.ts",
+      contents: `export const wrapped = "${"x".repeat(400)}";`,
+    });
+    const screen = await render(
+      <div style={{ height: 400, width: 500, overflow: "hidden" }}>
+        <div className="h-full min-h-0">
+          <FilePreviewPanel
+            cwd="/repo/wrap-default"
+            relativePath="wrap.ts"
+            threadRef={threadRef}
+            onOpenFile={vi.fn()}
+          />
+        </div>
+      </div>,
+    );
+    try {
+      await vi.waitFor(() => {
+        const viewport = document.querySelector(".file-preview-virtualizer");
+        expect(viewport).not.toBeNull();
+        // Wrapped text never overflows horizontally.
+        expect(viewport!.scrollWidth).toBeLessThanOrEqual(viewport!.clientWidth + 1);
+      });
     } finally {
       await screen.unmount();
     }
@@ -316,6 +345,68 @@ describe("FilePreviewPanel", () => {
         });
         expect(document.querySelector("[data-file-browser-panel]")).not.toBeNull();
       });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders file markdown like upstream: constrained container, file-dir links, persistent tasks", async () => {
+    readFileMock.mockResolvedValueOnce({
+      relativePath: "docs/notes.md",
+      contents: "# Notes\n\n- [ ] Ship it\n\nSee [guide](guide.md) and run `index.ts:10`.\n",
+    });
+    const screen = await render(
+      <FilePreviewPanel
+        cwd="/repo/markdown-upstream"
+        relativePath="docs/notes.md"
+        threadRef={threadRef}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    try {
+      await vi.waitFor(
+        () => {
+          expect(page.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+        },
+        { timeout: 10000 },
+      );
+      // Upstream centers file markdown in a constrained, padded container.
+      expect(document.querySelector(".chat-markdown.mx-auto.max-w-4xl")).not.toBeNull();
+      // Relative links anchor at the file's own directory, not the workspace root.
+      const guideLink = document.querySelector(
+        '.chat-markdown a[href="/repo/markdown-upstream/docs/guide.md"]',
+      );
+      expect(guideLink).not.toBeNull();
+      // Bare-basename inline code resolves the workspace-relative lookup hit
+      // against the workspace root, not the previewed file's directory. The
+      // workspace index loads asynchronously, so wait for the chip.
+      // (Bare names only reach the lookup with a `:line` suffix; without one
+      // the inline-code resolver returns null before consulting the index.)
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector(
+              '.chat-markdown a[href="/repo/markdown-upstream/src/index.ts:10"]',
+            ),
+          ).not.toBeNull();
+        },
+        { timeout: 10000 },
+      );
+
+      // Task checkboxes persist through the file save session.
+      const checkbox = page.getByRole("checkbox", { name: "Toggle task" });
+      await expect.element(checkbox).toBeInTheDocument();
+      await checkbox.click();
+      await vi.waitFor(
+        () => {
+          expect(writeFileMock).toHaveBeenCalledWith({
+            cwd: "/repo/markdown-upstream",
+            relativePath: "docs/notes.md",
+            contents: "# Notes\n\n- [x] Ship it\n\nSee [guide](guide.md) and run `index.ts:10`.\n",
+          });
+        },
+        { timeout: 10000 },
+      );
     } finally {
       await screen.unmount();
     }

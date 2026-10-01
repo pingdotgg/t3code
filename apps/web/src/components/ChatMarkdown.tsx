@@ -29,6 +29,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { reportClientWarning } from "../lib/clientLogger";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -92,6 +93,11 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   threadRef?: ScopedThreadRef;
+  className?: string;
+  /** Directory that anchors relative links; defaults to `cwd`. Set
+      to the file's own directory when rendering a markdown file. */
+  imageBaseDir?: string | undefined;
+  onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
 }
 
 type MarkdownFunctionComponentProps<K extends keyof Components> = Parameters<
@@ -160,6 +166,17 @@ function extractCodeBlock(
 function normalizeChatMarkdownText(text: string, isStreaming: boolean): string {
   const normalized = text.replace(WEB_CITATION_TOKEN_PATTERN, "");
   return isStreaming ? normalized.replace(TRAILING_PARTIAL_WEB_CITATION_PATTERN, "") : normalized;
+}
+
+function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
+  const firstLineEnd = markdown.indexOf("\n", listItemStart);
+  const firstLine = markdown.slice(
+    listItemStart,
+    firstLineEnd === -1 ? markdown.length : firstLineEnd,
+  );
+  const match = firstLine.match(/^(?:\s*(?:[-+*]|\d+[.)])\s+)(\[[ xX]\])/);
+  if (!match?.[1]) return null;
+  return listItemStart + firstLine.indexOf(match[1]);
 }
 
 type MarkdownAstNode = {
@@ -447,8 +464,9 @@ function resolveChatInlineCodeMeta(
   codeText: string,
   cwd: string | undefined,
   entries: ReadonlyArray<WorkspaceFileEntryLike>,
+  baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
-  const base = resolveInlineCodeFileLinkMeta(codeText, cwd);
+  const base = resolveInlineCodeFileLinkMeta(codeText, cwd, baseDir);
   if (!base || !cwd || entries.length === 0) return base;
   const trimmed = codeText.trim();
   const suffix = extractChatFilePositionSuffix(trimmed);
@@ -459,9 +477,11 @@ function resolveChatInlineCodeMeta(
   const relative = findWorkspaceRelativeForBasename(basename, entries);
   if (!relative) return base;
   // Re-resolve with the workspace-relative path so the file panel opens the
-  // real nested file instead of `cwd/basename`.
+  // real nested file instead of `cwd/basename`. The lookup result is already
+  // workspace-relative, so it anchors at `cwd` — not at the previewed file's
+  // directory, which would join it onto the wrong base.
   const candidate = suffix ? `${relative}:${suffix}` : relative;
-  return resolveMarkdownFileLinkMeta(candidate, cwd) ?? base;
+  return resolveMarkdownFileLinkMeta(candidate, cwd, cwd) ?? base;
 }
 
 function remarkTagInlineCode(resolve: (codeText: string) => MarkdownFileLinkMeta | null) {
@@ -519,7 +539,7 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   const promise = getSharedHighlighter({
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
-    preferredHighlighter: "shiki-js",
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
   }).catch((err) => {
     highlighterPromiseCache.delete(language);
     if (language === "text") {
@@ -1162,6 +1182,9 @@ function ChatMarkdownView({
   isStreaming = false,
   threadRef,
   workspaceEntries,
+  className,
+  imageBaseDir,
+  onTaskListChange,
 }: ChatMarkdownViewProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -1216,9 +1239,12 @@ function ChatMarkdownView({
     ],
     [environmentIds, primaryEnvironmentId, savedEnvironmentById],
   );
+  // Relative links resolve against the file's own directory when rendering
+  // a markdown file, and against the workspace root everywhere else.
+  const linkBaseDir = imageBaseDir ?? cwd;
   const resolveChatInlineCode = useCallback(
-    (codeText: string) => resolveChatInlineCodeMeta(codeText, cwd, workspaceEntries),
-    [cwd, workspaceEntries],
+    (codeText: string) => resolveChatInlineCodeMeta(codeText, cwd, workspaceEntries, linkBaseDir),
+    [cwd, linkBaseDir, workspaceEntries],
   );
   // Stabilize the map identity when streaming text grows without adding new
   // references: a fresh Map per chunk would otherwise rebuild remarkPlugins
@@ -1285,13 +1311,13 @@ function ChatMarkdownView({
     for (const href of extractMarkdownLinkHrefs(text)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
-      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
+      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd, linkBaseDir);
       if (meta) {
         metaByHref.set(normalizedHref, meta);
       }
     }
     return metaByHref;
-  }, [cwd, text]);
+  }, [cwd, linkBaseDir, text]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     return buildFileParentSuffixByPath(
       [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -1415,14 +1441,63 @@ function ChatMarkdownView({
     },
     [resolveChatInlineCode, cwd, resolvedTheme, threadRef],
   );
+  const markdownListItem = useCallback(
+    ({ node, ...props }: MarkdownFunctionComponentProps<"li">) => {
+      const listItemStart = node?.position?.start.offset;
+      const markerOffset =
+        typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+      return <li {...props} data-task-marker-offset={markerOffset ?? undefined} />;
+    },
+    [text],
+  );
+  const markdownTaskInput = useCallback(
+    ({
+      node: _node,
+      type,
+      checked,
+      disabled,
+      ...props
+    }: MarkdownFunctionComponentProps<"input">) => {
+      if (type !== "checkbox" || !onTaskListChange) {
+        return (
+          <input
+            {...props}
+            type={type}
+            checked={checked}
+            disabled={disabled}
+            readOnly={type === "checkbox"}
+          />
+        );
+      }
+      return (
+        <input
+          {...props}
+          type="checkbox"
+          name="markdown-task"
+          aria-label="Toggle task"
+          checked={checked}
+          onChange={(event) => {
+            const markerOffset = Number(
+              event.currentTarget.closest("li")?.dataset.taskMarkerOffset,
+            );
+            if (!Number.isSafeInteger(markerOffset)) return;
+            onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
+          }}
+        />
+      );
+    },
+    [onTaskListChange],
+  );
   const markdownComponents = useMemo<Components>(
     () => ({
       ...markdownComponentsWithoutRuntimeState,
       a: markdownAnchor,
       code: markdownCode,
       pre: markdownPre,
+      li: markdownListItem,
+      input: markdownTaskInput,
     }),
-    [markdownAnchor, markdownCode, markdownPre],
+    [markdownAnchor, markdownCode, markdownPre, markdownListItem, markdownTaskInput],
   );
   // Stable plugin array: react-markdown re-tokenizes when the array identity
   // changes, so factory plugins must be memoized across streaming renders.
@@ -1445,7 +1520,9 @@ function ChatMarkdownView({
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 leading-relaxed text-foreground/80">
+    <div
+      className={cn("chat-markdown w-full min-w-0 leading-relaxed text-foreground/80", className)}
+    >
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         components={markdownComponents}
