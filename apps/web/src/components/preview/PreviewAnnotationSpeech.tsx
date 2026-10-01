@@ -51,7 +51,7 @@ export function PreviewAnnotationSpeech({
       keys.current = null;
     };
   }, []);
-  useDictationShortcut({
+  const shortcutLabel = useDictationShortcut({
     keybindings: config.keybindings,
     speech,
     disabled: false,
@@ -75,6 +75,7 @@ export function PreviewAnnotationSpeech({
           status: resolveSpeechPresentation(state, progress).status,
           preview: preview ? preview.committed + preview.tentative : null,
           level,
+          shortcutLabel,
           freezesEditor: freezesEditor,
           blocksSubmission: blocksSubmission,
           draft: nextDraft,
@@ -98,6 +99,7 @@ export function PreviewAnnotationSpeech({
       blocksSubmission,
       cancel,
       level,
+      shortcutLabel,
       progress,
     ],
   );

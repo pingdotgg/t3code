@@ -735,7 +735,8 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     voiceButton.hidden = !state.available || active;
     voiceButton.disabled = voiceBusy;
     const label = voiceSettings ? "Open voice settings" : "Start voice input";
-    voiceButton.title = label;
+    voiceButton.title =
+      !voiceSettings && state.shortcutLabel ? `${label} (${state.shortcutLabel})` : label;
     voiceButton.setAttribute("aria-label", label);
     voiceRow.hidden = state.phase === "idle";
     voicePill.className = active
@@ -776,6 +777,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     voiceFinish.disabled = !recording;
     voiceFinish.title = recording ? "Finish voice input" : (state.status ?? "Voice input is busy");
     voiceFinish.setAttribute("aria-label", voiceFinish.title);
+    if (recording && state.shortcutLabel) voiceFinish.title += ` (${state.shortcutLabel})`;
     if (phaseChanged)
       voiceFinish.innerHTML = recording
         ? '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
