@@ -534,12 +534,18 @@ const make = (options?: StartupOptions) =>
       yield* providerSessions.idleReleases.pipe(
         Stream.runForEach(({ providerSessionId, threadIds }) =>
           Effect.gen(function* () {
-            // A replacement may have reused the id; its runs are live.
-            if (Option.isSome(yield* providerSessions.get(providerSessionId))) return;
             yield* Effect.forEach(
               threadIds,
               (threadId) =>
-                providerRuntimeRecovery.reconcileReleasedSession({ threadId, providerSessionId }),
+                providerRuntimeRecovery.reconcileReleasedSession({
+                  threadId,
+                  providerSessionId,
+                  isSessionLive: providerSessions.get(providerSessionId).pipe(
+                    Effect.map(Option.isSome),
+                    // When unsure, treat it as live and leave the thread alone.
+                    Effect.orElseSucceed(() => true),
+                  ),
+                }),
               { discard: true },
             );
           }).pipe(

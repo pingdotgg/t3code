@@ -1273,7 +1273,10 @@ it.effect(
   },
 );
 
-const releasedSessionFixture = (secondRunStatus: "queued" | "preparing" | "waiting") => {
+const releasedSessionFixture = (
+  secondRunStatus: "queued" | "preparing" | "waiting",
+  otherSessionStatus: "stopped" | "ready" = "stopped",
+) => {
   const threadId = ThreadId.make("thread_released_session");
   const providerSessionId = ProviderSessionId.make("session_released");
   const providerThreadId = ProviderThreadId.make("provider_thread_released");
@@ -1288,7 +1291,10 @@ const releasedSessionFixture = (secondRunStatus: "queued" | "preparing" | "waiti
   const projection = {
     thread: { id: threadId },
     runtimeRequests: [],
-    providerSessions: [{ id: providerSessionId, status: "stopped" }],
+    providerSessions: [
+      { id: providerSessionId, status: "stopped" },
+      { id: ProviderSessionId.make("session_other"), status: otherSessionStatus },
+    ],
     providerThreads: [
       { id: providerThreadId, providerSessionId, status: "active", ownerNodeId: null },
     ],
@@ -1361,7 +1367,11 @@ it.effect("settles a run stranded by an idle-released session and keeps the queu
   const fixture = releasedSessionFixture("queued");
   return Effect.gen(function* () {
     yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
-      { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+      {
+        threadId: fixture.threadId,
+        providerSessionId: fixture.providerSessionId,
+        isSessionLive: Effect.succeed(false),
+      },
     );
     const command = fixture.committed();
     assert.isNotNull(command);
@@ -1394,7 +1404,11 @@ it.effect(
     const fixture = releasedSessionFixture("preparing");
     return Effect.gen(function* () {
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
-        { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+        {
+          threadId: fixture.threadId,
+          providerSessionId: fixture.providerSessionId,
+          isSessionLive: Effect.succeed(false),
+        },
       );
       assert.isNull(fixture.committed());
     }).pipe(Effect.provide(fixture.layer));
@@ -1407,9 +1421,41 @@ it.effect(
     const fixture = releasedSessionFixture("waiting");
     return Effect.gen(function* () {
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
-        { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+        {
+          threadId: fixture.threadId,
+          providerSessionId: fixture.providerSessionId,
+          isSessionLive: Effect.succeed(false),
+        },
       );
       assert.isNull(fixture.committed());
     }).pipe(Effect.provide(fixture.layer));
   },
 );
+
+it.effect("leaves a thread alone when a live session holds the released id again", () => {
+  const fixture = releasedSessionFixture("queued");
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
+      {
+        threadId: fixture.threadId,
+        providerSessionId: fixture.providerSessionId,
+        isSessionLive: Effect.succeed(true),
+      },
+    );
+    assert.isNull(fixture.committed());
+  }).pipe(Effect.provide(fixture.layer));
+});
+
+it.effect("leaves a thread alone when another of its sessions is still live", () => {
+  const fixture = releasedSessionFixture("queued", "ready");
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
+      {
+        threadId: fixture.threadId,
+        providerSessionId: fixture.providerSessionId,
+        isSessionLive: Effect.succeed(false),
+      },
+    );
+    assert.isNull(fixture.committed());
+  }).pipe(Effect.provide(fixture.layer));
+});

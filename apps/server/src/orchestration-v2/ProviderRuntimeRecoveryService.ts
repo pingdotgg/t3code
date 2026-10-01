@@ -69,6 +69,8 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     readonly reconcileReleasedSession: (input: {
       readonly threadId: ThreadId;
       readonly providerSessionId: ProviderSessionId;
+      /** Whether a live session currently holds that id; checked just before the commit. */
+      readonly isSessionLive: Effect.Effect<boolean>;
     }) => Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
@@ -192,8 +194,8 @@ const TRIGGER_DETAIL: Record<ReconcileTrigger, string> = {
 };
 
 /**
- * A thread is stranded when every unfinished run is a running one on a
- * provider thread bound to the released session. A waiting run is left alone:
+ * A thread is stranded when no other session is live and every unfinished run
+ * is a running one on a provider thread bound to the released session. A waiting run is left alone:
  * its checkpoint capture can still complete concurrently with this read.
  */
 function isStrandedBySession(
@@ -201,7 +203,16 @@ function isStrandedBySession(
   providerSessionId: ProviderSessionId,
 ): boolean {
   const unfinished = nonterminalRuns(projection);
+  // Reconciliation stops every session in the projection, so another live one
+  // (for example a subagent's) must rule the thread out.
+  const otherLiveSession = projection.providerSessions.some(
+    (session) =>
+      session.id !== providerSessionId &&
+      session.status !== "stopped" &&
+      session.status !== "error",
+  );
   return (
+    !otherLiveSession &&
     unfinished.length > 0 &&
     unfinished.every(
       (run) =>
@@ -806,21 +817,26 @@ export const make = Effect.gen(function* () {
   const reconcileReleasedSession = (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
+    readonly isSessionLive: Effect.Effect<boolean>;
   }) =>
     Effect.gen(function* () {
-      const projection = yield* projections.getRuntimeRecoveryProjection(input.threadId);
+      const projection = yield* projections.getRuntimeRecoveryProjection(input.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderRuntimeRecoveryError({
+              operation: "read-projections",
+              threadId: input.threadId,
+              cause,
+            }),
+        ),
+      );
       if (!isStrandedBySession(projection, input.providerSessionId)) return;
+      // Checked after the read and right before the commit: a replacement
+      // that reused the id would have moved its run out of `running`.
+      const live = yield* input.isSessionLive;
+      if (live) return;
       yield* reconcileProjection(projection, "session-released", false);
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderRuntimeRecoveryError({
-            operation: "reconcile",
-            threadId: input.threadId,
-            cause,
-          }),
-      ),
-    );
+    });
 
   // Snapshot intent only while providers are live. A provider may finish while
   // this commits; reconciliation reads fresh state after shutdown, and delivery
