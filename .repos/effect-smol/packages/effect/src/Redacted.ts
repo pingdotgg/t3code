@@ -19,7 +19,7 @@ import type { Pipeable } from "./Pipeable.ts"
 import { hasProperty, isString } from "./Predicate.ts"
 import type { Covariant } from "./Types.ts"
 
-const TypeId = "~effect/data/Redacted"
+const TypeId = "~effect/Redacted"
 
 /**
  * A wrapper for sensitive values whose string, JSON, and inspection output is

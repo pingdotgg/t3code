@@ -43,6 +43,7 @@ export interface SourceControlProviderHandle {
 export class SourceControlProviderRegistry extends Context.Service<
   SourceControlProviderRegistry,
   {
+    readonly resolveLink: SourceControlProvider.ResolveSourceControlLink;
     readonly get: (
       kind: SourceControlProviderKind,
     ) => Effect.Effect<
@@ -161,6 +162,7 @@ function bindProviderContext(
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: provider.kind,
+    ...(provider.resolveLink ? { resolveLink: provider.resolveLink } : {}),
     listChangeRequests: (input) =>
       provider.listChangeRequests({
         ...input,
@@ -277,17 +279,24 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       );
 
     return SourceControlProviderRegistry.of({
+      resolveLink: (input) => {
+        if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
+          return undefined;
+        }
+        const kind = detectSourceControlProviderFromRemoteUrl(input.url.href)?.kind;
+        return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
+      },
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
-      discover: Effect.all(
-        discoverySpecs.map((spec) =>
+      discover: Effect.forEach(
+        discoverySpecs,
+        (spec) =>
           probeSourceControlProvider({
             spec,
             process,
             cwd: config.cwd,
           }),
-        ),
         { concurrency: "unbounded" },
       ),
     });

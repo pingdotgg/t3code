@@ -1,5 +1,5 @@
-import type { PullRequestContextMetadata } from "@t3tools/contracts";
-import { CircleDashedIcon, FilmIcon, GitPullRequestIcon, ImageIcon } from "lucide-react";
+import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
+import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
   useState,
   type ComponentProps,
@@ -8,100 +8,84 @@ import {
   type ReactNode,
 } from "react";
 
-import { cn } from "~/lib/utils";
+import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRequestIcons";
+import type { PullRequestContextDisplayState } from "~/lib/composerContextRecords";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
-import {
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-  CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
-  CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
-  CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
-  middleTruncateAttachmentName,
-} from "./composerInlineChip";
+import { middleTruncateAttachmentName } from "./composerInlineChip";
 import { PullRequestContextDetails } from "./PullRequestContextDetails";
-import { Button } from "./ui/button";
+import { ContextChip, ContextChipLabel, type ContextChipKind } from "./ContextChip";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 
-/** Shared visual slots; each surface keeps ownership of payload lookup and actions. */
+/** ContextChip kind for a pull request context in each display state. */
+export const PULL_REQUEST_CHIP_KINDS = {
+  open: "pr-open",
+  draft: "pr-draft",
+  merged: "pr-merged",
+  closed: "pr-closed",
+  unknown: "pull-request",
+} as const satisfies Record<PullRequestContextDisplayState | "unknown", ContextChipKind>;
+
+/** A static chip with an optional tooltip; each surface keeps ownership of payload lookup. */
 export function ContextChipShell({
   icon,
   label,
-  labelClassName,
   tooltip,
-  tooltipClassName = "max-w-96 whitespace-pre-wrap leading-tight",
-  interactive,
-  unresolved,
-  className,
   ...props
-}: ComponentProps<"span"> & {
+}: Omit<ComponentProps<typeof ContextChip>, "className" | "render"> & {
   icon: ReactNode;
   label: string;
-  labelClassName: string;
+  /** Newlines in the tooltip are kept. */
   tooltip?: ReactNode;
-  tooltipClassName?: string;
-  interactive?: boolean;
-  unresolved?: boolean;
 }) {
   const chip = (
-    <span
-      className={cn(
-        className,
-        interactive && CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-        tooltip && CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
-        unresolved && "border-dashed text-foreground",
-      )}
-      data-context-unresolved={unresolved ? "true" : undefined}
+    <ContextChip
+      data-context-unresolved={props.state === "unresolved" ? "true" : undefined}
       tabIndex={tooltip ? 0 : undefined}
       {...props}
     >
       {icon}
-      <span className={labelClassName}>{label}</span>
-    </span>
+      <ContextChipLabel>{label}</ContextChipLabel>
+    </ContextChip>
   );
   if (!tooltip) return chip;
   return (
     <Tooltip>
       <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" className={tooltipClassName}>
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {tooltip}
       </TooltipPopup>
     </Tooltip>
   );
 }
 
+/** A chip that opens its details in a popover; the chip itself is the trigger. */
 export function ContextChipPopover(props: {
+  kind: ContextChipKind;
+  icon: ReactNode;
+  label: string;
   copyMarkdown?: string;
   accessibleLabel: string;
-  chip: ReactNode;
   children: ReactNode;
-  triggerClassName?: string;
-  popupClassName?: string;
-  viewportClassName?: string;
 }) {
   return (
     <Popover>
       <PopoverTrigger
         render={
-          <Button
-            variant="chip"
-            className={cn(
-              "inline-flex max-w-full cursor-pointer items-center rounded-[0.5em] align-middle",
-              CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
-              props.triggerClassName,
-            )}
+          <ContextChip
+            kind={props.kind}
+            render={<button type="button" />}
             aria-label={`${props.accessibleLabel}. Show details`}
             data-markdown-copy={props.copyMarkdown}
           />
         }
       >
-        {props.chip}
+        {props.icon}
+        <ContextChipLabel>{props.label}</ContextChipLabel>
       </PopoverTrigger>
-      <PopoverPopup
-        side="top"
-        className={cn("w-[min(36rem,calc(100vw-2rem))]", props.popupClassName)}
-        viewportClassName={cn("overflow-x-auto p-2", props.viewportClassName)}
-      >
+      <PopoverPopup side="top" width="lg" padding="compact">
         <PopoverTitle className="sr-only">{props.accessibleLabel}</PopoverTitle>
         {props.children}
       </PopoverPopup>
@@ -111,34 +95,43 @@ export function ContextChipPopover(props: {
 
 export function PullRequestChip(props: {
   metadata: PullRequestContextMetadata;
+  environmentId: EnvironmentId | null;
   label: string;
   kindLabel: string;
-  className: string;
-  labelClassName: string;
+  kind: ContextChipKind;
   copyMarkdown?: string;
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
+  const previewTarget = usePullRequestPreviewTarget(props.environmentId, props.metadata.url);
+  const displayState =
+    props.metadata.state === "open" && props.metadata.isDraft ? "draft" : props.metadata.state;
+  const StateIcon = PULL_REQUEST_STATE_PRESENTATION[displayState].Icon;
+  const button = (
+    <ContextChip
+      kind={props.kind}
+      render={<button type="button" />}
+      aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
+      data-markdown-copy={props.copyMarkdown}
+      onClick={(event) => props.onOpen(event, props.metadata.url)}
+    >
+      <StateIcon />
+      <ContextChipLabel>{props.label}</ContextChipLabel>
+    </ContextChip>
+  );
+  if (previewTarget !== null) {
+    return (
+      <PullRequestLinkPreview
+        link={button}
+        originalUrl={props.metadata.url}
+        target={previewTarget}
+        confirmBeforeOpen={false}
+        fallback={<PullRequestContextDetails metadata={props.metadata} />}
+      />
+    );
+  }
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="chip"
-            className={cn(
-              props.className,
-              CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
-              CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-              "cursor-pointer",
-            )}
-            aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
-            data-markdown-copy={props.copyMarkdown}
-            onClick={(event) => props.onOpen(event, props.metadata.url)}
-          >
-            <GitPullRequestIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-            <span className={props.labelClassName}>{props.label}</span>
-          </Button>
-        }
-      />
+      <TooltipTrigger render={button} />
       <TooltipPopup side="top">
         <PullRequestContextDetails metadata={props.metadata} />
       </TooltipPopup>
@@ -177,16 +170,13 @@ function averageImageColor(image: HTMLImageElement): string | undefined {
 export function ImageChipButton({
   name,
   previewUrl,
-  className,
-  labelClassName,
   size,
   suffix,
   style,
   ...props
-}: ComponentProps<"button"> & {
+}: Omit<ComponentProps<typeof ContextChip>, "kind" | "render"> & {
   name: string;
   previewUrl: string | undefined;
-  labelClassName: string;
   /** Every attachment chip reports its size; images are no exception. */
   size: string;
   suffix?: string | null;
@@ -195,14 +185,9 @@ export function ImageChipButton({
   const [corsFailedUrl, setCorsFailedUrl] = useState<string>();
   const accent = sample?.url === previewUrl ? sample?.color : undefined;
   return (
-    <Button
-      variant="chip"
-      className={cn(
-        className,
-        CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.image,
-        CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-        "cursor-zoom-in",
-      )}
+    <ContextChip
+      kind="image"
+      render={<button type="button" />}
       aria-label={`Image attachment, ${name}, ${size}`}
       style={{ ...style, ...(accent ? { "--context-chip-accent": accent } : {}) } as CSSProperties}
       {...props}
@@ -213,25 +198,19 @@ export function ImageChipButton({
           crossOrigin={corsFailedUrl === previewUrl ? undefined : "anonymous"}
           src={previewUrl}
           alt=""
-          className="size-3.5 shrink-0 rounded-sm object-cover"
+          className="size-[1.17em] shrink-0 rounded-sm object-cover"
           onError={() => setCorsFailedUrl(previewUrl)}
           onLoad={(event) =>
             setSample({ url: previewUrl, color: averageImageColor(event.currentTarget) })
           }
         />
       ) : (
-        <ImageIcon
-          className={cn(
-            COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-            CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.image,
-            "size-3.5",
-          )}
-        />
+        <ImageIcon />
       )}
-      <span className={cn(labelClassName, "max-w-72")}>{middleTruncateAttachmentName(name)}</span>
-      <span className="shrink-0 text-[10px] text-current">{size}</span>
-      {suffix ? <span className="text-[10px] text-current">{suffix}</span> : null}
-    </Button>
+      <ContextChipLabel className="max-w-72">{middleTruncateAttachmentName(name)}</ContextChipLabel>
+      <span className="shrink-0 text-3xs text-current">{size}</span>
+      {suffix ? <span className="text-3xs text-current">{suffix}</span> : null}
+    </ContextChip>
   );
 }
 
@@ -240,8 +219,6 @@ export function FileChip(props: {
   size: string;
   isVideo: boolean;
   theme: "light" | "dark";
-  className: string;
-  labelClassName: string;
   accessibleLabel: string;
   tooltip: string;
   suffix?: string | null;
@@ -251,39 +228,39 @@ export function FileChip(props: {
   unresolved?: boolean;
   onOpen?: (() => void) | undefined;
 }) {
-  const className = cn(
-    props.className,
-    props.isVideo
-      ? CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.video
-      : CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.file,
-    props.onOpen && !props.disabled && CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
-    props.onOpen && !props.disabled && (props.isVideo ? "cursor-zoom-in" : "cursor-pointer"),
-    props.unresolved && "border-dashed text-foreground",
-    props.error && "border-destructive/35 bg-destructive/8 text-destructive",
-  );
   const content = <FileChipContent {...props} />;
+  const state = props.unresolved
+    ? ("unresolved" as const)
+    : props.error
+      ? ("invalid" as const)
+      : null;
   const attributes = {
-    className,
+    kind: props.isVideo ? "video" : "file",
+    ...(state ? { state } : {}),
     "aria-label": [props.accessibleLabel, props.suffix].filter(Boolean).join(", "),
     "data-markdown-copy": props.copyMarkdown,
     "data-context-unresolved": props.unresolved ? "true" : undefined,
-  };
+  } as const;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           props.onOpen ? (
-            <Button variant="chip" disabled={props.disabled} onClick={props.onOpen} {...attributes}>
+            <ContextChip
+              render={<button type="button" disabled={props.disabled} />}
+              onClick={props.onOpen}
+              {...attributes}
+            >
               {content}
-            </Button>
+            </ContextChip>
           ) : (
-            <span tabIndex={0} {...attributes}>
+            <ContextChip tabIndex={0} {...attributes}>
               {content}
-            </span>
+            </ContextChip>
           )
         }
       />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
+      <TooltipPopup side="top" className="whitespace-pre-wrap">
         {props.tooltip}
       </TooltipPopup>
     </Tooltip>
@@ -295,55 +272,33 @@ function FileChipContent(props: {
   size: string;
   isVideo: boolean;
   theme: "light" | "dark";
-  labelClassName: string;
   suffix?: string | null;
 }) {
   return (
     <>
       {props.isVideo ? (
-        <FilmIcon
-          className={cn(
-            COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
-            CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES.video,
-            "size-3.5",
-          )}
-        />
+        <FilmIcon />
       ) : (
-        <PierreEntryIcon
-          pathValue={props.name}
-          kind="file"
-          theme={props.theme}
-          className="size-3.5"
-        />
+        <PierreEntryIcon pathValue={props.name} kind="file" theme={props.theme} />
       )}
-      <span className={cn(props.labelClassName, "max-w-72")}>
+      <ContextChipLabel className="max-w-72">
         {middleTruncateAttachmentName(props.name)}
-      </span>
-      <span className="shrink-0 text-[10px] text-current">{props.size}</span>
-      {props.suffix ? <span className="text-[10px] text-current">{props.suffix}</span> : null}
+      </ContextChipLabel>
+      <span className="shrink-0 text-3xs text-current">{props.size}</span>
+      {props.suffix ? <span className="text-3xs text-current">{props.suffix}</span> : null}
     </>
   );
 }
 
-export function UnresolvedChip(props: {
-  label: string;
-  className: string;
-  labelClassName: string;
-  tooltip: string;
-  tooltipClassName: string;
-  copyMarkdown?: string;
-}) {
+export function UnresolvedChip(props: { label: string; tooltip: string; copyMarkdown?: string }) {
   return (
     <ContextChipShell
-      icon={<CircleDashedIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />}
+      icon={<CircleDashedIcon />}
       label={props.label}
-      className={props.className}
-      labelClassName={props.labelClassName}
+      state="unresolved"
       aria-label={`Unavailable context, ${props.label}`}
       data-markdown-copy={props.copyMarkdown}
       tooltip={props.tooltip}
-      tooltipClassName={props.tooltipClassName}
-      unresolved
     />
   );
 }

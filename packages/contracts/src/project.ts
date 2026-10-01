@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import {
   NonNegativeInt,
   PositiveInt,
+  ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
 } from "./baseSchemas.ts";
@@ -28,6 +29,7 @@ export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 export const ProjectEntry = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: ProjectEntryKind,
+  ignored: Schema.optional(Schema.Boolean),
 });
 export type ProjectEntry = typeof ProjectEntry.Type;
 
@@ -72,6 +74,9 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Present for immediate filesystem children, including ignored entries; empty means root.
+  // Omitted preserves the indexed recursive listing used by older clients.
+  directoryPath: Schema.optional(TrimmedString),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 
@@ -89,6 +94,7 @@ export const ProjectEntriesFailure = Schema.Literals([
   "search_index_create_failed",
   "search_index_scan_timed_out",
   "search_index_search_failed",
+  "directory_list_failed",
 ]);
 export type ProjectEntriesFailure = typeof ProjectEntriesFailure.Type;
 
@@ -275,6 +281,12 @@ export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+/** The environment's Scratch project, created on first request. */
+export const ProjectEnsureScratchResult = Schema.Struct({
+  projectId: ProjectId,
+});
+export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",

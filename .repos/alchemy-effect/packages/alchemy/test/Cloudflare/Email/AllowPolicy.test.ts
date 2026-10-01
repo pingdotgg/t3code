@@ -56,7 +56,7 @@ const findByPattern = (accountId: string) =>
 // and is refused at the edge instead:
 //
 //     Forbidden: Authentication error
-//       at matchTypedError (distilled/packages/core/src/protocol-http.ts)
+//       at matchTypedError (submodules/distilled/packages/core/src/protocol-http.ts)
 //
 // Set `CLOUDFLARE_TEST_EMAIL_SECURITY=1` with an API-token credential
 // carrying the Email Security read scope to run it.

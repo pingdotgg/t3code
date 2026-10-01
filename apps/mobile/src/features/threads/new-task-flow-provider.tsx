@@ -18,12 +18,9 @@ import {
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
-import {
-  isDefaultThreadEnvModeSettled,
-  resolveDefaultThreadEnvMode,
-} from "@t3tools/shared/threadEnvMode";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 
@@ -82,6 +79,7 @@ import {
   setPendingConnectionError,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
@@ -93,9 +91,10 @@ import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
-} from "./legacy-plan-mode";
+} from "../../state/legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
+  filterNewTaskBranches,
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
@@ -133,6 +132,9 @@ export function branchBadgeLabel(input: {
   if (input.branch.worktreePath && input.branch.worktreePath !== input.project?.workspaceRoot) {
     return "worktree";
   }
+  if (input.branch.isRemote) {
+    return "remote";
+  }
   if (input.branch.isDefault) {
     return "default";
   }
@@ -145,6 +147,8 @@ type NewTaskFlowContextValue = {
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
+  /** False for threads without a project: their folder has no branch or worktree. */
+  readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -431,39 +435,46 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       : null,
   );
   const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
-  const t3ProjectFileDefaultMode = useMemo(() => {
-    if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
-    return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
-  }, [t3ProjectFileData]);
-  // Environment settings with the project's overrides applied; the
-  // aggregate's own legacy fields still count until the server folds them.
+  const t3ProjectFile = useMemo(
+    () =>
+      t3ProjectFileData === null || t3ProjectFileData.truncated
+        ? null
+        : parseT3ProjectFile(t3ProjectFileData.contents),
+    [t3ProjectFileData],
+  );
+  // Environment settings with the project's overrides and its t3.json
+  // applied; the aggregate's own legacy fields still count until the server
+  // folds them.
   const projectSettings = useMemo(
     () =>
       resolveProjectSettings(
         selectedEnvironmentServerConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
         selectedProject?.id ?? null,
         selectedProject,
+        t3ProjectFile,
       ),
-    [selectedEnvironmentServerConfig?.settings, selectedProject],
+    [selectedEnvironmentServerConfig?.settings, selectedProject, t3ProjectFile],
   );
-  const projectThreadEnvMode =
-    projectSettings.sources.defaultThreadEnvMode === "project"
-      ? projectSettings.settings.defaultThreadEnvMode
-      : undefined;
-  const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
-    projectSetting: projectThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
-    globalDefault: projectSettings.settings.defaultThreadEnvMode,
-  });
-  // While unsettled the resolved default is provisional. Nothing may write
-  // it into the draft during that window (the auto-branch effect does), or
-  // the frozen interim value beats the t3.json default once it loads.
-  const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
-    explicitMode: selectedProjectDraft.workspaceSelection?.mode,
-    projectSetting: projectThreadEnvMode,
-    projectFilePending: t3ProjectFileQuery.isPending,
-  });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
+  // A thread without a project runs in a plain folder, so worktree mode
+  // would leave it unsendable: it is always local and offers no choice.
+  const canChooseWorkspace = !(
+    selectedProject !== null &&
+    isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot)
+  );
+  const defaultWorkspaceMode: WorkspaceMode = canChooseWorkspace
+    ? projectSettings.settings.defaultThreadEnvMode
+    : "local";
+  // While the file read is pending and nothing above it decided, the
+  // resolved default is provisional. Nothing may write it into the draft
+  // during that window (the auto-branch effect does), or the frozen interim
+  // value beats the t3.json default once it loads.
+  const defaultWorkspaceModeSettled =
+    selectedProjectDraft.workspaceSelection?.mode !== undefined ||
+    projectSettings.sources.defaultThreadEnvMode !== "environment" ||
+    !t3ProjectFileQuery.isPending;
+  const workspaceMode = canChooseWorkspace
+    ? (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode)
+    : "local";
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
   // Keep the user's explicit choice separate from the resolved display value:
@@ -633,7 +644,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
     replaceComposerDraftAttachments(selectedProjectDraftKey, []);
   }, [selectedProjectDraftKey]);
-  const debouncedBranchQuery = useDebouncedValue(branchQuery, BRANCH_SEARCH_DEBOUNCE_MS);
+  const branchSearchQuery = sanitizeNewRefName(branchQuery);
+  const debouncedBranchQuery = useDebouncedValue(branchSearchQuery, BRANCH_SEARCH_DEBOUNCE_MS);
   const branchTarget = useMemo(
     () => ({
       environmentId: selectedProject?.environmentId ?? null,
@@ -644,7 +656,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [debouncedBranchQuery, selectedProject?.environmentId, selectedProject?.workspaceRoot],
   );
   const branchState = usePaginatedBranches(branchTarget);
-  const branchSearchIsDebouncing = branchQuery.trim() !== debouncedBranchQuery.trim();
+  const branchSearchIsDebouncing = branchSearchQuery !== debouncedBranchQuery;
   const branchesLoading =
     branchSearchIsDebouncing || (branchState.isPending && branchState.data === null);
   const branchesFetchingNextPage = branchState.isFetchingNextPage;
@@ -676,17 +688,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const currentCheckoutBranchName = projectGitStatus.data?.refName ?? null;
 
-  const filteredBranches = useMemo(() => {
-    const query = branchQuery.trim().toLowerCase();
-    if (query.length === 0) {
-      return availableBranches;
-    }
-
-    return pipe(
-      availableBranches,
-      Arr.filter((branch) => branch.name.toLowerCase().includes(query)),
-    );
-  }, [availableBranches, branchQuery]);
+  const filteredBranches = useMemo(
+    () => filterNewTaskBranches(allBranchRefs, branchQuery),
+    [allBranchRefs, branchQuery],
+  );
 
   // The composer's draft follows the project it will be sent to: switching
   // mid-compose keeps the same draft and moves it, so typed text follows the
@@ -873,10 +878,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   useEffect(() => {
     if (
+      !selectedProjectDraftKey ||
       !defaultWorkspaceModeSettled ||
       workspaceMode !== "worktree" ||
       selectedBranchName !== null
     ) {
+      return;
+    }
+    // The draft screen writes a thread's branch and worktree into the draft in
+    // the same commit this effect runs, so the rendered selection above can be
+    // stale. Re-read the draft before replacing it.
+    const live = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
+    if (live && (live.mode !== "worktree" || live.branch !== null)) {
       return;
     }
     // The default may only exist as origin/<default> (isRemote), which
@@ -894,6 +907,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     defaultWorkspaceModeSettled,
     selectBranch,
     selectedBranchName,
+    selectedProjectDraftKey,
     workspaceMode,
   ]);
 
@@ -970,7 +984,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (text.length === 0 || !draftModelSelection) {
         return null;
       }
-      const workspaceSelection = draft.workspaceSelection;
+      // A saved choice from before the project went no-project must not
+      // survive: those threads always run locally in their own folder.
+      const workspaceSelection = canChooseWorkspace ? draft.workspaceSelection : undefined;
       // Fall back to the resolved mode (server default) so queued tasks drain
       // with the same mode the composer displayed.
       const mode = workspaceSelection?.mode ?? workspaceMode;
@@ -1030,6 +1046,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       };
     },
     [
+      canChooseWorkspace,
       defaultRuntimeMode,
       editingPendingProject,
       editingPendingTask,
@@ -1153,6 +1170,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectKey,
       selectedModelKey,
       workspaceMode,
+      canChooseWorkspace,
       selectedBranchName,
       selectedWorktreePath,
       startFromOrigin,
@@ -1258,6 +1276,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       startFromOrigin,
       submitting,
       workspaceMode,
+      canChooseWorkspace,
       appendAttachments,
       clearAttachments,
       removeAttachment,

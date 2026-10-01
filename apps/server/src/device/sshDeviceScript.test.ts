@@ -83,15 +83,16 @@ const state=process.env.AGENT_DEVICE_STATE_DIR || args[args.indexOf('--state-dir
 const file=path.join(state,'daemon.json');
 if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); fs.writeFileSync(path.join(state,'stopped-agent'),String(data.pid)); try {process.kill(data.pid,'SIGTERM')} catch {} }
 else if(args[0]==='serve') { const server=http.createServer((req,res)=>{res.statusCode=fs.existsSync(path.join(state,'unhealthy-agent-'+process.pid))?503:200;res.end('ok');}); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
-else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
+else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1]),'daemon.mjs'),'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
+        await NodeFSP.copyFile(agent, NodePath.join(NodePath.dirname(agent), "daemon.mjs"));
         const nextHubVersion = DEVICE_HUB_VERSION + "-upgrade";
         const nextAgentVersion = AGENT_DEVICE_VERSION + "-upgrade";
         let invocation = 0;
         const invoke = async (
           owner: string,
-          mode: "start" | "agent-start" | "stop-agent" | "stop",
+          mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
           upgraded = false,
         ) => {
           const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
@@ -107,6 +108,11 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
+        const inventory = await invoke("one", "probe");
+        expect(inventory.tools.hub.installedVersions).toEqual([DEVICE_HUB_VERSION]);
+        expect(inventory.tools.hub.runningVersion).toBeNull();
+        expect(inventory.tools.agent.installedVersions).toEqual([AGENT_DEVICE_VERSION]);
+        await expect(NodeFSP.stat(NodePath.join(root, "hosts/one/hub.json"))).rejects.toThrow();
         const template = NodePath.join(home, "hub-template");
         await NodeFSP.cp(hubDir, template, { recursive: true });
         await NodeFSP.rm(NodePath.join(hubDir, ".install-complete"));
@@ -114,11 +120,14 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         await NodeFSP.symlink("2147483647:exited-installer", installLock);
         await NodeFSP.writeFile(
           NodePath.join(bin, "npm"),
-          `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
+          `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='--version'){console.log('10.0.0');process.exit(0);}fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
           { mode: 0o755 },
         );
         await NodeFSP.mkdir(NodePath.join(root, "hosts/one"), { recursive: true });
         await NodeFSP.writeFile(NodePath.join(root, "hosts/one/fail-start-once"), "");
+        // Unavailable advisory bookkeeping must not prevent either helper from starting.
+        await NodeFSP.writeFile(NodePath.join(root, "tools/.maintenance-lock"), "blocked");
+        await NodeFSP.writeFile(NodePath.join(root, "tools/.users"), "unwritable lease directory");
         try {
           const [manual, concurrent] = await Promise.all([
             invoke("one", "start"),
@@ -135,6 +144,9 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           ]);
           expect(concurrentAgent.hubPort).toBe(first.hubPort);
           expect(concurrentAgent.daemonPort).toBe(first.daemonPort);
+          const running = await invoke("one", "probe");
+          expect(running.tools.hub.runningVersion).toBe(DEVICE_HUB_VERSION);
+          expect(running.tools.agent.runningVersion).toBe(AGENT_DEVICE_VERSION);
           const second = await invoke("two", "agent-start");
           const reused = await invoke("one", "agent-start");
           expect(reused.hubPort).toBe(first.hubPort);
