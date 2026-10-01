@@ -37,12 +37,15 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -464,6 +467,51 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("reports the exit of a live Codex session when its instance is removed", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const codexId = ProviderInstanceId.make("codex_removed_live");
+      const threadId = ThreadId.make("thread-instance-removed");
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver],
+        configMap: {
+          [codexId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            environment: [
+              { name: "T3_CODEX_COLLAB_SCRIPT", value: fixtures.codexScriptPath, sensitive: false },
+            ],
+            config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
+          },
+        },
+      });
+      const codex = yield* registry.getInstance(codexId);
+      expect(codex).toBeDefined();
+      const adapter = codex!.adapter;
+      const exitedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited" && event.threadId === threadId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      // A settings edit that drops the instance. The real adapter and runtime
+      // must report the exit, or the thread's turn stays "running" forever.
+      yield* mutator.reconcile({});
+
+      const exited = yield* Fiber.join(exitedFiber).pipe(Effect.timeout("10 seconds"));
+      expect(Option.isSome(exited)).toBe(true);
+      if (Option.isNone(exited) || exited.value.type !== "session.exited") return;
+      expect(exited.value.payload.exitKind).toBe("graceful");
+      expect(yield* registry.listInstances).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
 

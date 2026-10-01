@@ -2348,8 +2348,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // it and read it when a turn fails on the limit.
         let rateLimits: CodexRateLimitSnapshot | undefined;
         const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
+        // `runtime.close` closes the scope it was given before ending its event
+        // stream. A child scope keeps that from interrupting the forwarder
+        // below, which must stay alive to deliver the final `session/closed`.
+        const runtimeScope = yield* Scope.fork(sessionScope, "sequential");
         const runtime = yield* createRuntime(runtimeInput).pipe(
-          Effect.provideService(Scope.Scope, sessionScope),
+          Effect.provideService(Scope.Scope, runtimeScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError(
@@ -2766,7 +2770,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     // `close` ends the runtime event stream after emitting `session/closed`.
     // Let the forwarder drain it before its scope is closed, so the exit
     // reaches the orchestrator and the thread does not stay "running".
-    yield* Fiber.join(session.eventFiber).pipe(Effect.timeoutOption("5 seconds"), Effect.ignore);
+    // `await`, not `join`: an interrupted forwarder must not interrupt the stop.
+    yield* Fiber.await(session.eventFiber).pipe(Effect.timeoutOption("5 seconds"));
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
