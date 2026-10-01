@@ -111,8 +111,10 @@ const modelCatalog = {
   ],
 };
 
+/** The prompt id the recorded answer carries; a replay maps it to the one T3 chose. */
+const PROMPT_ID = "msg_0eb735d41001NJee1EvVePJAK5";
 const promptAccepted = replyData("session.prompt", {
-  id: "msg_0eb735d41001NJee1EvVePJAK5",
+  id: PROMPT_ID,
   sessionID: SESSION,
   time: { created: 1790656601410 },
   type: "user",
@@ -2176,10 +2178,58 @@ describe("OpenCode2 adapter", () => {
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
 
+  it.effect("does not end a turn from an earlier turn's history when its prompt is not there", () =>
+    Effect.gen(function* () {
+      // The stream drops before the turn's prompt reached the history: what the
+      // history holds is the previous turn's, and its `idle` is not this turn's end.
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_earlier", time: { created: 3 }, type: "idle", outcome: "succeeded" },
+            {
+              id: "msg_assistant_earlier",
+              time: { created: 2 },
+              type: "assistant",
+              agent: "build",
+              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+              content: [{ type: "text", text: "An earlier turn's answer." }],
+              finish: "stop",
+            },
+            { id: "msg_user_earlier", time: { created: 1 }, text: "earlier", type: "user" },
+          ],
+          cursor: {},
+        }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      assert.notInclude(
+        collected.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [event.turnItem.text]
+            : [],
+        ),
+        "An earlier turn's answer.",
+      );
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "interrupted" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("ends a turn that finished while the stream was down with the server's outcome", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
         ...reconnected({}, "succeeded"),
       ]);
@@ -2292,7 +2342,7 @@ describe("OpenCode2 adapter", () => {
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
         ...reconnected({ [SESSION]: { type: "running" } }),
         event("session.text.ended", {

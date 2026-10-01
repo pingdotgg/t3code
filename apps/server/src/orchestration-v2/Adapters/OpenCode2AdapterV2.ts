@@ -2581,15 +2581,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const promptId = promptOf(turn.providerTurn);
       const { before } = turn;
       if (promptId === undefined && before === undefined) return undefined;
-      const recent = yield* paginate(
+      const start = before !== undefined ? before : promptId;
+      const read = yield* paginate(
         { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 50 },
         client.message.list,
       ).pipe(
-        before !== undefined
-          ? Stream.takeWhile((message) => message.id !== before)
-          : Stream.takeUntil((message) => message.id === promptId),
+        Stream.takeUntil((message) => message.id === start),
         Stream.runCollect,
       );
+      // Without its start the history holds only earlier turns (the stream
+      // dropped before the prompt landed): none of it is this turn's. A null
+      // `before` is a command that started on an empty history.
+      const found = start === null || read.at(-1)?.id === start;
+      if (!found) return undefined;
+      const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
       const idle = recent.find((message) => message.type === "idle");
       for (const message of recent.toReversed()) {
         if (message.type !== "assistant" || state.active !== turn) continue;
