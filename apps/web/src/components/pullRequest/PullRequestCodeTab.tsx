@@ -24,9 +24,17 @@ import {
   TextWrapIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useAtomRefresh } from "@effect/atom-react";
+import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -203,6 +211,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  backgroundRefreshToken = 0,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -219,6 +228,7 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  backgroundRefreshToken?: number;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -437,6 +447,40 @@ function PullRequestCodeTab({
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  // A background refresh keeps the first page on screen and re-reads it in place. Later pages
+  // are dropped and their cached answers invalidated, so scrolling reads them fresh rather than
+  // trusting an unchanged first page to vouch for the rest of the diff.
+  const registry = useContext(RegistryContext);
+  const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
+  useEffect(() => {
+    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
+    for (const slice of loadedSlices.slice(1)) {
+      if (slice.cursor === null) continue;
+      registry.refresh(
+        pullRequestEnvironment.diff({
+          environmentId,
+          input: { ...reference, cursor: slice.cursor, ...(commit === null ? {} : { commit }) },
+        }),
+      );
+    }
+    setSliceState((previous) => ({
+      key: previous.key,
+      cursor: null,
+      slices: previous.slices.slice(0, 1),
+    }));
+    refreshFirstDiffPage();
+    refreshFilesViewed();
+  }, [
+    backgroundRefreshToken,
+    commit,
+    environmentId,
+    loadedSlices,
+    reference,
+    refreshFirstDiffPage,
+    refreshFilesViewed,
+    registry,
+  ]);
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
   // not structure and so dropped. Neither says anything about there being more to fetch.
