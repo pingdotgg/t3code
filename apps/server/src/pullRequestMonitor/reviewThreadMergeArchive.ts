@@ -11,6 +11,7 @@ import {
   threadPullRequestKey,
 } from "@t3tools/shared/threadPullRequests";
 
+import { collectActiveThreadSubtree } from "../orchestration/threadHierarchy.ts";
 import { isReviewWorkflowThread } from "./reviewWorkflowThread.ts";
 
 export type ReviewThreadMergeArchiveCandidate = {
@@ -44,9 +45,20 @@ function isArchiveCandidate(thread: OrchestrationThread): boolean {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
   // Settling is a deliberate signal from the user; archiving would overwrite it.
   if (thread.settledOverride === "settled") return false;
-  // Archiving stops the provider session, so a review that is still mid-turn would lose its
-  // in-flight findings. A merged pull request stays merged, so the next sweep takes it instead.
-  return thread.latestTurn?.state !== "running";
+  return !hasRunningTurn(thread);
+}
+
+function hasRunningTurn(thread: OrchestrationThread): boolean {
+  return thread.latestTurn?.state === "running";
+}
+
+/**
+ * `thread.archive` archives a thread's whole active subtree and stops each one's provider
+ * session, so the guard has to cover delegated work too — a review root that has finished while
+ * a child it delegated to is still running would otherwise take that child down with it.
+ */
+function subtreeHasRunningTurn(readModel: OrchestrationReadModel, rootThreadId: ThreadId): boolean {
+  return collectActiveThreadSubtree(readModel, rootThreadId).some(hasRunningTurn);
 }
 
 function activeReviewRoots(readModel: OrchestrationReadModel): OrchestrationThread[] {
@@ -108,7 +120,9 @@ export function planReviewThreadAutoArchive(
     const pullRequestKey = reviewThreadPullRequests(thread)
       .map(threadPullRequestKey)
       .find((key) => mergedPullRequestKeys.has(key));
-    return pullRequestKey === undefined ? [] : [{ threadId: thread.id, pullRequestKey }];
+    if (pullRequestKey === undefined) return [];
+    if (subtreeHasRunningTurn(readModel, thread.id)) return [];
+    return [{ threadId: thread.id, pullRequestKey }];
   });
 
   // Ancestor membership is decided over the whole candidate set rather than against the threads

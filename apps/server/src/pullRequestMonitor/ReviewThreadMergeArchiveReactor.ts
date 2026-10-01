@@ -96,7 +96,13 @@ export const sweepOnce = Effect.gen(function* () {
     }
   }
 
-  for (const candidate of planReviewThreadAutoArchive(readModel, mergedPullRequestKeys)) {
+  // The provider reads above took real time, during which the user can settle a thread, start a
+  // turn, or unlink the pull request. The archive decider only refuses a thread that is already
+  // archived, so eligibility is re-read here rather than dispatched on a stale read model. What
+  // remains is ordinary command ordering: a user action dispatched after this point wins, and one
+  // dispatched before it is already reflected above.
+  const current = yield* engine.getReadModel();
+  for (const candidate of planReviewThreadAutoArchive(current, mergedPullRequestKeys)) {
     yield* engine
       .dispatch({
         type: "thread.archive",

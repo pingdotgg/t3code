@@ -61,13 +61,17 @@ const harness = ({
   settings = { autoArchiveReviewThreadsOnMerge: true },
   mergedNumbers = [],
   failList = false,
+  duringProviderRead,
 }: {
   readonly threads: ReadonlyArray<OrchestrationThread>;
   readonly settings?: Partial<ServerSettings>;
   readonly mergedNumbers?: ReadonlyArray<number>;
   readonly failList?: boolean;
+  /** A user action that lands while the provider read is still in flight. */
+  readonly duringProviderRead?: (thread: OrchestrationThread) => OrchestrationThread;
 }) =>
   Effect.gen(function* () {
+    const current = yield* Ref.make<ReadonlyArray<OrchestrationThread>>(threads);
     const dispatched = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
     const listCalls = yield* Ref.make<ReadonlyArray<{ readonly state: string }>>([]);
     const detailCalls = yield* Ref.make(0);
@@ -75,7 +79,7 @@ const harness = ({
 
     const services = Layer.mergeAll(
       Layer.succeed(OrchestrationEngineService, {
-        getReadModel: () => Effect.succeed(readModel(threads)),
+        getReadModel: () => Ref.get(current).pipe(Effect.map(readModel)),
         dispatch: (command: OrchestrationCommand) =>
           Ref.update(dispatched, (previous) => [...previous, command]).pipe(
             Effect.as({ sequence: 1 }),
@@ -94,24 +98,40 @@ const harness = ({
       } as never),
       Layer.succeed(PullRequestService, {
         list: (input: { readonly state: string }) =>
-          Ref.update(listCalls, (previous) => [...previous, { state: input.state }]).pipe(
-            Effect.andThen(
-              failList
-                ? Effect.fail(new Error("gh unavailable"))
-                : Effect.succeed({
-                    entries: mergedNumbers.map((number) => ({
-                      host: "github.com",
-                      projectId,
-                      repository: REPO,
-                      number,
-                      title: `Change ${number}`,
-                      url: `https://github.com/${REPO}/pull/${number}`,
-                      state: "merged",
-                    })),
-                    truncated: false,
-                  }),
+          Ref.get(current)
+            .pipe(
+              Effect.flatMap((snapshot) =>
+                duringProviderRead === undefined
+                  ? Effect.void
+                  : Ref.set(
+                      current,
+                      snapshot.map((thread) => duringProviderRead(thread)),
+                    ),
+              ),
+            )
+            .pipe(
+              Effect.andThen(
+                Ref.update(listCalls, (previous) => [...previous, { state: input.state }]),
+              ),
+            )
+            .pipe(
+              Effect.andThen(
+                failList
+                  ? Effect.fail(new Error("gh unavailable"))
+                  : Effect.succeed({
+                      entries: mergedNumbers.map((number) => ({
+                        host: "github.com",
+                        projectId,
+                        repository: REPO,
+                        number,
+                        title: `Change ${number}`,
+                        url: `https://github.com/${REPO}/pull/${number}`,
+                        state: "merged",
+                      })),
+                      truncated: false,
+                    }),
+              ),
             ),
-          ),
         detail: () => Ref.update(detailCalls, (count) => count + 1).pipe(Effect.as(undefined)),
       } as never),
     );
@@ -195,6 +215,53 @@ describe("sweepOnce", () => {
         logs.some((line) => line.includes("review-thread-merge-archive")),
         `expected a sweep log line, saw ${JSON.stringify(logs)}`,
       );
+    }),
+  );
+
+  it.effect(
+    "does not archive a thread the user settled while the provider read was in flight",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* harness({
+          threads: [reviewThread("root", 7)],
+          mergedNumbers: [7],
+          duringProviderRead: (thread) =>
+            ({ ...thread, settledOverride: "settled" }) as unknown as OrchestrationThread,
+        });
+        yield* h.run;
+        const commands = yield* Ref.get(h.dispatched);
+        assert.strictEqual(commands.length, 0);
+      }),
+  );
+
+  it.effect("does not archive a thread whose turn the user started during the provider read", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        threads: [reviewThread("root", 7)],
+        mergedNumbers: [7],
+        duringProviderRead: (thread) =>
+          ({
+            ...thread,
+            latestTurn: { turnId: "turn-9", state: "running", completedAt: null },
+          }) as unknown as OrchestrationThread,
+      });
+      yield* h.run;
+      const commands = yield* Ref.get(h.dispatched);
+      assert.strictEqual(commands.length, 0);
+    }),
+  );
+
+  it.effect("does not archive a thread whose pull request the user unlinked mid-read", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({
+        threads: [reviewThread("root", 7)],
+        mergedNumbers: [7],
+        duringProviderRead: (thread) =>
+          ({ ...thread, pullRequests: [] }) as unknown as OrchestrationThread,
+      });
+      yield* h.run;
+      const commands = yield* Ref.get(h.dispatched);
+      assert.strictEqual(commands.length, 0);
     }),
   );
 

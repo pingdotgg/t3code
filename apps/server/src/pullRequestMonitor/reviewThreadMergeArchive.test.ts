@@ -106,6 +106,67 @@ describe("planReviewThreadAutoArchive", () => {
     ).toEqual(["done"]);
   });
 
+  it("defers a review thread whose delegated child is still running", () => {
+    const threads = [
+      reviewThread({
+        id: "root",
+        latestTurn: { turnId: "t1", state: "completed", completedAt: "2026-01-02T00:00:00.000Z" },
+      }),
+      reviewThread({
+        id: "child",
+        parentThreadId: "root",
+        reviewSnapshot: null,
+        latestTurn: { turnId: "t2", state: "running", completedAt: null },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("defers a review thread whose grandchild is still running", () => {
+    const threads = [
+      reviewThread({ id: "root" }),
+      reviewThread({ id: "child", parentThreadId: "root", reviewSnapshot: null }),
+      reviewThread({
+        id: "grandchild",
+        parentThreadId: "child",
+        reviewSnapshot: null,
+        latestTurn: { turnId: "t3", state: "running", completedAt: null },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
+  });
+
+  it("still archives once the delegated child finishes", () => {
+    const threads = [
+      reviewThread({ id: "root" }),
+      reviewThread({
+        id: "child",
+        parentThreadId: "root",
+        reviewSnapshot: null,
+        latestTurn: { turnId: "t2", state: "completed", completedAt: "2026-01-02T00:00:00.000Z" },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      { threadId: "root", pullRequestKey: `github.com/${REPO}#7` },
+    ]);
+  });
+
+  it("ignores a running delegated child that is already archived", () => {
+    const threads = [
+      reviewThread({ id: "root" }),
+      reviewThread({
+        id: "child",
+        parentThreadId: "root",
+        reviewSnapshot: null,
+        archivedAt: "2026-01-02T00:00:00.000Z",
+        latestTurn: { turnId: "t2", state: "running", completedAt: null },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      { threadId: "root", pullRequestKey: `github.com/${REPO}#7` },
+    ]);
+  });
+
   it("skips a review thread the user settled", () => {
     const threads = [reviewThread({ id: "root", settledOverride: "settled" })];
     expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([]);
