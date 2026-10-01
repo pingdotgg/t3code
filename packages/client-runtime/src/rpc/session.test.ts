@@ -149,6 +149,7 @@ const SERVER_CONFIG: ServerConfigType = {
     localTracingEnabled: false,
     otlpTracesEnabled: false,
     otlpMetricsEnabled: false,
+    otlpLogsEnabled: false,
   },
   settings: DEFAULT_SERVER_SETTINGS,
 };
@@ -160,7 +161,7 @@ const RpcRequest = Schema.TaggedStruct("Request", {
 });
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const isRpcRequest = Schema.is(RpcRequest);
-const isPing = Schema.is(Schema.Struct({ _tag: Schema.Literal("Ping") }));
+const isPing = Schema.is(Schema.TaggedStruct("Ping", {}));
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeServerConfig = Schema.encodeSync(ServerConfig);
 const encodeServerConfigStreamEvent = Schema.encodeSync(ServerConfigStreamEvent);
@@ -822,14 +823,14 @@ describe("RpcSessionFactory", () => {
             retryNow: Effect.void,
           } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
           const cache = Persistence.EnvironmentCacheStore.of({
-            loadShell: () => Effect.succeed(Option.none()),
+            loadShell: () => Effect.succeedNone,
             saveShell: () => Effect.void,
-            loadThread: () => Effect.succeed(Option.none()),
+            loadThread: () => Effect.succeedNone,
             saveThread: () => Effect.void,
             removeThread: () => Effect.void,
-            loadServerConfig: () => Effect.succeed(Option.none()),
+            loadServerConfig: () => Effect.succeedNone,
             saveServerConfig: () => Effect.void,
-            loadVcsRefs: () => Effect.succeed(Option.none()),
+            loadVcsRefs: () => Effect.succeedNone,
             saveVcsRefs: () => Effect.void,
             removeVcsRefs: () => Effect.void,
             clearVcsRefs: () => Effect.void,
@@ -1055,6 +1056,37 @@ describe("RpcSessionFactory", () => {
           });
         }),
       ),
+  );
+
+  it.effect("rejects a server config for a different environment", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(Effect.flip(session.ready));
+      const configFiber = yield* session
+        .subscribeServerConfig({})
+        .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
+      const customConfigFiber = yield* session
+        .subscribeServerConfig({ environmentThemes: true })
+        .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        environment: {
+          ...ENCODED_SERVER_CONFIG.environment,
+          environmentId: "environment-2",
+        },
+      });
+
+      const error = yield* Fiber.join(readyFiber);
+      expect(error).toMatchObject({
+        reason: "configuration",
+        message: "Connected environment environment-2 does not match environment-1.",
+      });
+      expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
+      expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");
+    }),
   );
 
   it.effect("tolerates two missed pong windows before closing the session", () =>

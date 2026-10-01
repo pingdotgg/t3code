@@ -150,9 +150,8 @@ export interface Channel extends Resource<
  * Channels bill per running hour; Alchemy provisions channels in the `IDLE`
  * state and never starts them — start/stop is a runtime operation.
  *
- * @resource
- * @section Creating a Channel
- * @example Single-pipeline HLS channel
+ * ### Creating a Channel
+ * **Example:** Single-pipeline HLS channel
  * ```typescript
  * const channel = yield* MediaLive.Channel("Live", {
  *   channelClass: "SINGLE_PIPELINE",
@@ -170,7 +169,7 @@ export interface Channel extends Resource<
  * });
  * ```
  *
- * @example IAM role for MediaLive
+ * **Example:** IAM role for MediaLive
  * ```typescript
  * const role = yield* IAM.Role("MediaLiveRole", {
  *   assumeRolePolicyDocument: {
@@ -185,6 +184,8 @@ export interface Channel extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Channel = Resource<Channel>("AWS.MediaLive.Channel");
 

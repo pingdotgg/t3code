@@ -22,7 +22,7 @@ export class SmsVoiceOptOutTestFunction extends Lambda.Function<Lambda.Function>
 export default SmsVoiceOptOutTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

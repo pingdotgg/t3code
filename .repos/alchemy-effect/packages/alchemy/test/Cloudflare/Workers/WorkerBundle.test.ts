@@ -1,5 +1,5 @@
 import * as Cloudflare from "@/Cloudflare";
-import { WorkerBundle } from "@/Cloudflare/Workers/WorkerBundle";
+import { WorkerBundle } from "@/Cloudflare/Workers/Sources/Rolldown";
 import * as Alchemy from "@/index.ts";
 import * as Test from "@/Test/Alchemy";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -85,6 +85,49 @@ layer(NodeServices.layer)("WorkerBundle", (it) => {
           if (!file.path.endsWith(".js")) continue;
           expect(decode(file.content)).not.toContain("Calling `require` for");
         }
+      }),
+  );
+  // `?worker` imports (WorkerModulePlugin.ts): the target is bundled into
+  // one self-contained module and imported as a STRING, ready for a
+  // `WorkerLoader`. Nested `?worker` imports inside the target work too.
+  it.effect(
+    "bundles a ?worker import into a string, nested imports included",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const root = yield* writeFixture({
+          "package.json": "{}",
+          "grandchild.mjs": [
+            `export default { fetch: () => new Response("GRANDCHILD_MARKER") };`,
+          ].join("\n"),
+          "child.mjs": [
+            `import grandchild from "./grandchild.mjs?worker";`,
+            `export const MARKER = "CHILD_MARKER_";`,
+            `export default { fetch: () => new Response(MARKER + grandchild) };`,
+          ].join("\n"),
+          "worker.mjs": [
+            `import child from "./child.mjs?worker";`,
+            `export default {`,
+            `  fetch: () => new Response(typeof child + ":" + child.length),`,
+            `};`,
+          ].join("\n"),
+        });
+        const bundler = yield* WorkerBundle;
+        const output = yield* bundler.build({
+          id: "worker-bundle-worker-module",
+          main: path.join(root, "worker.mjs"),
+          compatibility: { date: "2026-03-17", flags: ["nodejs_compat"] },
+          entry: { kind: "external" },
+          stack: { name: "worker-bundle-test", stage: "test" },
+          extraOptions: undefined,
+        });
+        const entry = decode(output.files[0].content);
+        // The child's code is embedded as a JSON string literal …
+        expect(entry).toContain("CHILD_MARKER_");
+        // … which itself embeds the grandchild's code (one more level).
+        expect(entry).toContain("GRANDCHILD_MARKER");
+        // `child` is a string in the parent, not a module namespace.
+        expect(entry).not.toContain("import child from");
       }),
   );
 });

@@ -78,6 +78,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedProjectSearch.command, "projectSearch.toggle");
 
+    const parsedUsageOpen = yield* decode(KeybindingRule, {
+      key: "mod+u",
+      command: "usage.open",
+    });
+    assert.strictEqual(parsedUsageOpen.command, "usage.open");
+
     const parsedThemeEditor = yield* decode(KeybindingRule, {
       key: "mod+alt+shift+t",
       command: "themeEditor.toggle",
@@ -121,6 +127,13 @@ it.effect("parses keybinding rules", () =>
       when: "!terminalFocus",
     });
     assert.strictEqual(parsedThreadCopyReference.command, "thread.copyReference");
+
+    const parsedPullRequestCopyNumber = yield* decode(KeybindingRule, {
+      key: "mod+shift+k",
+      command: "pullRequest.copyNumber",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedPullRequestCopyNumber.command, "pullRequest.copyNumber");
 
     const parsedThreadStop = yield* decode(KeybindingRule, {
       key: "mod+escape",

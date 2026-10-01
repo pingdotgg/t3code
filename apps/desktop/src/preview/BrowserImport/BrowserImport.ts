@@ -39,7 +39,7 @@ import {
   type BrowserImportSourceDefinition,
 } from "./Sources.ts";
 
-export class BrowserImportFailedError extends Schema.TaggedErrorClass<BrowserImportFailedError>()(
+export class BrowserImportFailedError extends Schema.TaggedError<BrowserImportFailedError>()(
   "BrowserImportFailedError",
   {
     sourceId: Schema.String,
@@ -55,7 +55,7 @@ export class BrowserImportFailedError extends Schema.TaggedErrorClass<BrowserImp
   }
 }
 
-export class BrowserCookieWriteError extends Schema.TaggedErrorClass<BrowserCookieWriteError>()(
+export class BrowserCookieWriteError extends Schema.TaggedError<BrowserCookieWriteError>()(
   "BrowserCookieWriteError",
   {
     url: Schema.String,

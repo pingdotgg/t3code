@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * running fails with the typed `ConflictException` tag. The channel id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaLive.StopChannelHttp)`.
- * @binding
- * @section Controlling Channels
- * @example Stop the Channel After the Broadcast
+ * ### Controlling Channels
+ * **Example:** Stop the Channel After the Broadcast
  * ```typescript
  * // init — bind the operation to the channel
  * const stopChannel = yield* AWS.MediaLive.StopChannel(channel);
@@ -22,6 +21,8 @@ import type { Channel } from "./Channel.ts";
  * // runtime
  * const { State } = yield* stopChannel();
  * ```
+ *
+ * @binding
  */
 export interface StopChannel extends Binding.Service<
   StopChannel,

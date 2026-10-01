@@ -39,7 +39,7 @@ const errorTagged = <A, E extends { _tag: string }, R>(
 export default KinesisAnalyticsV2TestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Application probes fan out SDK calls — AWS's 3s default intermittently
     // times out under cold starts.
     timeout: Duration.seconds(30),

@@ -15,9 +15,8 @@ export interface ListReceivedGrantsRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListReceivedGrantsHttp)`.
- * @binding
- * @section Managing Grants
- * @example List Received Grants
+ * ### Managing Grants
+ * **Example:** List Received Grants
  * ```typescript
  * // init
  * const listReceivedGrants =
@@ -26,6 +25,8 @@ export interface ListReceivedGrantsRequest
  * // runtime
  * const { Grants } = yield* listReceivedGrants();
  * ```
+ *
+ * @binding
  */
 export interface ListReceivedGrants extends Binding.Service<
   ListReceivedGrants,

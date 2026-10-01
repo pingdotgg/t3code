@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.GetRecommendationsHttp)`.
  *
- * @binding
- * @section Serving Recommendations
- * @example Recommend Items for a User
+ * ### Serving Recommendations
+ * **Example:** Recommend Items for a User
  * ```typescript
  * // init
  * const getRecommendations = yield* Personalize.GetRecommendations();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   numResults: 10,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetRecommendations extends Binding.Service<
   GetRecommendations,

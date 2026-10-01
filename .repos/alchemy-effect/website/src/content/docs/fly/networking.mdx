@@ -1,0 +1,106 @@
+---
+title: IPs & certificates
+description: Reach a Fly Service over fly.dev and on your own hostname.
+---
+
+IPs and certificates attach to the [App](/fly/compute/apps). The
+[Service](/fly/compute/services) publishes ports. Fly's proxy
+load-balances `{app}.fly.dev` across Machines that publish a proxy
+service.
+
+## Publish the Service
+
+A Service with `port` listens inside the Machine. Alchemy publishes
+HTTP 80 and HTTPS 443 on the Fly proxy in front of it.
+
+```typescript
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Yield the Service in the Stack. `api.url` is
+`https://{appName}.fly.dev`.
+
+```typescript
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Fly.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const api = yield* Api;
+    return { url: api.url };
+  }),
+);
+```
+
+That hostname does not answer over IPv4 yet.
+
+## Allocate a shared IPv4
+
+Add a shared Anycast IPv4 on the same App. This is what you want for
+fly.dev over IPv4. It is free.
+
+```typescript
+export const PublicIp = Fly.IpAssignment("Shared", {
+  app: Site,
+  type: "shared_v4",
+});
+```
+
+Yield it next to the Service.
+
+```diff lang="typescript"
+Effect.gen(function* () {
+  const api = yield* Api;
++  const ip = yield* PublicIp;
+  return { url: api.url, ip: ip.ip };
+}),
+```
+
+`v6` is free dedicated IPv6. `v4` is billed dedicated IPv4 and may
+400 if the org has no quota. Prefer `shared_v4` or `v6` in tests.
+
+Fly's proxy terminates TLS on 443. The Service still listens on
+`port` inside the Machine.
+
+## Use your own hostname
+
+A Certificate covers a hostname on the App. Default `kind` is
+`"acme"` (Let's Encrypt). The Service does not change.
+
+```typescript
+export const V6 = Fly.IpAssignment("V6", {
+  app: Site,
+  type: "v6",
+});
+
+export const Www = Fly.Certificate("Www", {
+  app: Site,
+  hostname: "www.example.com",
+  kind: "acme",
+});
+```
+
+Yield `Www` in the Stack. Point DNS at the App. An A record for
+`www` to `PublicIp.ip`. An AAAA record to `V6.ip`. Plus whatever
+`Www.dnsRequirements` lists for the ACME challenge.
+
+Fly's proxy terminates TLS on 443 once the certificate is
+`configured`.
+
+`"custom"` uploads a PEM (`fullchain` + `privateKey`). Hostname is
+the identity. Changing `app`, `hostname`, or `kind` replaces.
+
+## Where next
+
+The [tutorial](/fly/tutorial/part-2) allocates `shared_v4` so
+fly.dev answers. IPs and certificates hang off the
+[App](/fly/compute/apps). See the
+[`IpAssignment`](/providers/fly/ipassignment) and
+[`Certificate`](/providers/fly/certificate) references.

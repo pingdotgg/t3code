@@ -133,9 +133,8 @@ export interface InvestigationGroup extends Resource<
  *
  * You can have at most one investigation group per Region in an account, so
  * replacements are performed delete-first.
- * @resource
- * @section Creating an Investigation Group
- * @example Basic Investigation Group
+ * ### Creating an Investigation Group
+ * **Example:** Basic Investigation Group
  * ```typescript
  * import * as AIOps from "alchemy/AWS/AIOps";
  * import * as IAM from "alchemy/AWS/IAM";
@@ -157,7 +156,7 @@ export interface InvestigationGroup extends Resource<
  * });
  * ```
  *
- * @example Short Retention and Tag Boundaries
+ * **Example:** Short Retention and Tag Boundaries
  * ```typescript
  * const group = yield* AIOps.InvestigationGroup("Investigations", {
  *   roleArn: role.roleArn,
@@ -167,8 +166,8 @@ export interface InvestigationGroup extends Resource<
  * });
  * ```
  *
- * @section Resource Policy
- * @example Let CloudWatch Alarms Start Investigations
+ * ### Resource Policy
+ * **Example:** Let CloudWatch Alarms Start Investigations
  * ```typescript
  * const group = yield* AIOps.InvestigationGroup("Investigations", {
  *   roleArn: role.roleArn,
@@ -184,6 +183,8 @@ export interface InvestigationGroup extends Resource<
  *   }],
  * });
  * ```
+ *
+ * @resource
  */
 export const InvestigationGroup = Resource<InvestigationGroup>(
   "AWS.AIOps.InvestigationGroup",

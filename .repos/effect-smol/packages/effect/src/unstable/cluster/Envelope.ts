@@ -14,7 +14,7 @@ import * as PrimaryKey from "../../PrimaryKey.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
-import * as Headers from "../http/Headers.ts"
+import type * as Headers from "../http/Headers.ts"
 import type * as Rpc from "../rpc/Rpc.ts"
 import { EntityAddress } from "./EntityAddress.ts"
 import { type Snowflake, SnowflakeFromBigInt } from "./Snowflake.ts"
@@ -26,6 +26,35 @@ import { type Snowflake, SnowflakeFromBigInt } from "./Snowflake.ts"
  * @since 4.0.0
  */
 export const TypeId = "~effect/cluster/Envelope"
+
+/**
+ * Schema for a value that has already been encoded by the transport's hole
+ * codec.
+ *
+ * **Details**
+ *
+ * Cluster payloads are encoded twice: the entity payload is encoded with the
+ * entity RPC schema, and the result is carried opaquely inside the runner
+ * envelope. This schema names that hole so the outer runner encode leaves it
+ * alone. It is the identity under `Schema.toCodecJson`, so JSON, NDJSON, and
+ * text transports stay wire-compatible. A binary codec compiles it as a
+ * bytes leaf.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const OpaqueHole: Schema.declare<any> = Schema.declare(
+  (_: unknown): _ is any => true,
+  {
+    expected: "an already-encoded value",
+    toCodecJson: () => undefined,
+    toCodec: () =>
+      Schema.link<any>()(
+        Schema.Uint8Array,
+        SchemaTransformation.passthrough()
+      )
+  }
+)
 
 /**
  * Union of cluster envelopes exchanged for an RPC request.
@@ -103,8 +132,8 @@ export class PartialRequest extends Schema.Opaque<PartialRequest>()(Schema.Struc
   requestId: SnowflakeFromBigInt,
   address: EntityAddress,
   tag: Schema.String,
-  payload: Schema.Any,
-  headers: Headers.HeadersSchema,
+  payload: OpaqueHole,
+  headers: Schema.Headers,
   traceId: Schema.optional(Schema.String),
   spanId: Schema.optional(Schema.String),
   sampled: Schema.optional(Schema.Boolean)
@@ -320,7 +349,7 @@ export declare namespace Request {
  *
  * The check is based on the envelope type identifier.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isEnvelope = (u: unknown): u is Envelope<any> => Predicate.hasProperty(u, TypeId)
@@ -403,7 +432,7 @@ export const RequestTransform: SchemaTransformation.Transformation<
  * Returns the storage primary key for a request envelope whose payload has a
  * primary key, or `null` when the envelope is not a keyed request.
  *
- * @category primary key
+ * @category getters
  * @since 4.0.0
  */
 export const primaryKey = <R extends Rpc.Any>(envelope: Envelope<R>): string | null => {
@@ -421,7 +450,7 @@ export const primaryKey = <R extends Rpc.Any>(envelope: Envelope<R>): string | n
  * Builds a storage primary-key string from an entity address, RPC tag, and
  * payload primary-key ID.
  *
- * @category primary key
+ * @category constructors
  * @since 4.0.0
  */
 export const primaryKeyByAddress = (options: {

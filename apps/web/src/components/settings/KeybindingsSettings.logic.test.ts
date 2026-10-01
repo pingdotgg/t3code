@@ -17,6 +17,53 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("lists composer, provider, and pull request commands with editable defaults", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    for (const command of [
+      "composer.host",
+      "composer.effort",
+      "composer.mode",
+      "composer.workspace",
+      "composer.branch",
+      "composer.previousWorktree",
+      "modelPicker.previousProvider",
+      "modelPicker.nextProvider",
+      "thread.copyReference",
+      "pullRequest.copyNumber",
+    ]) {
+      expect(rows.find((row) => row.command === command)).toMatchObject({
+        source: "Default",
+        conflicts: [],
+      });
+    }
+  });
+  it.each(["pu", "pull request", "copy link", "thread id"])(
+    "finds the copy link shortcut with %s",
+    (query) => {
+      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
+      );
+    },
+  );
+  it("orders Usage bindings and command choices like the page", () => {
+    const expected = [
+      "usage.cost",
+      "usage.tokens",
+      "usage.limits",
+      "usage.period.day",
+      "usage.period.week",
+      "usage.period.month",
+      "usage.period.quarter",
+      "usage.open",
+    ];
+    const bindings = DEFAULT_RESOLVED_KEYBINDINGS.toReversed();
+    expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+    expect(
+      buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
+    ).toEqual(expected);
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
@@ -54,16 +101,52 @@ describe("KeybindingsSettings.logic", () => {
   it("captures platform-specific mod shortcuts", () => {
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
         "MacIntel",
       ),
     ).toBe("mod+shift+k");
     expect(
       keybindingFromKeyboardEvent(
-        { key: "K", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
+        { key: "K", code: "KeyK", metaKey: false, ctrlKey: true, altKey: false, shiftKey: true },
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it.each([
+    ["@", "Digit2", "mod+shift+2"],
+    ['"', "Digit2", "mod+shift+2"],
+    ["@", "Quote", "mod+shift+'"],
+  ])("captures %s at %s by physical key", (key, code, expected) => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key,
+          code,
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
+        "MacIntel",
+      ),
+    ).toBe(expected);
+  });
+
+  it("captures Latin layout keys instead of their punctuation position", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "m",
+          code: "Semicolon",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBe("mod+m");
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {
@@ -145,7 +228,15 @@ describe("KeybindingsSettings.logic", () => {
     const options = buildWhenVariableOptions();
 
     expect(options).toEqual(
-      expect.arrayContaining(["terminalFocus", "terminalOpen", "modelPickerOpen", "true", "false"]),
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "isWeb",
+        "isDesktop",
+        "modelPickerOpen",
+        "true",
+        "false",
+      ]),
     );
     expect(options).not.toContain("customModeActive");
   });
@@ -170,6 +261,7 @@ describe("KeybindingsSettings.logic", () => {
         "chat.new",
         "rightPanel.toggleMaximized",
         "thread.stop",
+        "usage.open",
         "script.setup-db.run",
       ]),
     );

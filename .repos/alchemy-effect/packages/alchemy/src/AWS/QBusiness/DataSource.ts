@@ -118,9 +118,8 @@ export interface DataSource extends Resource<
  * An Amazon Q Business data source — a connector that syncs documents from
  * a repository (S3 bucket, website, SharePoint, ...) into an index.
  *
- * @resource
- * @section Creating Data Sources
- * @example S3 Data Source
+ * ### Creating Data Sources
+ * **Example:** S3 Data Source
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -147,7 +146,7 @@ export interface DataSource extends Resource<
  * });
  * ```
  *
- * @example Scheduled Sync
+ * **Example:** Scheduled Sync
  * ```typescript
  * const source = yield* AWS.QBusiness.DataSource("Docs", {
  *   applicationId: app.applicationId,
@@ -157,6 +156,8 @@ export interface DataSource extends Resource<
  *   configuration: { ... },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataSource = Resource<DataSource>("AWS.QBusiness.DataSource");
 

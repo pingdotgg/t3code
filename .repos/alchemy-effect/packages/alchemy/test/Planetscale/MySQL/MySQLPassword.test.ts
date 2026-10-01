@@ -2,7 +2,7 @@ import * as Planetscale from "@/Planetscale";
 import * as Provider from "@/Provider";
 import * as RemovalPolicy from "@/RemovalPolicy.ts";
 import * as Test from "@/Test/Alchemy";
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import { describe, expect } from "alchemy-test";
 import { Data, Schedule } from "effect";
 import * as Cause from "effect/Cause";
@@ -131,7 +131,7 @@ describe
           });
 
           // Verify password was created by querying the API directly
-          const fetched = yield* ops.getPassword({
+          const fetched = yield* ps.getPassword({
             organization: database.organization,
             database: database.name,
             branch: branch.name,
@@ -176,7 +176,7 @@ describe
           expect(updatedPassword.name).not.toEqual(password.name);
 
           // Verify password was updated
-          const fetchedUpdated = yield* ops.getPassword({
+          const fetchedUpdated = yield* ps.getPassword({
             organization: database.organization,
             database: database.name,
             branch: branch.name,
@@ -261,7 +261,7 @@ describe
           expect(replacedPassword.role).toEqual("writer");
 
           // Old password should have been deleted as part of the replace.
-          const oldExit = yield* ops
+          const oldExit = yield* ps
             .getPassword({
               organization: database.organization,
               database: database.name,
@@ -275,7 +275,7 @@ describe
           }
 
           // New password exists with the new role.
-          const newFetched = yield* ops.getPassword({
+          const newFetched = yield* ps.getPassword({
             organization: database.organization,
             database: database.name,
             branch: branch.name,
@@ -320,7 +320,7 @@ describe
           );
 
           // Password exists post-deploy.
-          const fetched = yield* ops.getPassword({
+          const fetched = yield* ps.getPassword({
             organization: database.organization,
             database: database.name,
             branch: "main",
@@ -341,7 +341,7 @@ describe
           expect(liveDb.name).toEqual(dbName);
 
           // Password should still exist (was not deleted via API).
-          const stillExists = yield* ops.getPassword({
+          const stillExists = yield* ps.getPassword({
             organization,
             database: dbName,
             branch: "main",
@@ -351,7 +351,7 @@ describe
           expect(stillExists.name).toEqual(password.name);
 
           // Manual cleanup for the test.
-          yield* ops
+          yield* ps
             .deletePassword({
               organization,
               database: dbName,
@@ -360,7 +360,7 @@ describe
             })
             .pipe(Effect.catchTag("NotFound", () => Effect.void));
 
-          yield* ops
+          yield* ps
             .deleteDatabase({
               organization,
               database: dbName,
@@ -377,7 +377,7 @@ const waitForDatabaseToBeDeleted = Effect.fn(function* (
   database: string,
   organization: string,
 ) {
-  yield* ops
+  yield* ps
     .getDatabase({
       organization,
       database,

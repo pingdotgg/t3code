@@ -25,7 +25,7 @@ const DESKTOP_INSTALL_TIMEOUT = Duration.minutes(2);
 
 /** Progress stage a desktop update state maps to, or null when the state
     carries no progress worth streaming. */
-export function desktopUpdateProgressStage(
+function desktopUpdateProgressStage(
   state: DesktopUpdateState,
 ): ServerSelfUpdateProgressStage | null {
   switch (state.status) {
@@ -106,7 +106,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
               ? emitStage(desktopUpdateProgressStage(report.state)).pipe(
                   Effect.as(Option.none<DesktopUpdateStatusReport>()),
                 )
-              : Effect.succeed(Option.some(report)),
+              : Effect.succeedSome(report),
         ),
         Stream.filterMap(
           Option.match({

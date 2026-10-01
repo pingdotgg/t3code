@@ -1,0 +1,37 @@
+{
+  "name": "aws-website-solidstart",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@solidjs/router": "catalog:",
+    "@solidjs/start": "catalog:",
+    "@solidjs/vite-plugin-nitro-2": "catalog:",
+    "solid-js": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/aws-website-solidstart"
+  }
+}

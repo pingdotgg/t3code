@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
@@ -322,8 +323,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
 
   it.effect.each(["failure", "timeout"] as const)(
     "preserves cancellation when the session abort ends in %s",
-    (outcome) =>
-      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+    (outcome) => {
+      const messages: unknown[] = [];
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        messages.push(message);
+      });
+      return withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.gen(function* () {
           const promptStarted = Promise.withResolvers<void>();
           const abortStarted = Promise.withResolvers<AbortSignal | undefined>();
@@ -334,7 +339,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           runtimeMock.state.onAbort = (signal) => {
             abortStarted.resolve(signal);
             return outcome === "failure"
-              ? Promise.reject(new Error("Server disconnected"))
+              ? Promise.reject(new Error("Synthetic SDK response: confidential-value"))
               : new Promise<never>(() => {});
           };
           const fiber = yield* textGeneration
@@ -352,8 +357,21 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGeneration", (it) => {
           expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
           expect(runtimeMock.state.abortCalls).toEqual(["http://127.0.0.1:9999/session"]);
           if (outcome === "timeout") expect(abortSignal?.aborted).toBe(true);
+          expect(messages).toEqual([
+            [
+              "Failed to stop cancelled OpenCode text generation.",
+              {
+                operation: expect.any(String),
+                cwd: DEFAULT_COMMIT_MESSAGE_INPUT.cwd,
+                sessionId: "http://127.0.0.1:9999/session",
+                providerId: expect.any(String),
+                modelId: expect.any(String),
+              },
+            ],
+          ]);
         }),
-      ),
+      ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+    },
   );
 
   it.effect("excludes generic files from thread title generation", () =>

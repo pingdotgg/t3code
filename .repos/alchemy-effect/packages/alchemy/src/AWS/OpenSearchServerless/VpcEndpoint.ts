@@ -60,9 +60,8 @@ export interface VpcEndpoint extends Resource<
  * collection's access to only that endpoint. Creation is asynchronous — the
  * provider polls (bounded) until the endpoint reaches `ACTIVE`.
  *
- * @resource
- * @section Creating VPC Endpoints
- * @example Interface Endpoint in a VPC
+ * ### Creating VPC Endpoints
+ * **Example:** Interface Endpoint in a VPC
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -73,6 +72,8 @@ export interface VpcEndpoint extends Resource<
  *   securityGroupIds: [securityGroup.groupId],
  * });
  * ```
+ *
+ * @resource
  */
 export const VpcEndpoint = Resource<VpcEndpoint>(
   "AWS.OpenSearchServerless.VpcEndpoint",

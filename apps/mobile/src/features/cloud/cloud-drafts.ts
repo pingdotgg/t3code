@@ -7,7 +7,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { archiveCloudComposerDrafts } from "../../state/use-composer-drafts";
 
-export class CloudDraftArchiveError extends Schema.TaggedErrorClass<CloudDraftArchiveError>()(
+export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchiveError>()(
   "CloudDraftArchiveError",
   {
     environmentCount: Schema.Number,

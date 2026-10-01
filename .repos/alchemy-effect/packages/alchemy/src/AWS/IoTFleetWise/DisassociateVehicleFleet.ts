@@ -20,15 +20,16 @@ export interface DisassociateVehicleFleetRequest extends Omit<
  * implementation with
  * `Effect.provide(AWS.IoTFleetWise.DisassociateVehicleFleetHttp)`.
  *
- * @binding
- * @section Fleet Membership
- * @example Remove a Vehicle from the Fleet
+ * ### Fleet Membership
+ * **Example:** Remove a Vehicle from the Fleet
  * ```typescript
  * const disassociateVehicleFleet =
  *   yield* IoTFleetWise.DisassociateVehicleFleet(fleet);
  *
  * yield* disassociateVehicleFleet({ vehicleName: "vin-1HGBH41JXMN109186" });
  * ```
+ *
+ * @binding
  */
 export interface DisassociateVehicleFleet extends Binding.Service<
   DisassociateVehicleFleet,

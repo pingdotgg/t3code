@@ -4,6 +4,19 @@ import { constant, constUndefined } from "effect/Function"
 import { TestClock } from "effect/testing"
 
 describe("Schedule", () => {
+  describe("constructors", () => {
+    it.effect("during recurs while the duration has not elapsed", () =>
+      Effect.gen(function*() {
+        const step = yield* Schedule.toStep(Schedule.during("1 second"))
+        const completed = yield* Pull.catchDone(
+          step(0, undefined).pipe(Effect.as(false)),
+          () => Effect.succeed(true)
+        )
+
+        assert.isFalse(completed)
+      }))
+  })
+
   describe("combining", () => {
     it.effect("max - outputs the slowest schedule duration", () =>
       Effect.gen(function*() {
@@ -68,6 +81,28 @@ describe("Schedule", () => {
   })
 
   describe("sequencing", () => {
+    it.effect("concat - sequences self then other and merges their outputs", () =>
+      Effect.gen(function*() {
+        const left = Schedule.identity<string>().pipe(
+          Schedule.upTo({ times: 2 }),
+          Schedule.map(({ output }) => `left:${output}`)
+        )
+        const right = Schedule.identity<string>().pipe(
+          Schedule.map(({ output }) => `right:${output}`)
+        )
+        const step = yield* Schedule.toStep(Schedule.concat(left, right))
+
+        const first = yield* step(0, "a")
+        const second = yield* step(0, "b")
+        const third = yield* step(0, "c")
+
+        assert.deepStrictEqual([first, second, third], [
+          ["left:a", Duration.zero],
+          ["left:b", Duration.zero],
+          ["right:c", Duration.zero]
+        ])
+      }))
+
     it.effect("tap - provides full metadata", () =>
       Effect.gen(function*() {
         const observed: Array<Schedule.Metadata<number, string>> = []
@@ -190,13 +225,13 @@ describe("Schedule", () => {
         ])
       }))
 
-    it.effect("andThenResult - sequences self then other when collecting delays", () =>
+    it.effect("concatResult - sequences self then other when collecting delays", () =>
       Effect.gen(function*() {
         const left = Schedule.fixed("500 millis").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 3))
         )
         const right = Schedule.fixed("1 second")
-        const schedule = Schedule.andThenResult(left, right)
+        const schedule = Schedule.concatResult(left, right)
         const inputs = Array.makeBy(6, constUndefined)
         const outputs = yield* runDelays(schedule, inputs)
         expect(outputs).toEqual([
@@ -209,13 +244,13 @@ describe("Schedule", () => {
         ])
       }))
 
-    it.effect("andThenResult - includes finite other completion when collecting delays", () =>
+    it.effect("concatResult - includes finite other completion when collecting delays", () =>
       Effect.gen(function*() {
         const left = Schedule.fixed("500 millis").pipe(
           Schedule.while(({ attempt }) => Effect.succeed(attempt <= 2))
         )
         const right = Schedule.duration("1 second")
-        const schedule = Schedule.andThenResult(left, right)
+        const schedule = Schedule.concatResult(left, right)
         const inputs = Array.makeBy(5, constUndefined)
         const outputs = yield* runDelays(schedule, inputs)
         expect(outputs).toEqual([
@@ -226,11 +261,11 @@ describe("Schedule", () => {
         ])
       }))
 
-    it.effect("andThenResult - wraps self outputs as Failure and other outputs as Success", () =>
+    it.effect("concatResult - wraps self outputs as Failure and other outputs as Success", () =>
       Effect.gen(function*() {
         const left = Schedule.identity<string>().pipe(Schedule.upTo({ times: 2 }))
         const right = Schedule.identity<string>()
-        const step = yield* Schedule.toStep(Schedule.andThenResult(left, right))
+        const step = yield* Schedule.toStep(Schedule.concatResult(left, right))
 
         const first = yield* step(0, "left-1")
         const second = yield* step(0, "left-2")

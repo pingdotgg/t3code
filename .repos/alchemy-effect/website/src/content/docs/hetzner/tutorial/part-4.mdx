@@ -1,0 +1,260 @@
+---
+title: "Part 4: Networking & Load Balancing"
+description: Put your Service behind a managed Load Balancer on a private network, and lock the Server down with a Firewall.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Right now your Service is served straight off the Server's public
+IP, and every port on the Server is open to the internet. In this
+final part you'll make it production-shaped: a **private Network**
+between the machines, a managed **Load Balancer** in front, and a
+**Firewall** that closes the app port to everyone but the LB.
+
+:::note[Costs]
+The `lb11` Load Balancer costs about €5.39/month, billed hourly like
+everything else. The [cleanup step](#clean-up) at the end tears it
+all down.
+:::
+
+## Create a private Network
+
+Add a Network to `src/server.ts` and attach the Server to it:
+
+```diff lang="typescript"
+// src/server.ts
+import * as Hetzner from "alchemy/Hetzner";
+
++export const Net = Hetzner.Network("net", {
++  ipRange: "10.0.0.0/16",
++  subnets: [
++    { type: "cloud", networkZone: "eu-central", ipRange: "10.0.1.0/24" },
++  ],
++});
+
+export const Box = Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  location: "nbg1",
+  sshKeys: [Key],
++  networks: [Net],
+});
+
+export const Data = Hetzner.Volume("data", { /* ... */ });
+```
+
+`nbg1` lives in the `eu-central` network zone. Passing `Net` — a
+module-scope resource declaration — directly in `networks` is
+enough: resource-valued props accept the resource or an Effect
+producing it, and Alchemy resolves the reference and orders the
+deploy.
+
+## Add a Load Balancer
+
+Declare the Load Balancer in `src/server.ts`, targeting the Server
+over its **private** IP:
+
+```diff lang="typescript"
+// src/server.ts
++export const Edge = Hetzner.LoadBalancer("edge", {
++  location: "nbg1",
++  loadBalancerType: "lb11",
++  networks: [Net],
++  targets: [{ type: "server", server: Box, usePrivateIp: true }],
++  services: [
++    {
++      protocol: "http",
++      listenPort: 80,
++      destinationPort: 3000,
++      healthCheck: {
++        protocol: "http",
++        port: 3000,
++        interval: 3,
++        timeout: 2,
++        retries: 2,
++        http: { path: "/health" },
++      },
++    },
++  ],
++});
+```
+
+The LB listens on port 80 and forwards to port 3000 on the Server,
+reaching it through the private Network (`usePrivateIp: true`). Its
+health check polls the same `/health` route the deploy already
+uses — an unhealthy Service is pulled out of rotation automatically.
+
+## Lock down the Server
+
+With traffic flowing through the private network, close the public
+app port. Apply a Firewall to the Server that allows SSH from
+anywhere but port 3000 only from inside the Network:
+
+```diff lang="typescript"
+// src/server.ts
++export const Wall = Hetzner.Firewall("wall", {
++  applyTo: [Box],
++  rules: [
++    {
++      direction: "in",
++      protocol: "tcp",
++      port: "22",
++      sourceIps: ["0.0.0.0/0", "::/0"],
++      description: "ssh",
++    },
++    {
++      direction: "in",
++      protocol: "tcp",
++      port: "3000",
++      sourceIps: ["10.0.0.0/16"],
++      description: "api via private net",
++    },
++  ],
++});
+```
+
+A Hetzner Firewall is default-deny for inbound traffic: once
+applied, only what a rule allows gets through. Outbound stays open.
+
+## Surface the Load Balancer URL
+
+Yield the new resources from the Stack and output the LB address
+instead of the Server's:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Hetzner from "alchemy/Hetzner";
++import * as Output from "alchemy/Output";
+import * as Effect from "effect/Effect";
+import Api from "./src/api.ts";
+-import { Box } from "./src/server.ts";
++import { Box, Edge, Wall } from "./src/server.ts";
+
+// ...
+  Effect.gen(function* () {
+    const server = yield* Box;
++    const lb = yield* Edge;
++    yield* Wall;
+    const api = yield* Api;
+
+    return {
+      ipv4: server.ipv4,
+-      url: api.url,
++      url: Output.interpolate`http://${lb.ipv4}`,
+    };
+  }),
+```
+
+`Output.interpolate` builds a string from resource outputs — the
+LB's IP isn't known until it's created, so the template resolves
+after deploy.
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]3 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]net[/b] [d](Hetzner.Network)[/d]
+[g]+[/g] [b]edge[/b] [d](Hetzner.LoadBalancer)[/d]
+[g]+[/g] [b]wall[/b] [d](Hetzner.Firewall)[/d]
+[y]~[/y] [b]box[/b] [d](Hetzner.Server)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]net[/b] [d](Hetzner.Network)[/d] [g]created[/g]
+[g]✓[/g] [b]box[/b] [d](Hetzner.Server)[/d] [y]updated[/y]
+[g]✓[/g] [b]edge[/b] [d](Hetzner.LoadBalancer)[/d] [g]created[/g]
+[g]✓[/g] [b]wall[/b] [d](Hetzner.Firewall)[/d] [g]created[/g]
+{
+[s2]ipv4: "203.0.113.10",
+[s2]url: "http://198.51.100.7",
+}`} />
+
+## Try it out
+
+The app now answers on the Load Balancer:
+
+```sh
+curl http://198.51.100.7/hello.txt
+# → Hello, Volume!
+```
+
+And the direct route is gone — the Firewall drops it:
+
+```sh
+curl --max-time 5 http://203.0.113.10:3000/hello.txt
+# → curl: (28) Connection timed out
+```
+
+:::tip[Your own domain?]
+Hetzner DNS is part of the provider too: declare a `Hetzner.Zone`
+and a `Hetzner.RecordSet` pointing at `lb.ipv4`, and add a managed
+`Hetzner.Certificate` to terminate TLS on the Load Balancer. See
+[DNS](/hetzner/networking/dns) and
+[Networking](/hetzner/networking#load-balancer).
+:::
+
+## Clean up
+
+You're done — tear everything down so the hourly billing stops:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy destroy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+Alchemy deletes everything in reverse dependency order — Service,
+Load Balancer, Firewall, Volume, Server, Network, SSH key.
+
+## Recap
+
+Over four parts you built a complete, production-shaped deployment:
+
+- A Server provisioned in seconds, with an Alchemy-managed deploy
+  key
+- An HTTP Service bundled, shipped over SSH, and supervised by
+  systemd — updated only when its code hash changes
+- A Volume mounted at `/data` whose contents outlive deploys
+- A private Network, a health-checked Load Balancer, and a
+  default-deny Firewall
+
+## Where next
+
+- [Services](/hetzner/compute/services) — background workers,
+  environment variables, multiple Services per Server.
+- [Servers](/hetzner/compute/servers) — SSH access, snapshots,
+  placement groups, cloud-init.
+- [DNS](/hetzner/networking/dns) — zones and records for your own
+  domain.
+- [Testing](/testing) — deploy this stack from an integration test
+  and drive it over HTTP.
+- [CI](/environments/ci) — run `alchemy deploy` from GitHub Actions
+  with `HCLOUD_TOKEN`.

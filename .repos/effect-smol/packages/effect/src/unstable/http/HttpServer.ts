@@ -16,6 +16,7 @@ import { dual } from "../../Function.ts"
 import * as Layer from "../../Layer.ts"
 import * as Path from "../../Path.ts"
 import type * as Scope from "../../Scope.ts"
+import * as NetAddress from "../net/NetAddress.ts"
 import * as Etag from "./Etag.ts"
 import * as HttpClient from "./HttpClient.ts"
 import * as ClientRequest from "./HttpClientRequest.ts"
@@ -32,7 +33,7 @@ import type { HttpServerResponse } from "./HttpServerResponse.ts"
  * The service can serve an HTTP response effect and exposes the address where the
  * server is listening.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class HttpServer extends Context.Service<HttpServer, {
@@ -52,43 +53,8 @@ export class HttpServer extends Context.Service<HttpServer, {
     >
   }
 
-  readonly address: Address
+  readonly address: NetAddress.SocketAddress
 }>()("effect/http/HttpServer") {}
-
-/**
- * Address where an HTTP server is listening.
- *
- * **Details**
- *
- * The address is either a TCP host and port or a Unix domain socket path.
- *
- * @category address
- * @since 4.0.0
- */
-export type Address = UnixAddress | TcpAddress
-
-/**
- * TCP address for an HTTP server, identified by hostname and port.
- *
- * @category address
- * @since 4.0.0
- */
-export interface TcpAddress {
-  readonly _tag: "TcpAddress"
-  readonly hostname: string
-  readonly port: number
-}
-
-/**
- * Unix domain socket address for an HTTP server.
- *
- * @category address
- * @since 4.0.0
- */
-export interface UnixAddress {
-  readonly _tag: "UnixAddress"
-  readonly path: string
-}
 
 /**
  * Constructs an `HttpServer` service from a serving implementation and listening
@@ -103,7 +69,7 @@ export const make = (
       httpEffect: Effect.Effect<HttpServerResponse, unknown, HttpServerRequest | Scope.Scope>,
       middleware?: Middleware.HttpMiddleware
     ) => Effect.Effect<void, never, Scope.Scope>
-    readonly address: Address
+    readonly address: NetAddress.SocketAddress
   }
 ): HttpServer["Service"] => options
 
@@ -117,7 +83,7 @@ export const make = (
  * layer still requires the server, a scope, and any non-request dependencies of
  * the response effect or middleware.
  *
- * @category accessors
+ * @category layers
  * @since 4.0.0
  */
 export const serve: {
@@ -203,30 +169,23 @@ export const serveEffect: {
 > => HttpServer.use((server) => server.serve(effect, middleware!)) as any)
 
 /**
- * Formats a server address as a display string.
+ * Formats a server address as a display string using {@link NetAddress.formatUrlUnsafe}.
  *
- * **Details**
+ * **Gotchas**
  *
- * TCP addresses are formatted as `http://host:port`; Unix socket addresses are
- * formatted as `unix://path`.
+ * Throws a `NetAddressError` when URL conversion fails, including for scoped
+ * IPv6 addresses. Unix socket paths are displayed with a `unix://` prefix.
  *
- * @category address
+ * @category converting
  * @since 4.0.0
  */
-export const formatAddress = (address: Address): string => {
-  switch (address._tag) {
-    case "UnixAddress":
-      return `unix://${address.path}`
-    case "TcpAddress":
-      return `http://${address.hostname}:${address.port}`
-  }
-}
+export const formatAddress: (address: NetAddress.SocketAddress) => string = NetAddress.formatUrlUnsafe
 
 /**
  * Reads the current server address, formats it with `formatAddress`, and passes
  * the formatted address to the supplied effectful function.
  *
- * @category address
+ * @category accessors
  * @since 4.0.0
  */
 export const addressFormattedWith = <A, E, R>(
@@ -240,7 +199,7 @@ export const addressFormattedWith = <A, E, R>(
 /**
  * Logs the formatted address of the current HTTP server.
  *
- * @category address
+ * @category logging
  * @since 4.0.0
  */
 export const logAddress: Effect.Effect<void, never, HttpServer> = addressFormattedWith((_) =>
@@ -250,7 +209,7 @@ export const logAddress: Effect.Effect<void, never, HttpServer> = addressFormatt
 /**
  * Adds address logging to a layer that provides an `HttpServer`.
  *
- * @category address
+ * @category layers
  * @since 4.0.0
  */
 export const withLogAddress = <A, E, R>(
@@ -265,12 +224,12 @@ export const withLogAddress = <A, E, R>(
  *
  * **Details**
  *
- * For TCP servers, requests are prefixed with the server URL and `0.0.0.0` is
- * rewritten to `127.0.0.1`.
+ * For internet servers, requests are prefixed with the server URL and unspecified
+ * addresses are replaced by IPv4 loopback, including dual-stack `::` listeners.
  *
  * **Gotchas**
  *
- * Unix socket addresses are not supported.
+ * Unix socket addresses and scoped IPv6 addresses are not supported.
  *
  * @category testing
  * @since 4.0.0
@@ -283,12 +242,14 @@ export const makeTestClient: Effect.Effect<
   const server = yield* HttpServer
   const client = yield* HttpClient.HttpClient
   const address = server.address
-  if (address._tag === "UnixAddress") {
-    return yield* Effect.die(new Error("HttpServer.layerTestClient: UnixAddress not supported"))
+  if (NetAddress.isUnixPathAddress(address)) {
+    return yield* Effect.die(new Error("HttpServer.layerTestClient: UnixPathAddress not supported"))
   }
-  const host = address.hostname === "0.0.0.0" ? "127.0.0.1" : address.hostname
-  const url = `http://${host}:${address.port}`
-  return HttpClient.mapRequest(client, ClientRequest.prependUrl(url))
+  const url = yield* Effect.fromResult(NetAddress.toUrl(address)).pipe(Effect.orDie)
+  if (NetAddress.isUnspecified(address.address)) {
+    url.hostname = NetAddress.formatIp(NetAddress.ipv4Loopback)
+  }
+  return HttpClient.mapRequest(client, ClientRequest.prependUrl(url.origin))
 })
 
 /**
