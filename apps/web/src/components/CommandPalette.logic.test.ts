@@ -20,7 +20,9 @@ import {
   isSamePaletteScope,
   parsePaletteScopeQualifiers,
   parseTrailingPaletteScopeQualifier,
+  paletteScopeKey,
   resolvePaletteScopeThreadKeys,
+  selectPaletteScopeEnvironmentIds,
   splitPaletteHighlightParts,
   type CommandPaletteGroup,
   type PaletteScope,
@@ -293,8 +295,9 @@ describe("buildThreadActionItems", () => {
     expect(groups[0]?.items.map((item) => item.value)).toEqual(["thread:project-context-only"]);
   });
 
-  it("filters archived threads out of thread search items", () => {
+  it.each([false, true])("searches only the selected archive state (archived=%s)", (archived) => {
     const items = buildThreadActionItems({
+      archived,
       threads: [
         makeThread({
           id: ThreadId.make("thread-active"),
@@ -315,7 +318,9 @@ describe("buildThreadActionItems", () => {
       runThread: async (_thread) => undefined,
     });
 
-    expect(items.map((item) => item.value)).toEqual(["thread:environment-local:thread-active"]);
+    expect(items.map((item) => item.value)).toEqual([
+      `thread:environment-local:thread-${archived ? "archived" : "active"}`,
+    ]);
   });
 });
 
@@ -535,6 +540,23 @@ describe("palette search scopes", () => {
       label: "Parent",
     };
   }
+
+  it("commits the Archived chip without constraining environments or widening project scopes", () => {
+    const archived = parseTrailingPaletteScopeQualifier("archived", [], []);
+    expect(archived).toEqual({ kind: "archived", label: "Archived" });
+    expect(parsePaletteScopeQualifiers("archived needle", [], [])).toEqual({
+      scopes: [archived],
+      text: "needle",
+    });
+    if (!archived) throw new Error("Missing archived scope");
+    expect(selectPaletteScopeEnvironmentIds([archived])).toBeNull();
+    expect(resolvePaletteScopeThreadKeys([archived], makeScopeThreads()).size).toBe(4);
+    expect(
+      resolvePaletteScopeThreadKeys([archived, projectScope()], makeScopeThreads()).has(
+        paletteScopeKey(LOCAL_ENVIRONMENT_ID, THREAD_SIBLING),
+      ),
+    ).toBe(false);
+  });
 
   it("resolves project scopes to member threads only", () => {
     const keys = resolvePaletteScopeThreadKeys([projectScope()], makeScopeThreads());

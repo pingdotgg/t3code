@@ -1286,8 +1286,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.searchTranscript,
             (
-              projectionSnapshotQuery.searchTranscript?.(input.query, input.threadIds) ??
-              Effect.succeed({ matches: [] })
+              projectionSnapshotQuery.searchTranscript?.(
+                input.query,
+                input.threadIds,
+                input.archived,
+              ) ?? Effect.succeed({ matches: [] })
             ).pipe(
               Effect.mapError(
                 (cause) =>
