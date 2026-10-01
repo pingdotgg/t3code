@@ -106,6 +106,25 @@ export function resolveMarkdownFileLinkMeta(
   return buildFileLinkMetaFromTarget(targetPath, cwd);
 }
 
+/**
+ * Re-targets a link at a workspace-relative path the file index found for its
+ * bare filename, keeping the link's line and column.
+ */
+export function relocateMarkdownFileLinkMeta(
+  meta: MarkdownFileLinkMeta,
+  workspaceRelativePath: string,
+  cwd: string,
+): MarkdownFileLinkMeta {
+  return buildFileLinkMetaFromTarget(
+    formatFilePathPosition({
+      path: resolvePathLinkTarget(workspaceRelativePath, cwd),
+      ...(meta.line !== undefined ? { line: meta.line } : {}),
+      ...(meta.column !== undefined ? { column: meta.column } : {}),
+    }),
+    cwd,
+  );
+}
+
 function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {
   const { path, line, column } = splitFilePathPosition(targetPath);
   return {

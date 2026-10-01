@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
+  relocateMarkdownFileLinkMeta,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   resolveMarkdownFileLinkTarget,
@@ -528,5 +529,26 @@ it("routes the project-root code link to the workspace explorer", () => {
   expect(resolveInlineCodeFileLinkMeta(cwd, cwd)).toMatchObject({
     workspaceRelativePath: ".",
     filePath: cwd,
+  });
+});
+
+describe("relocateMarkdownFileLinkMeta", () => {
+  it("points a bare filename at the indexed path and keeps its position", () => {
+    const cwd = "/repo/bot";
+    const bare = resolveMarkdownFileLinkMeta("user.ts:261:5", cwd);
+    expect(bare).not.toBeNull();
+    const meta = relocateMarkdownFileLinkMeta(
+      bare!,
+      "src/discord/events/interactionCreate/user.ts",
+      cwd,
+    );
+    expect(meta).toMatchObject({
+      targetPath: "/repo/bot/src/discord/events/interactionCreate/user.ts:261:5",
+      displayPath: "bot/src/discord/events/interactionCreate/user.ts:261:5",
+      workspaceRelativePath: "src/discord/events/interactionCreate/user.ts",
+      basename: "user.ts",
+      line: 261,
+      column: 5,
+    });
   });
 });

@@ -151,6 +151,7 @@ import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
   normalizeMarkdownLinkDestination,
+  relocateMarkdownFileLinkMeta,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -187,7 +188,7 @@ import {
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "../terminal-links";
+import { isAbsolutePath } from "../terminal-links";
 import {
   isBrowserPreviewFile,
   openFileInPreview,
@@ -1203,6 +1204,9 @@ interface MarkdownFileLinkProps {
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
   onReveal?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  /** Looks up a bare filename in the workspace index; open and copy-path act on
+      the result so they agree with the panel click. */
+  resolvePaths?: (() => Promise<{ targetPath: string; displayPath: string }>) | undefined;
   /** Platform-specific menu label ("Reveal in Finder", ...); required for the
       reveal item to show. */
   revealLabel?: string | undefined;
@@ -1942,6 +1946,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   onOpenInBrowser,
   onOpenMedia,
   onReveal,
+  resolvePaths,
   revealLabel,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = useCallback(() => {
@@ -1950,7 +1955,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        const resolved = resolvePaths ? await resolvePaths() : null;
+        const result = await onOpen(resolved?.targetPath ?? targetPath);
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -1980,7 +1986,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     })();
-  }, [onOpen, targetPath]);
+  }, [onOpen, resolvePaths, targetPath]);
 
   const handleOpenInFilePreview = useCallback(() => {
     if (threadRef && panelPath) {
@@ -2145,12 +2151,13 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           handleRevealInFileManager();
           return;
         }
-        if (clicked === "copy-relative") {
-          handleCopy(displayPath, "Relative path");
-          return;
-        }
-        if (clicked === "copy-full") {
-          handleCopy(targetPath, "Full path");
+        if (clicked === "copy-relative" || clicked === "copy-full") {
+          const resolved = resolvePaths ? await resolvePaths() : null;
+          if (clicked === "copy-relative") {
+            handleCopy(resolved?.displayPath ?? displayPath, "Relative path");
+          } else {
+            handleCopy(resolved?.targetPath ?? targetPath, "Full path");
+          }
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2170,6 +2177,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       onOpen,
       onReveal,
       openInEditorMenuLabel,
+      resolvePaths,
       revealLabel,
       targetPath,
     ],
@@ -2282,6 +2290,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
+    previous.resolvePaths === next.resolvePaths &&
     previous.revealLabel === next.revealLabel
   );
 }
@@ -2599,16 +2608,24 @@ function useChatMarkdownState({
     },
     [cwd, findWorkspaceBasenameMatch, threadRef],
   );
-  const revealMarkdownFileInFileManager = useCallback(
+  // Same lookup for the editor, reveal, and copy-path actions, so a bare
+  // filename never lands on `<workspace>/<name>`.
+  const resolveMarkdownFileLinkMetaInWorkspace = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
       const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
       const match = workspaceRelativePath
         ? await findWorkspaceBasenameMatch(workspaceRelativePath)
         : null;
-      const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-      return revealFileInFileManager(filePath);
+      return match && cwd ? relocateMarkdownFileLinkMeta(fileLinkMeta, match, cwd) : fileLinkMeta;
     },
-    [cwd, findWorkspaceBasenameMatch, revealFileInFileManager],
+    [cwd, findWorkspaceBasenameMatch],
+  );
+  const revealMarkdownFileInFileManager = useCallback(
+    async (fileLinkMeta: MarkdownFileLinkMeta) =>
+      revealFileInFileManager(
+        (await resolveMarkdownFileLinkMetaInWorkspace(fileLinkMeta)).filePath,
+      ),
+    [resolveMarkdownFileLinkMetaInWorkspace, revealFileInFileManager],
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
@@ -2660,6 +2677,7 @@ function useChatMarkdownState({
               ? () => revealMarkdownFileInFileManager(fileLinkMeta)
               : undefined
           }
+          resolvePaths={() => resolveMarkdownFileLinkMetaInWorkspace(fileLinkMeta)}
           revealLabel={revealInFileManagerLabel}
           onOpenInBrowser={
             threadRef &&
@@ -2679,6 +2697,7 @@ function useChatMarkdownState({
       openMarkdownFileInPreview,
       openMarkdownMedia,
       preferredEditorMenuLabel,
+      resolveMarkdownFileLinkMetaInWorkspace,
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,
