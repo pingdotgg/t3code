@@ -39,6 +39,7 @@ it.effect.each([
   "sibling",
   "stopped-provider",
   "errored-provider",
+  "shared-provider",
   "conversation",
 ] as const)("preserves overlapping workspace files, owner=%s", (owner) =>
   Effect.gen(function* () {
@@ -127,18 +128,28 @@ it.effect.each([
               Effect.succeed({
                 thread: otherThread as never,
                 providerThreads: [],
-                providerSessions: ["provider", "stopped-provider", "errored-provider"].includes(
-                  owner,
-                )
+                providerSessions: [
+                  "provider",
+                  "stopped-provider",
+                  "errored-provider",
+                  "shared-provider",
+                ].includes(owner)
                   ? ([
                       {
-                        cwd: nested,
+                        // One session shared by every thread keeps the cwd of
+                        // the thread that opened it, here this thread's.
+                        cwd: owner === "shared-provider" ? cwd : nested,
                         status:
-                          owner === "provider"
+                          owner === "provider" || owner === "shared-provider"
                             ? "running"
                             : owner === "errored-provider"
                               ? "error"
                               : "stopped",
+                        capabilities: {
+                          sessions: {
+                            supportsMultipleProviderThreadsPerSession: owner === "shared-provider",
+                          },
+                        },
                       },
                     ] as never)
                   : [],
@@ -168,7 +179,9 @@ it.effect.each([
     );
     const service = yield* CheckpointRollbackServiceV2.pipe(Effect.provide(testLayer));
     const restoreFiles = owner !== "conversation";
-    const rejected = !["sibling", "stopped-provider", "conversation"].includes(owner);
+    const rejected = !["sibling", "stopped-provider", "shared-provider", "conversation"].includes(
+      owner,
+    );
     if (rejected) {
       const error = yield* service
         .execute({ threadId, providerThreadId, checkpointId, scopeId, restoreFiles })
