@@ -266,6 +266,7 @@ it.effect(
             Effect.succeed(
               providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
             ),
+          idleReleases: Stream.empty,
           close: () => Effect.void,
           closeInstance: () => Effect.void,
           release: () => Effect.void,

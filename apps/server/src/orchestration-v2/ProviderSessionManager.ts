@@ -20,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -140,6 +141,12 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 ]);
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
+/** A session released for sitting idle, with the threads that were attached to it. */
+export interface ProviderSessionIdleRelease {
+  readonly providerSessionId: ProviderSessionId;
+  readonly threadIds: ReadonlyArray<ThreadId>;
+}
+
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
@@ -154,6 +161,11 @@ export interface ProviderSessionManagerV2Shape {
   readonly get: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<Option.Option<ProviderAdapterV2SessionRuntime>, ProviderSessionManagerV2Error>;
+  /**
+   * Published after an idle release has persisted the session as stopped. The
+   * provider process is gone, so any run it still owned can no longer finish.
+   */
+  readonly idleReleases: Stream.Stream<ProviderSessionIdleRelease>;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -362,6 +374,7 @@ export const layerWithOptions = (
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const nextSubscriberId = yield* Ref.make(0);
+      const idleReleases = yield* PubSub.unbounded<ProviderSessionIdleRelease>();
       const sessionOpen = yield* makeKeyedSerialExecutor<ProviderSessionId>();
       // Orders a thread's attach against a detach unloading it on the same session.
       const threadAttachment = yield* makeKeyedSerialExecutor<string>();
@@ -803,6 +816,12 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                   }).pipe(entry.requestEventPermit.withPermits(1));
+                  if (input.reason === "idle_timeout") {
+                    yield* PubSub.publish(idleReleases, {
+                      providerSessionId: input.providerSessionId,
+                      threadIds: [...entry.attachedThreadIds],
+                    });
+                  }
                   if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
                     return yield* Effect.failCause(closeExit.value.cause);
                   }
@@ -1546,6 +1565,7 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        idleReleases: Stream.fromPubSub(idleReleases),
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,

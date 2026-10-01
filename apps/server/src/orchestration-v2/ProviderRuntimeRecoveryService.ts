@@ -2,6 +2,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type ProviderSessionId,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2ThreadProjection,
@@ -60,6 +61,15 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     readonly reconcile: (
       trigger: "startup" | "shutdown",
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
+    /**
+     * Settles a thread whose runs a released provider session stranded: the
+     * session's process is gone, so nothing can finish them. Skips threads with
+     * any run the released session does not own, since those may still be live.
+     */
+    readonly reconcileReleasedSession: (input: {
+      readonly threadId: ThreadId;
+      readonly providerSessionId: ProviderSessionId;
+    }) => Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
   }
@@ -173,6 +183,36 @@ function latestStartedRun(
   );
 }
 
+type ReconcileTrigger = "startup" | "shutdown" | "session-released";
+
+const TRIGGER_DETAIL: Record<ReconcileTrigger, string> = {
+  startup: "the server restarted",
+  shutdown: "the server shut down",
+  "session-released": "the provider session was released",
+};
+
+/**
+ * A thread is stranded when every unfinished run is a running or waiting one
+ * on a provider thread bound to the released session.
+ */
+function isStrandedBySession(
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+  providerSessionId: ProviderSessionId,
+): boolean {
+  const unfinished = nonterminalRuns(projection);
+  return (
+    unfinished.length > 0 &&
+    unfinished.every(
+      (run) =>
+        (run.status === "running" || run.status === "waiting") &&
+        projection.providerThreads.some(
+          (thread) =>
+            thread.id === run.providerThreadId && thread.providerSessionId === providerSessionId,
+        ),
+    )
+  );
+}
+
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -182,7 +222,7 @@ export const make = Effect.gen(function* () {
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
-      trigger: "startup" | "shutdown",
+      trigger: ReconcileTrigger,
       continueAfterRestart: boolean,
     ) {
       const now = yield* DateTime.now;
@@ -222,7 +262,8 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
-      const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
+      const why = TRIGGER_DETAIL[trigger];
+      const detail = `Cancelled because ${why} before the provider work completed.`;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
@@ -273,8 +314,11 @@ export const make = Effect.gen(function* () {
       };
       // Queued runs have not started provider work. Preserve their execution
       // identities and order, but require explicit consent before draining them.
+      // A released session leaves the queue intact: the user queued those runs
+      // to follow the stranded one, and nothing was lost that needs consent.
       for (const run of projection.runs) {
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (trigger === "session-released" || run.status !== "queued" || run.queueHeld === true)
+          continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -294,10 +338,10 @@ export const make = Effect.gen(function* () {
           occurredAt: now,
           payload: {
             ...request,
-            status: trigger === "startup" ? "expired" : "cancelled",
+            status: trigger === "shutdown" ? "cancelled" : "expired",
             responseCapability: {
               type: "not_resumable",
-              reason: `The server ${trigger === "startup" ? "restarted" : "shut down"} before this runtime request was resolved.`,
+              reason: `${why.charAt(0).toUpperCase()}${why.slice(1)} before this runtime request was resolved.`,
             },
             resolvedAt: now,
           },
@@ -755,6 +799,25 @@ export const make = Effect.gen(function* () {
       } satisfies ProviderRuntimeReconciliationSummary;
     });
 
+  const reconcileReleasedSession = (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+  }) =>
+    Effect.gen(function* () {
+      const projection = yield* projections.getRuntimeRecoveryProjection(input.threadId);
+      if (!isStrandedBySession(projection, input.providerSessionId)) return;
+      yield* reconcileProjection(projection, "session-released", false);
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderRuntimeRecoveryError({
+            operation: "reconcile",
+            threadId: input.threadId,
+            cause,
+          }),
+      ),
+    );
+
   // Snapshot intent only while providers are live. A provider may finish while
   // this commits; reconciliation reads fresh state after shutdown, and delivery
   // rejects any source run that actually completed.
@@ -798,7 +861,12 @@ export const make = Effect.gen(function* () {
     return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
   });
 
-  return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
+  return ProviderRuntimeRecoveryService.of({
+    reconcile,
+    reconcileReleasedSession,
+    prepareForShutdown,
+    recover,
+  });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);

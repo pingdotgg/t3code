@@ -17,6 +17,8 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -526,6 +528,31 @@ const make = (options?: StartupOptions) =>
         ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
       });
       yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+      // An idle-released session's process is gone, so a run it still owned
+      // (for example one pinned open by background work that never reported
+      // back) can never finish. Settle it instead of leaving it working.
+      yield* providerSessions.idleReleases.pipe(
+        Stream.runForEach(({ providerSessionId, threadIds }) =>
+          Effect.gen(function* () {
+            // A replacement may have reused the id; its runs are live.
+            if (Option.isSome(yield* providerSessions.get(providerSessionId))) return;
+            yield* Effect.forEach(
+              threadIds,
+              (threadId) =>
+                providerRuntimeRecovery.reconcileReleasedSession({ threadId, providerSessionId }),
+              { discard: true },
+            );
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("V2 orchestration idle-release reconciliation failed", {
+                providerSessionId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
       yield* runStartupPhase(
         "projects.auto-pull",
         Effect.gen(function* () {

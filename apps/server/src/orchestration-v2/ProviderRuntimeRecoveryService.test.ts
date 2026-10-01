@@ -1272,3 +1272,129 @@ it.effect(
     }).pipe(Effect.provide(layer));
   },
 );
+
+const releasedSessionFixture = (secondRunStatus: "queued" | "preparing") => {
+  const threadId = ThreadId.make("thread_released_session");
+  const providerSessionId = ProviderSessionId.make("session_released");
+  const providerThreadId = ProviderThreadId.make("provider_thread_released");
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const runId = RunId.make("run_stranded");
+  const attemptId = RunAttemptId.make("attempt_stranded");
+  const rootNodeId = NodeId.make("node_stranded_root");
+  const toolNodeId = NodeId.make("node_stranded_tool");
+  const nextRunId = RunId.make("run_next");
+  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+    null;
+  const projection = {
+    thread: { id: threadId },
+    runtimeRequests: [],
+    providerSessions: [{ id: providerSessionId, status: "stopped" }],
+    providerThreads: [
+      { id: providerThreadId, providerSessionId, status: "active", ownerNodeId: null },
+    ],
+    providerTurns: [
+      {
+        id: ProviderTurnId.make("turn_stranded"),
+        nodeId: rootNodeId,
+        providerThreadId,
+        runAttemptId: attemptId,
+        status: "running",
+      },
+    ],
+    runs: [
+      {
+        id: runId,
+        ordinal: 1,
+        status: "running",
+        providerThreadId,
+        providerInstanceId: instanceId,
+        activeAttemptId: attemptId,
+      },
+      {
+        id: nextRunId,
+        ordinal: 2,
+        status: secondRunStatus,
+        queuePosition: secondRunStatus === "queued" ? 1 : null,
+        providerThreadId: null,
+        providerInstanceId: instanceId,
+      },
+    ],
+    attempts: [{ id: attemptId, runId, rootNodeId, status: "running" }],
+    nodes: [
+      { id: rootNodeId, runId, status: "running" },
+      { id: toolNodeId, runId, status: "running" },
+    ],
+    subagents: [],
+    messages: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          commitCommand: (input) => {
+            committedInput = input;
+            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+          },
+        }),
+        IdAllocator.layer,
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({}),
+      ),
+    ),
+  );
+  return {
+    threadId,
+    providerSessionId,
+    runId,
+    nextRunId,
+    layer,
+    committed: () => committedInput,
+  };
+};
+
+it.effect("settles a run stranded by an idle-released session and keeps the queue intact", () => {
+  const fixture = releasedSessionFixture("queued");
+  return Effect.gen(function* () {
+    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
+      { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+    );
+    const command = fixture.committed();
+    assert.isNotNull(command);
+    if (command === null) return;
+    const runStatuses = command.events.flatMap((event) =>
+      event.type === "run.updated" ? [[event.runId, event.payload.status] as const] : [],
+    );
+    assert.deepEqual(runStatuses, [[fixture.runId, "cancelled"]]);
+    const nodeStatuses = command.events.flatMap((event) =>
+      event.type === "node.updated" ? [event.payload.status] : [],
+    );
+    assert.deepEqual(nodeStatuses, ["cancelled", "cancelled"]);
+    const turnStatuses = command.events.flatMap((event) =>
+      event.type === "provider-turn.updated" ? [event.payload.status] : [],
+    );
+    assert.deepEqual(turnStatuses, ["cancelled"]);
+    assert.isUndefined(
+      command.events.find(
+        (event) => event.type === "run.updated" && event.runId === fixture.nextRunId,
+      ),
+    );
+  }).pipe(Effect.provide(fixture.layer));
+});
+
+it.effect(
+  "leaves a thread alone when an unfinished run is not owned by the released session",
+  () => {
+    const fixture = releasedSessionFixture("preparing");
+    return Effect.gen(function* () {
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcileReleasedSession(
+        { threadId: fixture.threadId, providerSessionId: fixture.providerSessionId },
+      );
+      assert.isNull(fixture.committed());
+    }).pipe(Effect.provide(fixture.layer));
+  },
+);
