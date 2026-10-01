@@ -8,6 +8,11 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import TestService from "./fixtures/service.ts";
+import {
+  awaitLogGroups,
+  logGroupNamesFor,
+  observeLogGroups,
+} from "./logGroups.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -103,8 +108,19 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       );
       expect(later).toBeGreaterThan(first);
 
+      // App Runner auto-creates these two log groups for the service; they
+      // survive `deleteService`, so the provider reaps them explicitly.
+      // Asserting they exist FIRST keeps the post-destroy check below from
+      // passing vacuously on a wrong name.
+      const logGroupNames = logGroupNamesFor(
+        service.serviceName,
+        service.serviceId,
+      );
+      expect(yield* awaitLogGroups(logGroupNames)).toEqual([true, true]);
+
       // Destroy immediately — App Runner services bill while running — and
-      // verify zero leftovers: service, managed repository, and both roles.
+      // verify zero leftovers: service, managed repository, both roles, and
+      // both log groups.
       const { repositoryName, instanceRoleName, accessRoleName, serviceArn } =
         service;
       yield* stack.destroy();
@@ -130,6 +146,8 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
         );
         expect(roleError._tag).toBe("NoSuchEntityException");
       }
+
+      expect(yield* observeLogGroups(logGroupNames)).toEqual([false, false]);
     }),
   // Docker build + push (~2-4 min) + create (~3-5 min) + delete (~2-3 min).
   { timeout: 1_200_000 },

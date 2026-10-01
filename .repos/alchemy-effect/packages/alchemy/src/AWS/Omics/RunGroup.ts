@@ -72,16 +72,15 @@ export interface RunGroup extends Resource<
  *
  * A run group name is auto-generated from the app, stage, and logical ID
  * unless you provide one. All limits are mutable in place.
- * @resource
- * @section Creating a Run Group
- * @example Basic Run Group
+ * ### Creating a Run Group
+ * **Example:** Basic Run Group
  * ```typescript
  * import * as Omics from "alchemy/AWS/Omics";
  *
  * const group = yield* Omics.RunGroup("Batch");
  * ```
  *
- * @example Run Group with Limits
+ * **Example:** Run Group with Limits
  * ```typescript
  * const group = yield* Omics.RunGroup("Batch", {
  *   name: "nightly-batch",
@@ -90,6 +89,8 @@ export interface RunGroup extends Resource<
  *   maxDuration: "10 hours",
  * });
  * ```
+ *
+ * @resource
  */
 export const RunGroup = Resource<RunGroup>("AWS.Omics.RunGroup");
 

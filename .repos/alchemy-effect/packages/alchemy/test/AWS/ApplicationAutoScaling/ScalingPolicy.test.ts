@@ -2,6 +2,9 @@ import * as AWS from "@/AWS";
 import { ScalableTarget, ScalingPolicy } from "@/AWS/ApplicationAutoScaling";
 import { Table } from "@/AWS/DynamoDB";
 import * as Output from "@/Output";
+import * as Provider from "@/Provider";
+import { Stack } from "@/Stack";
+import { State, type ResourceState } from "@/State";
 import * as Test from "@/Test/Alchemy";
 import * as aas from "@distilled.cloud/aws/application-auto-scaling";
 import { expect } from "alchemy-test";
@@ -184,6 +187,119 @@ test.provider(
       // deregisterScalableTarget both hit ObjectNotFoundException and treat
       // it as success.
       yield* stack.destroy();
+    }),
+  { timeout: 240_000 },
+);
+
+const getState = Effect.fn(function* (fqn: string) {
+  const state = yield* yield* State;
+  const stk = yield* Stack;
+  return (yield* state.get({
+    stack: stk.name,
+    stage: stk.stage,
+    fqn,
+  })) as ResourceState | undefined;
+});
+
+const setState = Effect.fn(function* (fqn: string, value: ResourceState) {
+  const state = yield* yield* State;
+  const stk = yield* Stack;
+  yield* state.set({ stack: stk.name, stage: stk.stage, fqn, value });
+});
+
+// An apply interrupted mid-create (Ctrl-C, crash, CI timeout) can persist a
+// policy row WITHOUT its target triple — `scalableDimension` set,
+// `resourceId` missing. Application Auto Scaling treats ResourceId and
+// ScalableDimension as a pair: one without the other is
+// "ValidationException: Scalable dimension cannot be provided without a
+// resource ID", which used to fail `read` (so every plan) and `delete` (so
+// every destroy of the stack — and every resource depending on the policy
+// was skipped with it). The provider must converge from that row: a
+// re-deploy observes the live policy by name and restores the triple, and a
+// destroy deletes it with the triple the live policy reports.
+test.provider(
+  "read and destroy converge from a row persisted by an interrupted create",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const program = Effect.gen(function* () {
+        const table = yield* Table("AasPartialTable", {
+          partitionKey: "id",
+          attributes: { id: "S" },
+          billingMode: "PROVISIONED",
+          provisionedThroughput: {
+            ReadCapacityUnits: 1,
+            WriteCapacityUnits: 1,
+          },
+        });
+        const target = yield* ScalableTarget("AasPartialTarget", {
+          serviceNamespace: "dynamodb",
+          resourceId: Output.interpolate`table/${table.tableName}`,
+          scalableDimension: "dynamodb:table:ReadCapacityUnits",
+          minCapacity: 1,
+          maxCapacity: 3,
+        });
+        const policy = yield* ScalingPolicy("AasPartialPolicy", {
+          serviceNamespace: target.serviceNamespace,
+          resourceId: target.resourceId,
+          scalableDimension: target.scalableDimension,
+          targetTracking: {
+            TargetValue: 70,
+            PredefinedMetricSpecification: {
+              PredefinedMetricType: "DynamoDBReadCapacityUtilization",
+            },
+          },
+        });
+        return {
+          resourceId: target.resourceId.as<string>(),
+          policyName: policy.policyName.as<string>(),
+          policyResourceId: policy.resourceId.as<string>(),
+        };
+      });
+
+      const created = yield* stack.deploy(program);
+      expect(created.policyResourceId).toBe(created.resourceId);
+
+      // Simulate the interrupted create: the persisted attrs lose their
+      // resourceId but keep the scalable dimension.
+      const row = yield* getState("AasPartialPolicy");
+      expect(row?.status).toBe("created");
+      if (row?.status !== "created") return;
+      const attr = row.attr as { resourceId?: string; [key: string]: unknown };
+      expect(attr.resourceId).toBe(created.resourceId);
+      const { resourceId: _dropped, ...partialAttr } = attr;
+      const partialRow: ResourceState = { ...row, attr: partialAttr };
+      const readResourceId = Effect.map(
+        getState("AasPartialPolicy"),
+        (r) => (r?.status === "created" ? r.attr : undefined)?.resourceId,
+      );
+      yield* setState("AasPartialPolicy", partialRow);
+      expect(yield* readResourceId).toBe(undefined);
+
+      // `read` (refresh/sync/adopt) must observe the live policy by name
+      // and report the full triple rather than fail on the partial row —
+      // including when the Output-valued `resourceId` prop was lost too.
+      const provider = yield* Provider.findProvider(ScalingPolicy);
+      const { resourceId: _droppedProp, ...partialProps } =
+        partialRow.props as { resourceId?: string; [key: string]: unknown };
+      const observed = yield* provider.read!({
+        id: "AasPartialPolicy",
+        fqn: partialRow.fqn,
+        instanceId: partialRow.instanceId,
+        olds: partialProps as unknown as ScalingPolicy["Props"],
+        output: partialAttr as ScalingPolicy["Attributes"],
+      });
+      expect(observed?.resourceId).toBe(created.resourceId);
+      expect(observed?.scalableDimension).toBe(
+        "dynamodb:table:ReadCapacityUnits",
+      );
+
+      // And `delete` (every destroy) must converge from the partial row
+      // instead of wedging the stack.
+      yield* stack.destroy();
+      const gone = yield* waitUntilPolicyGone(created.policyName);
+      expect(gone).toBeUndefined();
     }),
   { timeout: 240_000 },
 );

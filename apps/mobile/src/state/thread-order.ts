@@ -12,6 +12,11 @@ import { environmentServerConfigsAtom } from "./server";
 import { environmentThreadShells } from "./threads";
 import { queuedThreadKeysAtom } from "./use-thread-outbox";
 
+// Covers lifecycle commands before a cross-section move can acquire an order hold.
+export const threadArrangementOpenAtom = Atom.make(false).pipe(Atom.keepAlive);
+
+export const threadDropBusyAtom = Atom.make(false).pipe(Atom.keepAlive);
+
 export const pendingThreadOrderAtom = Atom.make<PendingThreadOrder | null>(null).pipe(
   Atom.keepAlive,
 );

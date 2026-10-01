@@ -20,9 +20,8 @@ export interface UpdateSyncBlockerRequest extends Omit<
  * blocker (discovered via {@link GetSyncBlockerSummary}) so Git sync can
  * resume converging the resource. Provide the implementation with
  * `Effect.provide(AWS.CodeConnections.UpdateSyncBlockerHttp)`.
- * @binding
- * @section Monitoring Git Sync
- * @example Resolve a Sync Blocker
+ * ### Monitoring Git Sync
+ * **Example:** Resolve a Sync Blocker
  * ```typescript
  * // init — bind the operation to the sync configuration
  * const updateSyncBlocker = yield* AWS.CodeConnections.UpdateSyncBlocker(sync);
@@ -33,6 +32,8 @@ export interface UpdateSyncBlockerRequest extends Omit<
  *   ResolvedReason: "stack drift corrected manually",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateSyncBlocker extends Binding.Service<
   UpdateSyncBlocker,

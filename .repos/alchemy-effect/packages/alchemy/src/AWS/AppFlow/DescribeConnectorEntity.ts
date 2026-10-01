@@ -17,9 +17,8 @@ export interface DescribeConnectorEntityRequest extends Omit<
  * is injected automatically and `appflow:DescribeConnectorEntity` is granted
  * on the profile. Provide the implementation with
  * `Effect.provide(AWS.AppFlow.DescribeConnectorEntityHttp)`.
- * @binding
- * @section Discovering Connector Entities
- * @example Describe an Entity's Fields
+ * ### Discovering Connector Entities
+ * **Example:** Describe an Entity's Fields
  * ```typescript
  * // init — bind the operation to the connector profile
  * const describeConnectorEntity =
@@ -31,6 +30,8 @@ export interface DescribeConnectorEntityRequest extends Omit<
  * });
  * // result.connectorEntityFields lists each field with its type
  * ```
+ *
+ * @binding
  */
 export interface DescribeConnectorEntity extends Binding.Service<
   DescribeConnectorEntity,

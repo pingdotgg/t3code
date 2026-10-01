@@ -17,9 +17,8 @@ export interface PutObjectTaggingRequest extends Omit<
  * `s3:PutObjectTagging`/`s3:PutObjectVersionTagging` are granted on the
  * bucket's objects. Provide the implementation with
  * `Effect.provide(AWS.S3.PutObjectTaggingHttp)`.
- * @binding
- * @section Object Tagging
- * @example Tag an Object
+ * ### Object Tagging
+ * **Example:** Tag an Object
  * ```typescript
  * const putObjectTagging = yield* AWS.S3.PutObjectTagging(bucket);
  *
@@ -28,6 +27,8 @@ export interface PutObjectTaggingRequest extends Omit<
  *   Tagging: { TagSet: [{ Key: "status", Value: "final" }] },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutObjectTagging extends Binding.Service<
   PutObjectTagging,

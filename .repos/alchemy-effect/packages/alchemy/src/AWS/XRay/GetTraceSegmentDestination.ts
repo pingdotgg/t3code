@@ -14,9 +14,8 @@ export interface GetTraceSegmentDestinationRequest
  * provide the implementation with `Effect.provide(XRay.GetTraceSegmentDestinationHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetTraceSegmentDestination`, so the binding grants it on `*`.
- * @binding
- * @section Transaction Search
- * @example Check the trace segment destination
+ * ### Transaction Search
+ * **Example:** Check the trace segment destination
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -28,6 +27,8 @@ export interface GetTraceSegmentDestinationRequest
  * const destination = yield* getTraceSegmentDestination();
  * const isTransactionSearch = destination.Destination === "CloudWatchLogs";
  * ```
+ *
+ * @binding
  */
 export interface GetTraceSegmentDestination extends Binding.Service<
   GetTraceSegmentDestination,

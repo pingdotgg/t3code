@@ -12,15 +12,16 @@ import type { Table } from "./Table.ts";
  * metadata location are the inputs to the Iceberg commit protocol (see
  * {@link UpdateTableMetadataLocation}). Provide the implementation with
  * `Effect.provide(AWS.S3Tables.GetTableHttp)`.
- * @binding
- * @section Reading Table Metadata
- * @example Read the table's current version
+ * ### Reading Table Metadata
+ * **Example:** Read the table's current version
  * ```typescript
  * const getTable = yield* AWS.S3Tables.GetTable(table);
  *
  * const { versionToken, metadataLocation, warehouseLocation } =
  *   yield* getTable();
  * ```
+ *
+ * @binding
  */
 export interface GetTable extends Binding.Service<
   GetTable,

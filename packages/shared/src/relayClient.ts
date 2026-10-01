@@ -103,7 +103,7 @@ const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 
 const trimmedString = (name: string) =>
-  Config.string(name).pipe(
+  Config.String(name).pipe(
     Config.option,
     Config.map(
       Option.flatMap((value) => {
@@ -334,9 +334,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
       ).pipe(
         Effect.as(true),
-        Effect.catch((error) =>
-          isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
-        ),
+        Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
       );
       if (acquired) return;
 
@@ -447,16 +445,16 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       } satisfies AvailableRelayClient;
     }).pipe(
       Effect.scoped,
-      Effect.catch((cause) =>
-        cause instanceof RelayClientInstallError
-          ? Effect.fail(cause)
-          : Effect.fail(
-              new RelayClientInstallError({
-                reason: "write_failed",
-                message: "Could not install the relay client.",
-                cause,
-              }),
-            ),
+      Effect.catchIf(
+        (cause) => !(cause instanceof RelayClientInstallError),
+        (cause) =>
+          Effect.fail(
+            new RelayClientInstallError({
+              reason: "write_failed",
+              message: "Could not install the relay client.",
+              cause,
+            }),
+          ),
       ),
     );
   });

@@ -22,7 +22,7 @@ const TypeId = "~effect/rpc/RpcClientError"
  * @category errors
  * @since 4.0.0
  */
-export class RpcClientDefect extends Schema.ErrorClass<RpcClientDefect>("effect/rpc/RpcClientError/RpcClientDefect")({
+export class RpcClientDefect extends Schema.Error<RpcClientDefect>("effect/rpc/RpcClientError/RpcClientDefect")({
   _tag: Schema.tag("RpcClientDefect"),
   message: Schema.String,
   cause: Schema.Defect()
@@ -35,7 +35,7 @@ export class RpcClientDefect extends Schema.ErrorClass<RpcClientDefect>("effect/
  * @category errors
  * @since 4.0.0
  */
-export class RpcClientError extends Schema.ErrorClass<RpcClientError>(TypeId)({
+export class RpcClientError extends Schema.Error<RpcClientError>(TypeId)({
   _tag: Schema.tag("RpcClientError"),
   reason: Schema.Union([
     WorkerErrorReason,

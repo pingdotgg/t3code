@@ -70,15 +70,15 @@ export interface HttpApiProps {
  * The Lambda receives the same event shape as a Function URL, so an
  * Effect-native `fetch` handler works unchanged behind the API.
  *
- * @section Creating an HTTP API
- * @example Front a Lambda function
+ * ### Creating an HTTP API
+ * **Example:** Front a Lambda function
  * ```typescript
  * const fn = yield* MyFunction;
  * const { url } = yield* ApiGatewayV2.HttpApi("Api", { handler: fn });
  * // url -> https://{apiId}.execute-api.{region}.amazonaws.com
  * ```
  *
- * @example With CORS and a named stage
+ * **Example:** With CORS and a named stage
  * ```typescript
  * const { api, stage, url } = yield* ApiGatewayV2.HttpApi("Api", {
  *   handler: fn,

@@ -17,9 +17,9 @@ import type { ReadonlyRecord } from "../../Record.ts"
 import * as Schema from "../../Schema.ts"
 import type { SchemaError } from "../../Schema.ts"
 import type { Mutable, Simplify } from "../../Types.ts"
+import type * as Sse from "../encoding/Sse.ts"
 import type * as HttpClient from "../http/HttpClient.ts"
 import * as HttpClientError from "../http/HttpClientError.ts"
-import type { HttpClientResponse } from "../http/HttpClientResponse.ts"
 import type * as HttpApi from "../httpapi/HttpApi.ts"
 import * as HttpApiClient from "../httpapi/HttpApiClient.ts"
 import * as HttpApiEndpoint from "../httpapi/HttpApiEndpoint.ts"
@@ -37,7 +37,7 @@ import * as Reactivity from "./Reactivity.ts"
  * It exposes the generated HTTP API client, an atom runtime, mutation helpers that
  * return `AtomResultFn`s, and query helpers that return atoms of endpoint results.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpApiGroup.Constraint>
@@ -82,7 +82,7 @@ export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpA
           readonly reactivityKeys?: ReadonlyArray<unknown> | ReadonlyRecord<string, ReadonlyArray<unknown>> | undefined
         }
       >,
-      ResponseByMode<Extract<_Success, Schema.Top>["Type"], ResponseMode>,
+      ResponseByMode<Endpoint, ResponseMode>,
       ErrorByMode<_Error, _Middleware, ResponseMode>
     >
     : never
@@ -140,7 +140,7 @@ export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpA
     >
   ] ? Atom.Atom<
       AsyncResult.AsyncResult<
-        ResponseByMode<Extract<_Success, Schema.Top>["Type"], ResponseMode>,
+        ResponseByMode<Endpoint, ResponseMode>,
         ErrorByMode<_Error, _Middleware, ResponseMode>
       >
     >
@@ -223,11 +223,13 @@ export const Service =
         query: any
         headers: any
         payload: any
+        sseOptions?: Sse.DecodeOptions | undefined
         reactivityKeys?: ReadonlyArray<unknown> | ReadonlyRecord<string, ReadonlyArray<unknown>> | undefined
       }>()(
         Effect.fnUntraced(function*(opts) {
           const client = (yield* self) as any
-          const effect = catchErrors(client[group][endpoint]({
+          const groupClient = groups[group].topLevel ? client : client[group]
+          const effect = catchErrors(groupClient[endpoint]({
             ...opts,
             responseMode
           }) as Effect.Effect<any>)
@@ -261,11 +263,15 @@ export const Service =
     const queryFamily = Atom.family((opts: QueryKey) => {
       let atom = self.runtime.atom(self.use((client_) => {
         const client = client_ as any
-        return catchErrors(client[opts.group][opts.endpoint](opts) as Effect.Effect<
+        const groupClient = groups[opts.group].topLevel ? client : client[opts.group]
+        return catchErrors(groupClient[opts.endpoint](opts) as Effect.Effect<
           any,
           HttpClientError.HttpClientError | SchemaError
         >)
       }))
+      if (opts.reactivityKeys) {
+        atom = self.runtime.factory.withReactivity(opts.reactivityKeys)(atom)
+      }
       if (opts.responseMode === "decoded-only" && opts.serializationKey) {
         const endpoint = groups[opts.group].endpoints[opts.endpoint]
         atom = Atom.serializable(atom, {
@@ -281,9 +287,7 @@ export const Service =
           ? Atom.setIdleTTL(atom, opts.timeToLive)
           : Atom.keepAlive(atom)
       }
-      return opts.reactivityKeys
-        ? self.runtime.factory.withReactivity(opts.reactivityKeys)(atom)
-        : atom
+      return atom
     })
 
     self.query = ((
@@ -295,6 +299,7 @@ export const Service =
         readonly payload?: any
         readonly headers?: any
         readonly responseMode?: HttpApiEndpoint.ClientResponseMode
+        readonly sseOptions?: Sse.DecodeOptions | undefined
         readonly reactivityKeys?: ReadonlyArray<unknown> | ReadonlyRecord<string, ReadonlyArray<unknown>> | undefined
         readonly timeToLive?: Duration.Input | undefined
         readonly serializationKey?: string | undefined
@@ -308,8 +313,9 @@ export const Service =
         payload: request.payload,
         headers: request.headers,
         responseMode: request.responseMode ?? "decoded-only",
+        sseOptions: request.sseOptions,
         reactivityKeys: request.reactivityKeys,
-        timeToLive: request.timeToLive
+        timeToLive: request.timeToLive !== undefined
           ? Duration.fromInputUnsafe(request.timeToLive)
           : undefined,
         serializationKey: request.serializationKey
@@ -335,14 +341,20 @@ interface QueryKey {
   payload: any
   responseMode: HttpApiEndpoint.ClientResponseMode
   reactivityKeys: ReadonlyArray<unknown> | ReadonlyRecord<string, ReadonlyArray<unknown>> | undefined
+  sseOptions: Sse.DecodeOptions | undefined
   timeToLive: Duration.Duration | undefined
   serializationKey: string | undefined
 }
 
-type ResponseByMode<Success, ResponseMode extends HttpApiEndpoint.ClientResponseMode> = [ResponseMode] extends
-  ["decoded-and-response"] ? [Success, HttpClientResponse]
-  : [ResponseMode] extends ["response-only"] ? HttpClientResponse
-  : Success
+type ResponseByMode<
+  Endpoint extends HttpApiEndpoint.Constraint,
+  ResponseMode extends HttpApiEndpoint.ClientResponseMode
+> = HttpApiClient.Client.Response<
+  Effect.Success<
+    ReturnType<HttpApiClient.Client.Method<Extract<Endpoint, HttpApiEndpoint.ConstraintRequest>, never, never>>
+  >,
+  ResponseMode
+>
 
 type ErrorByMode<
   Error extends Schema.Constraint,

@@ -24,7 +24,7 @@ export class TranscribeTestFunction extends Lambda.Function<Lambda.Function>()(
 export default TranscribeTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Transcribe control-plane calls routinely take a couple of seconds;
     // AWS's default 3s Lambda timeout is too tight under cold starts.
     timeout: Duration.seconds(30),

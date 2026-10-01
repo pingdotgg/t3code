@@ -19,9 +19,8 @@ export interface PutGeofenceRequest extends Omit<
  * `geo:PutGeofence`), scoped to one {@link GeofenceCollection}. Provide the implementation with
  * `Effect.provide(AWS.Location.PutGeofenceHttp)`.
  *
- * @binding
- * @section Managing Geofences
- * @example Store a Circular Geofence
+ * ### Managing Geofences
+ * **Example:** Store a Circular Geofence
  * ```typescript
  * const putGeofence = yield* Location.PutGeofence(collection);
  *
@@ -30,6 +29,8 @@ export interface PutGeofenceRequest extends Omit<
  *   Geometry: { Circle: { Center: [-122.3493, 47.6205], Radius: 100 } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutGeofence extends Binding.Service<
   PutGeofence,

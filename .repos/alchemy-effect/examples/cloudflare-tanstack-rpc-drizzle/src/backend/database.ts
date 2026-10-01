@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 
 /**
  * A Drizzle schema + Neon project + feature branch. The branch's
- * `migrationsDir` is wired to the schema resource's `out` output, so the
+ * `migrations` prop is wired to the schema resource, so the
  * provider order becomes:
  *
  *   1. `Drizzle.Schema` regenerates pending migration SQL files.
@@ -29,7 +29,7 @@ export const NeonDatabase = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("Branch", {
     project,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   return { project, branch, schema };

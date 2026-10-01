@@ -13,9 +13,8 @@ export interface BatchDisassociateResourceRequest
  *
  * Disassociates resources from the specified Firewall Manager resource set, reporting per-item failures. Provide the
  * implementation with `Effect.provide(AWS.FMS.BatchDisassociateResourceHttp)`.
- * @binding
- * @section Resource Sets
- * @example Disassociate Resources from a Resource Set
+ * ### Resource Sets
+ * **Example:** Disassociate Resources from a Resource Set
  * ```typescript
  * // init — account-level binding takes no resource
  * const batchDisassociateResource = yield* AWS.FMS.BatchDisassociateResource();
@@ -27,6 +26,8 @@ export interface BatchDisassociateResourceRequest
  * });
  * console.log(result.FailedItems.length);
  * ```
+ *
+ * @binding
  */
 export interface BatchDisassociateResource extends Binding.Service<
   BatchDisassociateResource,

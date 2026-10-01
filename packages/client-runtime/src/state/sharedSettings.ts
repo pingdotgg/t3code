@@ -14,6 +14,7 @@ import type {
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { isModelSelectionProviderEnabled } from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Struct from "effect/Struct";
 
@@ -26,6 +27,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleOnMerge",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
+  "textGenerationModelSelection",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;
 
 export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
@@ -52,11 +54,31 @@ export function splitSharedServerPatch(patch: ServerSettingsPatch): {
   };
 }
 
-/** Omit restart recovery on servers that cannot persist its preference. */
+/** Filter unsupported preferences; direct model writes retain the server's fallback behavior. */
 export function filterSharedServerPatch(
   patch: ServerSettingsPatch,
   capabilities: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation"> | undefined,
+  settings?: ServerSettings,
+  sourceSettings = settings,
+  targetIsSource = false,
 ): ServerSettingsPatch {
+  const instanceId =
+    patch.textGenerationModelSelection?.instanceId ??
+    sourceSettings?.textGenerationModelSelection.instanceId;
+  if (
+    !targetIsSource &&
+    patch.textGenerationModelSelection &&
+    (!settings ||
+      (instanceId !== undefined &&
+        (sourceSettings?.providerInstances[instanceId]?.driver ?? instanceId) !==
+          (settings.providerInstances[instanceId]?.driver ?? instanceId)) ||
+      !isModelSelectionProviderEnabled(settings, {
+        ...settings.textGenerationModelSelection,
+        ...patch.textGenerationModelSelection,
+      }))
+  ) {
+    patch = Struct.omit(patch, ["textGenerationModelSelection"]);
+  }
   return capabilities?.threadRestartContinuation === true
     ? patch
     : Struct.omit(patch, ["continueThreadsAfterServerUpdate"]);
@@ -67,7 +89,11 @@ export function pickSharedServerSettings(
   settings: ServerSettings,
   capabilities?: Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">,
 ): ServerSettingsPatch {
-  return filterSharedServerPatch(Struct.pick(settings, SHARED_SERVER_SETTING_KEYS), capabilities);
+  return filterSharedServerPatch(
+    Struct.pick(settings, SHARED_SERVER_SETTING_KEYS),
+    capabilities,
+    settings,
+  );
 }
 
 /**
@@ -129,11 +155,20 @@ export function findSharedSettingsMismatches(input: {
     ) {
       return [];
     }
-    const expected = filterSharedServerPatch(primarySettings, environment.capabilities);
-    const actual = filterSharedServerPatch(
+    const expected = filterSharedServerPatch(
+      primarySettings,
+      environment.capabilities,
+      environment.settings,
+      input.primarySettings ?? undefined,
+    );
+    let actual = filterSharedServerPatch(
       pickSharedServerSettings(environment.settings, environment.capabilities),
       input.primaryCapabilities,
+      environment.settings,
     );
+    if (!expected.textGenerationModelSelection) {
+      actual = Struct.omit(actual, ["textGenerationModelSelection"]);
+    }
     return Equal.equals(actual, expected)
       ? []
       : [{ environmentId: environment.environmentId, label: environment.label }];
