@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/expo/modules/sharing/SharingRecords.kt b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
-index 0b87b53f632e82f9b4c09c066d5a67e4ab2525a4..65f1c57faef3ba8caac9e137341f2b8312bb5f86 100644
+index 0b87b53..65f1c57 100644
 --- a/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 +++ b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 @@ -52,7 +52,8 @@ enum class ContentType(val value: String) : Enumerable {
@@ -13,7 +13,7 @@ index 0b87b53f632e82f9b4c09c066d5a67e4ab2525a4..65f1c57faef3ba8caac9e137341f2b83
  
  @OptimizedRecord
 diff --git a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
-index 8dd50e8f04022d183884a57e4d61a7e1711b9e49..481cdb4bc64ea5ae49919071f686324f6d56d55c 100644
+index 8dd50e8..481cdb4 100644
 --- a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 +++ b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 @@ -3,6 +3,7 @@ package expo.modules.sharing
@@ -89,10 +89,10 @@ index 8dd50e8f04022d183884a57e4d61a7e1711b9e49..481cdb4bc64ea5ae49919071f686324f
      }
    }
 diff --git a/build/Sharing.types.d.ts b/build/Sharing.types.d.ts
-index e9820b061bddce91657ab7144fde98d0543a3b8e..364d63273cb3e209c6490de6dd869a01c8728fcc 100644
+index 74544e0..92bd2f5 100644
 --- a/build/Sharing.types.d.ts
 +++ b/build/Sharing.types.d.ts
-@@ -77,6 +77,11 @@ export type SharePayload = {
+@@ -100,6 +100,11 @@ export type SharePayload = {
       * @default 'text/plain'
       */
      mimeType?: string;
@@ -105,10 +105,10 @@ index e9820b061bddce91657ab7144fde98d0543a3b8e..364d63273cb3e209c6490de6dd869a01
  export type BaseResolvedSharePayload = SharePayload & {
      /**
 diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
-index d9a5ad38f5fe2856b365eb91b71abd640314a5cc..21ea45f04b88cce272e2e02de24c5e4eb8157e82 100644
+index 18af320..3a52b70 100644
 --- a/src/Sharing.types.ts
 +++ b/src/Sharing.types.ts
-@@ -85,6 +85,12 @@ export type SharePayload = {
+@@ -108,6 +108,12 @@ export type SharePayload = {
     * @default 'text/plain'
     */
    mimeType?: string;
