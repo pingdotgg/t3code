@@ -30,6 +30,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
+import { readSweepSnapshot } from "../ThreadPullRequestReactor.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
@@ -485,7 +486,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
+          autoSettleDisabledAt: null,
           titleRegeneration: null,
+          titleState: null,
           deletedAt: null,
           messages: [
             {
@@ -610,7 +613,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
+          autoSettleDisabledAt: null,
           titleRegeneration: null,
+          titleState: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -741,7 +746,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
           title: "Thread 1",
-          session: snapshot.threads[0]?.session,
+          titleState: null,
+          session: snapshot.threads[0]?.session ?? null,
         });
       }
 
@@ -1065,6 +1071,40 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
         "None",
       );
+      assert.deepEqual(yield* snapshotQuery.getDeletedWorktreeThreads(), []);
+      yield* sql`
+        UPDATE projection_threads
+        SET branch = 'retained-branch', worktree_path = '/tmp/archived-worktree',
+            deleted_at = '2026-04-06T00:00:09.000Z'
+        WHERE thread_id = 'thread-archived'
+      `;
+      assert.deepEqual(yield* snapshotQuery.getDeletedWorktreeThreads(), [
+        {
+          id: ThreadId.make("thread-archived"),
+          projectId: ProjectId.make("project-archive-test"),
+          branch: "retained-branch",
+          worktreePath: "/tmp/archived-worktree",
+          workspaceRoot: "/tmp/archive-test",
+          deletedAt: "2026-04-06T00:00:09.000Z",
+        },
+      ]);
+      assert.deepEqual((yield* snapshotQuery.getArchivedShellSnapshot()).threads, []);
+      yield* sql`
+        UPDATE projection_projects
+        SET deleted_at = '2026-04-06T00:00:10.000Z', updated_at = '2026-04-06T00:00:10.000Z'
+        WHERE project_id = 'project-archive-test'
+      `;
+      assert.deepEqual((yield* snapshotQuery.getShellSnapshot()).projects, []);
+      assert.deepEqual(yield* snapshotQuery.getDeletedWorktreeThreads(), [
+        {
+          id: ThreadId.make("thread-archived"),
+          projectId: ProjectId.make("project-archive-test"),
+          branch: "retained-branch",
+          worktreePath: "/tmp/archived-worktree",
+          workspaceRoot: "/tmp/archive-test",
+          deletedAt: "2026-04-06T00:00:09.000Z",
+        },
+      ]);
     }),
   );
 
@@ -3462,4 +3502,270 @@ it.effect("omits foreign-host PRs from legacy snapshots while preserving native 
       assert.equal(thread.linkedPullRequest?.url, "https://github.com/acme/web/pull/42");
     }
   }).pipe(Effect.provide(layer));
+});
+
+it.effect(
+  "lists linked threads like the shell snapshot, in one query and without identities",
+  () => {
+    const resolved: string[] = [];
+    const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(ThreadPlanProgress.layer),
+      Layer.provide(
+        Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+          resolve: (root) =>
+            Effect.sync(() => {
+              resolved.push(root);
+              return null;
+            }),
+        }),
+      ),
+      Layer.provideMerge(SqlitePersistenceMemory),
+    );
+    return Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const query = yield* ProjectionSnapshotQuery;
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'One', '/one', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+        ('p2', 'Two', '/two', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+      yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at, archived_at, deleted_at, settled_override, settled_at)
+      VALUES
+        ('t-late', 'p1', 'Late', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z', NULL, NULL, 'settled', '2026-09-04T00:00:00Z'),
+        ('t-early', 'p2', 'Early', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL, NULL, NULL),
+        ('t-first', 'p1', 'First', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL, NULL, NULL, NULL),
+        ('t-plain', 'p1', 'Plain', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL, NULL, NULL, NULL),
+        ('t-archived', 'p1', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', '2026-09-05T00:00:00Z', NULL, NULL, NULL),
+        ('t-deleted', 'p1', 'Deleted', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL, '2026-09-05T00:00:00Z', NULL, NULL)`;
+      yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at, snapshot_json)
+      VALUES
+        ('t-late', 'github.com', 'acme/web', 3, 'https://github.com/acme/web/pull/3', 'manual', '2026-09-03T00:00:00Z', NULL),
+        ('t-early', 'github.com', 'acme/api', 4, 'https://github.com/acme/api/pull/4', 'agent', '2026-09-01T00:00:00Z', NULL),
+        ('t-first', 'github.com', 'acme/web', 2, 'https://github.com/acme/web/pull/2', 'stack-dismissed', '2026-09-02T00:00:00Z', NULL),
+        ('t-first', 'github.com', 'acme/web', 1, 'https://github.com/acme/web/pull/1', 'created', '2026-09-02T00:00:00Z',
+          '{"state":"open","title":"One","headBranch":"one","baseBranch":"main","isDraft":false,"updatedAt":null,"syncedAt":"2026-09-02T00:00:00Z"}'),
+        ('t-archived', 'github.com', 'acme/web', 5, 'https://github.com/acme/web/pull/5', 'manual', '2026-09-02T00:00:00Z', NULL),
+        ('t-deleted', 'github.com', 'acme/web', 6, 'https://github.com/acme/web/pull/6', 'manual', '2026-09-02T00:00:00Z', NULL)`;
+      const expected = (yield* query.getShellSnapshot()).threads
+        .filter((thread) => thread.pullRequests.length > 0)
+        .map(({ id, projectId, settledOverride, settledAt, pullRequests }) => ({
+          id,
+          projectId,
+          settledOverride,
+          settledAt,
+          pullRequests,
+        }));
+      resolved.length = 0;
+
+      const counter = makeSqlStatementCounter();
+      const threads = yield* query
+        .listThreadsWithPullRequests()
+        .pipe(Effect.withTracer(counter.tracer));
+      assert.deepStrictEqual(
+        threads.map((thread) => [thread.id, thread.pullRequests.map((link) => link.number)]),
+        [
+          ["t-first", [1, 2]],
+          ["t-late", [3]],
+          ["t-early", [4]],
+        ],
+      );
+      assert.deepStrictEqual(threads, expected);
+      assert.strictEqual(counter.count(), 1);
+      assert.deepStrictEqual(resolved, []);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect("reads one sweep thread and its projects like the shell snapshot", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/acme/web",
+            provider: "github",
+            displayName: "acme/web",
+            locator: {
+              source: "git-remote" as const,
+              remoteName: "origin",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'One', '/one', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+        ('p2', 'Two', '/two', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z'),
+        ('p3', 'Three', '/three', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch, worktree_path, branch_pull_request_json, latest_turn_id, latest_user_message_at, pending_approval_count, snoozed_until, snoozed_at, created_at, updated_at, settled_override, settled_at)
+      VALUES
+        ('t-linked', 'p1', 'Linked', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'feature', '/one/wt', NULL, 'turn-1', '2026-09-02T00:00:00Z', 1, NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', NULL, NULL),
+        ('t-branch', 'p1', 'Branch', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', 'other', NULL,
+          '{"projectId":"p2","repository":"acme/web","number":8,"url":"https://github.com/acme/web/pull/8"}',
+          NULL, NULL, 0, '2026-09-10T00:00:00Z', '2026-09-02T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 'settled', '2026-09-03T00:00:00Z'),
+        ('t-other', 'p3', 'Other', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL)`;
+    yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('t-linked', 'github.com', 'acme/web', 7, 'https://github.com/acme/web/pull/7', 'agent', '2026-09-02T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, started_at, completed_at, checkpoint_files_json)
+      VALUES ('t-linked', 'turn-1', 'completed', '2026-09-02T00:00:00Z', '2026-09-02T00:00:01Z', '2026-09-02T00:00:02Z', '[]')`;
+    yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, provider_name, active_turn_id, last_error, updated_at)
+      VALUES ('t-linked', 'ready', 'codex', NULL, NULL, '2026-09-02T00:00:03Z')`;
+    for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+      yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${projector}, 9, '2026-09-02T00:00:03Z')`;
+    }
+
+    const full = yield* query.getShellSnapshot();
+    // The seeded fields must reach the snapshot, or the parity check is empty.
+    const linked = full.threads.find((thread) => thread.id === ThreadId.make("t-linked"));
+    assert.strictEqual(full.snapshotSequence, 9);
+    assert.strictEqual(linked?.linkedPullRequest?.number, 7);
+    assert.strictEqual(linked?.latestTurn?.turnId, asTurnId("turn-1"));
+    assert.strictEqual(linked?.session?.status, "ready");
+
+    for (const [threadId, projectIds] of [
+      [ThreadId.make("t-linked"), [asProjectId("p1")]],
+      // Settlement also needs the project that the saved branch PR names.
+      [ThreadId.make("t-branch"), [asProjectId("p1"), asProjectId("p2")]],
+    ] as const) {
+      assert.deepStrictEqual(yield* readSweepSnapshot(query, threadId), {
+        snapshotSequence: full.snapshotSequence,
+        projects: full.projects.filter((project) => projectIds.includes(project.id)),
+        threads: full.threads.filter((thread) => thread.id === threadId),
+      });
+    }
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reads a full sweep from unsettled threads and every project", () => {
+  const resolved: string[] = [];
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (root) =>
+          Effect.sync(() => {
+            resolved.push(root);
+            return null;
+          }),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('p1', 'One', '/one', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z'),
+        ('p2', 'Two', '/two', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z'),
+        ('p3', 'Three', '/three', '[]', '2026-09-03T00:00:00Z', '2026-09-03T00:00:00Z'),
+        ('p4', 'Four', '/four', '[]', '2026-09-04T00:00:00Z', '2026-09-04T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, branch_pull_request_json, latest_turn_id, created_at, updated_at, archived_at, settled_override, settled_at)
+      VALUES
+        ('t-open', 'p1', 'Open', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, 'turn-open', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL, NULL),
+        ('t-resumed', 'p1', 'Resumed', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, 'active', NULL),
+        ('t-branch', 'p1', 'Branch', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default',
+          '{"projectId":"p2","repository":"acme/web","number":8,"url":"https://github.com/acme/web/pull/8"}',
+          NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, NULL, NULL),
+        ('t-settled', 'p3', 'Settled', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, 'turn-settled', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL, 'settled', '2026-09-03T00:00:00Z'),
+        ('t-archived', 'p4', 'Archived', '{"provider":"codex","model":"gpt-5"}', 'full-access', 'default', NULL, NULL, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '2026-09-04T00:00:00Z', NULL, NULL)`;
+    // The open and the settled thread both have a row in each joined table. The
+    // settled thread's turn and session are the newest rows, so updatedAt shows
+    // whether those two reads skip it.
+    yield* sql`INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('t-open', 'github.com', 'acme/web', 7, 'https://github.com/acme/web/pull/7', 'agent', '2026-09-02T00:00:00Z'),
+        ('t-settled', 'github.com', 'acme/web', 9, 'https://github.com/acme/web/pull/9', 'agent', '2026-09-02T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_turns (thread_id, turn_id, state, requested_at, checkpoint_files_json)
+      VALUES ('t-open', 'turn-open', 'completed', '2026-09-02T00:00:00Z', '[]'),
+        ('t-settled', 'turn-settled', 'completed', '2026-09-09T00:00:00Z', '[]')`;
+    yield* sql`INSERT INTO projection_thread_sessions (thread_id, status, provider_name, active_turn_id, last_error, updated_at)
+      VALUES ('t-open', 'ready', 'codex', NULL, NULL, '2026-09-02T00:00:00Z'),
+        ('t-settled', 'stopped', 'codex', NULL, NULL, '2026-09-10T00:00:00Z')`;
+
+    const full = yield* query.getShellSnapshot();
+    // The settled thread's rows must reach the full read, or skipping them proves nothing.
+    const settled = full.threads.find((thread) => thread.id === ThreadId.make("t-settled"));
+    assert.strictEqual(settled?.pullRequests[0]?.number, 9);
+    assert.strictEqual(settled?.latestTurn?.turnId, asTurnId("turn-settled"));
+    assert.strictEqual(settled?.session?.status, "stopped");
+    assert.strictEqual(full.updatedAt, "2026-09-10T00:00:00Z");
+    resolved.length = 0;
+
+    const sweep = yield* readSweepSnapshot(query, null);
+    assert.strictEqual(sweep.snapshotSequence, full.snapshotSequence);
+    assert.deepStrictEqual(
+      sweep.threads,
+      full.threads.filter((thread) => thread.id !== ThreadId.make("t-settled")),
+    );
+    assert.deepStrictEqual(
+      sweep.threads.map((thread) => thread.id),
+      ["t-branch", "t-open", "t-resumed"],
+    );
+    // Like the full read, the sweep resolves every project, so it keeps the
+    // repository identity cache warm for client connects.
+    assert.deepStrictEqual(sweep.projects, full.projects);
+    assert.deepStrictEqual(resolved.toSorted(), ["/four", "/one", "/three", "/two"]);
+    // A settled thread's link that no longer decodes breaks the full read, but
+    // not the sweep, which never reads it.
+    yield* sql`UPDATE projection_thread_pull_requests SET snapshot_json = 'invalid-json' WHERE thread_id = 't-settled'`;
+    assert.strictEqual((yield* Effect.exit(query.getShellSnapshot()))._tag, "Failure");
+    const unsettled = yield* query.getShellSnapshot({ unsettledOnly: true });
+    assert.deepStrictEqual(unsettled.threads, sweep.threads);
+    assert.strictEqual(unsettled.updatedAt, "2026-09-04T00:00:00Z");
+  }).pipe(Effect.provide(layer));
+});
+
+projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
+  it.effect("lists one kind across active threads only, without hydrating the threads", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const timestamp = "2026-03-02T00:00:00.000Z";
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES ('project-kinds', 'Project', '/tmp/project-kinds', '[]', ${timestamp}, ${timestamp})
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          created_at, updated_at, deleted_at
+        ) VALUES
+          ('thread-live', 'project-kinds', 'Live', '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access', 'default', ${timestamp}, ${timestamp}, NULL),
+          ('thread-gone', 'project-kinds', 'Gone', '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access', 'default', ${timestamp}, ${timestamp}, ${timestamp}),
+          ('thread-shelved', 'project-kinds', 'Shelved', '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access', 'default', ${timestamp}, ${timestamp}, NULL)
+      `;
+      yield* sql`UPDATE projection_threads SET archived_at = ${timestamp} WHERE thread_id = 'thread-shelved'`;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
+        ) VALUES
+          ('setup-live', 'thread-live', NULL, 'info', 'worktree-setup', 'Setting up',
+            '{"phase":"running"}', ${timestamp}),
+          ('other-live', 'thread-live', NULL, 'info', 'tool.completed', 'Other',
+            '{}', ${timestamp}),
+          ('setup-gone', 'thread-gone', NULL, 'info', 'worktree-setup', 'Setting up',
+            '{"phase":"running"}', ${timestamp}),
+          ('setup-shelved', 'thread-shelved', NULL, 'info', 'worktree-setup', 'Setting up',
+            '{"phase":"running"}', ${timestamp})
+      `;
+
+      const setups = yield* query.listActivitiesByKind("worktree-setup");
+      assert.deepEqual(
+        setups.map((activity) => [activity.id, activity.kind, activity.payload]),
+        [["setup-live", "worktree-setup", { phase: "running" }]],
+      );
+      assert.deepEqual(yield* query.listActivitiesByKind("nope"), []);
+    }),
+  );
 });

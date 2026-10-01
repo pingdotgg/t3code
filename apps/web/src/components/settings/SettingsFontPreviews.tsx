@@ -10,7 +10,7 @@ import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
-// Lexical editor, the diff panel's file diff, and the Ghostty canvas
+// Tiptap editor, the diff panel's file diff, and the Ghostty canvas
 // renderer. Each already consumes the appearance font tokens (or, for the
 // terminal, the settings passed down as props), so what the row shows is
 // exactly what the app renders.
@@ -39,6 +39,7 @@ export function PromptFontPreview() {
   return (
     <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
       <ComposerPromptEditor
+        ariaLabel="Prompt font preview"
         editorRef={editorRef}
         value={prompt}
         cursor={cursor}
@@ -46,7 +47,7 @@ export function PromptFontPreview() {
         skills={EMPTY_SKILLS}
         disabled={false}
         placeholder={DISCONNECTED_COMPOSER_PLACEHOLDER}
-        className="max-h-40 min-h-12"
+        className="max-h-42 min-h-14"
         onChange={onChange}
         onPaste={noop}
       />

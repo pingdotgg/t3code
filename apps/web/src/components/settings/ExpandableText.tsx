@@ -1,3 +1,4 @@
+import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -33,15 +34,15 @@ export function ExpandableText({
         {text}
       </div>
       {canExpand ? (
-        <button
-          type="button"
+        <InlineButton
           aria-expanded={expanded}
           aria-controls={textId}
-          className="cursor-pointer mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
+          tone="muted"
+          className="mt-1"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "Show less" : expandLabel}
-        </button>
+        </InlineButton>
       ) : null}
     </div>
   );

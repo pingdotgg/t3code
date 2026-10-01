@@ -50,6 +50,45 @@ folded: >-
     )
   })
 
+  it("preserves paragraph and indentation breaks in folded block scalars", () => {
+    assert.deepStrictEqual(
+      Yaml.parse(`
+paragraph: >-
+  first
+
+  second
+indented: >-
+  first
+    second
+  third
+`),
+      {
+        paragraph: "first\nsecond",
+        indented: "first\n  second\nthird"
+      }
+    )
+  })
+
+  it.each([
+    [
+      "leading blanks before a more-indented first line",
+      "message: >-2\n\n    first\n  second\n",
+      "\n  first\nsecond"
+    ],
+    [
+      "keep chomping after a more-indented final line",
+      "message: >+2\n  first\n    second\n",
+      "first\n  second\n"
+    ],
+    [
+      "multiple blank paragraph lines",
+      "message: >-\n  first\n\n\n  second\n",
+      "first\n\nsecond"
+    ]
+  ])("preserves %s", (_, source, expected) => {
+    assert.deepStrictEqual(Yaml.parse(source), { message: expected })
+  })
+
   it("resolves aliases", () => {
     assert.deepStrictEqual(
       Yaml.parse(`

@@ -10,8 +10,9 @@ import {
   type ServerProvider,
   ThreadId,
   TurnId,
+  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
@@ -31,7 +32,6 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import {
-  MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
@@ -51,7 +51,6 @@ import {
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
-  reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -59,6 +58,8 @@ import {
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
+  findRecordedWorktreeSetup,
+  resolveVisibleWorktreeSetup,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
@@ -85,7 +86,6 @@ import {
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
-  toolGroupConsumesUpwardNavigation,
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
@@ -384,29 +384,35 @@ describe("proactive panels", () => {
     ).toBe(false);
   });
 
-  it("opens a completed turn diff only for changed files", () => {
-    const changedCheckpoint = {
-      status: "ready",
-      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
-    } satisfies Pick<TurnDiffSummary, "status" | "files">;
-    const unchangedCheckpoint = {
-      status: "ready",
-      files: [],
-    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+  it.each([
+    { files: 0, additions: 0, deletions: 0, action: "ignore" },
+    { files: 1, additions: 1, deletions: 0, action: "ignore" },
+    { files: 2, additions: 12, deletions: 12, action: "ignore" },
+    { files: 1, additions: 25, deletions: 24, action: "ignore" },
+    { files: 1, additions: 25, deletions: 25, action: "open" },
+    { files: 1, additions: 0, deletions: 50, action: "open" },
+    { files: 3, additions: 1, deletions: 0, action: "open" },
+  ])(
+    "uses change size for automatic diffs: $files files, +$additions/-$deletions",
+    ({ files, additions, deletions, action }) => {
+      const changedCheckpoint = {
+        status: "ready",
+        files: Array.from({ length: files }, (_, index) => ({
+          path: `src/app-${index}.ts`,
+          kind: "modified" as const,
+          additions,
+          deletions,
+        })),
+      } satisfies Pick<TurnDiffSummary, "status" | "files">;
 
-    expect(
-      resolveProactiveTurnDiffAction({
-        checkpoint: changedCheckpoint,
-        isGitRepo: true,
-      }),
-    ).toBe("open");
-    expect(
-      resolveProactiveTurnDiffAction({
-        checkpoint: unchangedCheckpoint,
-        isGitRepo: true,
-      }),
-    ).toBe("ignore");
-  });
+      expect(
+        resolveProactiveTurnDiffAction({
+          checkpoint: changedCheckpoint,
+          isGitRepo: true,
+        }),
+      ).toBe(action);
+    },
+  );
 
   it("waits for definitive checkpoint and repository state", () => {
     const missingCheckpoint = {
@@ -439,134 +445,6 @@ describe("proactive panels", () => {
   });
 });
 
-describe("toolGroupConsumesUpwardNavigation", () => {
-  class ScrollElement extends EventTarget {
-    scrollTop = 0;
-    scrollHeight = 100;
-    clientHeight = 100;
-    overflowY = "visible";
-
-    constructor(
-      readonly parentElement: ScrollElement | null = null,
-      readonly isToolGroup = false,
-    ) {
-      super();
-    }
-
-    closest(selector: string): ScrollElement | null {
-      if (selector !== "[data-tool-group-scroll]") return null;
-      return this.isToolGroup ? this : (this.parentElement?.closest(selector) ?? null);
-    }
-  }
-
-  beforeEach(() => {
-    vi.stubGlobal("Element", ScrollElement);
-    vi.stubGlobal("getComputedStyle", (element: ScrollElement) => ({
-      overflowY: element.overflowY,
-    }));
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("releases upward navigation when an overflowing group is at the top", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "auto",
-      scrollHeight: 300,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
-  });
-
-  it.each([
-    { overflowY: "auto", scrollTop: 1 },
-    { overflowY: "auto", scrollTop: 0.25 },
-    { overflowY: "scroll", scrollTop: 80 },
-  ])("consumes upward navigation within a scrolled group: %j", (scroll) => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      scrollHeight: 300,
-      ...scroll,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(group)).toBe(true);
-  });
-
-  it.each([100, 300])(
-    "consumes scrolling in a nested result with a group content height of %i",
-    (scrollHeight) => {
-      const group = Object.assign(new ScrollElement(null, true), {
-        overflowY: "auto",
-        scrollHeight,
-      });
-      const result = Object.assign(new ScrollElement(group), {
-        overflowY: "auto",
-        scrollHeight: 300,
-        scrollTop: 0.25,
-      });
-
-      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(true);
-    },
-  );
-
-  it("releases upward navigation when the group and nested result are both at the top", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "auto",
-      scrollHeight: 300,
-    });
-    const result = Object.assign(new ScrollElement(group), {
-      overflowY: "scroll",
-      scrollHeight: 300,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
-  });
-
-  it("ignores targets outside a tool group and non-element targets", () => {
-    const outside = Object.assign(new ScrollElement(), {
-      overflowY: "auto",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(outside)).toBe(false);
-    expect(toolGroupConsumesUpwardNavigation(new EventTarget())).toBe(false);
-    expect(toolGroupConsumesUpwardNavigation(null)).toBe(false);
-  });
-
-  it("does not consume scrolling from an ancestor beyond the tool group", () => {
-    const timeline = Object.assign(new ScrollElement(), {
-      overflowY: "auto",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-    const group = new ScrollElement(timeline, true);
-
-    expect(toolGroupConsumesUpwardNavigation(new ScrollElement(group))).toBe(false);
-  });
-
-  it.each(["hidden", "clip", "visible"])(
-    "ignores a non-scrollable child with overflow-y %s",
-    (overflowY) => {
-      const group = new ScrollElement(null, true);
-      const result = Object.assign(new ScrollElement(group), {
-        overflowY,
-        scrollHeight: 300,
-        scrollTop: 40,
-      });
-
-      expect(toolGroupConsumesUpwardNavigation(new ScrollElement(result))).toBe(false);
-    },
-  );
-
-  it("does not consume programmatic scrolling on an overflow-hidden group", () => {
-    const group = Object.assign(new ScrollElement(null, true), {
-      overflowY: "hidden",
-      scrollHeight: 300,
-      scrollTop: 40,
-    });
-
-    expect(toolGroupConsumesUpwardNavigation(group)).toBe(false);
-  });
-});
-
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
@@ -593,6 +471,30 @@ describe("draft hero submission transition", () => {
         isDraftHeroState: true,
         activeThreadKey: "environment-local:thread-1",
         submissionIntent: "background",
+      }),
+    ).toBe(false);
+  });
+
+  it("leaves the hero layout while a worktree setup card is on the timeline", () => {
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: true,
+        hasTimelineEntries: false,
+        isWorking: false,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: false,
+        hasWorktreeSetupCard: true,
+      }),
+    ).toBe(false);
+    // A background submission normally pins the hero, but never over the card.
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: true,
+        hasTimelineEntries: false,
+        isWorking: false,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: true,
+        hasWorktreeSetupCard: true,
       }),
     ).toBe(false);
   });
@@ -992,20 +894,10 @@ describe("draft promotion during worktree setup", () => {
   const serverThreadRef = { environmentId, threadId };
 
   it.each([null, "idle", "starting", "ready"] as const)(
-    "keeps the draft mounted while the first turn waits with session %s",
+    "keeps the draft mounted until the server owns the send, with session %s",
     (status) => {
       const serverThread = makeThread({
-        messages: [
-          {
-            id: MessageId.make("submitted-message"),
-            role: "user",
-            text: "Start in a new worktree",
-            turnId: null,
-            createdAt: now,
-            updatedAt: now,
-            streaming: false,
-          },
-        ],
+        messages: [],
         session: status ? { ...readySession, status } : null,
       });
 
@@ -1018,6 +910,31 @@ describe("draft promotion during worktree setup", () => {
       ).toBeNull();
     },
   );
+
+  it("promotes once the bootstrap persisted the user message, before any turn", () => {
+    const serverThread = makeThread({
+      messages: [
+        {
+          id: MessageId.make("submitted-message"),
+          role: "user",
+          text: "Start in a new worktree",
+          turnId: null,
+          createdAt: now,
+          updatedAt: now,
+          streaming: false,
+        },
+      ],
+      session: null,
+    });
+
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread,
+        backgroundSubmissionPending: false,
+      }),
+    ).toEqual(serverThreadRef);
+  });
 
   it("promotes when the provider starts the first turn", () => {
     const latestTurn = { ...completedTurn, state: "running" as const, completedAt: null };
@@ -1839,50 +1756,6 @@ describe("reconcileMountedTerminalThreadIds", () => {
   });
 });
 
-describe("reconcileRetainedMountedThreadIds", () => {
-  it("retains hidden open threads and adds the active open thread", () => {
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds: [ThreadId.make("thread-hidden")],
-        openThreadIds: [ThreadId.make("thread-hidden")],
-        activeThreadId: ThreadId.make("thread-active"),
-        activeThreadOpen: true,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-      }),
-    ).toEqual([ThreadId.make("thread-hidden"), ThreadId.make("thread-active")]);
-  });
-
-  it("can retain the active thread as hidden when it is inactive", () => {
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds: [ThreadId.make("thread-active")],
-        openThreadIds: [ThreadId.make("thread-active")],
-        activeThreadId: ThreadId.make("thread-active"),
-        activeThreadOpen: false,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-        retainInactiveActiveThread: true,
-      }),
-    ).toEqual([ThreadId.make("thread-active")]);
-  });
-
-  it("evicts the oldest hidden threads beyond the configured cap", () => {
-    const currentThreadIds = Array.from(
-      { length: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS + 2 },
-      (_, index) => ThreadId.make(`thread-${index + 1}`),
-    );
-
-    expect(
-      reconcileRetainedMountedThreadIds({
-        currentThreadIds,
-        openThreadIds: currentThreadIds,
-        activeThreadId: null,
-        activeThreadOpen: false,
-        maxHiddenThreadCount: MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
-      }),
-    ).toEqual(currentThreadIds.slice(-MAX_HIDDEN_MOUNTED_PREVIEW_THREADS));
-  });
-});
-
 describe("shouldWriteThreadErrorToCurrentServerThread", () => {
   it("writes errors for a shell-derived active server thread", () => {
     const routeThreadRef = { environmentId, threadId };
@@ -2445,6 +2318,115 @@ describe("restorePlanFollowUpComposer", () => {
       cursor: expect.any(Number),
       prompt: "Follow up on the plan",
       detectTrigger: true,
+    });
+  });
+});
+
+describe("worktree setup visibility", () => {
+  const stage = (
+    id: "fetch" | "checkout" | "submodules" | "setup-script" | "agent",
+    status: "done" | "running" | "failed" | "pending",
+  ) => ({
+    id,
+    status,
+    startedAt: now,
+    endedAt: status === "running" || status === "pending" ? null : now,
+    percent: null,
+    detail: null,
+    tail: [],
+  });
+  const base = {
+    threadId,
+    phase: "running" as const,
+    startedAt: now,
+    endedAt: null,
+    branch: "feature",
+    baseRef: "main",
+    worktreePath: null,
+    setupScript: null,
+    stages: [stage("checkout", "running"), stage("agent", "pending")],
+    error: null,
+    sequence: 1,
+  };
+  const settledDone = {
+    ...base,
+    phase: "done" as const,
+    endedAt: now,
+    stages: [stage("checkout", "done"), stage("setup-script", "done"), stage("agent", "done")],
+  };
+
+  it("reads the settled snapshot back from the thread's activities", () => {
+    const activities = [
+      { kind: "setup-script.started", payload: {} },
+      { kind: "worktree-setup", payload: settledDone },
+      { kind: "worktree-setup", payload: { not: "a snapshot" } },
+    ];
+    expect(findRecordedWorktreeSetup(activities, threadId)).toEqual(settledDone);
+    expect(findRecordedWorktreeSetup(activities, ThreadId.make("other"))).toBeNull();
+  });
+
+  it("shows a running setup and drops a clean one once the turn started", () => {
+    const visible = (snapshot: WorktreeSetupSnapshot | null, turnStarted: boolean) =>
+      resolveVisibleWorktreeSetup({
+        live: null,
+        recorded: snapshot,
+        turnStarted,
+        followUpSent: false,
+      });
+    expect(
+      resolveVisibleWorktreeSetup({
+        live: base,
+        recorded: null,
+        turnStarted: false,
+        followUpSent: false,
+      }),
+    ).toEqual(base);
+    expect(visible(settledDone, false)).toEqual(settledDone);
+    expect(visible(settledDone, true)).toBeNull();
+    expect(visible(null, true)).toBeNull();
+  });
+
+  it("keeps a failed script, a failed setup, and a cancelled setup visible", () => {
+    const scriptFailed = {
+      ...settledDone,
+      stages: [stage("checkout", "done"), stage("setup-script", "failed"), stage("agent", "done")],
+    };
+    const visible = (snapshot: WorktreeSetupSnapshot, followUpSent = false) =>
+      resolveVisibleWorktreeSetup({
+        live: null,
+        recorded: snapshot,
+        turnStarted: true,
+        followUpSent,
+      });
+    expect(visible(scriptFailed)).toEqual(scriptFailed);
+    const failed = { ...settledDone, phase: "failed" as const, error: "git exploded" };
+    expect(visible(failed)).toEqual(failed);
+    const cancelled = { ...settledDone, phase: "cancelled" as const };
+    expect(visible(cancelled)).toEqual(cancelled);
+
+    // The setup belongs to the first turn. A follow-up send retires every
+    // settled outcome; only a script that is still running stays.
+    expect(visible(scriptFailed, true)).toBeNull();
+    expect(visible(failed, true)).toBeNull();
+    expect(visible(cancelled, true)).toBeNull();
+    expect(visible(settledDone, true)).toBeNull();
+    const stillRunning = {
+      ...base,
+      stages: [stage("checkout", "done"), stage("setup-script", "running"), stage("agent", "done")],
+    };
+    expect(visible(stillRunning, true)).toEqual(stillRunning);
+  });
+
+  it("prefers whichever snapshot is newer by sequence", () => {
+    const pick = (live: WorktreeSetupSnapshot | null, recorded: WorktreeSetupSnapshot | null) =>
+      resolveVisibleWorktreeSetup({ live, recorded, turnStarted: false, followUpSent: false });
+    expect(pick({ ...base, sequence: 3 }, { ...settledDone, sequence: 7 })).toEqual({
+      ...settledDone,
+      sequence: 7,
+    });
+    expect(pick({ ...settledDone, sequence: 9 }, { ...base, sequence: 1 })).toEqual({
+      ...settledDone,
+      sequence: 9,
     });
   });
 });

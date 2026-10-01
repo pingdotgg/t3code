@@ -9,6 +9,7 @@ import {
 } from "../connection/catalog.ts";
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
+import { StoredGitHubRoutingPermission } from "../connection/githubRoutingPermissions.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
@@ -22,6 +23,7 @@ export const ConnectionCatalogDocument = Schema.Struct({
   profiles: Schema.Array(ConnectionProfile),
   credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
+  githubRoutingPermissions: Schema.optionalKey(Schema.Array(StoredGitHubRoutingPermission)),
   // Saved environments the user switched off. They stay registered with their
   // credentials and cache but never connect until switched back on. Older
   // documents predate the key, so decoding defaults it to none.
@@ -153,7 +155,15 @@ export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   target: ConnectionTarget,
 ): ConnectionCatalogDocument {
-  return removeConnectionMetadata(document, target, true);
+  const next = removeConnectionMetadata(document, target, true);
+  return document.githubRoutingPermissions === undefined
+    ? next
+    : {
+        ...next,
+        githubRoutingPermissions: document.githubRoutingPermissions.filter(
+          (permission) => permission.environmentId !== target.environmentId,
+        ),
+      };
 }
 
 /** Flips the disabled flag for a saved environment; unknown ids are ignored. */

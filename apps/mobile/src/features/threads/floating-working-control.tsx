@@ -24,6 +24,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 
@@ -63,12 +64,18 @@ export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTRO
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
+  readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
-  const labelWidth = Math.max(0, Math.min(overlayWidth, windowWidth) - CONTROL_HEIGHT - 16);
+  const deviceControlWidth = props.devicePreview !== null ? CONTROL_HEIGHT : 0;
+  const hasCapsule = props.status !== null || props.devicePreview !== null;
+  const labelWidth = Math.max(
+    0,
+    Math.min(overlayWidth, windowWidth) - CONTROL_HEIGHT - 16 - deviceControlWidth,
+  );
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
   useEffect(() => {
@@ -111,25 +118,30 @@ export function FloatingWorkingControl(props: {
   }));
   // Zero until the first measurement lands, so the capsule never paints around
   // a label it has not sized to yet.
-  const capsuleSizerStyle = useAnimatedStyle(() => ({ width: capsuleWidth.value ?? 0 }));
+  const capsuleSizerStyle = useAnimatedStyle(() => ({
+    width: (capsuleWidth.value ?? 0) + deviceControlWidth,
+  }));
 
-  if (props.status === null && !props.showScrollToEnd) {
+  if (!hasCapsule && !props.showScrollToEnd) {
     return null;
   }
 
   // Only the connection label is a button (tap to reconnect); the others
   // pass touches through to the feed like before.
   const statusInteractive = props.status?.kind === "connection";
+  const capsuleInteractive = statusInteractive || props.devicePreview !== null;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
-  const statusContent =
-    props.status !== null ? (
+  const capsuleContent =
+    props.status === null && props.devicePreview !== null ? (
+      <DevicePreviewButton {...props.devicePreview} compact={false} />
+    ) : props.status !== null ? (
       <>
         <Animated.View className="h-11" style={capsuleSizerStyle} />
         <View
-          pointerEvents="box-none"
+          pointerEvents={statusInteractive ? "box-none" : "none"}
           className="absolute h-11 items-center justify-center"
-          style={{ width: labelWidth }}
+          style={{ width: labelWidth, transform: [{ translateX: -deviceControlWidth / 2 }] }}
         >
           <FloatingStatusLabel
             key={
@@ -141,6 +153,18 @@ export function FloatingWorkingControl(props: {
             onLayout={handleLabelLayout}
           />
         </View>
+        {props.devicePreview !== null ? (
+          <>
+            <View
+              pointerEvents="none"
+              className="absolute h-4 w-px bg-border"
+              style={{ right: deviceControlWidth }}
+            />
+            <View className="absolute right-0">
+              <DevicePreviewButton {...props.devicePreview} />
+            </View>
+          </>
+        ) : null}
       </>
     ) : null;
 
@@ -153,7 +177,7 @@ export function FloatingWorkingControl(props: {
       entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
       exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
     >
-      {props.status !== null && NATIVE_LIQUID_GLASS_SUPPORTED ? (
+      {hasCapsule && NATIVE_LIQUID_GLASS_SUPPORTED ? (
         <UniwindGlassContainer
           spacing={GLASS_MERGE_SPACING}
           pointerEvents="box-none"
@@ -162,12 +186,12 @@ export function FloatingWorkingControl(props: {
           <AnimatedGlassView
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
-            isInteractive={statusInteractive}
-            pointerEvents={statusInteractive ? "box-none" : "none"}
+            isInteractive={capsuleInteractive}
+            pointerEvents={capsuleInteractive ? "box-none" : "none"}
             className="h-11 items-center justify-center overflow-hidden rounded-full"
             style={capsuleStyle}
           >
-            {statusContent}
+            {capsuleContent}
           </AnimatedGlassView>
 
           <AnimatedGlassView
@@ -185,14 +209,14 @@ export function FloatingWorkingControl(props: {
             </Animated.View>
           </AnimatedGlassView>
         </UniwindGlassContainer>
-      ) : props.status !== null ? (
+      ) : hasCapsule ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
-            pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
+            pointerEvents={capsuleInteractive ? "box-none" : "none"}
+            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-glass-fallback shadow-md shadow-black/10"
             style={capsuleStyle}
           >
-            {statusContent}
+            {capsuleContent}
           </Animated.View>
 
           <Animated.View
@@ -204,7 +228,7 @@ export function FloatingWorkingControl(props: {
             <ControlPill
               accessibilityLabel="Scroll to end"
               activateOnPressIn
-              className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
+              className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
               disabled={!props.showScrollToEnd}
               icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
               onPress={props.onScrollToEnd}
@@ -224,7 +248,7 @@ export function FloatingWorkingControl(props: {
         <ControlPill
           accessibilityLabel="Scroll to end"
           activateOnPressIn
-          className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
+          className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
           icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
           onPress={props.onScrollToEnd}
         />

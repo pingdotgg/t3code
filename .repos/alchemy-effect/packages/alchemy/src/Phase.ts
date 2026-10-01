@@ -19,9 +19,9 @@ declare global {
 
 export type AlchemyPhase = "plan" | "runtime";
 
-export const ALCHEMY_PHASE = Config.string("ALCHEMY_PHASE").pipe(
+export const ALCHEMY_PHASE = Config.String("ALCHEMY_PHASE").pipe(
   Config.withDefault("plan"),
-  Config.mapOrFail((value) => {
+  Config.mapEffect((value) => {
     if (value !== "plan" && value !== "runtime") {
       return Effect.die(new Error(`Invalid ALCHEMY_PHASE: ${value}`));
     }
@@ -51,6 +51,6 @@ export const ALCHEMY_PHASE = Config.string("ALCHEMY_PHASE").pipe(
  * });
  * ```
  */
-export const ALCHEMY_DEV = Config.boolean("ALCHEMY_DEV").pipe(
+export const ALCHEMY_DEV = Config.Boolean("ALCHEMY_DEV").pipe(
   Config.withDefault(false),
 );
