@@ -3594,6 +3594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     </>
                   ) : null}
                   <VoiceInputSetup
+                    environmentId={speechInput.transcriptionEnvironmentId}
                     open={speechInput.setup.open}
                     step={speechInput.setup.step}
                     status={speechInput.status}

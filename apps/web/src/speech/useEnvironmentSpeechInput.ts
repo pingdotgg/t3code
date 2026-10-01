@@ -356,6 +356,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       Boolean(navigator.mediaDevices?.getUserMedia) &&
       typeof AudioWorkletNode !== "undefined",
     status: currentStatus,
+    transcriptionEnvironmentId,
     setup: {
       open: setupOpen,
       step: setupStep,

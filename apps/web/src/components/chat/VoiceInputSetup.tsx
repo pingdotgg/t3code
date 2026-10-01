@@ -1,15 +1,21 @@
-import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentSpeechModel,
+  EnvironmentSpeechStatus,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { BookOpenIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
+import { RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useEnvironment } from "../../state/environments";
 import { Button } from "../ui/button";
-import { Dialog, DialogClose } from "../ui/dialog";
+import { Dialog } from "../ui/dialog";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 
 export function VoiceInputSetup(props: {
+  environmentId: EnvironmentId | null;
   open: boolean;
   step: number;
   status: EnvironmentSpeechStatus | null;
@@ -22,6 +28,7 @@ export function VoiceInputSetup(props: {
   onStartRecording(): void;
 }) {
   const navigate = useNavigate();
+  const environment = useEnvironment(props.environmentId);
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const updateClientSettings = useUpdateClientSettings();
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
@@ -68,9 +75,9 @@ export function VoiceInputSetup(props: {
       <WizardPopup>
         <WizardHeader
           title="Set up voice input"
-          description="Transcribe speech on your selected T3 environment and add the text to your draft."
+          description={`Transcribe speech on ${environment?.label ?? "your transcription environment"} and use voice input across environments.`}
         >
-          <WizardSteps steps={["Model", "Make it yours"]} currentStep={props.step} />
+          <WizardSteps steps={["Model", "Ready to dictate"]} currentStep={props.step} />
         </WizardHeader>
         <WizardPanel>
           {props.step === 0 ? (
@@ -85,43 +92,40 @@ export function VoiceInputSetup(props: {
                   ) : null}
                 </div>
                 <p className="mt-2 text-muted-foreground">
-                  Download {status ? Math.round(status.size / 1024 / 1024) : 697} MB to your
-                  selected T3 environment. Microphone audio is sent to that environment for
-                  transcription, including when it is remote.
+                  Download the {status ? Math.round(status.size / 1024 / 1024) : 697} MB model to{" "}
+                  {environment?.label ?? "your transcription environment"}. Microphone audio is sent
+                  there for transcription. You can choose another environment in Voice settings.
                 </p>
-              </div>
-              {props.downloading ? (
-                <div role="status" className="space-y-1 text-muted-foreground">
-                  <div
-                    role="progressbar"
-                    aria-label="Speech model download progress"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={progress ?? undefined}
-                    className="h-1 overflow-hidden rounded-full bg-muted"
-                  >
+                {props.downloading ? (
+                  <div role="status" className="mt-4 space-y-1 text-muted-foreground">
                     <div
-                      className="h-full bg-primary transition-[width] duration-200"
-                      style={{ width: `${progress ?? 0}%` }}
-                    />
+                      role="progressbar"
+                      aria-label="Speech model download progress"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progress ?? undefined}
+                      className="h-1 overflow-hidden rounded-full bg-muted"
+                    >
+                      <div
+                        className="h-full bg-primary transition-[width] duration-200"
+                        style={{ width: `${progress ?? 0}%` }}
+                      />
+                    </div>
+                    <p className="text-xs">
+                      {model?.state === "verifying"
+                        ? "Verifying download…"
+                        : progress === null
+                          ? "Starting download…"
+                          : `${progress}% downloaded`}
+                    </p>
                   </div>
-                  <p className="text-xs">
-                    {model?.state === "verifying"
-                      ? "Verifying download…"
-                      : progress === null
-                        ? "Starting download…"
-                        : `${progress}% downloaded`}
-                  </p>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
               {props.error ? (
                 <p role="alert" className="text-destructive">
                   {props.error}
                 </p>
               ) : null}
-              <Button variant="link" size="sm" onClick={() => openSettings("local-voice-input")}>
-                Choose another model or language in Voice settings
-              </Button>
             </section>
           ) : (
             <section className="space-y-4 text-sm">
@@ -187,39 +191,24 @@ export function VoiceInputSetup(props: {
                 ) : null}
               </div>
               <p className="text-muted-foreground">
-                Voice input is ready. You can personalize it now or start recording and come back
-                later.
+                Speak and transcribe in multiple languages or translate into English, get names and
+                technical terms right with the dictionary, fix recurring misspellings, and correct
+                yourself as you speak.
               </p>
-              <div className="space-y-3">
-                <p className="flex gap-3">
-                  <BookOpenIcon className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <span>
-                    <strong>Dictionary</strong> helps recognize names and technical terms.
-                  </span>
-                </p>
-                <p className="flex gap-3">
-                  <SparklesIcon className="mt-0.5 size-4 shrink-0 text-primary" />
-                  <span>
-                    <strong>Post-processing</strong> can polish the finished transcript.
-                  </span>
-                </p>
-              </div>
-              <Button variant="link" size="sm" onClick={() => openSettings("dictionary")}>
-                Explore these features in Voice settings
-              </Button>
             </section>
           )}
         </WizardPanel>
         <WizardFooter>
           {props.step === 0 ? (
             <>
+              <Button variant="outline" onClick={() => openSettings("local-voice-input")}>
+                Choose another model or language
+              </Button>
               {props.downloading ? (
                 <Button variant="outline" onClick={props.onCancelDownload}>
                   Cancel download
                 </Button>
-              ) : (
-                <DialogClose render={<Button variant="outline" />}>Not now</DialogClose>
-              )}
+              ) : null}
               <Button disabled={props.downloading || !status} onClick={props.onDownload}>
                 {props.downloading
                   ? "Downloading…"
@@ -229,7 +218,12 @@ export function VoiceInputSetup(props: {
               </Button>
             </>
           ) : (
-            <Button onClick={props.onStartRecording}>Start recording</Button>
+            <>
+              <Button variant="outline" onClick={() => openSettings("")}>
+                Customize in Voice settings
+              </Button>
+              <Button onClick={props.onStartRecording}>Start dictating</Button>
+            </>
           )}
         </WizardFooter>
       </WizardPopup>

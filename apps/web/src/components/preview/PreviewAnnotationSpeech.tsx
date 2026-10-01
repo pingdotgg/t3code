@@ -150,6 +150,7 @@ export function PreviewAnnotationSpeech({
   );
   return (
     <VoiceInputSetup
+      environmentId={speech.transcriptionEnvironmentId}
       open={speech.setup.open}
       step={speech.setup.step}
       status={speech.status}

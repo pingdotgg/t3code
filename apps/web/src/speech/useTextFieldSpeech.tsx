@@ -107,6 +107,7 @@ export function TextFieldSpeechControls({
         ) : null}
       </div>
       <VoiceInputSetup
+        environmentId={speech.transcriptionEnvironmentId}
         open={speech.setup.open}
         step={speech.setup.step}
         status={speech.status}
