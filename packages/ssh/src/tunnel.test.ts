@@ -366,7 +366,7 @@ describe("ssh tunnel scripts", () => {
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
         const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        for (const shell of ["/bin/bash", "/bin/sh", ""]) {
+        for (const shell of ["/bin/bash", "/bin/sh", "", "/bin/tcsh", "/bin/csh"]) {
           const child = yield* realSpawner.spawn(
             ChildProcess.make("/bin/sh", ["-c", remoteCommand], {
               env: { SHELL: shell, BASH_ENV: profile },

@@ -880,11 +880,13 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey: remoteStateKey(target),
     });
     const result = yield* runSshCommand(target, {
-      // Load the profile with its own shell, then feed the POSIX bootstrap to sh.
+      // C shells cannot combine login and command flags; retain the POSIX login fallback.
       remoteCommandArgs: [
         "sh",
         "-c",
-        shellSingleQuote('exec "${SHELL:-/bin/sh}" -l -c "$1"'),
+        shellSingleQuote(
+          'case "${SHELL##*/}" in csh|tcsh) exec sh -l -c "$1" ;; *) exec "${SHELL:-/bin/sh}" -l -c "$1" ;; esac',
+        ),
         "sh",
         shellSingleQuote(`exec sh -s -- ${remoteStateKey(target)}`),
       ],
