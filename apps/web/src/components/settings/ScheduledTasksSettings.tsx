@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   Clock3Icon,
+  CopyIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlayIcon,
@@ -17,6 +18,7 @@ import type {
   ScheduledTaskId,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
+  ScheduledTaskUpsertSchedule,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -42,10 +44,12 @@ import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  DEFAULT_WEBHOOK_PROMPT,
   matchesScheduledTaskScope,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -148,7 +152,9 @@ function splitModelKey(value: string): ModelSelection | null {
   };
 }
 
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
+function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule {
+  // The server creates the webhook URL on first save and keeps it across edits.
+  if (draft.scheduleMode === "webhook") return { type: "webhook" };
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
@@ -162,6 +168,7 @@ function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "When a webhook is received";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -378,6 +385,10 @@ function ScheduledTaskRow({
   readonly onEdit: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const { copyToClipboard } = useCopyToClipboard({
+    onCopy: () => toastManager.add({ type: "success", title: "Webhook URL copied" }),
+  });
+  const webhookUrl = task.schedule.type === "webhook" ? task.schedule.url : null;
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
   });
@@ -415,11 +426,13 @@ function ScheduledTaskRow({
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {scheduleLabel(task.schedule)} ·{" "}
-            {task.enabled
-              ? task.nextRunAt
-                ? `Next run ${relativeLabel(task.nextRunAt)}`
-                : "Not scheduled"
-              : "Paused"}
+            {!task.enabled
+              ? "Paused"
+              : webhookUrl !== null
+                ? "Listening"
+                : task.nextRunAt
+                  ? `Next run ${relativeLabel(task.nextRunAt)}`
+                  : "Not scheduled"}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
@@ -453,10 +466,17 @@ function ScheduledTaskRow({
                 <PencilIcon />
                 Edit
               </MenuItem>
-              <MenuItem onClick={() => void act("run")}>
-                <PlayIcon />
-                Run now
-              </MenuItem>
+              {webhookUrl !== null ? (
+                <MenuItem onClick={() => copyToClipboard(webhookUrl, undefined)}>
+                  <CopyIcon />
+                  Copy webhook URL
+                </MenuItem>
+              ) : (
+                <MenuItem onClick={() => void act("run")}>
+                  <PlayIcon />
+                  Run now
+                </MenuItem>
+              )}
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
@@ -635,7 +655,8 @@ function ScheduledTaskEditorDialog({
         <DialogHeader>
           <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
           <DialogDescription>
-            Run a prompt automatically — on an interval or at a fixed time.
+            Run a prompt automatically — on an interval, at a fixed time, or when a webhook is
+            received.
           </DialogDescription>
         </DialogHeader>
 
@@ -826,12 +847,20 @@ function ScheduledTaskEditorDialog({
                   value={[draft.scheduleMode]}
                   onValueChange={(values) => {
                     const mode = values[0];
-                    if (mode === "fixed" || mode === "interval")
-                      setDraft((current) => ({ ...current, scheduleMode: mode }));
+                    if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                      setDraft((current) => ({
+                        ...current,
+                        scheduleMode: mode,
+                        prompt:
+                          mode === "webhook" && !current.prompt.trim()
+                            ? DEFAULT_WEBHOOK_PROMPT
+                            : current.prompt,
+                      }));
                   }}
                 >
                   <Toggle value="fixed">At a time</Toggle>
                   <Toggle value="interval">Every interval</Toggle>
+                  <Toggle value="webhook">On a webhook</Toggle>
                 </ToggleGroup>
               </div>
 
@@ -872,6 +901,10 @@ function ScheduledTaskEditorDialog({
                     ))}
                   </ToggleGroup>
                 </div>
+              ) : draft.scheduleMode === "webhook" ? (
+                <WebhookScheduleDetails
+                  url={task?.schedule.type === "webhook" ? task.schedule.url : null}
+                />
               ) : (
                 <div className="flex items-center gap-2">
                   <Label htmlFor="scheduled-task-interval">Run every</Label>
@@ -926,5 +959,36 @@ function ScheduledTaskEditorDialog({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/** Shows the webhook URL once the task has one; new tasks get it on save. */
+function WebhookScheduleDetails({ url }: { readonly url: string | null }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  return (
+    <div className="space-y-2">
+      {url !== null ? (
+        <div className="flex items-center gap-2">
+          <Input
+            readOnly
+            nativeInput
+            aria-label="Webhook URL"
+            value={url}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <Button size="sm" variant="outline" onClick={() => copyToClipboard(url, undefined)}>
+            <CopyIcon />
+            {isCopied ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      ) : null}
+      <p className="text-sm text-muted-foreground">
+        {url === null ? "Saving creates the URL. " : null}
+        Anything POSTed to the URL starts a run with the request attached, so paste it wherever
+        events come from, such as a Sentry, GitHub or Linear webhook. Needs this machine linked to
+        T3 Connect with remote access. Anyone with the URL can start a run, so delete the task to
+        revoke it.
+      </p>
+    </div>
   );
 }

@@ -63,6 +63,21 @@ environment's time zone, which may differ from your phone's.
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Leaving an edited form asks before discarding unsaved changes.
 
+## Tasks that run on a webhook
+
+Choose **On a webhook** as a task's schedule to run it whenever something is sent
+to its URL. After saving, copy the URL from the task and paste it wherever events
+come from, such as a Sentry custom integration, a GitHub repository webhook or a
+Linear webhook. Each request starts its own run with the request attached, so the
+agent can tell what sent it and follow up with the tools on your machine, such as
+`sentry-cli` or `gh`. **Project settings → Automations** opens the task list for
+that project.
+
+Webhook tasks need the environment linked to T3 Connect with remote access. Requests that arrive
+while the machine is offline wait for up to seven days and run once it is back.
+A paused task ignores requests that arrive while it is paused. Anyone with the URL
+can start a run, so keep it private; deleting the task revokes the URL.
+
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser

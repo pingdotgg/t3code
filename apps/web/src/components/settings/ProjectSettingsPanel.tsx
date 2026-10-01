@@ -491,6 +491,22 @@ function ProjectDetail({
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
+        <SettingsSection title="Automations">
+          <SettingsRow
+            title="Scheduled tasks"
+            description="Run agents in this project on a schedule or when a webhook is received."
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                // Settings navigation keeps this project selected on the next page.
+                onClick={() => void navigate({ to: "/settings/scheduled-tasks" })}
+              >
+                Open
+              </Button>
+            }
+          />
+        </SettingsSection>
         {hasMultipleCheckouts ? checkoutChoices : null}
         <SettingsSection title="Danger">
           <SettingsRow

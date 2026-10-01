@@ -168,6 +168,16 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
+describe("editing webhook tasks", () => {
+  it("reopens a webhook task in webhook mode", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "webhook", inboxId: "inbox-1", url: "https://relay.test/v1/inbox/inbox-1" },
+    });
+    expect(draft.scheduleMode).toBe("webhook");
+  });
+});
+
 describe("scheduled task model defaults", () => {
   const instanceId = ProviderInstanceId.make("codex");
   const projectId = ProjectId.make("project");

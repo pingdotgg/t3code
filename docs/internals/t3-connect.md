@@ -106,6 +106,25 @@ and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a
 host that reconnects mid-sweep wins.
 
+## Webhook deliveries ride the health-check channel
+
+Webhook tasks need an always-on public URL, which a laptop cannot offer. The relay's
+`/v1/inbox/:inboxId` stores each request, then pushes it to the owning environment
+over its managed tunnel exactly like the health check: a relay-signed request to
+`/api/t3-connect/webhook-delivery` that the environment verifies against the cloud
+mint key, answered by a proof signed with the environment key. The request proof
+carries a digest of the delivery it travels with, so a relay key compromise is the
+only way to forge one. The relay never interprets a request; the environment hands
+it to an agent as external data.
+
+A delivery is deleted only once the signed ack verifies. Failed pushes retry on the
+delivery queue, and the five-minute cron requeues anything still pending, so an
+environment that was asleep catches up once it is reachable again; retention caps
+how long that waits. Links without a managed tunnel cannot receive deliveries, which
+is why the server refuses to create an inbox for them. The inbox id is the sender's
+only credential, so it carries 256 bits; bodies, backlog per inbox and retention are
+capped in the [inbox service](../../infra/relay/src/webhooks/WebhookInboxes.ts).
+
 ## OAuth traps
 
 Interactive clients and the headless CLI use the same Clerk application but

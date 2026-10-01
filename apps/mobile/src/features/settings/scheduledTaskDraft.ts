@@ -37,7 +37,7 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval";
+  readonly mode: "fixed_time" | "interval" | "webhook";
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
@@ -51,6 +51,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
+  if (task.schedule.type === "webhook") return { ...DEFAULT_SCHEDULE, mode: "webhook" };
   return task.schedule.type === "fixed_time"
     ? {
         ...DEFAULT_SCHEDULE,
@@ -67,6 +68,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  // The server creates the webhook URL on first save and keeps it across edits.
+  if (draft.mode === "webhook") return { type: "webhook" };
   if (draft.mode === "interval") {
     const minutes = Number(draft.intervalMinutes);
     // Undo floating-point noise from displaying existing millisecond intervals as minutes.

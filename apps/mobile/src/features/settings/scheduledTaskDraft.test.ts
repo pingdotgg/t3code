@@ -24,6 +24,15 @@ describe("scheduleDraftForTask", () => {
     expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
   });
 
+  it("keeps a webhook task listening on the same URL through an edit", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "webhook", inboxId: "inbox-1", url: "https://relay.test/v1/inbox/inbox-1" },
+    });
+    expect(draft.mode).toBe("webhook");
+    // The server keeps the existing URL when a webhook task is saved again.
+    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook" });
+  });
+
   it("preserves valid fractional-minute schedules through an edit", () => {
     const schedule = { type: "interval" as const, everyMs: 65_000 };
     expect(scheduleFromDraft(scheduleDraftForTask({ schedule }))).toEqual(schedule);

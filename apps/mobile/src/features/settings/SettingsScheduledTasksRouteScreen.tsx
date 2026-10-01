@@ -39,6 +39,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { buildModelOptions } from "../../lib/modelOptions";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
@@ -86,6 +87,7 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
+  if (task.schedule.type === "webhook") return "When a webhook is received";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
@@ -795,6 +797,7 @@ function TaskForm({
             options={[
               { value: "fixed_time", label: "At a time" },
               { value: "interval", label: "Every interval" },
+              { value: "webhook", label: "Webhook" },
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
@@ -873,6 +876,10 @@ function TaskForm({
               }}
             />
           </>
+        ) : draft.schedule.mode === "webhook" ? (
+          <WebhookScheduleDetails
+            url={draft.task?.schedule.type === "webhook" ? draft.task.schedule.url : null}
+          />
         ) : (
           <>
             <FormField
@@ -1020,9 +1027,11 @@ function EnvironmentTasks({
                 {describeSchedule(task)}
                 {!task.enabled
                   ? " · Paused"
-                  : task.nextRunAt
-                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
-                    : ""}
+                  : task.schedule.type === "webhook"
+                    ? " · Listening"
+                    : task.nextRunAt
+                      ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
+                      : ""}
               </Text>
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
@@ -1034,13 +1043,17 @@ function EnvironmentTasks({
               actions={[
                 { id: "edit", title: "Edit" },
                 { id: "toggle", title: task.enabled ? "Pause" : "Resume" },
-                { id: "run", title: "Run now" },
+                task.schedule.type === "webhook"
+                  ? { id: "copy-url", title: "Copy webhook URL" }
+                  : { id: "run", title: "Run now" },
                 { id: "delete", title: "Delete", attributes: { destructive: true } },
               ]}
               onPressAction={({ nativeEvent }) => {
                 const action = nativeEvent.event;
                 if (action === "edit") {
                   onEdit(task);
+                } else if (action === "copy-url" && task.schedule.type === "webhook") {
+                  void tryCopyTextWithHaptic(task.schedule.url, { target: "webhook URL" });
                 } else if (action === "delete") {
                   Alert.alert("Delete task?", task.title, [
                     { text: "Cancel", style: "cancel" },
@@ -1072,5 +1085,32 @@ function EnvironmentTasks({
         ))
       )}
     </SettingsSection>
+  );
+}
+
+/** Shows the webhook URL once the task has one; new tasks get it on save. */
+function WebhookScheduleDetails({ url }: { readonly url: string | null }) {
+  return (
+    <View className="gap-2 border-t border-border-subtle px-4 py-3">
+      {url !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Copy webhook URL"
+          onPress={() => void tryCopyTextWithHaptic(url, { target: "webhook URL" })}
+          className="active:opacity-70"
+        >
+          <Text className="text-base text-foreground" selectable numberOfLines={2}>
+            {url}
+          </Text>
+          <Text className="text-sm text-primary">Tap to copy</Text>
+        </Pressable>
+      ) : null}
+      <Text className="text-sm text-foreground-muted">
+        {url === null ? "Saving creates the URL. " : null}
+        Anything POSTed to the URL starts a run with the request attached. Needs this machine linked
+        to T3 Connect with remote access. Anyone with the URL can start a run, so delete the task to
+        revoke it.
+      </Text>
+    </View>
   );
 }
