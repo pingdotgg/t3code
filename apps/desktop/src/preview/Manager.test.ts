@@ -4592,8 +4592,13 @@ describe("PreviewManager", () => {
         expect(download()).not.toHaveBeenCalled();
 
         yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        const startedAt = (1_790_844_530_500).toString(36);
         expect(download()).toHaveBeenCalledWith(
-          `/tmp/t3/dev/browser-artifacts/browser-download-${(1_790_844_530_500).toString(36)}-chart.png`,
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-0-chart.png`,
+        );
+        // Same name, same millisecond: still a separate file.
+        expect(download()).toHaveBeenCalledWith(
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-1-chart.png`,
         );
 
         humanInput?.({}, { kind: "pointer", x: 10, y: 10, button: 0 });

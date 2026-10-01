@@ -686,6 +686,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   const downloadHandlerSessions = new WeakSet<Session>();
+  let downloadCount = 0;
   // Preview pages whose latest input came from an agent action, not the human.
   const agentDrivenWebContents = new WeakSet<Electron.WebContents>();
   let frameCaptureWindowOpen = true;
@@ -3515,8 +3516,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     downloadHandlerSessions.add(session);
     session.on("will-download", (_event, item, source) => {
       if (!agentDrivenWebContents.has(source)) return;
-      const startedAt = Math.round(item.getStartTime() * 1000).toString(36);
-      const fileName = `browser-download-${startedAt}-${path.basename(item.getFilename())}`;
+      // The start time keeps names unique across restarts; the count keeps two
+      // same-name downloads in one millisecond from overwriting each other.
+      const id = `${Math.round(item.getStartTime() * 1000).toString(36)}-${(downloadCount++).toString(36)}`;
+      const fileName = `browser-download-${id}-${path.basename(item.getFilename())}`;
       item.setSavePath(path.join(resolvedArtifactDirectory, fileName));
     });
   };
