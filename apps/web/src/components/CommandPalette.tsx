@@ -9,6 +9,7 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -22,6 +23,7 @@ import {
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
+  XIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -88,10 +90,20 @@ import {
   type CommandPaletteView,
   filterBrowseEntries,
   filterCommandPaletteGroups,
+  filterPaletteItemsByScopes,
+  filterTranscriptMatchesByScopes,
+  formatPaletteScopeLabels,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
+  isSamePaletteScope,
   ITEM_ICON_CLASS,
+  parsePaletteScopeQualifiers,
+  parseTrailingPaletteScopeQualifier,
   RECENT_THREAD_LIMIT,
+  resolvePaletteScopeThreadKeys,
+  paletteScopeKey,
+  selectPaletteScopeEnvironmentIds,
+  type PaletteScope,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
@@ -212,6 +224,41 @@ function CommandPaletteDialog() {
   return <OpenCommandPaletteDialog />;
 }
 
+function PaletteScopeChip(props: {
+  scope: PaletteScope;
+  project: { environmentId: EnvironmentId; cwd: string } | undefined;
+  onRemove: (scope: PaletteScope) => void;
+}) {
+  return (
+    <span className="flex h-6 max-w-36 shrink-0 items-center gap-1 rounded-md border border-border bg-muted py-0 ps-1.5 pe-1 text-xs text-foreground">
+      {props.scope.kind === "project" && props.project ? (
+        <ProjectFavicon
+          environmentId={props.project.environmentId}
+          cwd={props.project.cwd}
+          className="size-3.5 shrink-0 text-muted-foreground/80"
+        />
+      ) : (
+        <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground/80" />
+      )}
+      <span className="truncate" title={props.scope.label}>
+        {props.scope.label}
+      </span>
+      <button
+        type="button"
+        aria-label={`Remove ${props.scope.kind} filter ${props.scope.label}`}
+        title={`Remove ${props.scope.label} filter`}
+        onClick={() => props.onRemove(props.scope)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground/70 outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <XIcon className="size-3" />
+      </button>
+    </span>
+  );
+}
+
 function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
@@ -220,6 +267,8 @@ function OpenCommandPaletteDialog() {
   const clearOpenIntent = useCommandPaletteStore((store) => store.clearOpenIntent);
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [scopes, setScopes] = useState<PaletteScope[]>([]);
   const [transcriptSearchItems, setTranscriptSearchItems] = useState<TranscriptSearchItem[]>([]);
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -230,7 +279,7 @@ function OpenCommandPaletteDialog() {
     useHandleNewThread();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
-  const transcriptSearchEnvironmentIds = useStore(
+  const allTranscriptSearchEnvironmentIds = useStore(
     useShallow((state) => [
       ...new Set([
         ...selectProjectsAcrossEnvironments(state).map((project) => project.environmentId),
@@ -238,6 +287,12 @@ function OpenCommandPaletteDialog() {
       ]),
     ]),
   );
+  // Scoped search skips environments with nothing in scope, so the slowest
+  // environment no longer sets transcript latency.
+  const transcriptSearchEnvironmentIds = useMemo(() => {
+    const scoped = selectPaletteScopeEnvironmentIds(scopes);
+    return scoped ?? allTranscriptSearchEnvironmentIds;
+  }, [allTranscriptSearchEnvironmentIds, scopes]);
   const keybindings = useServerKeybindings();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
@@ -341,9 +396,25 @@ function OpenCommandPaletteDialog() {
     () => new Map<ProjectId, string>(projects.map((project) => [project.id, project.name])),
     [projects],
   );
+  const scopedThreadIdsByEnvironment = useMemo(() => {
+    if (scopes.length === 0) return null;
+    const keys = resolvePaletteScopeThreadKeys(scopes, threads);
+    const byEnvironment = new Map<EnvironmentId, Set<ThreadId>>();
+    const add = (environmentId: EnvironmentId, threadId: ThreadId) => {
+      if (!keys.has(paletteScopeKey(environmentId, threadId))) return;
+      const ids = byEnvironment.get(environmentId) ?? new Set<ThreadId>();
+      ids.add(threadId);
+      byEnvironment.set(environmentId, ids);
+    };
+    for (const thread of threads) add(thread.environmentId, thread.id);
+    for (const scope of scopes) {
+      if (scope.kind === "thread") add(scope.environmentId, scope.threadId);
+    }
+    return byEnvironment;
+  }, [scopes, threads]);
 
   useEffect(() => {
-    const normalizedQuery = query.trim().replace(/\s+/g, " ");
+    const normalizedQuery = deferredQuery.trim().replace(/\s+/g, " ");
     if (
       normalizedQuery.length < 3 ||
       normalizedQuery.startsWith(">") ||
@@ -359,11 +430,16 @@ function OpenCommandPaletteDialog() {
     const timer = window.setTimeout(() => {
       void Promise.allSettled(
         transcriptSearchEnvironmentIds.flatMap((environmentId) => {
+          const threadIds = scopedThreadIdsByEnvironment?.get(environmentId);
+          if (scopedThreadIdsByEnvironment && !threadIds?.size) return [];
           const api = readEnvironmentApi(environmentId);
           return api
             ? [
                 api.orchestration
-                  .searchTranscript({ query: normalizedQuery })
+                  .searchTranscript({
+                    query: normalizedQuery,
+                    ...(threadIds ? { threadIds: [...threadIds] } : {}),
+                  })
                   .then((result) =>
                     result.matches.map(
                       (match) => ({ environmentId, match }) satisfies TranscriptSearchItem,
@@ -384,7 +460,13 @@ function OpenCommandPaletteDialog() {
       current = false;
       window.clearTimeout(timer);
     };
-  }, [currentView, isBrowsing, query, transcriptSearchEnvironmentIds]);
+  }, [
+    currentView,
+    isBrowsing,
+    deferredQuery,
+    scopedThreadIdsByEnvironment,
+    transcriptSearchEnvironmentIds,
+  ]);
 
   const activeThreadId = activeThread?.id;
   const currentProjectEnvironmentId =
@@ -516,13 +598,17 @@ function OpenCommandPaletteDialog() {
 
   const projectSearchItems = useMemo(
     () =>
-      buildProjectActionItems({
-        projects,
-        valuePrefix: "project",
-        icon: renderProjectFavicon,
-        runProject: openProjectFromSearch,
-      }),
-    [openProjectFromSearch, projects, renderProjectFavicon],
+      filterPaletteItemsByScopes(
+        buildProjectActionItems({
+          projects,
+          valuePrefix: "project",
+          icon: renderProjectFavicon,
+          runProject: openProjectFromSearch,
+        }),
+        scopes,
+        threads,
+      ),
+    [openProjectFromSearch, projects, renderProjectFavicon, scopes, threads],
   );
 
   const projectThreadItems = useMemo(
@@ -577,16 +663,38 @@ function OpenCommandPaletteDialog() {
     [activeThreadId, navigate, projectTitleById, settings.sidebarThreadSortOrder, threads],
   );
   const threadSearchItems = useMemo(
-    () => (shouldBuildThreadSearchItems ? buildThreadItems() : EMPTY_THREAD_SEARCH_ITEMS),
-    [buildThreadItems, shouldBuildThreadSearchItems],
+    () =>
+      shouldBuildThreadSearchItems
+        ? filterPaletteItemsByScopes(buildThreadItems(), scopes, threads)
+        : EMPTY_THREAD_SEARCH_ITEMS,
+    [buildThreadItems, scopes, shouldBuildThreadSearchItems, threads],
   );
   const recentThreadItems = useMemo(() => {
     if (threadSearchItems.length > 0) {
       return threadSearchItems.slice(0, RECENT_THREAD_LIMIT);
     }
 
-    return buildThreadItems(RECENT_THREAD_LIMIT);
-  }, [buildThreadItems, threadSearchItems]);
+    return filterPaletteItemsByScopes(
+      buildThreadItems(scopes.length > 0 ? undefined : RECENT_THREAD_LIMIT),
+      scopes,
+      threads,
+    ).slice(0, RECENT_THREAD_LIMIT);
+  }, [buildThreadItems, scopes, threadSearchItems, threads]);
+
+  const addScope = useCallback((scope: PaletteScope): void => {
+    setScopes((previous) =>
+      previous.some((active) => isSamePaletteScope(active, scope))
+        ? previous
+        : [...previous, scope],
+    );
+    setHighlightedItemValue(null);
+  }, []);
+
+  const removeScope = useCallback((scope: PaletteScope): void => {
+    setScopes((previous) => previous.filter((active) => !isSamePaletteScope(active, scope)));
+    setHighlightedItemValue(null);
+    inputRef.current?.focus();
+  }, []);
 
   function pushPaletteView(view: CommandPaletteView): void {
     setViewStack((previousViews) => [
@@ -598,6 +706,7 @@ function OpenCommandPaletteDialog() {
       },
     ]);
     setHighlightedItemValue(null);
+    setScopes([]);
     setQuery(view.initialQuery ?? "");
   }
 
@@ -620,7 +729,31 @@ function OpenCommandPaletteDialog() {
 
   function handleQueryChange(nextQuery: string): void {
     setHighlightedItemValue(null);
-    setQuery(nextQuery);
+    if (isFilesystemBrowseQuery(nextQuery, browseEnvironmentPlatform)) {
+      if (scopes.length > 0) {
+        setScopes([]);
+      }
+      setQuery(nextQuery);
+      return;
+    }
+    const { scopes: qualifierScopes, text } =
+      currentView === null
+        ? parsePaletteScopeQualifiers(nextQuery, projects, threads)
+        : { scopes: [], text: nextQuery };
+    if (qualifierScopes.length > 0) {
+      setScopes((previous) => {
+        const merged = [...previous];
+        for (const scope of qualifierScopes) {
+          if (!merged.some((active) => isSamePaletteScope(active, scope))) {
+            merged.push(scope);
+          }
+        }
+        return merged;
+      });
+      setQuery(text);
+    } else {
+      setQuery(nextQuery);
+    }
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
     }
@@ -823,7 +956,7 @@ function OpenCommandPaletteDialog() {
       return null;
     }
     const items = buildTranscriptActionItems({
-      matches: transcriptSearchItems,
+      matches: filterTranscriptMatchesByScopes(transcriptSearchItems, scopes, threads),
       metadataGroups: filteredGroups,
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       runThread: async (ref) => {
@@ -837,7 +970,15 @@ function OpenCommandPaletteDialog() {
     return items.length > 0
       ? { value: "conversation-matches", label: "Conversation matches", items }
       : null;
-  }, [currentView, filteredGroups, isActionsOnly, navigate, transcriptSearchItems]);
+  }, [
+    currentView,
+    filteredGroups,
+    isActionsOnly,
+    navigate,
+    scopes,
+    threads,
+    transcriptSearchItems,
+  ]);
 
   const handleAddProject = useCallback(
     async (rawCwd: string) => {
@@ -994,10 +1135,91 @@ function OpenCommandPaletteDialog() {
     displayedGroups = relativePathNeedsActiveProject ? [] : browseGroups;
   }
 
-  const inputPlaceholder = getCommandPaletteInputPlaceholder(paletteMode);
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
   const canSubmitBrowsePath = isBrowsing && !relativePathNeedsActiveProject;
+
+  const findDisplayedItem = (
+    value: string | null,
+  ): CommandPaletteActionItem | CommandPaletteSubmenuItem | null => {
+    if (value === null) {
+      return null;
+    }
+    for (const group of displayedGroups) {
+      const found = group.items.find((item) => item.value === value);
+      if (found) {
+        return found;
+      }
+    }
+    return null;
+  };
+
+  // Automatic highlight changes can omit the callback or leave a removed row.
+  const highlightedItem =
+    findDisplayedItem(highlightedItemValue) ?? displayedGroups[0]?.items[0] ?? null;
+  const highlightedScopeItem =
+    currentView === null && !isBrowsing && !isActionsOnly ? (highlightedItem?.scope ?? null) : null;
+  const pendingQualifier =
+    currentView === null && !isBrowsing && !isActionsOnly
+      ? parseTrailingPaletteScopeQualifier(query, projects, threads)
+      : null;
+  const showScopeHint = highlightedScopeItem !== null || pendingQualifier !== null;
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    const shouldSubmitBrowsePath =
+      canSubmitBrowsePath &&
+      event.key === "Enter" &&
+      (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event));
+
+    if (shouldSubmitBrowsePath) {
+      event.preventDefault();
+      void handleAddProject(resolvedAddProjectPath);
+      return;
+    }
+
+    if (event.key === "Backspace" && query === "" && isSubmenu) {
+      event.preventDefault();
+      popView();
+      return;
+    }
+
+    if (
+      event.key === "Backspace" &&
+      query === "" &&
+      !isSubmenu &&
+      !isBrowsing &&
+      scopes.length > 0
+    ) {
+      event.preventDefault();
+      setScopes((previous) => previous.slice(0, -1));
+      setHighlightedItemValue(null);
+      return;
+    }
+
+    if (
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.nativeEvent.isComposing &&
+      showScopeHint
+    ) {
+      const scope = pendingQualifier ?? highlightedScopeItem;
+      if (scope) {
+        event.preventDefault();
+        addScope(scope);
+        setQuery("");
+      }
+    }
+  }
+
+  const scopedLabels = scopes.length > 0 ? formatPaletteScopeLabels(scopes) : null;
+  const showScopeChips = scopes.length > 0 && !isSubmenu && !isBrowsing;
+  const inputPlaceholder =
+    scopedLabels && !isSubmenu && !isBrowsing
+      ? `Search in ${scopedLabels}...`
+      : getCommandPaletteInputPlaceholder(paletteMode);
   const willCreateProjectPath =
     canSubmitBrowsePath &&
     !isBrowsePending &&
@@ -1042,24 +1264,6 @@ function OpenCommandPaletteDialog() {
 
   function isPrimaryModifierPressed(event: KeyboardEvent<HTMLInputElement>): boolean {
     return useMetaForMod ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    const shouldSubmitBrowsePath =
-      canSubmitBrowsePath &&
-      event.key === "Enter" &&
-      (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event));
-
-    if (shouldSubmitBrowsePath) {
-      event.preventDefault();
-      void handleAddProject(resolvedAddProjectPath);
-      return;
-    }
-
-    if (event.key === "Backspace" && query === "" && isSubmenu) {
-      event.preventDefault();
-      popView();
-    }
   }
 
   function executeItem(item: CommandPaletteActionItem | CommandPaletteSubmenuItem): void {
@@ -1139,61 +1343,94 @@ function OpenCommandPaletteDialog() {
         onValueChange={handleQueryChange}
         value={query}
       >
-        <div className="relative">
-          <CommandInput
-            className={isBrowsing ? (willCreateProjectPath ? "pe-36" : "pe-16") : undefined}
-            placeholder={inputPlaceholder}
-            wrapperClassName={
-              isSubmenu ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto" : undefined
-            }
-            {...(isSubmenu
-              ? {
-                  startAddon: (
-                    <button
-                      type="button"
-                      className="flex cursor-pointer items-center"
-                      aria-label="Back"
-                      onClick={popView}
-                    >
-                      <ArrowLeftIcon />
-                    </button>
-                  ),
-                }
-              : isBrowsing && !isSubmenu
-                ? {
-                    startAddon: <FolderPlusIcon />,
-                  }
-                : {})}
-            onKeyDown={handleKeyDown}
-          />
-          {isBrowsing ? (
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className={cn(
-                "absolute end-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
-              )}
-              aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={relativePathNeedsActiveProject}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (relativePathNeedsActiveProject) {
-                  return;
-                }
-                void handleAddProject(resolvedAddProjectPath);
-              }}
-              title={`${submitActionLabel} (${addShortcutLabel})`}
+        <div className="relative flex items-center gap-1.5">
+          {showScopeChips ? (
+            <div
+              className="flex min-w-0 max-w-1/2 shrink-0 items-center gap-1 overflow-x-auto ps-3"
+              role="group"
+              aria-label="Active search scopes"
             >
-              <span>{submitActionLabel}</span>
-              <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-                <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-              </KbdGroup>
-            </Button>
+              {scopes.map((scope) => (
+                <PaletteScopeChip
+                  key={
+                    scope.kind === "project"
+                      ? `project:${scope.environmentId}:${scope.projectId}`
+                      : `thread:${scope.environmentId}:${scope.threadId}`
+                  }
+                  scope={scope}
+                  project={
+                    scope.kind === "project"
+                      ? projects.find(
+                          (project) =>
+                            project.environmentId === scope.environmentId &&
+                            project.id === scope.projectId,
+                        )
+                      : undefined
+                  }
+                  onRemove={removeScope}
+                />
+              ))}
+            </div>
           ) : null}
+          <div className="relative min-w-0 flex-1">
+            <CommandInput
+              ref={inputRef}
+              className={isBrowsing ? (willCreateProjectPath ? "pe-36" : "pe-16") : undefined}
+              placeholder={inputPlaceholder}
+              wrapperClassName={
+                isSubmenu
+                  ? "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto"
+                  : undefined
+              }
+              {...(isSubmenu
+                ? {
+                    startAddon: (
+                      <button
+                        type="button"
+                        className="flex cursor-pointer items-center"
+                        aria-label="Back"
+                        onClick={popView}
+                      >
+                        <ArrowLeftIcon />
+                      </button>
+                    ),
+                  }
+                : isBrowsing && !isSubmenu
+                  ? {
+                      startAddon: <FolderPlusIcon />,
+                    }
+                  : {})}
+              onKeyDown={handleKeyDown}
+            />
+            {isBrowsing ? (
+              <Button
+                variant="outline"
+                size="xs"
+                tabIndex={-1}
+                className={cn(
+                  "absolute end-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                  hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+                )}
+                aria-label={`${submitActionLabel} (${addShortcutLabel})`}
+                disabled={relativePathNeedsActiveProject}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => {
+                  if (relativePathNeedsActiveProject) {
+                    return;
+                  }
+                  void handleAddProject(resolvedAddProjectPath);
+                }}
+                title={`${submitActionLabel} (${addShortcutLabel})`}
+              >
+                <span>{submitActionLabel}</span>
+                <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+                  <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+                </KbdGroup>
+              </Button>
+            ) : null}
+          </div>
         </div>
         <CommandPanel className="max-h-[min(28rem,70vh)] bg-chat-background">
           <CommandPaletteResults
@@ -1209,7 +1446,11 @@ function OpenCommandPaletteDialog() {
                 ? {
                     emptyStateMessage: "Press Enter to create this folder and add it as a project.",
                   }
-                : {})}
+                : scopedLabels && displayedGroups.length === 0
+                  ? {
+                      emptyStateMessage: `No matches in ${scopedLabels} for "${deferredQuery.trim()}".`,
+                    }
+                  : {})}
           />
         </CommandPanel>
         <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
@@ -1233,6 +1474,12 @@ function OpenCommandPaletteDialog() {
               <KbdGroup className="items-center gap-1.5">
                 <Kbd>Backspace</Kbd>
                 <span className={cn("text-muted-foreground/80")}>Back</span>
+              </KbdGroup>
+            ) : null}
+            {showScopeHint ? (
+              <KbdGroup className="items-center gap-1.5">
+                <Kbd>Tab</Kbd>
+                <span className={cn("text-muted-foreground/80")}>Scope</span>
               </KbdGroup>
             ) : null}
             <KbdGroup className="items-center gap-1.5">

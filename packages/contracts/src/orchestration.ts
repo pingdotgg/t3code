@@ -3217,6 +3217,7 @@ export type DispatchResult = typeof DispatchResult.Type;
 
 export const OrchestrationSearchTranscriptInput = Schema.Struct({
   query: Schema.String,
+  threadIds: Schema.optionalKey(Schema.Array(ThreadId)),
 });
 export type OrchestrationSearchTranscriptInput = typeof OrchestrationSearchTranscriptInput.Type;
 

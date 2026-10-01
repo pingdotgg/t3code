@@ -13,9 +13,17 @@ import {
   buildThreadActionItems,
   buildTranscriptActionItems,
   filterCommandPaletteGroups,
+  filterPaletteItemsByScopes,
+  filterTranscriptMatchesByScopes,
+  formatPaletteScopeLabels,
   getPaletteMatchSource,
+  isSamePaletteScope,
+  parsePaletteScopeQualifiers,
+  parseTrailingPaletteScopeQualifier,
+  resolvePaletteScopeThreadKeys,
   splitPaletteHighlightParts,
   type CommandPaletteGroup,
+  type PaletteScope,
 } from "./CommandPalette.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -153,6 +161,36 @@ describe("buildProjectActionItems", () => {
 });
 
 describe("buildThreadActionItems", () => {
+  it("finds threads by full or partial ID without fuzzy ID matches", () => {
+    const id = ThreadId.make("41cff7ea-f2d9-468b-8a85-7428d5700c78");
+    const items = buildThreadActionItems({
+      threads: [makeThread({ id, title: "Palette improvements" })],
+      projectTitleById: new Map(),
+      sortOrder: "created_at",
+      icon: null,
+      runThread: async () => {},
+    });
+    for (const query of [id, id.toUpperCase(), "41cff7ea", "7428d5700c78"]) {
+      const groups = filterCommandPaletteGroups({
+        activeGroups: [],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: items,
+      });
+      expect(groups.flatMap((group) => group.items)).toEqual(items);
+      expect(getPaletteMatchSource(items[0]!, query)).toBe("ID");
+    }
+    expect(
+      filterCommandPaletteGroups({
+        activeGroups: [],
+        query: "41cff7ea-f2d9-468b-8a85-7428d5700c79",
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: items,
+      }),
+    ).toEqual([]);
+  });
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T12:00:00.000Z"));
@@ -450,5 +488,231 @@ describe("match source and highlight", () => {
         "https://github.com/pingdotgg/t3code/pull/10839?tab=files#diff-123",
       ),
     ).toBe("PR");
+  });
+});
+
+describe("palette search scopes", () => {
+  const PROJECT_T3 = ProjectId.make("project-t3");
+  const PROJECT_OTHER = ProjectId.make("project-other");
+  const THREAD_PARENT = ThreadId.make("thread-parent");
+  const THREAD_CHILD = ThreadId.make("thread-child");
+  const THREAD_GRANDCHILD = ThreadId.make("thread-grandchild");
+  const THREAD_SIBLING = ThreadId.make("thread-sibling");
+
+  function makeScopeThreads() {
+    return [
+      makeThread({ id: THREAD_PARENT, projectId: PROJECT_T3, title: "Parent" }),
+      makeThread({
+        id: THREAD_CHILD,
+        projectId: PROJECT_T3,
+        parentThreadId: THREAD_PARENT,
+        title: "Child",
+      }),
+      makeThread({
+        id: THREAD_GRANDCHILD,
+        projectId: PROJECT_T3,
+        parentThreadId: THREAD_CHILD,
+        title: "Grandchild",
+      }),
+      makeThread({ id: THREAD_SIBLING, projectId: PROJECT_OTHER, title: "Sibling" }),
+    ];
+  }
+
+  function projectScope(): PaletteScope {
+    return {
+      kind: "project",
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      projectId: PROJECT_T3,
+      label: "T3",
+    };
+  }
+
+  function threadScope(): PaletteScope {
+    return {
+      kind: "thread",
+      environmentId: LOCAL_ENVIRONMENT_ID,
+      threadId: THREAD_PARENT,
+      label: "Parent",
+    };
+  }
+
+  it("resolves project scopes to member threads only", () => {
+    const keys = resolvePaletteScopeThreadKeys([projectScope()], makeScopeThreads());
+    expect([...keys].toSorted()).toEqual(
+      [THREAD_PARENT, THREAD_CHILD, THREAD_GRANDCHILD]
+        .map((id) => `thread:${LOCAL_ENVIRONMENT_ID}:${id}`)
+        .toSorted(),
+    );
+  });
+
+  it("resolves thread scopes to the thread plus subthreads", () => {
+    const keys = resolvePaletteScopeThreadKeys([threadScope()], makeScopeThreads());
+    expect([...keys].toSorted()).toEqual(
+      [THREAD_PARENT, THREAD_CHILD, THREAD_GRANDCHILD]
+        .map((id) => `thread:${LOCAL_ENVIRONMENT_ID}:${id}`)
+        .toSorted(),
+    );
+  });
+
+  it("includes scope roots absent from the thread list", () => {
+    const keys = resolvePaletteScopeThreadKeys([threadScope()], []);
+    expect([...keys]).toEqual([`thread:${LOCAL_ENVIRONMENT_ID}:${THREAD_PARENT}`]);
+  });
+
+  it("narrows project scopes further when a thread scope is added", () => {
+    const keys = resolvePaletteScopeThreadKeys(
+      [
+        threadScope(),
+        {
+          kind: "project",
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_OTHER,
+          label: "Other",
+        },
+      ],
+      makeScopeThreads(),
+    );
+    expect([...keys]).toEqual([]);
+    expect(
+      [
+        ...resolvePaletteScopeThreadKeys([projectScope(), threadScope()], makeScopeThreads()),
+      ].toSorted(),
+    ).toEqual(
+      [THREAD_PARENT, THREAD_CHILD, THREAD_GRANDCHILD]
+        .map((id) => `thread:${LOCAL_ENVIRONMENT_ID}:${id}`)
+        .toSorted(),
+    );
+  });
+
+  it("filters thread and project rows by scope while keeping actions", () => {
+    const threads = makeScopeThreads();
+    const threadItems = buildThreadActionItems({
+      threads,
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const projectItems = buildProjectActionItems({
+      projects: [
+        makeProject({ id: PROJECT_T3, name: "T3" }),
+        makeProject({ id: PROJECT_OTHER, name: "Other" }),
+      ],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+    const actionItem = {
+      kind: "action" as const,
+      value: "action:settings",
+      searchTerms: ["settings"],
+      title: "Open settings",
+      icon: null,
+      run: async () => undefined,
+    };
+    const filtered = filterPaletteItemsByScopes(
+      [...threadItems, ...projectItems, actionItem],
+      [projectScope()],
+      threads,
+    );
+    expect(filtered.map((item) => item.value).toSorted()).toEqual(
+      [
+        `thread:${LOCAL_ENVIRONMENT_ID}:${THREAD_PARENT}`,
+        `thread:${LOCAL_ENVIRONMENT_ID}:${THREAD_CHILD}`,
+        `thread:${LOCAL_ENVIRONMENT_ID}:${THREAD_GRANDCHILD}`,
+        `project:${LOCAL_ENVIRONMENT_ID}:${PROJECT_T3}`,
+        "action:settings",
+      ].toSorted(),
+    );
+  });
+
+  it("hides project rows when only a thread scope is active", () => {
+    const threads = makeScopeThreads();
+    const projectItems = buildProjectActionItems({
+      projects: [makeProject({ id: PROJECT_T3, name: "T3" })],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+    expect(filterPaletteItemsByScopes(projectItems, [threadScope()], threads)).toHaveLength(0);
+  });
+
+  it("filters transcript matches to scoped threads", () => {
+    const matches = [
+      {
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        match: {
+          threadId: THREAD_CHILD,
+          messageId: MessageId.make("message-child"),
+          title: "Child",
+          projectTitle: "T3",
+          branch: null,
+          role: "user" as const,
+          excerpt: "needle here",
+          updatedAt: "2026-09-10T00:00:00.000Z",
+        },
+      },
+      {
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        match: {
+          threadId: THREAD_SIBLING,
+          messageId: MessageId.make("message-sibling"),
+          title: "Sibling",
+          projectTitle: "Other",
+          branch: null,
+          role: "user" as const,
+          excerpt: "needle there",
+          updatedAt: "2026-09-10T00:00:00.000Z",
+        },
+      },
+    ];
+    const filtered = filterTranscriptMatchesByScopes(matches, [threadScope()], makeScopeThreads());
+    expect(filtered.map((item) => item.match.threadId)).toEqual([THREAD_CHILD]);
+  });
+
+  it("parses leading project qualifiers into chips", () => {
+    const projects = [makeProject({ id: PROJECT_T3, name: "T3" })];
+    const parsed = parsePaletteScopeQualifiers("project:t3 rest of query", projects, []);
+    expect(parsed.scopes).toEqual([projectScope()]);
+    expect(parsed.text).toBe("rest of query");
+  });
+
+  it("parses quoted qualifier values with spaces", () => {
+    const projects = [makeProject({ id: PROJECT_T3, name: "My Project" })];
+    const parsed = parsePaletteScopeQualifiers('project:"My Project" rest', projects, []);
+    expect(parsed.scopes).toEqual([
+      {
+        kind: "project",
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        projectId: PROJECT_T3,
+        label: "My Project",
+      },
+    ]);
+    expect(parsed.text).toBe("rest");
+  });
+
+  it("leaves unresolvable qualifiers as text", () => {
+    const parsed = parsePaletteScopeQualifiers("project:zzz rest", [], []);
+    expect(parsed.scopes).toEqual([]);
+    expect(parsed.text).toBe("project:zzz rest");
+  });
+
+  it("does not consume a qualifier still being typed", () => {
+    const projects = [makeProject({ id: PROJECT_T3, name: "T3" })];
+    const parsed = parsePaletteScopeQualifiers("project:t", projects, []);
+    expect(parsed.scopes).toEqual([]);
+    expect(parsed.text).toBe("project:t");
+  });
+
+  it("commits a lone qualifier for Tab", () => {
+    const projects = [makeProject({ id: PROJECT_T3, name: "T3" })];
+    expect(parseTrailingPaletteScopeQualifier("project:t3", projects, [])).toEqual(projectScope());
+    expect(parseTrailingPaletteScopeQualifier("some project:t3", projects, [])).toBeNull();
+  });
+
+  it("compares and labels scopes", () => {
+    expect(isSamePaletteScope(projectScope(), projectScope())).toBe(true);
+    expect(isSamePaletteScope(projectScope(), threadScope())).toBe(false);
+    expect(formatPaletteScopeLabels([projectScope(), threadScope()])).toBe("T3, Parent");
   });
 });

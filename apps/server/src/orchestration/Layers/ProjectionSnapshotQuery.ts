@@ -2975,9 +2975,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const searchTranscript: NonNullable<ProjectionSnapshotQueryShape["searchTranscript"]> = (
     query,
+    threadIds,
   ) => {
     const normalizedQuery = query.trim().replace(/\s+/g, " ");
-    if (normalizedQuery.length < 3) {
+    if (normalizedQuery.length < 3 || threadIds?.length === 0) {
       return Effect.succeed({ matches: [] });
     }
     const literalQuery = `"${normalizedQuery.replaceAll('"', '""')}"`;
@@ -2998,6 +2999,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           WHERE projection_thread_message_fts MATCH ${matchQuery}
             AND threads.archived_at IS NULL
             AND threads.deleted_at IS NULL
+            ${threadIds ? sql`AND ${sql.in("threads.thread_id", threadIds)}` : sql``}
         ),
         best_scores AS MATERIALIZED (
           SELECT "threadId", MIN(score) AS score

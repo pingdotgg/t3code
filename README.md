@@ -42,6 +42,14 @@ yay -S t3code-bin
 
 ## Some notes
 
+Use the command palette's Search button to find projects and threads, including by full or
+partial thread ID. Press Tab on a project result to add a scope chip, then keep typing to
+search only that project's threads and conversations. Tab on a thread result narrows to
+that thread and its subthreads. Backspace in an empty search or the chip's remove button
+removes a scope. You can also commit `project:name` or `thread:title` with space or Tab;
+quote names containing spaces. Multiple projects are combined, while project and thread
+scopes intersect.
+
 We are very very early in this project. Expect bugs.
 
 We are not accepting contributions yet.
