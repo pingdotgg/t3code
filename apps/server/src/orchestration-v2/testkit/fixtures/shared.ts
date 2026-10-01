@@ -1156,6 +1156,20 @@ export function assertProviderNativeSubagentRootTurns(result: OrchestratorV2Scen
       assert.isNotEmpty(roots, `child ${childThreadId} must have a root turn`);
       for (const root of roots) assert.isNull(root.runId);
 
+      // One run ingests a child thread at a time, so no update is stored by two.
+      const runByChildUpdate = new Map<string, string | undefined>();
+      for (const event of result.domainEvents) {
+        if (event.threadId !== childThreadId) continue;
+        const update = `${event.type}:${JSON.stringify(event.payload)}`;
+        const storedBy = runByChildUpdate.get(update);
+        if (runByChildUpdate.has(update) && storedBy !== event.runId) {
+          assert.fail(
+            `child ${childThreadId} stored ${event.type} in ${storedBy} and ${event.runId}`,
+          );
+        }
+        runByChildUpdate.set(update, event.runId);
+      }
+
       const rootEvents = result.domainEvents.flatMap((event, index) =>
         event.type === "node.updated" &&
         event.payload.threadId === childThreadId &&
