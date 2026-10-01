@@ -56,6 +56,7 @@ import {
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleTrigger } from "../ui/collapsible";
 import { WorkLogPanel } from "./WorkLogPanel";
+import { WorkEntryTerminalButton, workEntryTerminalId } from "./WorkEntryTerminalButton";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -1250,7 +1251,7 @@ const WorkGroupPresentational = memo(function WorkGroupPresentational({
   activeTurnInProgress: boolean;
   activeTurnId: TurnId | null | undefined;
 }) {
-  const { workspaceRoot, workGroupExpansion } = use(TimelineRowCtx);
+  const { workspaceRoot, workGroupExpansion, threadRef } = use(TimelineRowCtx);
   const onlyToolEntries =
     groupedEntries.length > 0 && groupedEntries.every((entry) => entry.tone === "tool");
   const groupKey = groupedEntries[0]?.stableId ?? groupedEntries[0]?.id ?? "";
@@ -1281,6 +1282,7 @@ const WorkGroupPresentational = memo(function WorkGroupPresentational({
   const activityIsCommand = activity.lead
     ? toolGroupAction(activity.lead) === "command"
     : groupedEntries.length === 1 && toolGroupAction(groupedEntries[0]!) === "command";
+  const terminalEntry = activity.lead ?? (groupedEntries.length === 1 ? groupedEntries[0] : null);
 
   return (
     <Collapsible
@@ -1291,54 +1293,59 @@ const WorkGroupPresentational = memo(function WorkGroupPresentational({
         setDisclosure({ key: disclosureKey, expanded });
       }}
     >
-      <CollapsibleTrigger
-        className="chat-work-trigger text-muted-foreground"
-        aria-label={workGroupAccessibleLabel(
-          `${toggleLabel} ${groupLabel} (${groupedEntries.length})`,
-          activity.activeCount,
-        )}
-      >
-        <span
-          data-work-icon
-          className={cn(
-            "flex items-center justify-center",
-            attention && "text-amber-700 dark:text-amber-400",
+      <div className="flex min-w-0 items-baseline gap-1.5">
+        <CollapsibleTrigger
+          className="chat-work-trigger min-w-0 text-muted-foreground"
+          aria-label={workGroupAccessibleLabel(
+            `${toggleLabel} ${groupLabel} (${groupedEntries.length})`,
+            activity.activeCount,
           )}
-          aria-hidden="true"
         >
-          {attention ? (
-            <CircleAlertIcon className="size-full" />
-          ) : activity.lead ? (
-            createElement(workEntryIcon(activity.lead), { className: "size-full" })
-          ) : activity.state === "stopped" ? (
-            <Minimize2Icon className="size-full" />
-          ) : (
-            <CheckIcon className="size-full" />
-          )}
-        </span>
-        <span
-          className={cn(
-            "chat-work-label",
-            activityIsCommand && "chat-work-label-truncate",
-            activity.shimmer && "work-activity-shimmer",
-          )}
-          title={activity.label}
-        >
-          {activity.label}
-        </span>
-        {activity.activeCount > 1 ? (
           <span
-            className="shrink-0 text-muted-foreground"
-            title={`${activity.activeCount - 1} more active`}
+            data-work-icon
+            className={cn(
+              "flex items-center justify-center",
+              attention && "text-amber-700 dark:text-amber-400",
+            )}
+            aria-hidden="true"
           >
-            +{activity.activeCount - 1}
+            {attention ? (
+              <CircleAlertIcon className="size-full" />
+            ) : activity.lead ? (
+              createElement(workEntryIcon(activity.lead), { className: "size-full" })
+            ) : activity.state === "stopped" ? (
+              <Minimize2Icon className="size-full" />
+            ) : (
+              <CheckIcon className="size-full" />
+            )}
           </span>
+          <span
+            className={cn(
+              "chat-work-label",
+              activityIsCommand && "chat-work-label-truncate",
+              activity.shimmer && "work-activity-shimmer",
+            )}
+            title={activity.label}
+          >
+            {activity.label}
+          </span>
+          {activity.activeCount > 1 ? (
+            <span
+              className="shrink-0 text-muted-foreground"
+              title={`${activity.activeCount - 1} more active`}
+            >
+              +{activity.activeCount - 1}
+            </span>
+          ) : null}
+          <ChevronRightIcon
+            aria-hidden="true"
+            className={cn("size-3 shrink-0 chat-work-chevron", isExpanded && "rotate-90")}
+          />
+        </CollapsibleTrigger>
+        {!isExpanded && terminalEntry ? (
+          <WorkEntryTerminalButton entry={terminalEntry} threadRef={threadRef} />
         ) : null}
-        <ChevronRightIcon
-          aria-hidden="true"
-          className={cn("size-3 shrink-0 chat-work-chevron", isExpanded && "rotate-90")}
-        />
-      </CollapsibleTrigger>
+      </div>
       <WorkLogPanel open={isExpanded}>
         <div className="ml-[0.5em] border-l border-border/50 pl-[1em] py-1">
           <p className="sr-only">
@@ -1387,7 +1394,7 @@ function WorkGroupHistory({
 }
 
 function repeatableWorkEntry(entry: TimelineWorkEntry) {
-  return entry.agentRun || entry.action ? null : entry;
+  return entry.agentRun || entry.action || workEntryTerminalId(entry) ? null : entry;
 }
 
 function RepeatedWorkRow({
@@ -2304,7 +2311,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { canExpandCommand = false, workEntry, workspaceRoot } = props;
   const [isCommandExpanded, setIsCommandExpanded] = useState(false);
   const navigate = useNavigate();
-  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const { activeThreadEnvironmentId, threadRef } = use(TimelineRowCtx);
   if (workEntry.agentRun) {
     return <AgentRunRow agentRun={workEntry.agentRun} workspaceRoot={workspaceRoot} />;
   }
@@ -2343,32 +2350,38 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     const failed = workEntryNeedsAttention(workEntry);
     return (
       <Collapsible open={isCommandExpanded} onOpenChange={setIsCommandExpanded}>
-        <CollapsibleTrigger
-          disabled={!hasDetail}
-          aria-expanded={hasDetail ? isCommandExpanded : undefined}
-          aria-label={
-            hasDetail ? `${isCommandExpanded ? "Collapse" : "Expand"} details: ${label}` : label
-          }
-          className="chat-work-trigger text-muted-foreground disabled:cursor-default"
-        >
-          {failed ? (
-            <CircleAlertIcon className="text-amber-700 dark:text-amber-400" aria-hidden="true" />
-          ) : (
-            entryIcon
-          )}
-          <span
-            className={cn("chat-work-label", truncateLabel && "chat-work-label-truncate")}
-            title={label}
+        <div className="flex min-w-0 items-baseline gap-1.5">
+          <CollapsibleTrigger
+            disabled={!hasDetail}
+            aria-expanded={hasDetail ? isCommandExpanded : undefined}
+            aria-label={
+              hasDetail ? `${isCommandExpanded ? "Collapse" : "Expand"} details: ${label}` : label
+            }
+            className="chat-work-trigger min-w-0 text-muted-foreground disabled:cursor-default"
           >
-            {label}
-          </span>
-          {hasDetail ? (
-            <ChevronRightIcon
-              className={cn("size-3 shrink-0 chat-work-chevron", isCommandExpanded && "rotate-90")}
-              aria-hidden="true"
-            />
-          ) : null}
-        </CollapsibleTrigger>
+            {failed ? (
+              <CircleAlertIcon className="text-amber-700 dark:text-amber-400" aria-hidden="true" />
+            ) : (
+              entryIcon
+            )}
+            <span
+              className={cn("chat-work-label", truncateLabel && "chat-work-label-truncate")}
+              title={label}
+            >
+              {label}
+            </span>
+            {hasDetail ? (
+              <ChevronRightIcon
+                className={cn(
+                  "size-3 shrink-0 chat-work-chevron",
+                  isCommandExpanded && "rotate-90",
+                )}
+                aria-hidden="true"
+              />
+            ) : null}
+          </CollapsibleTrigger>
+          <WorkEntryTerminalButton entry={workEntry} threadRef={threadRef} />
+        </div>
         <WorkLogPanel open={isCommandExpanded}>
           <WorkEntryDetails workEntry={workEntry} />
         </WorkLogPanel>
@@ -2449,6 +2462,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             </Tooltip>
           )}
         </div>
+        <WorkEntryTerminalButton entry={workEntry} threadRef={threadRef} />
         {workEntry.action && actionHref ? (
           <a
             href={actionHref}
