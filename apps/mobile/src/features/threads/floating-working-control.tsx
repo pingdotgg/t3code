@@ -138,7 +138,7 @@ export function FloatingWorkingControl(props: {
       <DevicePreviewButton {...props.devicePreview} compact={false} />
     ) : props.status !== null ? (
       <>
-        <Animated.View className="h-11" style={capsuleSizerStyle} />
+        <Animated.View pointerEvents="none" className="h-11" style={capsuleSizerStyle} />
         <View
           pointerEvents={statusInteractive ? "box-none" : "none"}
           className="absolute h-11 items-center justify-center"
