@@ -163,7 +163,7 @@ No `drizzle-kit generate` step in your CI — the deploy owns it.
 ## Open the connection with `Drizzle.Postgres`
 
 `Drizzle.Postgres` takes Hyperdrive's connection string and returns a
-typed `EffectPgDatabase`. Bind it once at init and use it directly
+typed `EffectPgDatabase`. Bind it once in the constructor and use it directly
 inside `fetch` — no manual `Client` setup, no `Effect.promise(...)`
 wrappers around queries:
 

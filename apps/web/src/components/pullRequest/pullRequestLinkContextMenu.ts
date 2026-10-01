@@ -11,6 +11,7 @@ export type PullRequestLinkContextMenuAction = "copy-link" | "open-external";
 const OPEN_ON_HOST_LABELS: Partial<Record<string, string>> = {
   github: "Open on GitHub",
   gitlab: "Open on GitLab",
+  forgejo: "Open on Forgejo",
   bitbucket: "Open on Bitbucket",
   "azure-devops": "Open on Azure DevOps",
 };

@@ -325,6 +325,59 @@ describe("third-party license generation", () => {
     expect(manifest.entries[0]?.noticeText).toBe("Override text");
   });
 
+  it("keeps all licenses and attributions in a package with multiple generated notices", async () => {
+    const fixture = await createFixture();
+    await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));
+    for (const licenseId of ["Apache-2.0", "BSD-3-Clause"]) {
+      await writeJson(
+        NodePath.join(
+          fixture.root,
+          `.generated/third-party-licenses/spdx/v3.28.0/${licenseId}.json`,
+        ),
+        { licenseId, licenseText: `${licenseId} terms` },
+      );
+    }
+    await writeJson(fixture.configFile, {
+      packageOverrides: [
+        {
+          name: "demo-dependency",
+          license: "(Apache-2.0 AND BSD-3-Clause)",
+          generatedNotices: [
+            { licenseId: "Apache-2.0", copyrights: ["Copyright primary author"] },
+            { licenseId: "BSD-3-Clause", copyrights: ["Copyright vendored author"] },
+          ],
+        },
+      ],
+    });
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+    expect(manifest.entries[0]?.license).toBe("(Apache-2.0 AND BSD-3-Clause)");
+    expect(manifest.entries[0]?.noticeText).toBe(
+      "Copyright primary author\n\nApache-2.0 terms\n\n---\n\nCopyright vendored author\n\nBSD-3-Clause terms",
+    );
+  });
+
+  it("rejects conflicting package notice sources", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.configFile, {
+      packageOverrides: [
+        {
+          name: "demo-dependency",
+          generatedNotice: { licenseId: "MIT" },
+          generatedNotices: [{ licenseId: "BSD-3-Clause" }],
+        },
+      ],
+    });
+    await expect(
+      generateThirdPartyLicenseManifest({
+        configFile: fixture.configFile,
+        packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      }),
+    ).rejects.toThrow("can define only one");
+  });
+
   it("applies repository overrides across monorepo packages", async () => {
     const fixture = await createFixture();
     await NodeFSP.rm(NodePath.join(fixture.dependencyRoot, "LICENSE"));

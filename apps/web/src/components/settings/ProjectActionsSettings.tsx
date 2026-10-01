@@ -111,6 +111,7 @@ export function ProjectActionsSettings() {
         command: fileScript.command,
         icon: fileScript.icon ?? "play",
         runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+        waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
         keybinding: null,
         previewUrl: fileScript.previewUrl ?? null,
         autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
@@ -155,7 +156,7 @@ export function ProjectActionsSettings() {
                   Import scripts
                   <ChevronDownIcon className="size-3.5" />
                 </MenuTrigger>
-                <MenuPopup align="end" className="w-72">
+                <MenuPopup align="end">
                   <MenuGroup>
                     <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
                     <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">

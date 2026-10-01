@@ -228,7 +228,7 @@ describe.sequential("GoogleTagGateway", () => {
           // deploy leaves behind: `creating`, no attributes, and the
           // Output-valued `zone` prop lost in the state round-trip (#736).
           const state = yield* yield* State;
-          const stage = "test"; // scratch stacks default to the "test" stage
+          const stage = stack.stage;
           const fqns = yield* state.list({ stack: stack.name, stage });
           const rows = yield* Effect.forEach(fqns, (fqn) =>
             state

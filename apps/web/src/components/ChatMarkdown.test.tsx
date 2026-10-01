@@ -55,6 +55,7 @@ vi.mock("../editorPreferences", () => ({
 vi.mock("~/lib/openPullRequestLink", () => ({
   findProjectOnChangeRequestHost: () => undefined,
   parseChangeRequestUrl: () => null,
+  resolvePullRequestPreviewTarget: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
@@ -71,6 +72,74 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown context references", () => {
+  it("renders text and image references through the chip renderer, with readable fallback", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text =
+      "See [Terminal output](t3-context://v1/terminal/term-1) and ![Error image](t3-context://v1/image/img-1).";
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            renderContextReference={({ kind, label }) => (
+              <button>
+                {kind}: {label}
+              </button>
+            )}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+      ).toEqual(["terminal: Terminal output", "image: Error image"]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} />);
+      });
+      expect(renderer!.root.findAllByType("span").map((span) => span.children.join(""))).toEqual([
+        "Terminal output",
+        "Error image",
+      ]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads formatted context labels through nested markup instead of the context id", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const seen: Array<string> = [];
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text="See [**Bold** `code`](t3-context://v1/terminal/term-1)."
+            renderContextReference={({ kind, label }) => {
+              seen.push(`${kind}: ${label}`);
+              return <button>{label}</button>;
+            }}
+          />,
+        );
+      });
+      expect(seen).toEqual(["terminal: Bold code"]);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
@@ -110,6 +179,75 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("runs only a complete single-line shell block after a click", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const onRunShellCommand = vi.fn();
+    let renderer: ReactTestRenderer | undefined;
+    const message = (text: string, isStreaming = false) => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={text}
+        isStreaming={isStreaming}
+        onRunShellCommand={onRunShellCommand}
+      />
+    );
+    try {
+      await act(async () => {
+        renderer = create(message("```bash\necho hello\n```", true));
+      });
+      const mounted = renderer!;
+      expect(
+        mounted.root
+          .findAllByType(Button)
+          .some((button) => button.props["aria-label"] === "Run in terminal"),
+      ).toBe(false);
+
+      await act(async () => {
+        mounted.update(message("```bash\necho hello\n```"));
+      });
+      await act(async () => {
+        codeButton(mounted, "Run in terminal").onClick?.({} as never);
+      });
+      expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+
+      for (const text of [
+        "~~~bash\necho tilde\n~~~",
+        "> ```bash\n> echo quote\n> ```",
+        "````bash\necho four\n````",
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(codeButton(mounted, "Run in terminal")).toBeDefined();
+      }
+
+      for (const text of [
+        "```bash\necho one\necho two\n```",
+        "```typescript\necho hello\n```",
+        "```bash\n\n```",
+        "```bash\necho hello\n\n```",
+        "```bash\necho hello\\\n```",
+        "```bash\necho safe \u202e#\n```",
+        "```bash\necho incomplete",
+        "~~~bash\necho incomplete",
+        "````bash\necho incomplete\n```",
+        '<pre><code class="language-bash">echo html</code></pre>',
+      ]) {
+        await act(async () => {
+          mounted.update(message(text));
+        });
+        expect(
+          mounted.root
+            .findAllByType(Button)
+            .some((button) => button.props["aria-label"] === "Run in terminal"),
+        ).toBe(false);
+      }
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("does not retokenize completed lines when streaming finishes", async () => {
     const highlighter = await getSyntaxHighlighterPromise("typescript");
     const highlight = vi.spyOn(highlighter, "codeToHast");
@@ -570,7 +708,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html).not.toContain("::artifact-template");
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).toContain('data-artifact-kind="document"');
     expect(html).toContain('data-markdown-copy="Hello World (Document template)\n\n"');
     expect(html).toContain('data-skill-name="artifact-template-hello-world"');
@@ -585,7 +723,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       <ChatMarkdown cwd="/tmp/project" text={ARTIFACT_TEMPLATE_DIRECTIVE} />,
     );
 
-    expect(html).toContain("chat-markdown-artifact-template");
+    expect(html).toContain("data-chat-markdown-artifact-template");
     expect(html).not.toContain("Use template");
   });
 
@@ -597,7 +735,7 @@ describe("ChatMarkdown artifact-template cards", () => {
     for (const text of [malformed, unfinished]) {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -609,7 +747,7 @@ describe("ChatMarkdown artifact-template cards", () => {
       const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
 
       expect(html).toContain("::artifact-template");
-      expect(html).not.toContain("chat-markdown-artifact-template");
+      expect(html).not.toContain("data-chat-markdown-artifact-template");
     }
   });
 
@@ -622,7 +760,29 @@ describe("ChatMarkdown artifact-template cards", () => {
     );
 
     expect(html.match(/::artifact-template/g)).toHaveLength(2);
-    expect(html).not.toContain("chat-markdown-artifact-template");
+    expect(html).not.toContain("data-chat-markdown-artifact-template");
+  });
+});
+
+describe("ChatMarkdown heading levels", () => {
+  it("exposes headings below the host heading without changing their tags", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"# Top\n\n## Section\n\n###### Fine print"}
+        headingLevelOffset={3}
+      />,
+    );
+
+    expect(html).toContain('<h1 aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 aria-level="6">Fine print</h6>');
+  });
+
+  it("leaves heading levels alone when the markdown is not nested", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
+
+    expect(html).toContain("<h1>Top</h1>");
   });
 });
 
