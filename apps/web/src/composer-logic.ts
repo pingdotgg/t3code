@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import {
   splitPromptIntoComposerSegments,
+  isComposerCursorInCodeBlock,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
@@ -217,6 +218,7 @@ export function isCollapsedCursorAdjacentToInlineToken(
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
+  if (isComposerCursorInCodeBlock(text, cursor)) return null;
   const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const linePrefix = text.slice(lineStart, cursor);
 

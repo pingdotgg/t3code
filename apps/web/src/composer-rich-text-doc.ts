@@ -1,6 +1,7 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
+import { Extension } from "@tiptap/core";
 
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
@@ -48,6 +49,26 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
  * Code nests inside emphasis here, so it only excludes itself like the rest.
  */
 export const ComposerCodeExtension = Code.extend({ excludes: "code" });
+
+// Keep an unfinished fence unfinished when restoring a draft. These attributes
+// are Markdown metadata, not HTML attributes on pasted code blocks.
+export const ComposerBlockAttributesExtension = Extension.create({
+  name: "composer-block-attributes",
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["codeBlock"],
+        attributes: {
+          fence: { default: "```", rendered: false },
+          info: { default: null, rendered: false },
+          closed: { default: true, rendered: false },
+          openingNewline: { default: true, rendered: false },
+          finalNewline: { default: false, rendered: false },
+        },
+      },
+    ];
+  },
+});
 
 /**
  * Task list items keep their exact source indent in an attribute so nesting
@@ -176,6 +197,79 @@ export function buildTiptapContent(
   skillLabelFor: (name: string) => SkillMeta,
   options?: { styling?: boolean },
 ): Record<string, unknown>[] {
+  return buildBlocks(value, skillLabelFor, options?.styling ?? true, 0);
+}
+
+function buildBlocks(
+  value: string,
+  skillLabelFor: (name: string) => SkillMeta,
+  styling: boolean,
+  depth: number,
+): Record<string, unknown>[] {
+  if (!styling || depth >= 32) return buildInlineContent(value, skillLabelFor, { styling });
+  const lines = value.split("\n");
+  const blocks: Record<string, unknown>[] = [];
+  let pending: string[] = [];
+  const flush = () => {
+    if (pending.length)
+      blocks.push(...buildInlineContent(pending.join("\n"), skillLabelFor, { styling }));
+    pending = [];
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const fence = line.match(/^(`{3,}|~{3,})([^\n]*)$/);
+    if (fence && (fence[1]![0] !== "`" || !fence[2]!.includes("`"))) {
+      flush();
+      const body: string[] = [];
+      let closed = false;
+      let finalNewline = false;
+      const openingNewline = index < lines.length - 1;
+      for (index += 1; index < lines.length; index += 1) {
+        const next = lines[index]!;
+        const closing = next.match(/^(`{3,}|~{3,})[ \t]*$/);
+        if (closing && closing[1]![0] === fence[1]![0] && closing[1]!.length >= fence[1]!.length) {
+          closed = true;
+          finalNewline = body.length > 0;
+          break;
+        }
+        body.push(next);
+      }
+      const text = body.join("\n");
+      blocks.push({
+        type: "codeBlock",
+        attrs: {
+          fence: fence[1],
+          info: fence[2],
+          language: fence[2]!.trim().split(/\s+/)[0] || null,
+          closed,
+          openingNewline,
+          finalNewline,
+        },
+        content: text ? [{ type: "text", text }] : [],
+      });
+    } else if (/^> ?/.test(line)) {
+      flush();
+      const quoted = [line.replace(/^> ?/, "")];
+      while (index + 1 < lines.length && /^> ?/.test(lines[index + 1]!)) {
+        quoted.push(lines[++index]!.replace(/^> ?/, ""));
+      }
+      blocks.push({
+        type: "blockquote",
+        content: buildBlocks(quoted.join("\n"), skillLabelFor, styling, depth + 1),
+      });
+    } else {
+      pending.push(line);
+    }
+  }
+  flush();
+  return blocks;
+}
+
+function buildInlineContent(
+  value: string,
+  skillLabelFor: (name: string) => SkillMeta,
+  options?: { styling?: boolean },
+): Record<string, unknown>[] {
   const styling = options?.styling ?? true;
   // Hide token source from the markdown parser, then restore the atoms with
   // the marks of their surrounding text. Choose a sentinel absent from input.
@@ -273,7 +367,7 @@ export function buildDocJson(
 }
 
 export interface RichRun {
-  kind: "text" | "token" | "break" | "prefix";
+  kind: "text" | "token" | "break" | "prefix" | "suffix";
   /** Flat document offset (atoms count 1, markers excluded). */
   flatStart: number;
   docLen: number;
@@ -489,7 +583,36 @@ function appendInlineRuns(
   }
 }
 
-function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator): void {
+function appendMarker(
+  acc: RichAccumulator,
+  source: string,
+  pmPos: number,
+  kind: "prefix" | "suffix" = "prefix",
+): void {
+  if (!source) return;
+  acc.runs.push({
+    kind,
+    flatStart: acc.flat,
+    docLen: 0,
+    collapsedLen: source.length,
+    mdLen: source.length,
+    openLen: 0,
+    closeLen: 0,
+    pmPos,
+    mdStart: acc.md,
+    collapsedStart: acc.collapsed,
+  });
+  acc.value += source;
+  acc.collapsed += source.length;
+  acc.md += source.length;
+}
+
+function walkTaskList(
+  list: ProseMirrorNode,
+  listStart: number,
+  acc: RichAccumulator,
+  quotePrefix = "",
+): void {
   let itemPos = listStart + 1;
   let firstItem = true;
   list.content.forEach((item) => {
@@ -497,6 +620,7 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
     if (!firstItem) pushBreakRun(acc);
     firstItem = false;
     const itemContentStart = itemPos + 1;
+    appendMarker(acc, quotePrefix, itemContentStart + 1);
     const first = item.firstChild;
     const empty = first?.type.name === "paragraph" && first.content.childCount === 0;
     const attrs = item.attrs as Record<string, unknown>;
@@ -529,10 +653,13 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
     let childPos = itemContentStart;
     let firstBlock = true;
     item.content.forEach((child) => {
-      if (!firstBlock) pushBreakRun(acc);
+      if (!firstBlock) {
+        pushBreakRun(acc);
+        if (child.type.name === "paragraph") appendMarker(acc, quotePrefix, childPos + 1);
+      }
       firstBlock = false;
       if (child.type.name === "taskList") {
-        walkTaskList(child, childPos, acc);
+        walkTaskList(child, childPos, acc, quotePrefix);
       } else if (child.type.name === "paragraph") {
         appendInlineRuns(child, childPos + 1, acc);
       }
@@ -542,23 +669,82 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
   });
 }
 
+function walkBlocks(
+  container: ProseMirrorNode,
+  start: number,
+  acc: RichAccumulator,
+  quotePrefix = "",
+): void {
+  let position = start;
+  container.forEach((block, _offset, index) => {
+    if (index > 0) pushBreakRun(acc);
+    if (block.type.name === "blockquote") {
+      walkBlocks(block, position + 1, acc, `${quotePrefix}> `);
+    } else if (block.type.name === "taskList") {
+      walkTaskList(block, position, acc, quotePrefix);
+    } else if (block.type.name === "codeBlock") {
+      const text = block.textContent;
+      const storedFence = typeof block.attrs.fence === "string" ? block.attrs.fence : "```";
+      const character = storedFence[0] === "~" ? "~" : "`";
+      const runs = text.match(character === "`" ? /`+/g : /~+/g) ?? [];
+      const fence = character.repeat(
+        runs.reduce(
+          (length, run) => Math.max(length, run.length + 1),
+          Math.max(3, storedFence.length),
+        ),
+      );
+      const info =
+        typeof block.attrs.info === "string" ? block.attrs.info : block.attrs.language || "";
+      const openingNewline =
+        block.attrs.openingNewline !== false || text || block.attrs.closed !== false ? "\n" : "";
+      appendMarker(acc, `${quotePrefix}${fence}${info}${openingNewline}`, position + 1);
+      let offset = 0;
+      text.split("\n").forEach((line, lineIndex) => {
+        if (lineIndex > 0) {
+          pushBreakRun(acc, position + offset);
+          appendMarker(acc, quotePrefix, position + offset + 1);
+        } else if (
+          text ||
+          block.attrs.finalNewline ||
+          (block.attrs.closed === false && block.attrs.openingNewline !== false)
+        ) {
+          appendMarker(acc, quotePrefix, position + 1);
+        }
+        acc.runs.push({
+          kind: "text",
+          flatStart: acc.flat,
+          docLen: line.length,
+          collapsedLen: line.length,
+          mdLen: line.length,
+          openLen: 0,
+          closeLen: 0,
+          pmPos: position + 1 + offset,
+          mdStart: acc.md,
+          collapsedStart: acc.collapsed,
+        });
+        acc.value += line;
+        acc.flat += line.length;
+        acc.collapsed += line.length;
+        acc.md += line.length;
+        offset += line.length + 1;
+      });
+      // A code block followed by another block must have a closing fence even
+      // if its source draft originally ended with an unfinished fence.
+      if (block.attrs.closed !== false || index < container.childCount - 1) {
+        const newline = text || block.attrs.finalNewline ? "\n" : "";
+        appendMarker(acc, `${newline}${quotePrefix}${fence}`, position + 1 + text.length, "suffix");
+      }
+    } else if (block.type.name === "paragraph") {
+      appendMarker(acc, quotePrefix, position + 1);
+      appendInlineRuns(block, position + 1, acc);
+    }
+    position += block.nodeSize;
+  });
+}
+
 export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
   const acc: RichAccumulator = { runs: [], value: "", flat: 0, collapsed: 0, md: 0 };
-  const blocks: ProseMirrorNode[] = [];
-  doc.content.forEach((node) => {
-    blocks.push(node);
-  });
-
-  let pmBlockStart = 0;
-  blocks.forEach((block, blockIndex) => {
-    if (blockIndex > 0) pushBreakRun(acc);
-    if (block.type.name === "taskList") {
-      walkTaskList(block, pmBlockStart, acc);
-    } else if (block.type.name === "paragraph") {
-      appendInlineRuns(block, pmBlockStart + 1, acc);
-    }
-    pmBlockStart += block.nodeSize;
-  });
+  walkBlocks(doc, 0, acc);
 
   return {
     value: acc.value,
@@ -571,6 +757,7 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
 function lastRunEnd(map: RichDocMap, space: "collapsed" | "md"): number {
   const last = map.runs[map.runs.length - 1];
   if (!last) return 0;
+  if (last.kind === "suffix") return space === "collapsed" ? last.collapsedStart : last.mdStart;
   return space === "collapsed"
     ? last.collapsedStart + last.collapsedLen
     : last.mdStart + last.mdLen;
@@ -607,7 +794,7 @@ export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): numbe
     if (collapsedOffset < run.collapsedStart + run.collapsedLen) {
       // Checkbox prefixes and style markers are shown, never edited: every
       // offset inside them clamps to the adjacent document position.
-      if (run.kind === "prefix") return run.flatStart;
+      if (run.kind === "prefix" || run.kind === "suffix") return run.flatStart;
       if (run.kind === "text" || run.kind === "token") {
         const within = collapsedOffset - run.collapsedStart;
         // Marker characters clamp to the styled edge: they are shown, never edited.

@@ -2235,3 +2235,24 @@ code {
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
 }
+
+.composer-tiptap pre {
+  margin: 0.35em 0;
+  padding: 0.6em 0.75em;
+  border-radius: 0.5em;
+  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+}
+
+.composer-tiptap pre code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.composer-tiptap blockquote {
+  margin: 0.35em 0;
+  padding-left: 0.75em;
+  border-left: 2px solid var(--muted-foreground);
+}
