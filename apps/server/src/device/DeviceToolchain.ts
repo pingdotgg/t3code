@@ -33,13 +33,8 @@ const AGENT_DEVICE_PACKAGE = "agent-device";
 export const AGENT_DEVICE_VERSION = "0.21.12";
 
 /**
- * Hub arguments shared by every place that starts one, local or over SSH.
- *
- * The hub defaults Android capture to `grpc-screenshot`, which only works on
- * emulators and silently streams nothing on some of them (the socket opens and
- * closes without a frame, so the panel waits on video forever). scrcpy is
- * serve-emu's own default, works on emulators and is the only source for
- * physical devices, so T3 asks for it unless the setting says otherwise.
+ * Hub arguments shared by every place that starts one, local or over SSH, so
+ * the two cannot drift onto different capture sources.
  */
 export const deviceHubArgs = (streamSource: DeviceStreamSource): ReadonlyArray<string> => [
   "--hide-sidebar",

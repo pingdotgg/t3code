@@ -128,14 +128,16 @@ export const DeviceSession = Schema.Struct({
 export type DeviceSession = typeof DeviceSession.Type;
 
 /**
- * Where serve-emu reads Android frames from. scrcpy works on emulators and
- * physical devices; grpc-screenshot is emulator-only and streams nothing on
- * some of them, so it stays available but is not the default.
+ * Where the device hub reads Android frames from. `grpc-screenshot` is the
+ * hub's own default and only works on emulators, and streams nothing at all on
+ * some of them; `scrcpy` works on emulators and physical devices alike. The
+ * hub takes it as a start argument, so changing it only affects hubs started
+ * afterwards.
  */
 export const DeviceStreamSource = Schema.Literals(["scrcpy", "grpc-screenshot"]);
 export type DeviceStreamSource = typeof DeviceStreamSource.Type;
 
-export const DEFAULT_DEVICE_STREAM_SOURCE = "scrcpy" as DeviceStreamSource;
+export const DEFAULT_DEVICE_STREAM_SOURCE = "grpc-screenshot" as DeviceStreamSource;
 
 export const DeviceServiceState = Schema.Struct({
   supportsHostRetry: Schema.optional(Schema.Boolean),

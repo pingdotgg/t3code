@@ -32,7 +32,7 @@ const baseState: DeviceServiceState = {
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
-  streamSource: "scrcpy",
+  streamSource: "grpc-screenshot",
   hubBasePath: "/api/device-hub",
   revision: 0,
 };
@@ -288,19 +288,26 @@ describe("device setup consent", () => {
 
   it.effect("switching the capture source persists it and restarts hosts", () =>
     Effect.gen(function* () {
-      const { service, starts, settings } = yield* fixture();
-      yield* service.configure({ enabled: true });
+      const { service, starts, agentStarts, settings } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
       expect(starts).toEqual(["start"]);
+      expect(agentStarts).toHaveLength(1);
 
-      const switched = yield* service.configure({ streamSource: "grpc-screenshot" });
-      expect(switched.streamSource).toBe("grpc-screenshot");
-      expect((yield* Ref.get(settings)).deviceStreamSource).toBe("grpc-screenshot");
+      const switched = yield* service.configure({ streamSource: "scrcpy" });
+      expect(switched.streamSource).toBe("scrcpy");
+      expect((yield* Ref.get(settings)).deviceStreamSource).toBe("scrcpy");
       // The hub takes the source at spawn, so the running one has to go.
       expect(starts.filter((event) => event === "stop")).toHaveLength(1);
+      // Stopping the host stopped its agent daemon too; device automation has
+      // to come back without waiting for the next `device_open`.
+      expect(agentStarts).toHaveLength(2);
 
-      // Re-selecting the current source leaves the running hub alone.
+      // Settings can also be written straight through `settings.update`, which
+      // leaves the hubs on the old source. Asking for the stored source again
+      // has to restart them rather than read the value and decide nothing
+      // changed.
       yield* service.configure({ streamSource: "grpc-screenshot" });
-      expect(starts.filter((event) => event === "stop")).toHaveLength(1);
+      expect(starts.filter((event) => event === "stop")).toHaveLength(2);
     }).pipe(Effect.scoped),
   );
 

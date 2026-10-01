@@ -29,12 +29,12 @@ import type { DeviceControls } from "./useDeviceControls";
 import { type DeviceEventLogEntry, subscribeDeviceEventLog } from "./deviceHubApi";
 
 /**
- * serve-emu reads Android frames from one of these. The hub takes it as a start
- * argument, so switching restarts every device host on the environment.
+ * The hub reads Android frames from one of these. It takes the source as a
+ * start argument, so switching restarts every device host on the environment.
  */
 const STREAM_SOURCES: ReadonlyArray<{ value: DeviceStreamSource; label: string }> = [
-  { value: "scrcpy", label: "scrcpy" },
   { value: "grpc-screenshot", label: "gRPC screenshot" },
+  { value: "scrcpy", label: "scrcpy" },
 ];
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [

@@ -529,13 +529,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       // Everything a concurrent configure could change is read, written, and
       // published under one permit; a snapshot taken before the lock lets the
       // later call republish the values the earlier one just moved.
-      const { nextEnabled, nextAgentAccess } = yield* lifecycleLock.withPermit(
+      const { nextEnabled, nextAgentAccess, restartedForSource } = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
           const currentSettings = yield* readDeviceSettings;
           const nextEnabled = input.enabled ?? currentSettings.enabled;
           const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
           const nextStreamSource = input.streamSource ?? currentSettings.streamSource;
-          const streamSourceChanged = nextStreamSource !== currentSettings.streamSource;
           yield* settings
             .updateSettings({
               ...(input.enabled === undefined ? {} : { enableDeviceSupport: input.enabled }),
@@ -545,7 +544,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ...(input.onboardingCompleted === undefined
                 ? {}
                 : { deviceOnboardingCompleted: input.onboardingCompleted }),
-              ...(streamSourceChanged ? { deviceStreamSource: nextStreamSource } : {}),
+              ...(input.streamSource === undefined
+                ? {}
+                : { deviceStreamSource: input.streamSource }),
             })
             .pipe(
               Effect.mapError(
@@ -559,8 +560,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             );
           // The capture source is a hub start argument, so a running hub keeps
           // the old one until it is restarted. Open panels reconnect through
-          // `list`.
-          if (!nextEnabled || streamSourceChanged) {
+          // `list`. Any asked-for source restarts, even one that matches what
+          // is stored: settings can also be written directly, and then the
+          // running hubs are already on a source the setting no longer names.
+          if (!nextEnabled || input.streamSource !== undefined) {
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
@@ -577,10 +580,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             streamSource: nextStreamSource,
             onboardingCompleted: input.onboardingCompleted ?? state.onboardingCompleted,
           }));
-          return { nextEnabled, nextAgentAccess };
+          return {
+            nextEnabled,
+            nextAgentAccess,
+            restartedForSource: nextEnabled && input.streamSource !== undefined,
+          };
         }),
       );
-      if (nextEnabled && nextAgentAccess && input.agentAccessEnabled === true) {
+      // Stopping a host for a new capture source takes its agent daemon with
+      // it, and `list` only brings hubs back, so the agent has to be asked for
+      // again or device automation stays down until the next `device_open`.
+      if (
+        nextEnabled &&
+        nextAgentAccess &&
+        (input.agentAccessEnabled === true || restartedForSource)
+      ) {
         yield* agentReadinessIfSupported();
       }
       return yield* list;

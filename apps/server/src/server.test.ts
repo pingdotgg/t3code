@@ -1741,7 +1741,7 @@ const EMPTY_DEVICE_STATE: DeviceServiceState = {
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
-  streamSource: "scrcpy",
+  streamSource: "grpc-screenshot",
   hubBasePath: DeviceService.DEVICE_HUB_ROUTE_PREFIX,
   revision: 0,
 };
