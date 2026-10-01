@@ -19,24 +19,17 @@ import {
   DEFAULT_AGENT_WORKFLOW_AUTOMATION_COOLDOWN_MS,
   DEFAULT_AGENT_WORKFLOW_MAX_RUNS_PER_THREAD,
   DEFAULT_PROVIDER_DRIVER_KIND,
-  defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
   type EnvironmentId,
   type ModelSelection,
   DEFAULT_BROWSER_PROFILE_ID,
-  DEFAULT_PREVIEW_APPEARANCE,
-  DEFAULT_PREVIEW_ZOOM_FACTOR,
-  FILL_PREVIEW_VIEWPORT,
   resolveBrowserProfiles,
   type BrowserProfile,
   type BrowserImportSource,
   type BrowserImportSourceId,
   BROWSER_IMPORT_FAILURE_COPY,
   BROWSER_IMPORT_UNAVAILABLE_COPY,
-  type PreviewAppearancePreference,
-  type PreviewViewportSetting,
   ProviderDriverKind,
-  type ProviderInstanceConfig,
   type ProviderInstanceId,
   type PullRequestListState,
   type ReviewChangesScope,
@@ -44,25 +37,9 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
 import {
-  DEFAULT_CHAT_FONT_SIZE,
-  RECOMMENDED_FONT_SIZES_BY_UI_DENSITY,
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
-  DEFAULT_BROWSER_LINK_TARGET,
-  DEFAULT_CODE_FONT,
-  DEFAULT_CODE_FONT_SIZE,
-  DEFAULT_INPUT_FONT_SIZE,
-  DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS,
-  DEFAULT_SIDEBAR_FONT_SIZE,
-  DEFAULT_SIDEBAR_META_FONT_SIZE,
-  DEFAULT_SIDEBAR_ROW_SPACING,
-  DEFAULT_SIDEBAR_TRANSLUCENCY,
-  DEFAULT_SIDEBAR_V2_ENABLED,
-  DEFAULT_STATUS_LINE_FONT_SIZE,
-  DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
-  DEFAULT_UI_DENSITY,
-  DEFAULT_UI_FONT,
   DEFAULT_UNIFIED_SETTINGS,
   DEFAULT_HEADER_SHOW_PROJECT_SCRIPTS,
   DEFAULT_HEADER_SHOW_OPEN_IN,
@@ -89,7 +66,6 @@ import {
   DEFAULT_WORKFLOW_RUNS_SHOW_BADGE,
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
-  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
@@ -128,11 +104,7 @@ import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
-import {
-  getCustomModelOptionsByInstance,
-  resolveAppModelSelectionState,
-  resolveDelegatedThreadModelSelectionState,
-} from "../../modelSelection";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
@@ -152,12 +124,8 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
-import { ProviderInstanceCard } from "./ProviderInstanceCard";
-import { getDriverOption } from "./providerDriverMeta";
 import {
   buildArchivedThreadGroupsFromSnapshots,
-  buildProviderInstanceUpdatePatch,
   filterArchivedThreadGroups,
   mergeCollaborativeAcceptancePolicy,
   runSequentiallySettled,
@@ -179,7 +147,7 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 
-const THEME_OPTIONS = [
+export const THEME_OPTIONS = [
   {
     value: "system",
     label: "System",
@@ -194,20 +162,21 @@ const THEME_OPTIONS = [
   },
 ] as const;
 
-const TIMESTAMP_FORMAT_LABELS = {
+export const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
 
-const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint: string }> = [
-  { value: "compact", label: "Compact", hint: "— tighter spacing" },
-  { value: "default", label: "Default", hint: "— balanced" },
-  { value: "comfortable", label: "Comfortable", hint: "— relaxed spacing" },
-  { value: "spacious", label: "Spacious", hint: "— more breathing room" },
-];
+export const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint: string }> =
+  [
+    { value: "compact", label: "Compact", hint: "— tighter spacing" },
+    { value: "default", label: "Default", hint: "— balanced" },
+    { value: "comfortable", label: "Comfortable", hint: "— relaxed spacing" },
+    { value: "spacious", label: "Spacious", hint: "— more breathing room" },
+  ];
 
-const SIDEBAR_ROW_SPACING_OPTIONS: ReadonlyArray<{
+export const SIDEBAR_ROW_SPACING_OPTIONS: ReadonlyArray<{
   value: SidebarRowSpacing;
   label: string;
   hint: string;
@@ -217,7 +186,7 @@ const SIDEBAR_ROW_SPACING_OPTIONS: ReadonlyArray<{
   { value: "relaxed", label: "Relaxed", hint: "— more breathing room" },
 ];
 
-const SIDEBAR_TRANSLUCENCY_OPTIONS: ReadonlyArray<{
+export const SIDEBAR_TRANSLUCENCY_OPTIONS: ReadonlyArray<{
   value: SidebarTranslucency;
   label: string;
   hint: string;
@@ -273,7 +242,7 @@ const COLLABORATIVE_ACCEPTANCE_COMMENT_OPTIONS = [
   { value: "all-review-threads-resolved", label: "All review threads resolved" },
 ] as const;
 
-type HeaderSidebarToggleKey = keyof Pick<
+export type HeaderSidebarToggleKey = keyof Pick<
   UnifiedSettings,
   | "headerShowProjectScripts"
   | "headerShowOpenIn"
@@ -302,7 +271,7 @@ type HeaderSidebarToggleKey = keyof Pick<
   | "sidebarNewThreadConfirm"
 >;
 
-const HEADER_VISIBILITY_ROWS: ReadonlyArray<{
+export const HEADER_VISIBILITY_ROWS: ReadonlyArray<{
   key: HeaderSidebarToggleKey;
   title: string;
   description: string;
@@ -339,7 +308,7 @@ const HEADER_VISIBILITY_ROWS: ReadonlyArray<{
   },
 ];
 
-const PANEL_TOGGLE_ROWS: ReadonlyArray<{
+export const PANEL_TOGGLE_ROWS: ReadonlyArray<{
   key: HeaderSidebarToggleKey;
   title: string;
   description: string;
@@ -367,7 +336,7 @@ const PANEL_TOGGLE_ROWS: ReadonlyArray<{
   { key: "headerShowDiffToggle", title: "Diff toggle", description: "Show the diff panel toggle." },
 ];
 
-const SIDEBAR_VISIBILITY_ROWS: ReadonlyArray<{
+export const SIDEBAR_VISIBILITY_ROWS: ReadonlyArray<{
   key: HeaderSidebarToggleKey;
   title: string;
   description: string;
@@ -394,7 +363,7 @@ const SIDEBAR_VISIBILITY_ROWS: ReadonlyArray<{
   },
 ];
 
-const HEADER_BEHAVIOR_ROWS: ReadonlyArray<{
+export const HEADER_BEHAVIOR_ROWS: ReadonlyArray<{
   key: HeaderSidebarToggleKey;
   title: string;
   description: string;
@@ -451,7 +420,7 @@ const HEADER_BEHAVIOR_ROWS: ReadonlyArray<{
   },
 ];
 
-const HEADER_SIDEBAR_DEFAULTS: Record<HeaderSidebarToggleKey, boolean> = {
+export const HEADER_SIDEBAR_DEFAULTS: Record<HeaderSidebarToggleKey, boolean> = {
   headerShowProjectScripts: DEFAULT_HEADER_SHOW_PROJECT_SCRIPTS,
   headerShowOpenIn: DEFAULT_HEADER_SHOW_OPEN_IN,
   headerShowGitActions: DEFAULT_HEADER_SHOW_GIT_ACTIONS,
@@ -479,9 +448,9 @@ const HEADER_SIDEBAR_DEFAULTS: Record<HeaderSidebarToggleKey, boolean> = {
   sidebarNewThreadConfirm: DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
 };
 
-const DEFAULT_DRIVER_KIND = DEFAULT_PROVIDER_DRIVER_KIND;
+export const DEFAULT_DRIVER_KIND = DEFAULT_PROVIDER_DRIVER_KIND;
 
-function withoutProviderInstanceKey<V>(
+export function withoutProviderInstanceKey<V>(
   record: Readonly<Record<ProviderInstanceId, V>> | undefined,
   key: ProviderInstanceId,
 ): Record<ProviderInstanceId, V> {
@@ -574,14 +543,14 @@ function WorkflowModelControls({
   );
 }
 
-function withoutProviderInstanceFavorites(
+export function withoutProviderInstanceFavorites(
   favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
   instanceId: ProviderInstanceId,
 ) {
   return favorites.filter((favorite) => favorite.provider !== instanceId);
 }
 
-const UI_FONT_OPTIONS: ReadonlyArray<{ value: UiFont; label: string }> = [
+export const UI_FONT_OPTIONS: ReadonlyArray<{ value: UiFont; label: string }> = [
   {
     value: "dm-sans",
     label: "DM Sans",
@@ -596,11 +565,11 @@ const UI_FONT_OPTIONS: ReadonlyArray<{ value: UiFont; label: string }> = [
   },
 ];
 
-function isUiFont(value: unknown): value is UiFont {
+export function isUiFont(value: unknown): value is UiFont {
   return UI_FONT_OPTIONS.some((option) => option.value === value);
 }
 
-const CODE_FONT_OPTIONS: ReadonlyArray<{ value: CodeFont; label: string }> = [
+export const CODE_FONT_OPTIONS: ReadonlyArray<{ value: CodeFont; label: string }> = [
   {
     value: "system-mono",
     label: "System mono",
@@ -619,11 +588,11 @@ const CODE_FONT_OPTIONS: ReadonlyArray<{ value: CodeFont; label: string }> = [
   },
 ];
 
-function isCodeFont(value: unknown): value is CodeFont {
+export function isCodeFont(value: unknown): value is CodeFont {
   return CODE_FONT_OPTIONS.some((option) => option.value === value);
 }
 
-const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
+export const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
   { value: 6, label: "6px" },
   { value: 7, label: "7px" },
   { value: 8, label: "8px" },
@@ -641,19 +610,19 @@ const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
   { value: 24, label: "24px" },
 ];
 
-const MESSAGE_PREVIEW_LINE_OPTIONS: ReadonlyArray<MessagePreviewLineCount> = [
+export const MESSAGE_PREVIEW_LINE_OPTIONS: ReadonlyArray<MessagePreviewLineCount> = [
   1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30,
 ];
 
-function isMessagePreviewLineCount(value: unknown): value is MessagePreviewLineCount {
+export function isMessagePreviewLineCount(value: unknown): value is MessagePreviewLineCount {
   return MESSAGE_PREVIEW_LINE_OPTIONS.some((option) => String(option) === String(value));
 }
 
-function formatMessagePreviewLineCount(lineCount: MessagePreviewLineCount): string {
+export function formatMessagePreviewLineCount(lineCount: MessagePreviewLineCount): string {
   return `${lineCount} ${lineCount === 1 ? "line" : "lines"}`;
 }
 
-function isFontSize(value: unknown): value is FontSize {
+export function isFontSize(value: unknown): value is FontSize {
   return FONT_SIZE_OPTIONS.some((option) => String(option.value) === String(value));
 }
 
@@ -667,7 +636,7 @@ const PULL_REQUESTS_STATE_OPTIONS: ReadonlyArray<{
   { value: "merged", label: "Merged" },
 ];
 
-function isPullRequestListState(value: unknown): value is PullRequestListState {
+export function isPullRequestListState(value: unknown): value is PullRequestListState {
   return PULL_REQUESTS_STATE_OPTIONS.some((option) => option.value === value);
 }
 
@@ -721,7 +690,7 @@ function WorkflowPromptTemplateEditor({
   );
 }
 
-type InstallProviderSettings = {
+export type InstallProviderSettings = {
   provider: ProviderDriverKind;
   title: string;
   badgeLabel?: string;
@@ -736,7 +705,7 @@ type InstallProviderSettings = {
   homeDescription?: ReactNode;
 };
 
-const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
+export const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   {
     provider: ProviderDriverKind.make("codex"),
     title: "Codex",
@@ -785,7 +754,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
   },
 ] as const;
 
-function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
+export function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
   const lastCheckedRelative = lastCheckedAt ? formatRelativeTime(lastCheckedAt) : null;
 
@@ -1326,7 +1295,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
-function HeaderSidebarToggleRows({
+export function HeaderSidebarToggleRows({
   rows,
   settings,
   updateSettings,
@@ -1365,12 +1334,8 @@ function HeaderSidebarToggleRows({
 export function GeneralSettingsPanel() {
   const isDesktopRuntime = isElectronRuntime();
   const browserEnvironmentId = usePrimaryEnvironmentId();
-  const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  // Each size's "reset" target follows the active density, so resetting always
-  // lands on the value that density was designed around.
-  const recommendedFontSizes = RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[settings.uiDensity];
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
     keybindings: false,
     logsDirectory: false,
@@ -1378,11 +1343,9 @@ export function GeneralSettingsPanel() {
   const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
     Partial<Record<"keybindings" | "logsDirectory", string | null>>
   >({});
-  const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isPickingChatExportDirectory, setIsPickingChatExportDirectory] = useState(false);
   const [isExportingActiveChats, setIsExportingActiveChats] = useState(false);
   const [isImportingChatArchive, setIsImportingChatArchive] = useState(false);
-  const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [newBrowserProfileName, setNewBrowserProfileName] = useState("");
   const [browserProfileNames, setBrowserProfileNames] = useState<Record<string, string>>({});
   const [browserImportSources, setBrowserImportSources] = useState<
@@ -1501,42 +1464,9 @@ export function GeneralSettingsPanel() {
     importTargetProfile.id,
     selectedImportSource,
   ]);
-  // Collapsible state per provider-instance card, keyed by the instance id.
-  // `Record<string, boolean>` so we don't need to preseed an entry for every
-  // configured instance — an absent key reads as collapsed. Default-slot
-  // rows share this state: their id is the driver slug
-  // (`defaultInstanceIdForDriver(driver)`), which is also `ProviderDriverKind` at
-  // runtime, so a pre-existing open key for e.g. "codex" persists across
-  // the legacy/unified render swap.
-  const [openInstanceDetails, setOpenInstanceDetails] = useState<Record<string, boolean>>({});
-  const refreshingRef = useRef(false);
-  const refreshProviders = useCallback(() => {
-    if (refreshingRef.current) return;
-    refreshingRef.current = true;
-    setIsRefreshingProviders(true);
-    void ensureLocalApi()
-      .server.refreshProviders()
-      .catch((error: unknown) => {
-        reportClientWarning("Failed to refresh providers", error);
-      })
-      .finally(() => {
-        refreshingRef.current = false;
-        setIsRefreshingProviders(false);
-      });
-  }, []);
-
   const keybindingsConfigPath = useServerKeybindingsConfigPath();
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
-  const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some(
-        (provider) =>
-          provider.instanceId === defaultInstanceIdForDriver(ProviderDriverKind.make("cursor")),
-      ),
-  );
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -1549,40 +1479,6 @@ export function GeneralSettingsPanel() {
     const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
     return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
   })();
-
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const textGenInstanceId = textGenerationModelSelection.instanceId;
-  const textGenModel = textGenerationModelSelection.model;
-  const textGenModelOptions = textGenerationModelSelection.options;
-  const gitModelInstanceEntries = sortProviderInstanceEntries(
-    deriveProviderInstanceEntries(serverProviders),
-  );
-  const textGenInstanceEntry = gitModelInstanceEntries.find(
-    (entry) => entry.instanceId === textGenInstanceId,
-  );
-  const textGenProvider: ProviderDriverKind =
-    textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
-  const gitModelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
-    serverProviders,
-    textGenInstanceId,
-    textGenModel,
-  );
-  const isGitWritingModelDirty = !Equal.equals(
-    settings.textGenerationModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
-  );
-
-  const delegatedThreadModelSelection = resolveDelegatedThreadModelSelectionState(
-    settings,
-    serverProviders,
-  );
-  const delegatedInstanceId = delegatedThreadModelSelection.instanceId;
-  const delegatedModel = delegatedThreadModelSelection.model;
-  const isDelegatedThreadModelDirty = !Equal.equals(
-    settings.delegatedThreadModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection ?? null,
-  );
 
   const openInPreferredEditor = useCallback(
     (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
@@ -1722,967 +1618,8 @@ export function GeneralSettingsPanel() {
   const isOpeningKeybindings = openingPathByTarget.keybindings;
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
-  const lastCheckedAt =
-    serverProviders.length > 0
-      ? serverProviders.reduce(
-          (latest, provider) => (provider.checkedAt > latest ? provider.checkedAt : latest),
-          serverProviders[0]!.checkedAt,
-        )
-      : null;
-
-  /**
-   * Build the list of rows to render, one per configured instance. Each
-   * row carries enough context to drive `ProviderInstanceCard` without
-   * threading storage concerns: whether it's a built-in default slot (in
-   * which case `isDefault` is true, deletion is gated off, and the
-   * effective envelope may have been synthesized from legacy just for
-   * this render), the driver kind narrow for the in-card model-slug
-   * normalization, and whether a reset-to-factory action is warranted.
-   *
-   * Ordering mirrors the prior split: visible built-in default slots
-   * first (one per visible kind), then user-authored custom instances
-   * grouped by driver after their default sibling, then orphan instances
-   * whose driver isn't in the visible-defaults set.
-   */
-  interface InstanceRow {
-    readonly instanceId: ProviderInstanceId;
-    readonly instance: ProviderInstanceConfig;
-    readonly driver: ProviderDriverKind;
-    /** True for the slot whose id is `defaultInstanceIdForDriver(driver)`. */
-    readonly isDefault: boolean;
-    /**
-     * True when this default slot differs from the factory defaults —
-     * either through an explicit `providerInstances[defaultId]` entry,
-     * or through a non-default legacy `settings.providers[kind]` struct
-     * that we're still bridging. Used to show the reset-to-factory
-     * affordance. Undefined for custom rows (they have a delete button
-     * instead; "factory defaults" isn't meaningful).
-     */
-    readonly isDirty?: boolean;
-  }
-
-  const instancesByDriver = new Map<
-    ProviderDriverKind,
-    Array<[ProviderInstanceId, ProviderInstanceConfig]>
-  >();
-  for (const [rawId, instance] of Object.entries(settings.providerInstances ?? {})) {
-    const driver = instance.driver;
-    const list = instancesByDriver.get(driver) ?? [];
-    list.push([rawId as ProviderInstanceId, instance]);
-    instancesByDriver.set(driver, list);
-  }
-
-  const defaultSlotIdsBySource = new Set<string>(
-    visibleProviderSettings.map((providerSettings) =>
-      String(defaultInstanceIdForDriver(providerSettings.provider)),
-    ),
-  );
-
-  const rows: InstanceRow[] = [];
-  const visibleDriverKinds = new Set<ProviderDriverKind>(
-    visibleProviderSettings.map((providerSettings) => providerSettings.provider),
-  );
-
-  for (const providerSettings of visibleProviderSettings) {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const legacyProviders = settings.providers as Record<string, LegacyProviderSettings>;
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings
-    >;
-    const driver = providerSettings.provider;
-    const defaultInstanceId = defaultInstanceIdForDriver(driver);
-    // Prefer an explicit `providerInstances[defaultId]` entry when one
-    // exists (every edit via this UI promotes the default slot into
-    // that map); fall back to synthesizing one from the legacy
-    // `settings.providers[kind]` struct so first-time viewers still see
-    // their persisted config.
-    const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    const legacyConfig = legacyProviders[providerSettings.provider]!;
-    const defaultLegacyConfig = defaultLegacyProviders[providerSettings.provider]!;
-    const effectiveInstance: ProviderInstanceConfig =
-      explicitInstance ??
-      ({
-        driver,
-        enabled: legacyConfig.enabled,
-        config: legacyConfig,
-      } satisfies ProviderInstanceConfig);
-    const isDirty =
-      explicitInstance !== undefined || !Equal.equals(legacyConfig, defaultLegacyConfig);
-    rows.push({
-      instanceId: defaultInstanceId,
-      instance: effectiveInstance,
-      driver,
-      isDefault: true,
-      isDirty,
-    });
-    // Non-default customs for this driver kind follow their default.
-    for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
-      if (id === defaultInstanceId) continue;
-      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
-    }
-  }
-  // Orphan instances: drivers the visible-defaults list doesn't cover
-  // (e.g. Cursor when the server hasn't reported it but the user has
-  // authored a Cursor instance anyway, or fork drivers not shipped by
-  // this build). Preserve insertion order within each driver.
-  for (const [driver, list] of instancesByDriver) {
-    if (visibleDriverKinds.has(driver)) continue;
-    for (const [id, instance] of list) {
-      const isDefaultSlot = defaultSlotIdsBySource.has(String(id));
-      rows.push({
-        instanceId: id,
-        instance,
-        driver: instance.driver,
-        isDefault: isDefaultSlot,
-      });
-    }
-  }
-
-  const updateProviderInstance = (
-    row: InstanceRow,
-    next: ProviderInstanceConfig,
-    options?: {
-      readonly textGenerationModelSelection?: Parameters<
-        typeof buildProviderInstanceUpdatePatch
-      >[0]["textGenerationModelSelection"];
-    },
-  ) => {
-    updateSettings(
-      buildProviderInstanceUpdatePatch({
-        settings,
-        instanceId: row.instanceId,
-        instance: next,
-        driver: row.driver,
-        isDefault: row.isDefault,
-        textGenerationModelSelection: options?.textGenerationModelSelection,
-      }),
-    );
-  };
-
-  const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
-      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
-    });
-  };
-
-  const updateProviderModelPreferences = (
-    instanceId: ProviderInstanceId,
-    next: {
-      readonly hiddenModels: ReadonlyArray<string>;
-      readonly modelOrder: ReadonlyArray<string>;
-    },
-  ) => {
-    const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
-    const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
-    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateSettings({
-      providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0
-          ? rest
-          : {
-              ...rest,
-              [instanceId]: {
-                hiddenModels,
-                modelOrder,
-              },
-            },
-    });
-  };
-
-  const updateProviderFavoriteModels = (
-    instanceId: ProviderInstanceId,
-    nextFavoriteModels: ReadonlyArray<string>,
-  ) => {
-    const favoriteModels = [
-      ...new Set(nextFavoriteModels.map((slug) => slug.trim()).filter((slug) => slug.length > 0)),
-    ];
-    updateSettings({
-      favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
-      ],
-    });
-  };
-
-  /**
-   * Reset a built-in default slot back to factory defaults. Clears both
-   * the legacy `settings.providers[kind]` struct and any explicit
-   * `providerInstances[defaultId]` entry that has promoted legacy into
-   * the new map, so hydration re-synthesizes a clean envelope on next
-   * load. Safe to call on drivers that have never been edited.
-   */
-  const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
-    type LegacyProviderSettings = (typeof settings.providers)[keyof typeof settings.providers];
-    const defaultLegacyProviders = DEFAULT_UNIFIED_SETTINGS.providers as Record<
-      string,
-      LegacyProviderSettings | undefined
-    >;
-    const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-    const defaultLegacyProvider = defaultLegacyProviders[driverKind];
-    if (defaultLegacyProvider === undefined) return;
-    updateSettings({
-      providers: {
-        ...settings.providers,
-        [driverKind]: defaultLegacyProvider,
-      } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-      providerModelPreferences: withoutProviderInstanceKey(
-        settings.providerModelPreferences,
-        defaultInstanceId,
-      ),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
-    });
-  };
-
   return (
     <SettingsPageContainer>
-      <SettingsSection title="General">
-        <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Time format"
-          description="System default follows your browser or OS clock preference."
-          resetAction={
-            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
-              <SettingResetButton
-                label="time format"
-                onClick={() =>
-                  updateSettings({
-                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.timestampFormat}
-              onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
-                  updateSettings({ timestampFormat: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {TIMESTAMP_FORMAT_LABELS.locale}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="UI density"
-          description="Control spacing and type size across the entire interface — sidebar, chat, composer, and toolbars. Changing this applies the recommended font sizes for that density; each size stays adjustable below."
-          resetAction={
-            settings.uiDensity !== DEFAULT_UI_DENSITY ? (
-              <SettingResetButton
-                label="UI density"
-                onClick={() =>
-                  updateSettings({
-                    uiDensity: DEFAULT_UI_DENSITY,
-                    ...RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[DEFAULT_UI_DENSITY],
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.uiDensity}
-              onValueChange={(value) => {
-                if (UI_DENSITY_OPTIONS.some((option) => option.value === value)) {
-                  const density = value as UiDensity;
-                  // Spacing alone cannot make a layout read as dense; the type
-                  // scale has to move with it.
-                  updateSettings({
-                    uiDensity: density,
-                    ...RECOMMENDED_FONT_SIZES_BY_UI_DENSITY[density],
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="UI density">
-                <SelectValue>
-                  {UI_DENSITY_OPTIONS.find((option) => option.value === settings.uiDensity)
-                    ?.label ?? "Default"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {UI_DENSITY_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    <div>
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        {isDesktopRuntime && (
-          <SettingsRow
-            title="Sidebar translucency"
-            description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available, with CSS blur as a fallback."
-            resetAction={
-              settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
-                <SettingResetButton
-                  label="sidebar translucency"
-                  onClick={() =>
-                    updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={settings.sidebarTranslucency}
-                onValueChange={(value) => {
-                  if (
-                    value === "off" ||
-                    value === "subtle" ||
-                    value === "medium" ||
-                    value === "strong" ||
-                    value === "liquid-glass"
-                  ) {
-                    updateSettings({ sidebarTranslucency: value });
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
-                  <SelectValue>
-                    {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
-                      (option) => option.value === settings.sidebarTranslucency,
-                    )?.label ?? "Off"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
-                    <SelectItem hideIndicator key={option.value} value={option.value}>
-                      <div>
-                        <span className="font-medium">{option.label}</span>
-                        <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
-        )}
-      </SettingsSection>
-
-      <SettingsSection title="Sidebar">
-        <SettingsRow
-          title="Inbox sidebar (beta)"
-          description="Use the flat inbox with active, snoozed, and settled thread shelves."
-          resetAction={
-            settings.sidebarV2Enabled !== DEFAULT_SIDEBAR_V2_ENABLED ? (
-              <SettingResetButton
-                label="inbox sidebar"
-                onClick={() => updateSettings({ sidebarV2Enabled: DEFAULT_SIDEBAR_V2_ENABLED })}
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarV2Enabled}
-              onCheckedChange={(checked) => updateSettings({ sidebarV2Enabled: Boolean(checked) })}
-            />
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Header & sidebar buttons">
-        <HeaderSidebarToggleRows
-          rows={HEADER_VISIBILITY_ROWS}
-          settings={settings}
-          updateSettings={updateSettings}
-        />
-        <HeaderSidebarToggleRows
-          rows={PANEL_TOGGLE_ROWS}
-          settings={settings}
-          updateSettings={updateSettings}
-        />
-        <HeaderSidebarToggleRows
-          rows={SIDEBAR_VISIBILITY_ROWS}
-          settings={settings}
-          updateSettings={updateSettings}
-        />
-        <HeaderSidebarToggleRows
-          rows={HEADER_BEHAVIOR_ROWS}
-          settings={settings}
-          updateSettings={updateSettings}
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Fonts">
-        <SettingsRow
-          title="Interface font"
-          description="Choose the sans-serif typeface used throughout the app UI."
-          resetAction={
-            settings.uiFont !== DEFAULT_UI_FONT ? (
-              <SettingResetButton
-                label="interface font"
-                onClick={() =>
-                  updateSettings({
-                    uiFont: DEFAULT_UI_FONT,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.uiFont}
-              onValueChange={(value) => {
-                if (isUiFont(value)) {
-                  updateSettings({ uiFont: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Interface font">
-                <SelectValue>
-                  {UI_FONT_OPTIONS.find((option) => option.value === settings.uiFont)?.label ??
-                    "DM Sans"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {UI_FONT_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Code font"
-          description="Choose the monospace typeface used for code blocks, diffs, and terminals."
-          resetAction={
-            settings.codeFont !== DEFAULT_CODE_FONT ? (
-              <SettingResetButton
-                label="code font"
-                onClick={() =>
-                  updateSettings({
-                    codeFont: DEFAULT_CODE_FONT,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.codeFont}
-              onValueChange={(value) => {
-                if (isCodeFont(value)) {
-                  updateSettings({ codeFont: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Code font">
-                <SelectValue>
-                  {CODE_FONT_OPTIONS.find((option) => option.value === settings.codeFont)?.label ??
-                    "System mono"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {CODE_FONT_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Code font size"
-          description="Font size for code blocks, diffs, and terminals."
-          resetAction={
-            settings.codeFontSize !== recommendedFontSizes.codeFontSize ? (
-              <SettingResetButton
-                label="code font size"
-                onClick={() =>
-                  updateSettings({
-                    codeFontSize: recommendedFontSizes.codeFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.codeFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ codeFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Code font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.codeFontSize)
-                    ?.label ?? `${DEFAULT_CODE_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Chat font size"
-          description="Font size for assistant and user messages in the chat."
-          resetAction={
-            settings.chatFontSize !== recommendedFontSizes.chatFontSize ? (
-              <SettingResetButton
-                label="chat font size"
-                onClick={() =>
-                  updateSettings({
-                    chatFontSize: recommendedFontSizes.chatFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.chatFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ chatFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Chat font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.chatFontSize)
-                    ?.label ?? `${DEFAULT_CHAT_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        {(
-          [
-            {
-              key: "normal",
-              title: "Normal message preview",
-              description: "Lines shown before expanding messages sent directly in a chat.",
-            },
-            {
-              key: "crossThread",
-              title: "Cross-thread message preview",
-              description: "Lines shown before expanding messages sent from another chat.",
-            },
-            {
-              key: "monitoring",
-              title: "Monitoring message preview",
-              description: "Lines shown before expanding pull request monitoring messages.",
-            },
-          ] as const
-        ).map(({ key, title, description }) => (
-          <SettingsRow
-            key={key}
-            title={title}
-            description={description}
-            resetAction={
-              settings.messagePreviewLineLimits[key] !==
-              DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS[key] ? (
-                <SettingResetButton
-                  label={title.toLowerCase()}
-                  onClick={() =>
-                    updateSettings({
-                      messagePreviewLineLimits: {
-                        ...settings.messagePreviewLineLimits,
-                        [key]: DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS[key],
-                      },
-                    })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={String(settings.messagePreviewLineLimits[key])}
-                onValueChange={(value) => {
-                  const lineCount = Number(value);
-                  if (isMessagePreviewLineCount(lineCount)) {
-                    updateSettings({
-                      messagePreviewLineLimits: {
-                        ...settings.messagePreviewLineLimits,
-                        [key]: lineCount,
-                      },
-                    });
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full sm:w-40" aria-label={title}>
-                  <SelectValue>
-                    {formatMessagePreviewLineCount(settings.messagePreviewLineLimits[key])}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {MESSAGE_PREVIEW_LINE_OPTIONS.map((lineCount) => (
-                    <SelectItem hideIndicator key={lineCount} value={String(lineCount)}>
-                      {formatMessagePreviewLineCount(lineCount)}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
-        ))}
-        <SettingsRow
-          title="Status line font size"
-          description="Font size for assistant metadata lines, including timestamps, elapsed time, and resume commands."
-          resetAction={
-            settings.statusLineFontSize !== recommendedFontSizes.statusLineFontSize ? (
-              <SettingResetButton
-                label="status line font size"
-                onClick={() =>
-                  updateSettings({
-                    statusLineFontSize: recommendedFontSizes.statusLineFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.statusLineFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ statusLineFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Status line font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.statusLineFontSize)
-                    ?.label ?? `${DEFAULT_STATUS_LINE_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Input font size"
-          description="Font size for the message composer, its controls, and menus."
-          resetAction={
-            settings.inputFontSize !== recommendedFontSizes.inputFontSize ? (
-              <SettingResetButton
-                label="input font size"
-                onClick={() =>
-                  updateSettings({
-                    inputFontSize: recommendedFontSizes.inputFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.inputFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ inputFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Input font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.inputFontSize)
-                    ?.label ?? `${DEFAULT_INPUT_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Sidebar font size"
-          description="Font size for project and chat titles in the sidebar."
-          resetAction={
-            settings.sidebarFontSize !== recommendedFontSizes.sidebarFontSize ? (
-              <SettingResetButton
-                label="sidebar font size"
-                onClick={() =>
-                  updateSettings({
-                    sidebarFontSize: recommendedFontSizes.sidebarFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.sidebarFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ sidebarFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
-                    ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Sidebar icon size"
-          description="Icon size for action and row icons across the sidebar. Status glyphs stay on their own smaller tier."
-          resetAction={
-            settings.sidebarIconSize !== recommendedFontSizes.sidebarIconSize ? (
-              <SettingResetButton
-                label="sidebar icon size"
-                onClick={() =>
-                  updateSettings({
-                    sidebarIconSize: recommendedFontSizes.sidebarIconSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.sidebarIconSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ sidebarIconSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar icon size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarIconSize)
-                    ?.label ?? `${DEFAULT_SIDEBAR_ICON_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Sidebar metadata font size"
-          description="Font size for the project name, worktree, branch, pull request, and timestamps on sidebar rows."
-          resetAction={
-            settings.sidebarMetaFontSize !== recommendedFontSizes.sidebarMetaFontSize ? (
-              <SettingResetButton
-                label="sidebar metadata font size"
-                onClick={() =>
-                  updateSettings({
-                    sidebarMetaFontSize: recommendedFontSizes.sidebarMetaFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.sidebarMetaFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ sidebarMetaFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar metadata font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarMetaFontSize)
-                    ?.label ?? `${DEFAULT_SIDEBAR_META_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Sidebar row spacing"
-          description="Control the padding inside sidebar rows and the gap between them."
-          resetAction={
-            settings.sidebarRowSpacing !== DEFAULT_SIDEBAR_ROW_SPACING ? (
-              <SettingResetButton
-                label="sidebar row spacing"
-                onClick={() => updateSettings({ sidebarRowSpacing: DEFAULT_SIDEBAR_ROW_SPACING })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarRowSpacing}
-              onValueChange={(value) => {
-                if (SIDEBAR_ROW_SPACING_OPTIONS.some((option) => option.value === value)) {
-                  updateSettings({ sidebarRowSpacing: value as SidebarRowSpacing });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar row spacing">
-                <SelectValue>
-                  {SIDEBAR_ROW_SPACING_OPTIONS.find(
-                    (option) => option.value === settings.sidebarRowSpacing,
-                  )?.label ?? "Default"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SIDEBAR_ROW_SPACING_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    <div>
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Tool output font size"
-          description="Font size for work log entries and tool call output."
-          resetAction={
-            settings.toolFontSize !== recommendedFontSizes.toolFontSize ? (
-              <SettingResetButton
-                label="tool output font size"
-                onClick={() =>
-                  updateSettings({
-                    toolFontSize: recommendedFontSizes.toolFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.toolFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ toolFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Tool output font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.toolFontSize)
-                    ?.label ?? `${DEFAULT_TOOL_FONT_SIZE}px`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-      </SettingsSection>
-
       <SettingsSection title="Pull request monitoring">
         <SettingsRow
           title="Automatically monitor associated PRs"
@@ -2812,115 +1749,6 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
-        <SettingsRow
-          title="Diff code font size"
-          description="Font size for code in pull request diffs."
-          resetAction={
-            settings.pullRequestsCodeFontSize !==
-            DEFAULT_UNIFIED_SETTINGS.pullRequestsCodeFontSize ? (
-              <SettingResetButton
-                label="pull requests code font size"
-                onClick={() =>
-                  updateSettings({
-                    pullRequestsCodeFontSize: DEFAULT_UNIFIED_SETTINGS.pullRequestsCodeFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.pullRequestsCodeFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ pullRequestsCodeFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Pull requests code font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find(
-                    (option) => option.value === settings.pullRequestsCodeFontSize,
-                  )?.label ?? "12px"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Body font size"
-          description="Font size for pull request descriptions and comments."
-          resetAction={
-            settings.pullRequestsBodyFontSize !==
-            DEFAULT_UNIFIED_SETTINGS.pullRequestsBodyFontSize ? (
-              <SettingResetButton
-                label="pull requests body font size"
-                onClick={() =>
-                  updateSettings({
-                    pullRequestsBodyFontSize: DEFAULT_UNIFIED_SETTINGS.pullRequestsBodyFontSize,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.pullRequestsBodyFontSize)}
-              onValueChange={(value) => {
-                const num = Number(value);
-                if (isFontSize(num)) {
-                  updateSettings({ pullRequestsBodyFontSize: num });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Pull requests body font size">
-                <SelectValue>
-                  {FONT_SIZE_OPTIONS.find(
-                    (option) => option.value === settings.pullRequestsBodyFontSize,
-                  )?.label ?? "14px"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Wrap long diff lines"
-          description="Wrap instead of horizontally scrolling long lines in pull request diffs."
-          resetAction={
-            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
-              <SettingResetButton
-                label="pull requests diff line wrapping"
-                onClick={() =>
-                  updateSettings({
-                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.diffWordWrap}
-              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
-              aria-label="Wrap long lines in pull request diffs"
-            />
-          }
-        />
       </SettingsSection>
 
       <DeviceSettings />
@@ -3014,185 +1842,6 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="60">
                   60 fps
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Browser default viewport"
-          description="Choose the viewport size used by new browser tabs unless an entry point provides an explicit size."
-          resetAction={
-            settings.browserDefaultViewport._tag !== FILL_PREVIEW_VIEWPORT._tag ? (
-              <SettingResetButton
-                label="browser default viewport"
-                onClick={() => updateSettings({ browserDefaultViewport: FILL_PREVIEW_VIEWPORT })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={
-                settings.browserDefaultViewport._tag === "fill"
-                  ? "fill"
-                  : `${settings.browserDefaultViewport.width}x${settings.browserDefaultViewport.height}`
-              }
-              onValueChange={(value) => {
-                if (value === null) return;
-                const next: Record<string, PreviewViewportSetting> = {
-                  fill: FILL_PREVIEW_VIEWPORT,
-                  "1440x900": { _tag: "freeform", width: 1440, height: 900 },
-                  "1024x768": { _tag: "freeform", width: 1024, height: 768 },
-                  "390x844": { _tag: "freeform", width: 390, height: 844 },
-                };
-                const viewport = next[value];
-                if (viewport) updateSettings({ browserDefaultViewport: viewport });
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Browser default viewport">
-                <SelectValue>
-                  {settings.browserDefaultViewport._tag === "fill"
-                    ? "Panel size"
-                    : `${settings.browserDefaultViewport.width} x ${settings.browserDefaultViewport.height}`}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="fill">
-                  Panel size
-                </SelectItem>
-                <SelectItem hideIndicator value="1440x900">
-                  Desktop (1440 x 900)
-                </SelectItem>
-                <SelectItem hideIndicator value="1024x768">
-                  Tablet (1024 x 768)
-                </SelectItem>
-                <SelectItem hideIndicator value="390x844">
-                  Mobile (390 x 844)
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Browser default zoom"
-          description="Set the initial zoom factor for human and agent browser tabs."
-          resetAction={
-            settings.browserDefaultZoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
-              <SettingResetButton
-                label="browser default zoom"
-                onClick={() =>
-                  updateSettings({ browserDefaultZoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.browserDefaultZoomFactor)}
-              onValueChange={(value) => {
-                const zoom = Number(value);
-                if ([0.8, 1, 1.25, 1.5].includes(zoom)) {
-                  updateSettings({
-                    browserDefaultZoomFactor: zoom as typeof settings.browserDefaultZoomFactor,
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Browser default zoom">
-                <SelectValue>{Math.round(settings.browserDefaultZoomFactor * 100)}%</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {[0.8, 1, 1.25, 1.5].map((zoom) => (
-                  <SelectItem hideIndicator key={zoom} value={String(zoom)}>
-                    {Math.round(zoom * 100)}%
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Browser default appearance"
-          description="Choose the color scheme applied when a new browser tab is created."
-          resetAction={
-            settings.browserDefaultAppearance !== DEFAULT_PREVIEW_APPEARANCE ? (
-              <SettingResetButton
-                label="browser default appearance"
-                onClick={() =>
-                  updateSettings({ browserDefaultAppearance: DEFAULT_PREVIEW_APPEARANCE })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.browserDefaultAppearance}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  updateSettings({
-                    browserDefaultAppearance: value as PreviewAppearancePreference,
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Browser default appearance">
-                <SelectValue>
-                  {settings.browserDefaultAppearance === "system"
-                    ? "System"
-                    : settings.browserDefaultAppearance === "light"
-                      ? "Light"
-                      : "Dark"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="system">
-                  System
-                </SelectItem>
-                <SelectItem hideIndicator value="light">
-                  Light
-                </SelectItem>
-                <SelectItem hideIndicator value="dark">
-                  Dark
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Open links in"
-          description="Choose whether HTTP(S) links open in T3 Code or your system browser. Cmd/Ctrl/Shift/Alt-click always opens externally."
-          resetAction={
-            settings.browserLinkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
-              <SettingResetButton
-                label="link destination"
-                onClick={() => updateSettings({ browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET })}
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.browserLinkTarget}
-              onValueChange={(value) => {
-                if (value === "system" || value === "app") {
-                  updateSettings({ browserLinkTarget: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Open links in">
-                <SelectValue>
-                  {settings.browserLinkTarget === "app" ? "T3 Code" : "System browser"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="app">
-                  T3 Code
-                </SelectItem>
-                <SelectItem hideIndicator value="system">
-                  System browser
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -3403,30 +2052,6 @@ export function GeneralSettingsPanel() {
             </div>
           </div>
         </SettingsRow>
-
-        <SettingsRow
-          title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
-          resetAction={
-            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
-              <SettingResetButton
-                label="diff line wrapping"
-                onClick={() =>
-                  updateSettings({
-                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.diffWordWrap}
-              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
-              aria-label="Wrap diff lines by default"
-            />
-          }
-        />
 
         <SettingsRow
           title="Assistant output"
@@ -3799,256 +2424,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-
-        <SettingsRow
-          title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
-          resetAction={
-            isGitWritingModelDirty ? (
-              <SettingResetButton
-                label="text generation model"
-                onClick={() =>
-                  updateSettings({
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <ProviderModelPicker
-                activeInstanceId={textGenInstanceId}
-                model={textGenModel}
-                lockedProvider={null}
-                instanceEntries={gitModelInstanceEntries}
-                modelOptionsByInstance={gitModelOptionsByInstance}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onInstanceModelChange={(instanceId, model) => {
-                  updateSettings({
-                    textGenerationModelSelection: resolveAppModelSelectionState(
-                      {
-                        ...settings,
-                        textGenerationModelSelection: createModelSelection(instanceId, model),
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
-              />
-              <TraitsPicker
-                provider={textGenProvider}
-                models={
-                  // Use the exact instance's models (rather than the
-                  // first-kind-match) so a custom text-gen instance like
-                  // `codex_personal` gets its own model list, not the
-                  // default Codex one.
-                  textGenInstanceEntry?.models ?? []
-                }
-                model={textGenModel}
-                prompt=""
-                onPromptChange={() => {}}
-                modelOptions={textGenModelOptions}
-                allowPromptInjectedEffort={false}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onModelOptionsChange={(nextOptions) => {
-                  updateSettings({
-                    textGenerationModelSelection: resolveAppModelSelectionState(
-                      {
-                        ...settings,
-                        textGenerationModelSelection: createModelSelection(
-                          textGenInstanceId,
-                          textGenModel,
-                          nextOptions,
-                        ),
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
-              />
-            </div>
-          }
-        />
-
-        <SettingsRow
-          title="Delegated thread model"
-          description="Default model for helper threads created via delegate_work when no explicit model is given. Explicit per-delegation models always win."
-          resetAction={
-            isDelegatedThreadModelDirty ? (
-              <SettingResetButton
-                label="delegated thread model"
-                onClick={() =>
-                  updateSettings({
-                    delegatedThreadModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
-              <ProviderModelPicker
-                activeInstanceId={delegatedInstanceId}
-                model={delegatedModel}
-                lockedProvider={null}
-                instanceEntries={gitModelInstanceEntries}
-                modelOptionsByInstance={gitModelOptionsByInstance}
-                triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
-                onInstanceModelChange={(instanceId, model) => {
-                  updateSettings({
-                    delegatedThreadModelSelection: resolveDelegatedThreadModelSelectionState(
-                      {
-                        ...settings,
-                        delegatedThreadModelSelection: createModelSelection(instanceId, model),
-                      },
-                      serverProviders,
-                    ),
-                  });
-                }}
-              />
-            </div>
-          }
-        />
       </SettingsSection>
-
-      <SettingsSection
-        title="Providers"
-        headerAction={
-          <div className="flex items-center gap-1.5">
-            <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider instance"
-                  >
-                    <PlusIcon className="size-3" />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider instance</TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
-                    disabled={isRefreshingProviders}
-                    onClick={() => void refreshProviders()}
-                    aria-label="Refresh provider status"
-                  >
-                    {isRefreshingProviders ? (
-                      <LoaderIcon className="size-3 animate-spin" />
-                    ) : (
-                      <RefreshCwIcon className="size-3" />
-                    )}
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
-            </Tooltip>
-          </div>
-        }
-      >
-        {rows.map((row) => {
-          const driverOption = getDriverOption(row.driver);
-          const liveProvider = serverProviders.find(
-            (candidate) => candidate.instanceId === row.instanceId,
-          );
-          const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
-            hiddenModels: [],
-            modelOrder: [],
-          };
-          const favoriteModels = (settings.favorites ?? [])
-            .filter((favorite) => favorite.provider === row.instanceId)
-            .map((favorite) => favorite.model);
-          const resetLabel = driverOption?.label ?? String(row.driver);
-          const headerAction =
-            row.isDefault && row.isDirty ? (
-              <SettingResetButton
-                label={`${resetLabel} provider settings`}
-                onClick={() => resetDefaultInstance(row.driver)}
-              />
-            ) : null;
-          return (
-            <ProviderInstanceCard
-              automaticPrFeedback={settings.copilotAutomaticPrFeedback[row.instanceId] === true}
-              onAutomaticPrFeedbackChange={(enabled) =>
-                updateSettings({ copilotAutomaticPrFeedback: { [row.instanceId]: enabled } })
-              }
-              key={row.instanceId}
-              instanceId={row.instanceId}
-              instance={row.instance}
-              driverOption={driverOption}
-              liveProvider={liveProvider}
-              isExpanded={openInstanceDetails[row.instanceId] ?? false}
-              onExpandedChange={(open) =>
-                setOpenInstanceDetails((existing) => ({
-                  ...existing,
-                  [row.instanceId]: open,
-                }))
-              }
-              onUpdate={(next) => {
-                // When the user disables the exact instance the text-gen
-                // selection points at, fall back to the global default so we
-                // don't leave the selection dangling on a disabled instance.
-                // Prior kind-level behavior cleared on any kind-matching
-                // disable; instance-level addressing makes this narrower and
-                // more accurate (other instances of the same kind stay
-                // untouched).
-                const wasEnabled = row.instance.enabled ?? true;
-                const isDisabling = next.enabled === false && wasEnabled;
-                const shouldClearTextGen = isDisabling && textGenInstanceId === row.instanceId;
-                if (shouldClearTextGen) {
-                  updateProviderInstance(row, next, {
-                    textGenerationModelSelection:
-                      DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
-                  });
-                } else {
-                  updateProviderInstance(row, next);
-                }
-              }}
-              onDelete={row.isDefault ? undefined : () => deleteProviderInstance(row.instanceId)}
-              headerAction={headerAction}
-              hiddenModels={modelPreferences.hiddenModels}
-              favoriteModels={favoriteModels}
-              modelOrder={modelPreferences.modelOrder}
-              onHiddenModelsChange={(hiddenModels) =>
-                updateProviderModelPreferences(row.instanceId, {
-                  ...modelPreferences,
-                  hiddenModels,
-                })
-              }
-              onFavoriteModelsChange={(favoriteModels) =>
-                updateProviderFavoriteModels(row.instanceId, favoriteModels)
-              }
-              onModelOrderChange={(modelOrder) =>
-                updateProviderModelPreferences(row.instanceId, {
-                  ...modelPreferences,
-                  modelOrder,
-                })
-              }
-            />
-          );
-        })}
-      </SettingsSection>
-
-      <AddProviderInstanceDialog
-        open={isAddInstanceDialogOpen}
-        onOpenChange={setIsAddInstanceDialogOpen}
-      />
 
       <SettingsSection title="Advanced">
         <SettingsRow

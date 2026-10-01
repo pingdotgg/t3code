@@ -17,9 +17,11 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsWorkflowsRouteImport } from './routes/settings.workflows'
 import { Route as SettingsPullRequestCollaborationRouteImport } from './routes/settings.pull-request-collaboration'
+import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ConnectEnvironmentsRouteImport } from './routes/connect_.environments'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
@@ -66,6 +68,11 @@ const SettingsPullRequestCollaborationRoute =
     path: '/pull-request-collaboration',
     getParentRoute: () => SettingsRoute,
   } as any)
+const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
@@ -79,6 +86,11 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
+  id: '/appearance',
+  path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
 const ConnectEnvironmentsRoute = ConnectEnvironmentsRouteImport.update({
@@ -117,9 +129,11 @@ export interface FileRoutesByFullPath {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/connect/environments': typeof ConnectEnvironmentsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -133,9 +147,11 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/connect/environments': typeof ConnectEnvironmentsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/': typeof ChatIndexRoute
@@ -152,9 +168,11 @@ export interface FileRoutesById {
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/connect_/environments': typeof ConnectEnvironmentsRoute
+  '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/_chat/': typeof ChatIndexRoute
@@ -172,9 +190,11 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/connect/callback'
     | '/connect/environments'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/providers'
     | '/settings/pull-request-collaboration'
     | '/settings/workflows'
     | '/$environmentId/$threadId'
@@ -188,9 +208,11 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/connect/callback'
     | '/connect/environments'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/providers'
     | '/settings/pull-request-collaboration'
     | '/settings/workflows'
     | '/'
@@ -206,9 +228,11 @@ export interface FileRouteTypes {
     | '/_chat/pull-requests'
     | '/connect_/callback'
     | '/connect_/environments'
+    | '/settings/appearance'
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/providers'
     | '/settings/pull-request-collaboration'
     | '/settings/workflows'
     | '/_chat/'
@@ -284,6 +308,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsPullRequestCollaborationRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/providers': {
+      id: '/settings/providers'
+      path: '/providers'
+      fullPath: '/settings/providers'
+      preLoaderRoute: typeof SettingsProvidersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/general': {
       id: '/settings/general'
       path: '/general'
@@ -303,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/archived'
       fullPath: '/settings/archived'
       preLoaderRoute: typeof SettingsArchivedRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/appearance': {
+      id: '/settings/appearance'
+      path: '/appearance'
+      fullPath: '/settings/appearance'
+      preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/connect_/environments': {
@@ -360,17 +398,21 @@ const ChatRouteChildren: ChatRouteChildren = {
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
+  SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsPullRequestCollaborationRoute: typeof SettingsPullRequestCollaborationRoute
   SettingsWorkflowsRoute: typeof SettingsWorkflowsRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
+  SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsPullRequestCollaborationRoute: SettingsPullRequestCollaborationRoute,
   SettingsWorkflowsRoute: SettingsWorkflowsRoute,
 }
