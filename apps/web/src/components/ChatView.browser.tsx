@@ -8079,7 +8079,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("maximizes and restores the inline right panel", async () => {
+  it("keeps the inline right panel full-height beside the header and restores it after maximizing", async () => {
+    const matchMediaSpy = stubNarrowLayout(false);
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -8089,26 +8090,55 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      useRightPanelStore.getState().open(THREAD_REF, "files");
+      await page.getByRole("button", { name: "Toggle file browser", exact: true }).click();
       const maximizeButton = await waitForElement(
         () => document.querySelector<HTMLButtonElement>('[aria-label="Maximize panel"]'),
         "Unable to find maximize panel button.",
       );
+      const panel = maximizeButton.closest<HTMLElement>('[data-preview-panel-mode="inline"]')!;
+      const header = document.querySelector<HTMLElement>("header")!;
+      const rail = document.querySelector<HTMLElement>('[data-chat-panel-toggles="vertical"]')!;
+      let pane = panel.parentElement!;
+      while (!pane.contains(header)) pane = pane.parentElement!;
+      await page.screenshot();
+      const expectFullHeight = () => {
+        const paneRect = pane.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const railRect = rail.getBoundingClientRect();
+        expect(Math.abs(panelRect.top - paneRect.top)).toBeLessThanOrEqual(1);
+        expect(Math.abs(panelRect.bottom - paneRect.bottom)).toBeLessThanOrEqual(1);
+        expect(Math.abs(railRect.top - paneRect.top)).toBeLessThanOrEqual(1);
+        expect(Math.abs(railRect.bottom - paneRect.bottom)).toBeLessThanOrEqual(1);
+        expect(header.getBoundingClientRect().right).toBeLessThanOrEqual(panelRect.left + 1);
+      };
+      await vi.waitFor(expectFullHeight);
       maximizeButton.click();
       await vi.waitFor(() => {
+        expect(panel.dataset.previewPanelMaximized).toBe("true");
         expect(
-          document.querySelector(
-            '[data-preview-panel-mode="inline"][data-preview-panel-maximized="true"]',
-          ),
-        ).not.toBeNull();
+          Math.abs(panel.getBoundingClientRect().left - pane.getBoundingClientRect().left),
+        ).toBeLessThanOrEqual(1);
+        expect(header.getBoundingClientRect().height).toBe(0);
       });
-      document.querySelector<HTMLButtonElement>('[aria-label="Restore panel size"]')?.click();
-      useRightPanelStore.getState().close(THREAD_REF);
+      await page.getByRole("button", { name: "Restore panel size", exact: true }).click();
+      await vi.waitFor(() => {
+        expect(panel.dataset.previewPanelMaximized).toBe("false");
+        expect(header.getBoundingClientRect().height).toBeGreaterThan(0);
+        expectFullHeight();
+      });
+      await mounted.setContainerSize({ width: 1_200, height: 800 });
+      await vi.waitFor(expectFullHeight);
+      await page.getByRole("button", { name: "Toggle file browser", exact: true }).click();
       await vi.waitFor(() => {
         expect(document.querySelector("[data-chat-view-right-panel-surface]")).toBeNull();
+        expect(header.getBoundingClientRect().right).toBeCloseTo(
+          rail.getBoundingClientRect().left,
+          0,
+        );
       });
     } finally {
       await mounted.cleanup();
+      matchMediaSpy.mockRestore();
     }
   });
 
