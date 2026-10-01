@@ -293,9 +293,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
-  const skillLabel = (node.attrs.skillLabel as string) || skillName;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skill = skills.find((candidate) => candidate.name === skillName);
+  // The node outlives a provider switch, so its stored label can be another provider's.
+  const skillLabel = skill
+    ? formatProviderSkillDisplayName(skill)
+    : (node.attrs.skillLabel as string) || skillName;
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
@@ -1159,10 +1162,16 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   // The skill list loads after the editor opens and differs per provider, so
   // the same prompt can gain or lose skill chips without its text changing.
+  // Rebuilding gives citations new keys, which would close an open citation
+  // comment and drop its draft, so the rebuild waits until that comment closes.
+  const chippedSkillsRef = useRef(skills);
+  const citationCommentOpen = openCitation !== null;
   useEffect(() => {
-    const previousSkills = skillsRef.current;
     skillsRef.current = skills;
-    if (!editor || previousSkills === skills) return;
+    if (!editor || citationCommentOpen) return;
+    const previousSkills = chippedSkillsRef.current;
+    chippedSkillsRef.current = skills;
+    if (previousSkills === skills) return;
     if (previousSkills.length === 0 && skills.length === 0) return;
     const map = serializeEditorDoc(editor.state.doc);
     const wanted = splitPromptIntoComposerSegments(map.value).flatMap((segment) =>
@@ -1190,7 +1199,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [editor, richText, skills]);
+  }, [citationCommentOpen, editor, richText, skills]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
