@@ -79,7 +79,12 @@ it("rejects unsupported media instead of silently dropping attachments", () => {
 
 it("validates editable limits at the contract boundary", () => {
   const decode = Schema.decodeUnknownSync(ChatGPTWebSettings);
-  expect(decode({}).minimumIntervalSeconds).toBe("60");
+  expect(decode({})).toMatchObject({
+    minimumIntervalSeconds: "6",
+    requestsPerHour: "200",
+    requestsPerDay: "1000",
+    cooldownMinutes: "3",
+  });
   for (const value of ["0", "-1", "NaN", "Infinity", "1.5", "999999", ""]) {
     expect(() => decode({ requestsPerHour: value })).toThrow();
   }
