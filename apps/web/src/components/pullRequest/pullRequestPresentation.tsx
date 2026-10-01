@@ -4,7 +4,9 @@ import type {
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
+  PullRequestLabel,
   PullRequestMergeability,
+  PullRequestReviewDecision,
   PullRequestState,
 } from "@t3tools/contracts";
 import {
@@ -13,14 +15,18 @@ import {
   CircleDotIcon,
   CircleXIcon,
   UserCheckIcon,
+  UserRoundIcon,
+  UserRoundXIcon,
 } from "lucide-react";
-import { Children, isValidElement, type ReactNode, useState } from "react";
+import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
+import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
+import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
   PullRequestGlyph,
@@ -28,17 +34,81 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
 
-export function PullRequestApprovalGlyph() {
+/**
+ * A host label as a flat tinted tag in the label's own color: a wash of it behind, the name
+ * in a mix of it and the theme foreground. The mix leans to the foreground because hosts hand
+ * out any color at all: at 30% of the label on light and 45% on dark, white, black and
+ * GitHub's pale yellows all clear 4.5:1 on their wash, selected row included, and
+ * saturated colors sit well above.
+ * A label with no usable color falls back to the muted tag. Children ride after the name,
+ * for an overflow count. The height is pinned so a labeled row is as tall as one without.
+ */
+export function PullRequestLabelChip({
+  label,
+  size = "sm",
+  className,
+  children,
+}: {
+  label: Pick<PullRequestLabel, "name" | "color">;
+  size?: "sm" | "default";
+  className?: string;
+  children?: ReactNode;
+}) {
+  const color = pullRequestLabelColor(label.color);
+  return (
+    <Badge
+      size={size}
+      variant={color ? "label" : "secondary"}
+      className={cn("min-w-0 max-w-40 shrink justify-start", className)}
+      {...(color ? { style: { "--label": color } as CSSProperties } : {})}
+    >
+      <span className="truncate">{label.name}</span>
+      {children}
+    </Badge>
+  );
+}
+
+/**
+ * The review verdict as one glyph beside the checks glyph, so a row answers both "does it
+ * build" and "did someone say yes" in the same spot. "Awaiting review" is only drawn when the
+ * host reports it, which on GitHub means the branch rules require a review nobody has given.
+ */
+function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
+  switch (decision) {
+    case "approved":
+      return {
+        Icon: UserCheckIcon,
+        label: "Approved",
+        toneClassName: CHECK_STATUS_PRESENTATION.success.toneClassName,
+      };
+    case "changes-requested":
+      return {
+        Icon: UserRoundXIcon,
+        label: "Changes requested",
+        toneClassName: "text-amber-600/90 dark:text-amber-400/80",
+      };
+    case "review-required":
+      return {
+        Icon: UserRoundIcon,
+        label: "Awaiting review",
+        toneClassName: "text-muted-foreground/60",
+      };
+  }
+}
+
+export function PullRequestReviewDecisionGlyph({
+  decision,
+}: {
+  decision: PullRequestReviewDecision;
+}) {
+  const presentation = reviewDecisionPresentation(decision);
   return (
     <Tooltip>
       <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <UserCheckIcon
-          aria-hidden
-          className={cn("size-3.5", CHECK_STATUS_PRESENTATION.success.toneClassName)}
-        />
-        <span className="sr-only">Approved</span>
+        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        <span className="sr-only">{presentation.label}</span>
       </TooltipTrigger>
-      <TooltipPopup>Approved</TooltipPopup>
+      <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -336,7 +406,7 @@ export function PullRequestReviewOutcomeBadge({
 }) {
   const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
   return (
-    <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
+    <Badge size="sm" variant={presentation.badgeVariant} className={className}>
       <presentation.Icon aria-hidden className="size-3" />
       {presentation.label}
     </Badge>
@@ -358,7 +428,7 @@ export function PullRequestActorAvatar({
     <span
       aria-hidden
       className={cn(
-        "flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[8px] font-medium text-muted-foreground",
+        "flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-3xs font-medium text-muted-foreground",
         className,
       )}
     >
@@ -376,51 +446,56 @@ export function PullRequestActorAvatar({
   );
 }
 
-/** GitHub attributes work from a deleted account to "ghost"; say the same word everywhere. */
+/**
+ * GitHub attributes work from a deleted account to "ghost"; say the same word everywhere.
+ *
+ * An actor as a login beside its avatar, or as the avatar alone. With a profile URL the actor
+ * is an inline link; `className` places it and never restyles it.
+ */
 export function PullRequestActorLabel({
   actor,
   className,
-  labelClassName,
+  variant = "label",
   tooltip = true,
   profileUrl,
 }: {
   actor: PullRequestActor | null;
   className?: string;
-  labelClassName?: string;
+  variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
-    <>
+    <span className={cn("flex min-w-0 items-center", variant === "label" && "gap-1.5")}>
       <PullRequestActorAvatar actor={actor} />
-      <span className={cn("truncate", labelClassName)}>{login}</span>
-    </>
+      <span className={variant === "label" ? "truncate font-medium text-foreground" : "sr-only"}>
+        {login}
+      </span>
+    </span>
   );
-  if (!tooltip) {
-    return <span className={cn("flex min-w-0 items-center gap-1.5", className)}>{label}</span>;
-  }
+  const placement = cn("flex min-w-0 shrink", className);
+  if (!tooltip) return <span className={placement}>{label}</span>;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           profileUrl ? (
-            <a
-              href={profileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open ${login}'s profile`}
+            <InlineButton
+              className={placement}
+              render={
+                <a
+                  href={profileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open ${login}'s profile`}
+                />
+              }
             />
           ) : (
-            <span />
+            <span className={placement} />
           )
         }
-        className={cn(
-          "flex min-w-0 items-center gap-1.5",
-          profileUrl &&
-            "cursor-pointer rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-          className,
-        )}
       >
         {label}
       </TooltipTrigger>

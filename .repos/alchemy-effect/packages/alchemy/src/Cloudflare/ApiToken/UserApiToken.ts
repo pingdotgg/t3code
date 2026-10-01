@@ -39,7 +39,7 @@ export type UserApiToken = Resource<
  *
  * User-owned tokens are tied to the authenticated user's identity. They can
  * be created by any authenticated user (including OAuth-derived sessions
- * from `alchemy login`) without needing the account-level
+ * from `alchemy profile edit`) without needing the account-level
  * `API Tokens > Write` permission, but they are also revoked if the user
  * leaves the account.
  *

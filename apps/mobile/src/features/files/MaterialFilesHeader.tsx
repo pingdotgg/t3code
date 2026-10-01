@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { BackHandler, Keyboard, Pressable, TextInput, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BackHandler, Keyboard, type TextInput, View } from "react-native";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { SymbolView } from "../../components/AppSymbol";
+import { AndroidAnchoredMenu } from "../../components/AndroidAnchoredMenu";
+import { MaterialSearchField } from "../../components/MaterialSearchField";
+import { useMaterialToolbarLayout } from "../../components/useMaterialToolbarLayout";
 
 /** Keep Files search in the same header row on compact and expanded layouts. */
 export function MaterialFilesHeader(props: {
@@ -14,7 +15,7 @@ export function MaterialFilesHeader(props: {
   readonly onBack?: () => void;
   readonly leading?: ReactNode;
 }) {
-  const insets = useSafeAreaInsets();
+  const { paddingTop, paddingBottom } = useMaterialToolbarLayout();
   const searchRef = useRef<TextInput>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = searchOpen || props.searchQuery.length > 0;
@@ -55,65 +56,42 @@ export function MaterialFilesHeader(props: {
               icon: "magnifyingglass",
               onPress: () => setSearchOpen(true),
             },
-            {
-              accessibilityLabel: "Refresh files",
-              icon: "arrow.clockwise",
-              onPress: props.onRefresh,
-            },
           ]}
+          trailing={
+            <AndroidAnchoredMenu
+              title="File options"
+              actions={[{ id: "refresh", title: "Refresh files" }]}
+              onPressAction={({ nativeEvent }) => {
+                if (nativeEvent.event === "refresh") props.onRefresh();
+              }}
+            >
+              {(open) => (
+                <AndroidHeaderIconButton
+                  accessibilityLabel="File options"
+                  icon="ellipsis"
+                  onPress={open}
+                />
+              )}
+            </AndroidAnchoredMenu>
+          }
         />
       </View>
       {searching ? (
-        <View
-          className="absolute inset-0 bg-header px-2 pb-2"
-          style={{ paddingTop: Math.max(insets.top, 12) }}
-        >
-          <View className="min-h-14 flex-1 flex-row items-center gap-1">
+        <View className="absolute inset-0 bg-header px-2" style={{ paddingTop, paddingBottom }}>
+          <View className="flex-1 flex-row items-center gap-1">
             <AndroidHeaderIconButton
               accessibilityLabel="Close file search"
               icon="arrow.left"
               onPress={closeSearch}
             />
-            <View className="h-12 min-w-0 flex-1 flex-row items-center gap-2 rounded-full border border-input-border bg-input px-3">
-              <SymbolView
-                name="magnifyingglass"
-                size={18}
-                tintColorClassName="accent-foreground-muted"
-              />
-              <TextInput
-                ref={searchRef}
-                accessibilityLabel="Search files"
-                autoFocus
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="search"
-                placeholder="Search files"
-                placeholderTextColorClassName="accent-placeholder"
-                selectionColorClassName="accent-primary/32"
-                cursorColorClassName="accent-primary"
-                selectionHandleColorClassName="accent-primary"
-                className="min-w-0 flex-1 py-2 font-sans text-base text-foreground"
-                value={props.searchQuery}
-                onChangeText={onSearchQueryChange}
-              />
-              {props.searchQuery.length > 0 ? (
-                <Pressable
-                  accessibilityLabel="Clear file search"
-                  accessibilityRole="button"
-                  hitSlop={10}
-                  onPress={() => {
-                    onSearchQueryChange("");
-                    searchRef.current?.focus();
-                  }}
-                >
-                  <SymbolView
-                    name="xmark.circle.fill"
-                    size={18}
-                    tintColorClassName="accent-foreground-muted"
-                  />
-                </Pressable>
-              ) : null}
-            </View>
+            <MaterialSearchField
+              inputRef={searchRef}
+              accessibilityLabel="Search files"
+              clearAccessibilityLabel="Clear file search"
+              placeholder="Search files"
+              value={props.searchQuery}
+              onChangeText={onSearchQueryChange}
+            />
           </View>
         </View>
       ) : null}

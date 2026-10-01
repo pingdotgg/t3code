@@ -41,7 +41,8 @@ vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("~/state/pullRequests", () => ({
+vi.mock("~/state/pullRequests", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/pullRequests")>()),
   pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
@@ -294,6 +295,8 @@ describe.each([
           terminalOpen: false,
           previewFocus: false,
           previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
         })}
       />,
     );

@@ -63,8 +63,13 @@ function opaqueNativeHexColor(color: string, background: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function createNativeReviewDiffStyle(codeSurface: ResolvedMobileCodeSurface) {
+/** `wordWrap` wraps line rows at the view width instead of panning them horizontally. */
+export function createNativeReviewDiffStyle(
+  codeSurface: ResolvedMobileCodeSurface,
+  wordWrap: boolean,
+) {
   return {
+    wordWrap,
     rowHeight: codeSurface.rowHeight,
     contentWidth: NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
     changeBarWidth: 4,
@@ -177,20 +182,19 @@ export function createNativeReviewDiffTheme(
     appTheme["--color-screen"],
     scheme === "dark" ? "#000000" : "#ffffff",
   );
-  const background = opaqueNativeHexColor(appTheme["--color-sheet"], screen);
+  const background = opaqueNativeHexColor(appTheme["--color-md-code-bg"], screen);
   const nativeColor = (color: string) => opaqueNativeHexColor(color, background);
 
   if (scheme === "dark") {
     return {
-      // Match the app surface (--color-sheet) so code views blend with the rest of
-      // the app instead of using a distinct code-editor background.
+      // Code surfaces share the desktop palette rather than the sheet behind them.
       background,
       text: nativeColor(appTheme["--color-md-code-text"]),
       mutedText: nativeColor(appTheme["--color-foreground-muted"]),
       headerBackground: background,
       border: nativeColor(appTheme["--color-border"]),
       hunkBackground: nativeColor(appTheme["--color-subtle-strong"]),
-      hunkText: nativeColor(appTheme["--color-primary"]),
+      hunkText: nativeColor(appTheme["--color-foreground"]),
       addBackground: "#0d2f28",
       deleteBackground: "#391415",
       addBar: "#00cab1",
@@ -201,15 +205,13 @@ export function createNativeReviewDiffTheme(
   }
 
   return {
-    // Match the app surface (--color-sheet) so code views blend with the rest of the
-    // app instead of using a distinct code-editor background.
     background,
     text: nativeColor(appTheme["--color-md-code-text"]),
     mutedText: nativeColor(appTheme["--color-foreground-muted"]),
     headerBackground: background,
     border: nativeColor(appTheme["--color-border"]),
     hunkBackground: nativeColor(appTheme["--color-subtle-strong"]),
-    hunkText: nativeColor(appTheme["--color-primary"]),
+    hunkText: nativeColor(appTheme["--color-foreground"]),
     addBackground: "#e5f8f5",
     deleteBackground: "#ffe6e7",
     addBar: "#00cab1",

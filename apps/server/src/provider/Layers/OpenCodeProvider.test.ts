@@ -1,4 +1,5 @@
 import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -71,6 +72,10 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
       Effect.provide(NodeServices.layer),
     );
     NodeAssert.equal(limits.unavailable, undefined);
+    NodeAssert.equal(
+      limits.credentialFingerprint,
+      NodeCrypto.createHash("sha256").update("opencode-go\0instance-key").digest("hex"),
+    );
     NodeAssert.deepEqual(
       limits.windows.map(({ kind, usedPercent, resetsAt: reset }) => ({
         kind,
@@ -139,6 +144,7 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
         Effect.provide(NodeServices.layer),
       );
       NodeAssert.equal(limits.unavailable?.reason, reason);
+      NodeAssert.equal(limits.credentialFingerprint, undefined);
       NodeAssert.deepEqual(limits.windows, []);
     }
   }),
