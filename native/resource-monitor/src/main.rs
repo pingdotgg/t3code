@@ -1,3 +1,5 @@
+mod storage_scan;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, BufRead, BufWriter, Write};
@@ -786,6 +788,13 @@ fn write_history(
 }
 
 fn main() -> io::Result<()> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--storage-scan")) {
+        let root = args
+            .next()
+            .ok_or_else(|| io::Error::other("storage scan requires a root"))?;
+        return storage_scan::run(root.into());
+    }
     let mut writer = BufWriter::new(io::stdout().lock());
     write_event(
         &mut writer,

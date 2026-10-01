@@ -68,6 +68,21 @@ Open **Settings → Storage** to enable automatic cleanup on one machine or all 
 environments. Policies are off by default and run on the server at startup, when changed, and
 hourly. Offline machines keep their existing policies.
 
+The storage summary shows space used by worktrees, broken down by cleanup category. Each folder
+is counted once, in order: deleted threads, merged, no unique commits, then inactive threads.
+The inactivity category uses the project's retention period, or 8 days when the rule is off.
+Protected worktrees appear under Other worktrees. Categories show matching storage even when
+cleanup rules are off. A worktree can be removed by any enabled rule it matches.
+
+Edit the rules, then choose **Save cleanup rules** to apply them. Cleanup can start as soon as you
+save. **Discard** cancels unsaved edits; existing saved rules continue running. Changing the
+selected scope or leaving Storage discards unsaved edits.
+
+The summary follows the selected machines and project scope. Offline machines and machines
+without storage reporting are excluded and listed separately. Projects on different machines
+count as separate checkouts. Estimates use local branch references and synced pull request
+information. Large scans may be partial; cleanup checks eligibility again before removing folders.
+
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser

@@ -63,9 +63,10 @@ function useRunScopedPlan() {
         });
         return;
       }
-      void persistScopedSettingsPatch(plan, persistServer, persistClientSettingsPatch).then(
-        ({ failedEnvironments, savedEnvironmentCount }) => {
-          if (failedEnvironments.length === 0) return;
+      return persistScopedSettingsPatch(plan, persistServer, persistClientSettingsPatch).then(
+        (result) => {
+          const { failedEnvironments, savedEnvironmentCount } = result;
+          if (failedEnvironments.length === 0) return result;
           toastManager.add({
             type: "error",
             title:
@@ -74,6 +75,7 @@ function useRunScopedPlan() {
                 : "Setting not saved",
             description: `Could not update ${failedEnvironments.map((environment) => environment.label).join(", ")}.${savedEnvironmentCount > 0 ? " The other selected environments saved the change." : ""}`,
           });
+          return result;
         },
       );
     },
@@ -101,7 +103,7 @@ export function useClearScopedSettings() {
   return useCallback(
     (keys: readonly ProjectScopedServerSettingKey[]) => {
       if (context === null) return;
-      run(planScopedSettingsClear(context.scope, context.environments, keys));
+      return run(planScopedSettingsClear(context.scope, context.environments, keys));
     },
     [context, run],
   );
