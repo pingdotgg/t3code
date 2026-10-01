@@ -14,7 +14,8 @@
  * key comes from the test's environment, which the spawned server inherits).
  * A second run covers plan mode, a workspace command and skill, and `/compact`;
  * a third a generated title, T3's MCP server (`OPENCODE2_MCP_URL` names a
- * stand-in one) and a turn cut off by a killed server.
+ * stand-in one) and a turn cut off by a killed server. Each step waits up to
+ * `OPENCODE2_STEP_WAIT` seconds (120 by default).
  */
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -235,6 +236,10 @@ const continuationWorkerLayer = ProviderContinuationService.workerLive.pipe(
 );
 const liveLayer = continuationWorkerLayer.pipe(Layer.provideMerge(orchestrationLayer));
 
+// How long one step may take, in seconds. A free model sometimes takes minutes
+// before its first tool call; `OPENCODE2_STEP_WAIT` raises it for such runs.
+const STEP_WAIT_SECONDS = Number(process.env.OPENCODE2_STEP_WAIT ?? "120");
+
 const settled = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.length > 0 &&
   projection.runs.every(
@@ -246,7 +251,7 @@ const waitFor = Effect.fn("OpenCode2Live.waitFor")(function* (
   done: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  for (let attempt = 0; attempt < 240; attempt += 1) {
+  for (let attempt = 0; attempt < STEP_WAIT_SECONDS * 2; attempt += 1) {
     const projection = yield* orchestrator.getThreadProjection(threadId);
     if (done(projection)) return projection;
     yield* Effect.sleep("500 millis");
@@ -986,7 +991,7 @@ describe.runIf(binaryPath !== undefined && ROOT !== "")("OpenCode 2 live orchest
         yield* send(
           threadId,
           "modes-plan",
-          "Plan how to add a --verbose flag to a script named cli.js. Present a short plan; do not implement it.",
+          "Plan how to add a --verbose flag to a script named cli.js; the file may not exist yet, so plan it from scratch. Do not ask me anything. Present a short plan; do not implement it.",
         );
         const planned = yield* waitFor(threadId, runs(1));
         assert.equal(planned.runs[0]?.status, "completed");
