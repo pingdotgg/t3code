@@ -18,12 +18,14 @@ vi.mock("~/localApi", () => ({
 import {
   __resetClientSettingsPersistenceForTests,
   __setClientSettingsForTests,
+  clientSettingsPatchesPublishImmediately,
   ensureClientSettingsHydrated,
   getClientSettings,
   mergeEnvironmentSettings,
   persistClientSettingsPatch,
   persistClientSettingsUpdate,
   resolveEnvironmentIdentificationMode,
+  whenClientSettingsPatchesPublished,
 } from "./useSettings";
 
 beforeEach(() => {
@@ -187,6 +189,38 @@ describe("persistClientSettingsPatch", () => {
 
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
+  });
+});
+
+describe("deferred patch publication", () => {
+  it("releases waiters on reset and ignores deferred patches from before it", async () => {
+    let finishStaleRead!: (settings: ClientSettings) => void;
+    persistenceMocks.getClientSettings.mockReturnValue(
+      new Promise<ClientSettings>((resolve) => {
+        finishStaleRead = resolve;
+      }),
+    );
+    const stalePatch = persistClientSettingsPatch({ wordWrap: !DEFAULT_CLIENT_SETTINGS.wordWrap });
+    const staleWaiter = whenClientSettingsPatchesPublished();
+
+    __resetClientSettingsPersistenceForTests();
+    await staleWaiter;
+
+    let finishRead!: (settings: ClientSettings | null) => void;
+    persistenceMocks.getClientSettings.mockReturnValue(
+      new Promise<ClientSettings | null>((resolve) => {
+        finishRead = resolve;
+      }),
+    );
+    const patch = persistClientSettingsPatch({ snapShotFlash: false });
+    finishStaleRead(DEFAULT_CLIENT_SETTINGS);
+    await stalePatch;
+    finishRead(null);
+    await patch;
+
+    expect(getClientSettings()).toEqual({ ...DEFAULT_CLIENT_SETTINGS, snapShotFlash: false });
+    expect(clientSettingsPatchesPublishImmediately()).toBe(true);
+    await whenClientSettingsPatchesPublished();
   });
 });
 

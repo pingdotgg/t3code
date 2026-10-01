@@ -29,6 +29,7 @@ import {
 // and the edit layer still land in the order they were made, and an action
 // queued in one session of the mode never runs in a later one.
 let pendingActions: Promise<void> = Promise.resolve();
+let idleWaiters: Array<() => void> = [];
 
 function afterHydration(run: (settingsLoaded: boolean) => void): void {
   const session = useCustomizeInterfaceStore.getState().session;
@@ -44,6 +45,9 @@ function afterHydration(run: (settingsLoaded: boolean) => void): void {
           // Hydration logs its own failure, and the next action retries it.
           return runInSession(false);
         }
+        const waiters = idleWaiters;
+        idleWaiters = [];
+        for (const resolve of waiters) resolve();
         await whenClientSettingsPatchesPublished();
       }
       runInSession(true);
@@ -63,6 +67,18 @@ function settingsNotLoaded(): void {
 /** Resolves once every queued Customize interface action has run. */
 export function customizeActionsSettled(): Promise<void> {
   return pendingActions;
+}
+
+/**
+ * Resolves once no queued action can run yet: every one has run, or the next
+ * is waiting for earlier settings patches to publish. Lets tests act at that
+ * point without waiting on timers.
+ */
+export function customizeActionsIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    idleWaiters.push(resolve);
+    void pendingActions.then(resolve);
+  });
 }
 
 export function createCustomizeActions(deps: {

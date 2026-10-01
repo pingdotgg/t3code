@@ -60,6 +60,15 @@ let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
 let deferredClientSettingsPatchWaiters: Array<() => void> = [];
+// Bumped by the test reset, so a deferred patch from before it cannot publish
+// into, or settle the count of, the state after it.
+let deferredClientSettingsPatchGeneration = 0;
+
+function releaseDeferredClientSettingsPatchWaiters(): void {
+  const waiters = deferredClientSettingsPatchWaiters;
+  deferredClientSettingsPatchWaiters = [];
+  for (const resolve of waiters) resolve();
+}
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -179,6 +188,7 @@ export function persistClientSettingsPatch(
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+  const generation = deferredClientSettingsPatchGeneration;
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
@@ -190,13 +200,12 @@ export function persistClientSettingsPatch(
         if (clientSettingsHydrationStatus !== "ready") {
           await hydrateClientSettings();
         }
+        if (generation !== deferredClientSettingsPatchGeneration) return;
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
-        deferredClientSettingsPatchCount -= 1;
-        if (deferredClientSettingsPatchCount === 0) {
-          const waiters = deferredClientSettingsPatchWaiters;
-          deferredClientSettingsPatchWaiters = [];
-          for (const resolve of waiters) resolve();
+        if (generation === deferredClientSettingsPatchGeneration) {
+          deferredClientSettingsPatchCount -= 1;
+          if (deferredClientSettingsPatchCount === 0) releaseDeferredClientSettingsPatchWaiters();
         }
       }
     }
@@ -551,7 +560,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
-  deferredClientSettingsPatchWaiters = [];
+  deferredClientSettingsPatchGeneration += 1;
+  releaseDeferredClientSettingsPatchWaiters();
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

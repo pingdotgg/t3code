@@ -27,7 +27,11 @@ import {
   persistClientSettingsPatch,
 } from "../../hooks/useSettings";
 import { CUSTOMIZE_HISTORY_LIMIT, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
-import { createCustomizeActions, customizeActionsSettled } from "./useCustomizeActions";
+import {
+  createCustomizeActions,
+  customizeActionsIdle,
+  customizeActionsSettled,
+} from "./useCustomizeActions";
 
 function createLocalStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -62,13 +66,6 @@ const actions = createCustomizeActions({
 async function settled() {
   await customizeActionsSettled();
   await Promise.all(writes);
-}
-/**
- * Lets every queued microtask run, so actions that are free to run have run.
- * Actions held back on purpose stay held; this is a drain, not a timeout.
- */
-function drainMicrotasks() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 function stall() {
   let release = () => {};
@@ -261,7 +258,7 @@ describe("Customize interface history", () => {
 
     actions.commitLayout(hide("terminal"));
     actions.commitLayout(hide("branch"));
-    await drainMicrotasks();
+    await customizeActionsIdle();
     release();
     await settled();
     expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal", "branch"]);
@@ -286,12 +283,12 @@ describe("Customize interface history", () => {
     };
     actions.commitLayout(hide("terminal"));
     actions.undo();
-    await drainMicrotasks();
+    await customizeActionsIdle();
     release();
     await hideSaving;
 
     actions.commitLayout(hide("branch"));
-    await drainMicrotasks();
+    await customizeActionsIdle();
     save.release();
     await settled();
     expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["branch"]);
@@ -335,7 +332,7 @@ describe("Customize interface history", () => {
     const save = stall();
     persist = () => save.stalled;
     actions.commit({ chatWidth: "wide" });
-    await drainMicrotasks();
+    await customizeActionsIdle();
     release();
     await customizeActionsSettled();
     expect(getClientSettings().chatWidth).toBe("wide");

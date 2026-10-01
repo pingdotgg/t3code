@@ -50,10 +50,12 @@ import {
   isMovable,
   moveCustomizeElementByKeyboard,
   readingOrder,
+  resolveCustomizeFocusTarget,
   resolveCustomizeMoveOrder,
   resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
+  shouldMoveCustomizeHideFocus,
   unionRect,
 } from "./customizeEdit.logic";
 import {
@@ -262,10 +264,9 @@ export function CustomizeEditLayer({
       return;
     const first = handles[0];
     const target =
-      lastFocusRef.current?.isConnected && !lastFocusRef.current.matches(":disabled")
-        ? lastFocusRef.current
-        : ((first ? handleFor(`${first.surface}:${first.id}`) : null) ??
-          layer.querySelector<HTMLElement>("[data-customize-back]"));
+      resolveCustomizeFocusTarget(layer, lastFocusRef.current) ??
+      (first ? handleFor(`${first.surface}:${first.id}`) : null) ??
+      layer.querySelector<HTMLElement>("[data-customize-back]");
     target?.focus({ preventScroll: true });
   }, [handles, handleFor]);
 
@@ -276,9 +277,8 @@ export function CustomizeEditLayer({
       isCustomizeAboveModeTarget(target) || hasOpenCustomizePopup();
     const focusInside = () => {
       const target =
-        lastFocusRef.current?.isConnected && !lastFocusRef.current.matches(":disabled")
-          ? lastFocusRef.current
-          : layer.querySelector<HTMLElement>("[data-customize-handle], [data-customize-back]");
+        resolveCustomizeFocusTarget(layer, lastFocusRef.current) ??
+        layer.querySelector<HTMLElement>("[data-customize-handle], [data-customize-back]");
       target?.focus({ preventScroll: true });
     };
     const onFocus = (event: FocusEvent) => {
@@ -345,7 +345,11 @@ export function CustomizeEditLayer({
     commitLayout((current) => {
       if (resolveSurfaceLayout(layoutSurface, current).hidden.has(id) === hidden) return current;
       const next = setSurfaceElementHidden(current, layoutSurface, id, hidden);
-      if (fromHandle && hidden) {
+      if (
+        fromHandle &&
+        hidden &&
+        shouldMoveCustomizeHideFocus(document.activeElement, `${layoutSurface}:${id}`)
+      ) {
         const index = handles.findIndex(
           (element) => element.surface === layoutSurface && element.id === id,
         );
@@ -413,13 +417,13 @@ export function CustomizeEditLayer({
         if (measuredIds === null) {
           const resolved = resolveSurfaceLayout(layoutSurface, next);
           announce(
-            `Moved ${label} to list position ${resolved.order.indexOf(id) + 1} of ${resolved.order.length}, including hidden items and items outside this view.${resolved.hidden.has(id) ? " Item remains hidden." : ""}`,
+            `Moved ${label} to list position ${resolved.order.indexOf(id) + 1} of ${resolved.order.length}${resolved.hidden.has(id) ? ". Item remains hidden." : ""}`,
           );
         } else announceMove(layoutSurface, id, next);
       } else if (
         resolveCustomizeMoveOrder(current, layoutSurface, measuredIds, legacySidebar).includes(id)
       ) {
-        announce(`${label} is already ${direction === "left" ? "first" : "last"}`);
+        announce(`${label} can't move ${direction === "left" ? "earlier" : "later"}`);
       }
       return next;
     });
@@ -679,6 +683,7 @@ export function CustomizeEditLayer({
                 ) : (
                   <button
                     type="button"
+                    data-customize-hide={key}
                     aria-label={`Hide ${definition.label}`}
                     tabIndex={-1}
                     onClick={() => setHidden(element.surface, element.id, true, true)}
@@ -873,9 +878,10 @@ function FallbackList({
   ) => void;
 }) {
   const layout = useClientSetting("interfaceLayout");
+  const descriptionId = useId();
   return (
     <div className="mt-1.5">
-      <p className="text-xs text-muted-foreground">
+      <p id={descriptionId} className="text-xs text-muted-foreground">
         {measuredKeys.size === 0 ? `${FALLBACK_REASONS[surface]} ` : ""}
         Arrange all items here. List positions include hidden items and items outside this view.
       </p>
@@ -906,6 +912,7 @@ function FallbackList({
                   {!resolved.hidden.has(id) && !measuredKeys.has(`${layoutSurface}:${id}`) ? (
                     <span className="block text-2xs text-muted-foreground">
                       {surface === "threadRow" ? "Not in this row" : "Not in this view"}
+                      {canMove(id) || !definition.required ? " · edit here" : ""}
                     </span>
                   ) : null}
                 </span>
@@ -915,6 +922,7 @@ function FallbackList({
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Move ${definition.label} earlier`}
+                      aria-describedby={descriptionId}
                       disabled={index === 0}
                       onClick={() => onMove(layoutSurface, id, "left")}
                     >
@@ -924,6 +932,7 @@ function FallbackList({
                       size="icon-xs"
                       variant="ghost"
                       aria-label={`Move ${definition.label} later`}
+                      aria-describedby={descriptionId}
                       disabled={index === sortable.length - 1}
                       onClick={() => onMove(layoutSurface, id, "right")}
                     >

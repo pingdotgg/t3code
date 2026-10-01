@@ -165,6 +165,31 @@ export function resolveCustomizeRowTarget(row: HTMLElement): HTMLElement {
   return customizeFocusableControls(row)[0] ?? row;
 }
 
+/** Keep focus in the same list item when its arrow is disabled or its row is reinserted. */
+export function resolveCustomizeFocusTarget(
+  layer: HTMLElement,
+  previous: HTMLElement | null,
+): HTMLElement | null {
+  if (previous?.isConnected && layer.contains(previous) && !previous.matches(":disabled"))
+    return previous;
+  const previousRow = previous?.closest<HTMLElement>("[data-customize-row]");
+  if (!previousRow) return null;
+  const row =
+    previousRow.isConnected && layer.contains(previousRow)
+      ? previousRow
+      : [...layer.querySelectorAll<HTMLElement>("[data-customize-row]")].find(
+          (candidate) => candidate.dataset.customizeRow === previousRow.dataset.customizeRow,
+        );
+  return row ? resolveCustomizeRowTarget(row) : null;
+}
+
+/** A queued hide may move focus only while the user is still on that canvas item. */
+export function shouldMoveCustomizeHideFocus(active: Element | null, key: string): boolean {
+  if (active === document.body) return true;
+  const control = active?.closest<HTMLElement>("[data-customize-handle], [data-customize-hide]");
+  return control?.dataset.customizeHandle === key || control?.dataset.customizeHide === key;
+}
+
 /** The next editing control, with handles ordered as they appear on the canvas. */
 export function resolveCustomizeTabTarget(
   layer: HTMLElement,

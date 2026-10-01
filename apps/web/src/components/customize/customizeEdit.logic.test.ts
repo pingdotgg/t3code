@@ -11,11 +11,13 @@ import {
   moveCustomizeElementByKeyboard,
   preservesNativeCustomizeEscape,
   readingOrder,
+  resolveCustomizeFocusTarget,
   resolveCustomizeMoveOrder,
   resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
   resolveKeyboardMove,
+  shouldMoveCustomizeHideFocus,
   unionRect,
 } from "./customizeEdit.logic";
 
@@ -432,6 +434,114 @@ describe("resolveCustomizeTabTarget", () => {
     expect(resolveCustomizeTabTarget(row, document.body, false)).toBe(toggle);
     toggle.setAttribute("data-disabled", "");
     expect(resolveCustomizeRowTarget(row)).toBe(row);
+  });
+});
+
+describe("resolveCustomizeFocusTarget", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+  });
+
+  const setup = () => {
+    const layer = document.createElement("div");
+    document.body.append(layer);
+    const rect = new DOMRect(0, 0, 100, 100);
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue(
+      Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) }),
+    );
+    const addRow = (key: string) => {
+      const row = document.createElement("li");
+      row.dataset.customizeRow = key;
+      row.tabIndex = -1;
+      const earlier = document.createElement("button");
+      const later = document.createElement("button");
+      const toggle = document.createElement("button");
+      toggle.setAttribute("role", "switch");
+      row.append(earlier, later, toggle);
+      layer.append(row);
+      return { row, earlier, later, toggle };
+    };
+    return { layer, addRow };
+  };
+
+  it.each(["earlier", "later"] as const)(
+    "keeps focus in the item when its %s arrow becomes disabled",
+    (direction) => {
+      const { layer, addRow } = setup();
+      const item = addRow("chatHeader:scripts");
+      item[direction].focus();
+      item[direction].disabled = true;
+      const other = direction === "earlier" ? item.later : item.earlier;
+      const target = resolveCustomizeFocusTarget(layer, item[direction]);
+      expect(target).toBe(other);
+      target?.focus();
+      expect(document.activeElement).toBe(other);
+      item.earlier.disabled = true;
+      item.later.disabled = true;
+      resolveCustomizeFocusTarget(layer, item[direction])?.focus();
+      expect(document.activeElement).toBe(item.toggle);
+    },
+  );
+
+  it("recovers the same item by key when React replaces its row", () => {
+    const { layer, addRow } = setup();
+    const original = addRow("threadRow:branch");
+    original.earlier.focus();
+    original.row.remove();
+    addRow("composer:branch");
+    const replacement = addRow("threadRow:branch");
+    replacement.earlier.disabled = true;
+    resolveCustomizeFocusTarget(layer, original.earlier)?.focus();
+    expect(document.activeElement).toBe(replacement.later);
+  });
+
+  it("retains a usable control and permits the canvas fallback only when its item is gone", () => {
+    const { layer, addRow } = setup();
+    const item = addRow("chatHeader:scripts");
+    expect(resolveCustomizeFocusTarget(layer, item.later)).toBe(item.later);
+    item.row.remove();
+    addRow("chatHeader:git");
+    expect(resolveCustomizeFocusTarget(layer, item.later)).toBeNull();
+    expect(resolveCustomizeFocusTarget(layer, null)).toBeNull();
+  });
+});
+
+describe("shouldMoveCustomizeHideFocus", () => {
+  afterEach(() => document.body.replaceChildren());
+
+  it("allows focus recovery from that item's handle, hide badge or lost body focus", () => {
+    const key = "chatHeader:scripts";
+    const handle = document.createElement("button");
+    handle.dataset.customizeHandle = key;
+    const badge = document.createElement("button");
+    badge.dataset.customizeHide = key;
+    const icon = document.createElement("span");
+    badge.append(icon);
+    document.body.append(handle, badge);
+    for (const control of [handle, badge]) {
+      control.focus();
+      expect(shouldMoveCustomizeHideFocus(document.activeElement, key)).toBe(true);
+    }
+    expect(shouldMoveCustomizeHideFocus(icon, key)).toBe(true);
+    badge.remove();
+    expect(shouldMoveCustomizeHideFocus(document.activeElement, key)).toBe(true);
+  });
+
+  it("does not steal focus after the user moves to another item or list control", () => {
+    const key = "chatHeader:scripts";
+    const otherHandle = document.createElement("button");
+    otherHandle.dataset.customizeHandle = "chatHeader:git";
+    const otherBadge = document.createElement("button");
+    otherBadge.dataset.customizeHide = "chatHeader:git";
+    const listControl = document.createElement("button");
+    document.body.append(otherHandle, otherBadge, listControl);
+    const queuedHideCanMoveFocus = () => shouldMoveCustomizeHideFocus(document.activeElement, key);
+    for (const control of [otherHandle, otherBadge, listControl]) {
+      control.focus();
+      expect(queuedHideCanMoveFocus()).toBe(false);
+    }
+    expect(shouldMoveCustomizeHideFocus(null, key)).toBe(false);
   });
 });
 
