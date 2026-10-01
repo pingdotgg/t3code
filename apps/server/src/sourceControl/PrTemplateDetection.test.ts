@@ -283,6 +283,54 @@ it.effect("recognizes a mixed-case Azure branch template", () =>
   ),
 );
 
+it.effect("prefers the most specific nested Azure branch template", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(
+        cwd,
+        ".azuredevops/pull_request_template/branches/release.md",
+        "release template",
+      );
+      yield* writeTemplate(
+        cwd,
+        ".azuredevops/pull_request_template/branches/release/october.md",
+        "release october template",
+      );
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(
+        Option.getOrUndefined(
+          yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+            baseBranch: "release/october/week1",
+          }),
+        ),
+        "release october template",
+      );
+      assert.strictEqual(
+        Option.getOrUndefined(
+          yield* detectTemplate(cwd, "HEAD", "azure-devops", { baseBranch: "release/november" }),
+        ),
+        "release template",
+      );
+    }),
+  ),
+);
+
+it.effect("keeps Azure templates listed before a truncated folder listing", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "docs/pull_request_template.md", "docs template");
+      for (let index = 0; index < 2_000; index++) {
+        yield* writeTemplate(cwd, `docs/z-${String(index).padStart(4, "0")}.md`, "page");
+      }
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+      assert.strictEqual(Option.getOrUndefined(template), "docs template");
+    }),
+  ),
+);
+
 it.effect("returns none for Azure when the tree has no template", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {

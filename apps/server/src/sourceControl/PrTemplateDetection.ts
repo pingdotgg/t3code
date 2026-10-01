@@ -38,11 +38,13 @@ const AZURE_DEVOPS_TEMPLATE_NAME = "pull_request_template";
 const AZURE_DEVOPS_TEMPLATE_EXTENSIONS = ["md", "txt"] as const;
 
 // Azure Repos branch-specific templates live under `pull_request_template/branches/`
-// in the same folders searched for the default template. The filename matches the
-// first level of the branch the pull request targets (for example
-// `pull_request_template/branches/release.md` for a pull request into `release/1.2`).
+// in the same folders searched for the default template. The template path matches a
+// prefix of the branch the pull request targets, up to 10 levels deep (for example
+// `branches/release.md` or `branches/release/october.md` for a pull request into
+// `release/october/week1`), and the most specific match applies.
 // https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-templates#branch-specific-templates
 const AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORY = "branches";
+const AZURE_DEVOPS_BRANCH_TEMPLATE_MAX_LEVELS = 10;
 
 interface ChangeRequestTemplatePaths {
   readonly paths: ReadonlyArray<string>;
@@ -206,10 +208,51 @@ function resolveAzureDevOpsTemplatePaths(input: {
         maxOutputBytes: TREE_LIST_MAX_BYTES,
         appendTruncationMarker: true,
       });
-      const entries = result.stdoutTruncated ? [] : parseTreeLevelEntries(result.stdout);
+      // A truncated listing still holds every record that ended before the cut, so keep
+      // those instead of hiding templates that were listed.
+      const output = result.stdoutTruncated
+        ? result.stdout.slice(0, result.stdout.lastIndexOf("\0") + 1)
+        : result.stdout;
+      const entries = parseTreeLevelEntries(output);
       levels.set(directory, entries);
       return entries;
     });
+
+    const branchSegments = (input.baseBranch ?? "")
+      .split("/")
+      .filter((segment) => segment.length > 0)
+      .slice(0, AZURE_DEVOPS_BRANCH_TEMPLATE_MAX_LEVELS);
+
+    // Returns branch template paths under `branchDirectory`, most specific first.
+    const findBranchTemplatePaths = Effect.fn("PrTemplateDetection.findBranchTemplatePaths")(
+      function* (branchDirectory: string) {
+        const pathsByDepth: string[][] = [];
+        let directories = [branchDirectory];
+        for (const [index, segment] of branchSegments.entries()) {
+          const depthPaths: string[] = [];
+          const nextDirectories: string[] = [];
+          for (const directory of directories) {
+            const entries = yield* listLevel(directory);
+            for (const extension of AZURE_DEVOPS_TEMPLATE_EXTENSIONS) {
+              for (const entry of findEntriesByName(entries, "blob", `${segment}.${extension}`)) {
+                depthPaths.push(entry.path);
+              }
+            }
+            if (index < branchSegments.length - 1) {
+              for (const entry of findEntriesByName(entries, "tree", segment)) {
+                nextDirectories.push(entry.path);
+              }
+            }
+          }
+          pathsByDepth.push(depthPaths);
+          if (nextDirectories.length === 0) {
+            break;
+          }
+          directories = nextDirectories;
+        }
+        return pathsByDepth.toReversed().flat();
+      },
+    );
 
     const rootEntries = yield* listLevel("");
     const folders = AZURE_DEVOPS_TEMPLATE_FOLDERS.flatMap((folder) =>
@@ -217,7 +260,6 @@ function resolveAzureDevOpsTemplatePaths(input: {
         ? [""]
         : findEntriesByName(rootEntries, "tree", folder).map((entry) => entry.path),
     );
-    const branchTemplateName = input.baseBranch?.split("/", 1)[0];
 
     const branchTemplatePaths: string[] = [];
     const defaultTemplatePaths: string[] = [];
@@ -230,7 +272,7 @@ function resolveAzureDevOpsTemplatePaths(input: {
         }
       }
 
-      if (!branchTemplateName) {
+      if (branchSegments.length === 0) {
         continue;
       }
       for (const templateDirectory of findEntriesByName(
@@ -243,13 +285,7 @@ function resolveAzureDevOpsTemplatePaths(input: {
           "tree",
           AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORY,
         )) {
-          const branchEntries = yield* listLevel(branchDirectory.path);
-          for (const extension of AZURE_DEVOPS_TEMPLATE_EXTENSIONS) {
-            const templateName = `${branchTemplateName}.${extension}`;
-            for (const entry of findEntriesByName(branchEntries, "blob", templateName)) {
-              branchTemplatePaths.push(entry.path);
-            }
-          }
+          branchTemplatePaths.push(...(yield* findBranchTemplatePaths(branchDirectory.path)));
         }
       }
     }
