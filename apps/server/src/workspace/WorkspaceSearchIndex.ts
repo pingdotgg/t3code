@@ -7,37 +7,29 @@ import {
   ProjectSearchEntriesResult,
   ProjectSearchContentsResult,
 } from "@t3tools/contracts";
-import {
-  WorkspaceSearchIndex,
-  WORKSPACE_INDEX_PAGE_SIZE,
-  WorkspaceSearchIndexCreateFailed,
-  WorkspaceSearchIndexRefreshFailed,
-  WorkspaceSearchIndexScanTimedOut,
-  WorkspaceSearchIndexSearchFailed,
-  type WorkspaceSearchIndexVariant,
-} from "./WorkspaceSearchIndexService.ts";
+import * as WorkspaceSearchIndexService from "./WorkspaceSearchIndexService.ts";
 import * as WorkspaceSearchHost from "./WorkspaceSearchHost.ts";
 
 export * from "./WorkspaceSearchIndexService.ts";
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
-const isCreateFailed = Schema.is(WorkspaceSearchIndexCreateFailed);
-const isScanTimedOut = Schema.is(WorkspaceSearchIndexScanTimedOut);
-const isSearchFailed = Schema.is(WorkspaceSearchIndexSearchFailed);
-const isRefreshFailed = Schema.is(WorkspaceSearchIndexRefreshFailed);
+const isCreateFailed = Schema.is(WorkspaceSearchIndexService.WorkspaceSearchIndexCreateFailed);
+const isScanTimedOut = Schema.is(WorkspaceSearchIndexService.WorkspaceSearchIndexScanTimedOut);
+const isSearchFailed = Schema.is(WorkspaceSearchIndexService.WorkspaceSearchIndexSearchFailed);
+const isRefreshFailed = Schema.is(WorkspaceSearchIndexService.WorkspaceSearchIndexRefreshFailed);
 const decodeList = Schema.decodeUnknownEffect(ProjectListEntriesResult);
 const decodeSearch = Schema.decodeUnknownEffect(ProjectSearchEntriesResult);
 const decodeContents = Schema.decodeUnknownEffect(ProjectSearchContentsResult);
 
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
-  variant: WorkspaceSearchIndexVariant = "paths",
+  variant: WorkspaceSearchIndexService.WorkspaceSearchIndexVariant = "paths",
 ) {
   const host = yield* WorkspaceSearchHost.WorkspaceSearchHost;
   const remote = yield* host.open(cwd, variant).pipe(
     Effect.mapError((cause) =>
       isCreateFailed(cause) || isScanTimedOut(cause)
         ? cause
-        : new WorkspaceSearchIndexCreateFailed({
+        : new WorkspaceSearchIndexService.WorkspaceSearchIndexCreateFailed({
             cwd,
             reason: "Workspace search process could not initialize.",
             cause,
@@ -48,7 +40,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchFailure = (queryLength: number, pageSize: number) => (cause: unknown) =>
     isSearchFailed(cause)
       ? cause
-      : new WorkspaceSearchIndexSearchFailed({
+      : new WorkspaceSearchIndexService.WorkspaceSearchIndexSearchFailed({
           cwd,
           queryLength,
           pageSize,
@@ -56,13 +48,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         });
 
-  return WorkspaceSearchIndex.of({
+  return WorkspaceSearchIndexService.WorkspaceSearchIndex.of({
     list: () =>
       remote
         .request({ method: "list" })
         .pipe(
           Effect.flatMap(decodeList),
-          Effect.mapError(searchFailure(0, WORKSPACE_INDEX_PAGE_SIZE)),
+          Effect.mapError(searchFailure(0, WorkspaceSearchIndexService.WORKSPACE_INDEX_PAGE_SIZE)),
         ),
     search: (query, limit, kind, imageOnly) =>
       remote
@@ -72,7 +64,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           Effect.mapError(
             searchFailure(
               query.length,
-              imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1),
+              imageOnly
+                ? WorkspaceSearchIndexService.WORKSPACE_INDEX_PAGE_SIZE
+                : Math.max(1, limit + 1),
             ),
           ),
         ),
@@ -89,7 +83,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         Effect.mapError((cause) =>
           isRefreshFailed(cause) || isScanTimedOut(cause)
             ? cause
-            : new WorkspaceSearchIndexRefreshFailed({
+            : new WorkspaceSearchIndexService.WorkspaceSearchIndexRefreshFailed({
                 cwd,
                 reason: "Workspace search process failed.",
                 cause,
@@ -104,16 +98,21 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
  * content-search index of the same workspace are separate resources with
  * independent lifecycles. "\n" cannot appear in a filesystem path.
  */
-export const workspaceSearchIndexKey = (cwd: string, variant: WorkspaceSearchIndexVariant) =>
-  `${variant}\n${cwd}`;
+export const workspaceSearchIndexKey = (
+  cwd: string,
+  variant: WorkspaceSearchIndexService.WorkspaceSearchIndexVariant,
+) => `${variant}\n${cwd}`;
 
 function parseWorkspaceSearchIndexKey(key: string): {
   readonly cwd: string;
-  readonly variant: WorkspaceSearchIndexVariant;
+  readonly variant: WorkspaceSearchIndexService.WorkspaceSearchIndexVariant;
 } {
   const separatorIndex = key.indexOf("\n");
   return {
-    variant: key.slice(0, separatorIndex) as WorkspaceSearchIndexVariant,
+    variant: key.slice(
+      0,
+      separatorIndex,
+    ) as WorkspaceSearchIndexService.WorkspaceSearchIndexVariant,
     cwd: key.slice(separatorIndex + 1),
   };
 }
@@ -128,7 +127,7 @@ function parseWorkspaceSearchIndexKey(key: string): {
  */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
-  return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
+  return Layer.effect(WorkspaceSearchIndexService.WorkspaceSearchIndex, make(cwd, variant));
 };
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(
