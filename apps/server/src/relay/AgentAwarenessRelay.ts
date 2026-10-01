@@ -2,6 +2,7 @@ import type {
   EnvironmentId,
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadShell,
+  OrchestrationV2TurnItem,
   Project,
   ThreadId,
 } from "@t3tools/contracts";
@@ -11,6 +12,7 @@ import {
   type RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
@@ -64,6 +66,15 @@ function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
   return event.threadId;
 }
 
+// The filter takes loosely typed events; a turn-item payload carries both fields.
+function isTurnItemPayload(
+  payload: unknown,
+): payload is Pick<OrchestrationV2TurnItem, "type" | "status"> {
+  return (
+    typeof payload === "object" && payload !== null && "type" in payload && "status" in payload
+  );
+}
+
 export function shouldPublishAgentAwarenessEvent(
   event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
@@ -76,8 +87,10 @@ export function shouldPublishAgentAwarenessEvent(
   ) {
     return false;
   }
-  // projectThreadAwarenessV2 reads thread metadata, run status, and pending requests.
-  // Message bodies and tool progress cannot change the published activity.
+  // projectThreadAwarenessV2 reads thread metadata, run status, pending requests,
+  // and pending background work (a finished subagent, a cleared roster, or an
+  // ended background item can release a held completion). Message bodies and
+  // tool progress cannot change the published activity.
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
@@ -90,6 +103,8 @@ export function shouldPublishAgentAwarenessEvent(
     case "run.created":
     case "run.updated":
     case "runtime-request.updated":
+    case "subagent.updated":
+    case "provider-thread.updated":
       return true;
     case "thread.settled":
     case "thread.unsettled":
@@ -108,14 +123,13 @@ export function shouldPublishAgentAwarenessEvent(
     case "run-attempt.created":
     case "run-attempt.updated":
     case "node.updated":
-    case "subagent.updated":
     case "provider-session.attached":
     case "provider-session.updated":
     case "provider-session.detached":
-    case "provider-thread.updated":
     case "provider-turn.updated":
-    case "message.updated":
     case "turn-item.updated":
+      return isTurnItemPayload(event.payload) && turnItemUpdateCanEndBackgroundWork(event.payload);
+    case "message.updated":
     case "plan.updated":
     case "checkpoint-scope.created":
     case "checkpoint.captured":

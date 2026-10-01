@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
@@ -20,6 +21,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -86,6 +88,8 @@ export const layer: Layer.Layer<
   | ProviderSessionManagerV2
   | RuntimePolicyV2
   | FileSystem.FileSystem
+  | Path.Path
+  | ProjectStore.ProjectStoreV2
 > = Layer.effect(
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
@@ -96,6 +100,8 @@ export const layer: Layer.Layer<
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;
     const fileSystem = yield* FileSystem.FileSystem;
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    const path = yield* Path.Path;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -150,7 +156,12 @@ export const layer: Layer.Layer<
 
       if (
         input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(projection.thread, scope, { fileSystem, projections }))
+        !(yield* isCheckpointRestoreIsolated(projection.thread, scope, {
+          fileSystem,
+          projections,
+          projects,
+          path,
+        }))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "shared-workspace",

@@ -40,10 +40,10 @@ import { OrchestrationEventStoreLive } from "../src/persistence/Layers/Orchestra
 import * as EventStore from "../src/orchestration-v2/EventStore.ts";
 import * as EventSink from "../src/orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
-import { ThreadManagementService } from "../src/orchestration-v2/ThreadManagementService.ts";
+import * as ThreadManagementService from "../src/orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "../src/orchestration-v2/ProjectStore.ts";
-import { ProjectService } from "../src/project/ProjectService.ts";
-import { ProjectEnrichmentService } from "../src/project/ProjectEnrichmentService.ts";
+import * as ProjectService from "../src/project/ProjectService.ts";
+import * as ProjectEnrichmentService from "../src/project/ProjectEnrichmentService.ts";
 import { orchestrationHttpApiLayer } from "../src/orchestration-v2/http.ts";
 import { httpCompressionLayer } from "../src/http.ts";
 import { subscribeOrchestrationV2Thread, subscribeOrchestrationV2Shell } from "../src/ws.ts";
@@ -81,7 +81,7 @@ const management = Layer.unwrap(
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sink = yield* EventSink.EventSinkV2;
-    return Layer.mock(ThreadManagementService)({
+    return Layer.mock(ThreadManagementService.ThreadManagementService)({
       ensureLegacyTranscript: () => Effect.void,
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
@@ -96,7 +96,7 @@ const management = Layer.unwrap(
 const enrichment = Layer.unwrap(
   Effect.gen(function* () {
     const changes = yield* PubSub.unbounded<never>();
-    return Layer.mock(ProjectEnrichmentService)({
+    return Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
       getAvailable: () =>
         Effect.succeed({
           repositoryIdentity: null,
@@ -110,7 +110,7 @@ const enrichment = Layer.unwrap(
 // The transfer history has no project events, so shell streams never read a project shell.
 const services = management.pipe(
   Layer.provideMerge(ProjectStore.layer),
-  Layer.provideMerge(Layer.mock(ProjectService)({})),
+  Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
   Layer.provideMerge(enrichment),
   Layer.provideMerge(persistence),
 );

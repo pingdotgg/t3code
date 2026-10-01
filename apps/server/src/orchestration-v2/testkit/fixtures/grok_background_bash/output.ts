@@ -20,6 +20,7 @@ import { GROK_BACKGROUND_BASH_PROMPT, GROK_BACKGROUND_BASH_TICKS } from "./input
 export function assertGrokBackgroundBashOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
+  commandDescription = "Run three tock echoes in the background",
 ) {
   assertBaseProjection({
     result,
@@ -81,7 +82,7 @@ export function assertGrokBackgroundBashOutput(
   // The timeline names the command from Grok's task_completed snapshot.
   assert.deepEqual(backgroundNotifications(projection), [
     {
-      summary: 'Command "Run three tock echoes in the background" finished (exit 0)',
+      summary: `Command "${commandDescription}" finished (exit 0)`,
       outcome: "completed",
       source: { kind: "command" },
     },

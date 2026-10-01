@@ -27,14 +27,14 @@ import { Command } from "effect/unstable/cli";
 
 import { cli } from "../binCli.ts";
 import * as ServerConfig from "../config.ts";
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   OrchestrationV2EventSinkLayerLive,
   ProjectServiceLayerLive,
 } from "../orchestration-v2/runtimeLayer.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -96,7 +96,7 @@ const readProjects = (baseDir: string) =>
       Layer.provideMerge(ProjectFaviconResolver.layer),
       Layer.provideMerge(T3ProjectFileLoader.layer),
       Layer.provideMerge(WorkspacePaths.layer),
-      Layer.provideMerge(SqlitePersistenceLayerLive),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
@@ -175,7 +175,7 @@ const makeThreadPersistenceLayer = Effect.fn("ProjectCliTest.makeThreadPersisten
       ProjectionStore.layer,
       EventStore.layer,
     ).pipe(
-      Layer.provideMerge(SqlitePersistenceLayerLive),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, config.logLevel)),
@@ -195,7 +195,7 @@ const seedNativeThreads = Effect.fn("ProjectCliTest.seedNativeThreads")(function
   const createdAt = DateTime.makeUnsafe("2026-09-04T12:00:00.000Z");
   const providerInstanceId = ProviderInstanceId.make("codex");
   yield* Effect.gen(function* () {
-    const eventSink = yield* EventSinkV2;
+    const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
       commandId: CommandId.make("project-cli-seed-threads"),
       events: threads.map(({ id, projectId, archived }) => {

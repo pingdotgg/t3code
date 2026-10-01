@@ -10,7 +10,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 
@@ -74,7 +74,7 @@ const seedEvents = Effect.fn("test.seedSequenceEvents")(function* (
 
 it.effect("keeps application and scoped agent high-water marks separate from legacy history", () =>
   Effect.gen(function* () {
-    const store = yield* OrchestrationEventStore;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
     const target = ThreadId.make("target");
     assert.equal(yield* store.latestApplicationSequence, 0);
@@ -119,7 +119,7 @@ it.effect(
   "preserves mixed application paging, scoped replay, and the catch-up to live boundary",
   () =>
     Effect.gen(function* () {
-      const store = yield* OrchestrationEventStore;
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
       const rows = yield* seedEvents(
         Array.from({ length: 1_560 }, (_, index) => {
           const kind = index % 3 === 1 ? "project" : "thread";
@@ -211,7 +211,7 @@ it.effect(
 
 it.effect("uses indexed high-water lookups for populated history without OR scans", () =>
   Effect.gen(function* () {
-    const store = yield* OrchestrationEventStore;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
     yield* sql`

@@ -511,6 +511,13 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "repositoryUrl": "https://github.com/anomalyco/opencode",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
     }
   ]
 }

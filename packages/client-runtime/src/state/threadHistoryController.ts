@@ -46,7 +46,7 @@ export class ThreadHistoryController extends Context.Service<
   }
 >()("@t3tools/client-runtime/state/threadHistoryController") {}
 
-export const threadHistoryControllerLayer: Layer.Layer<ThreadHistoryController> = Layer.effect(
+export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
   ThreadHistoryController,
   Effect.gen(function* () {
     const handlers = yield* Ref.make(new Map<string, ThreadHistoryHandler>());

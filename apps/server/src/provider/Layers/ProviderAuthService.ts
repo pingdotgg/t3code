@@ -8,15 +8,15 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
-import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
-import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAuthService from "../Services/ProviderAuthService.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 
 export const makeProviderAuthService = Effect.gen(function* () {
-  const registry = yield* ProviderInstanceRegistry;
-  const projections = yield* ProjectionStoreV2;
-  const providerSessions = yield* ProviderSessionManagerV2;
+  const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const credentialChanges = yield* Semaphore.make(1);
 
   const getController = Effect.fn("ProviderAuthService.getController")(function* (
@@ -146,6 +146,33 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 
   return ProviderAuthService.ProviderAuthService.of({
+    reconnectProfile: Effect.fnUntraced(function* (input) {
+      const auth = yield* getController(input.instanceId, "export");
+      if (!auth.reconnectProfile)
+        return yield* new ProviderSetupError({
+          instanceId: input.instanceId,
+          operation: "export",
+          detail: "This provider does not support ChatGPT profile transfer.",
+        });
+      return yield* auth.reconnectProfile(input.methodId);
+    }),
+    importProfile: (input) =>
+      credentialChanges.withPermit(
+        Effect.gen(function* () {
+          const auth = yield* getController(input.instanceId, "import");
+          yield* checkSharedBinding(input.instanceId, "start", auth);
+          if (!auth.importProfile)
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "import",
+              detail: "This provider does not support ChatGPT profile transfer.",
+            });
+          return yield* auth.importProfile(
+            input.profile,
+            stopSessions(input.instanceId, auth.credentialBinding),
+          );
+        }),
+      ),
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
@@ -155,6 +182,8 @@ export const makeProviderAuthService = Effect.gen(function* () {
             ownerSessionId,
             stopSessions(input.instanceId, auth.credentialBinding),
             input.methodId,
+            input.returnUrl,
+            input.callbackMode,
           );
         }),
       );

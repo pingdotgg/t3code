@@ -16,11 +16,11 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "../orchestration-v2/KeyedSerialExecutor.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
-import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   decodeProjectCommandRejection,
   encodeProjectCommandRejection,
@@ -28,12 +28,9 @@ import {
   type ProjectCommand,
 } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import {
-  ThreadCommandExecutor,
-  layer as threadCommandExecutorLayer,
-} from "../orchestration-v2/ThreadCommandExecutor.ts";
+import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
-import { ProjectEnrichmentService, type ProjectEnrichment } from "./ProjectEnrichmentService.ts";
+import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -149,13 +146,13 @@ export class ProjectService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const projectEnrichment = yield* ProjectEnrichmentService;
+  const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-  const threadProjections = yield* ProjectionStoreV2;
-  const eventSink = yield* EventSinkV2;
+  const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-  const threadCommands = yield* ThreadCommandExecutor;
+  const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   // Commands for one project run in order. Commands that claim a workspace root
   // also hold that root, so two projects cannot both claim it.
   const projectLocks = yield* makeKeyedSerialExecutor<ProjectId>();
@@ -163,7 +160,7 @@ export const make = Effect.gen(function* () {
 
   const toProject = (
     row: ProjectStore.ProjectRow,
-    enrichment: ProjectEnrichment | null,
+    enrichment: ProjectEnrichmentService.ProjectEnrichment | null,
   ): Project => ({
     id: row.projectId,
     title: row.title,
@@ -571,5 +568,5 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ProjectService, make).pipe(
-  Layer.provide(threadCommandExecutorLayer),
+  Layer.provide(ThreadCommandExecutor.layer),
 );

@@ -11,6 +11,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   type ThreadRelationshipEdge,
@@ -47,7 +48,7 @@ import {
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
-import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -332,6 +333,7 @@ export function ThreadRelationshipsPanel(props: {
               const isSubagent = edge.kind === "subagent";
               const isMergeTarget = threadId === mergeTargetThreadId;
               const isParent = isParentThreadRelationship(edge, props.threadId);
+              const status = threadRelationshipRowStatus(graph, { threadId, edge });
               const RelationshipIcon = isParent
                 ? CornerLeftUpIcon
                 : isSubagent
@@ -380,13 +382,12 @@ export function ThreadRelationshipsPanel(props: {
                     driver={isSubagent && !isParent ? providerDriver : undefined}
                     provider={provider}
                     fallbackIcon={RelationshipIcon}
-                    status={edge.status}
+                    status={status}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
                       {threadTitle}
                     </span>
-                    {agent ? <span className="sr-only">{agent.status}</span> : null}
                   </span>
                   {agent ? (
                     agent.startedAt ? (
@@ -397,6 +398,11 @@ export function ThreadRelationshipsPanel(props: {
                   ) : (
                     <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                   )}
+                  {!isMergeTarget ? (
+                    <span className="shrink-0 text-2xs text-muted-foreground">
+                      {threadRelationshipStatusLabel(status)}
+                    </span>
+                  ) : null}
                 </>
               );
               return (
@@ -411,6 +417,7 @@ export function ThreadRelationshipsPanel(props: {
                               size="sm"
                               variant="ghost"
                               part="link-primary"
+                              aria-label={`${threadTitle} ${threadRelationshipStatusLabel(status)}`}
                               disabled={node?.missing === true}
                               onClick={() => openThread(threadId)}
                             />
@@ -455,6 +462,9 @@ export function ThreadRelationshipsPanel(props: {
                               : "Merge this conversation back into its source"}
                         </TooltipPopup>
                       </Tooltip>
+                      <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
+                        {threadRelationshipStatusLabel(status)}
+                      </span>
                     </div>
                   ) : (
                     <Tooltip>

@@ -9,7 +9,6 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
-import { CodexAppServerClient } from "./client.ts";
 import * as CodexClient from "./client.ts";
 import * as CodexError from "./errors.ts";
 
@@ -364,8 +363,8 @@ function replayTransportError(
 
 export function layerReplay(
   transcript: CodexAppServerReplayTranscript,
-): Layer.Layer<CodexAppServerClient, CodexAppServerReplayError> {
-  return Layer.effect(CodexAppServerClient, makeReplayClient(transcript));
+): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError> {
+  return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClient(transcript));
 }
 
 export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeReplayDriver")(
@@ -383,8 +382,8 @@ export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeRe
 
 export function layerReplayWithDriver(
   driver: CodexAppServerReplayDriver,
-): Layer.Layer<CodexAppServerClient, CodexAppServerReplayError> {
-  return Layer.effect(CodexAppServerClient, makeReplayClientWithState(driver));
+): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError> {
+  return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClientWithState(driver));
 }
 
 const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(function* (

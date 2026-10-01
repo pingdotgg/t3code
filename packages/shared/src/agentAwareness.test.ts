@@ -23,7 +23,11 @@ describe("projectThreadAwarenessV2", () => {
     overrides: Partial<
       Pick<
         OrchestrationV2ThreadShell,
-        "activityRunStatus" | "status" | "pendingRuntimeRequest" | "lineage"
+        | "activityRunStatus"
+        | "status"
+        | "pendingBackgroundTasks"
+        | "pendingRuntimeRequest"
+        | "lineage"
       >
     > = {},
   ) => ({
@@ -79,6 +83,27 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread({ status: "cancelled", activityRunStatus: "running" }),
       }),
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
+  });
+
+  it.each([
+    ["only a dev server", "completed", [{ taskId: "dev", kind: "command" }]],
+    ["a monitor", "running", [{ taskId: "watch", kind: "monitor" }]],
+    [
+      "a dev server and a subagent",
+      "running",
+      [
+        { taskId: "dev", kind: "command" },
+        { taskId: "review", kind: "subagent" },
+      ],
+    ],
+  ] as const)("reports a completed run waiting on %s as %s", (_case, phase, tasks) => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({ status: "completed", pendingBackgroundTasks: tasks }),
+      }),
+    ).toMatchObject({ phase });
   });
 
   it("prioritizes V2 user-input requests", () => {

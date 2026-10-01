@@ -161,6 +161,7 @@ const runtimeRequestServiceProvided = runtimeRequestServiceLayer.pipe(
 const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProjectStore.layer,
       checkpointServiceProvided,
       eventSinkProvided,
       idAllocatorLayer,

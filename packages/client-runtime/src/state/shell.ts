@@ -15,16 +15,16 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
-import { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
+import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent, mergeShellSnapshotProjects } from "./shellReducer.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
@@ -52,9 +52,9 @@ function shellStatusForSnapshot(
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
-  const supervisor = yield* EnvironmentSupervisor;
-  const cache = yield* EnvironmentCacheStore;
-  const snapshotLoader = yield* ShellSnapshotLoader;
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const cache = yield* Persistence.EnvironmentCacheStore;
+  const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
   const cachedSnapshot = yield* cache.loadShell(environmentId).pipe(
@@ -421,7 +421,10 @@ export function createEnvironmentServerConfigsAtom(input: {
 
 export function createEnvironmentShellAtoms<R, E>(
   runtime: Atom.AtomRuntime<
-    EnvironmentRegistry | EnvironmentCacheStore | ShellSnapshotLoader | R,
+    | EnvironmentRegistry.EnvironmentRegistry
+    | Persistence.EnvironmentCacheStore
+    | ShellSnapshotLoader.ShellSnapshotLoader
+    | R,
     E
   >,
 ) {
@@ -446,5 +449,5 @@ export function createEnvironmentShellAtoms<R, E>(
 export * from "./models.ts";
 export * from "./shellCommands.ts";
 export * from "./shellReducer.ts";
-export * from "./shellSnapshotHttp.ts";
+export * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 export * from "./snapshots.ts";

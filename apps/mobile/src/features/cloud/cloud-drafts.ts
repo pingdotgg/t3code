@@ -23,7 +23,7 @@ export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchive
 export const removeCloudEnvironments = createRuntimeCommand(connectionAtomRuntime, {
   label: "cloud:preserve-drafts-and-remove-environments",
   execute: Effect.fn("removeCloudEnvironments")(function* (accountId: string | null) {
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const entries = yield* SubscriptionRef.get(registry.entries);
     const environmentIds = new Set(
       [...entries.values()]

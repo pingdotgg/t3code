@@ -48,6 +48,42 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
+/**
+ * Whether a turn-item update can end background work that a settled run is
+ * still waiting on: an item of a background type that is no longer active.
+ * Streaming output on a running item, and every other item type, cannot.
+ */
+export function turnItemUpdateCanEndBackgroundWork(
+  item: Pick<OrchestrationV2TurnItem, "type" | "status">,
+): boolean {
+  return BACKGROUND_TURN_ITEM_TYPES.has(item.type) && !isOrchestrationV2WorkActive(item.status);
+}
+
+/**
+ * Whether background work left behind by a completed root run holds back its
+ * completion alert (desktop/web notification and the mobile push). Commands,
+ * such as dev servers and other long-lived shells, do not: the agent is done
+ * and may leave them running for hours. Subagents and monitors do, because
+ * they wake the agent and it continues (#13625). Work the adapter cannot name,
+ * including kinds this build does not know, holds as the conservative choice.
+ */
+export function backgroundWorkHoldsCompletion(
+  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind">>,
+): boolean {
+  return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind));
+}
+
+function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
+  switch (kind) {
+    case "command":
+      return false;
+    case "subagent":
+    case "monitor":
+    case "background_task":
+      return true;
+  }
+}
+
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
 type PendingBackgroundWorkProviderThread = Pick<

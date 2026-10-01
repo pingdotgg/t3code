@@ -683,6 +683,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
+            if (requestedPath === ".") {
+              return upsertSurface(current, singletonSurface("files"));
+            }
             // Workspace entry paths use '/', including on Windows.
             const relativePath = /^[A-Za-z]:\/+$/.test(requestedPath)
               ? requestedPath

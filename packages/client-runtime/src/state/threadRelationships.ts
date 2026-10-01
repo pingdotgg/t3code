@@ -194,6 +194,18 @@ export function isParentThreadRelationship(
   return edge.kind !== "transfer" && edge.targetThreadId === currentThreadId;
 }
 
+/** An incoming parent row shows its own activity, not the child's edge status. */
+export function threadRelationshipRowStatus(
+  graph: ThreadRelationshipGraph,
+  row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
+): string | null {
+  if (row.edge.kind === "transfer" || row.threadId === row.edge.targetThreadId) {
+    return row.edge.status;
+  }
+  const thread = graph.nodes.get(row.threadId)?.thread;
+  return thread?.activityRunStatus ?? thread?.status ?? null;
+}
+
 function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number | null {
   // `createdAt` is typed as a DateTime, but the value reaches here from a
   // decoded shell that may be missing (a related thread we have no shell for).

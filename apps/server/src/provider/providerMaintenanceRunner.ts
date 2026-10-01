@@ -23,7 +23,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -218,7 +218,7 @@ function makeUpdateState(input: {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
-  const providerRegistry = yield* ProviderRegistry;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const manifestService = yield* ModelManifest.ModelManifest;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;

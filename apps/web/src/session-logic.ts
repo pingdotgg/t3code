@@ -30,6 +30,7 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
+import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 
 import {
@@ -1011,6 +1012,22 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
     return "connecting";
   if (runtime.status === "running" || runtime.status === "waiting") return "running";
   return "ready";
+}
+
+/**
+ * Whether web and desktop offer Stop for the active thread. The server settles
+ * a preparing or starting run on `run.interrupt` (Orchestrator.dispatchRunInterrupt),
+ * so Stop must not wait for the phase to reach "running". A queued thread offers
+ * Stop only while an earlier run is still interruptible; Stop targets that run.
+ */
+export function deriveCanInterruptRunningThread(
+  hasActiveThread: boolean,
+  runtime: ThreadRuntimeSummary | null,
+): boolean {
+  return (
+    hasActiveThread &&
+    (derivePhase(runtime) === "running" || threadRuntimeHasInterruptibleRun(runtime))
+  );
 }
 
 export type { TurnDiffSummary };

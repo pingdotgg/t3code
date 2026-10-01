@@ -67,6 +67,8 @@ export const ServerProviderAuth = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
   action: Schema.optional(AcpRegistryUrlAuthAction),
   canLogout: Schema.optional(Schema.Boolean),
+  subscriptionSharing: Schema.optional(Schema.Boolean),
+  profileId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -244,6 +246,12 @@ export const ServerProvider = Schema.Struct({
     }),
   ),
   configurableProviders: Schema.optional(Schema.Boolean),
+  runtimePaths: Schema.optionalKey(
+    Schema.Struct({
+      homePath: TrimmedNonEmptyString,
+      shadowHomePath: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+  ),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

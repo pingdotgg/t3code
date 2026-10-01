@@ -13,6 +13,8 @@ import {
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
+import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import { buildCodexInitializeParams } from "../../provider/Layers/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
@@ -24,6 +26,7 @@ import {
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,
   ProviderDriverKind,
+  type ProviderSetupError,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -226,11 +229,6 @@ const decodeCodexBackgroundTerminalTerminateResponse = Schema.decodeUnknownEffec
 const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
 );
-const CODEX_CLIENT_INFO = {
-  name: "t3code_desktop",
-  title: "T3 Code Desktop",
-  version: "0.1.0",
-} as const;
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
   optOutNotificationMethods: ["turn/diff/updated"],
@@ -703,6 +701,8 @@ export function buildCodexTurnStartParams(input: {
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
+  /** ChatGPT token sharing does not accept service tiers. */
+  readonly omitServiceTier?: boolean;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -720,7 +720,10 @@ export function buildCodexTurnStartParams(input: {
     );
     const effort =
       selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
-    const serviceTier = getCodexServiceTierOptionValue(input.modelSelection);
+    const serviceTier =
+      input.omitServiceTier === true
+        ? undefined
+        : getCodexServiceTierOptionValue(input.modelSelection);
     const developerInstructions =
       input.hasT3Mcp !== true
         ? undefined
@@ -1440,7 +1443,7 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits"> = {},
+  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
 ) =>
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
@@ -1523,6 +1526,12 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /**
+   * Resolves launch settings when each session opens, replacing `settings` and
+   * `environment`. Managed ChatGPT sign-in uses it to launch the T3-installed
+   * Codex with a current access token.
+   */
+  readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
@@ -1548,13 +1557,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
     openSession: (input) =>
       Effect.gen(function* () {
         const scope = yield* Scope.Scope;
+        const resolvedRuntime =
+          adapterOptions.resolveRuntime === undefined
+            ? undefined
+            : yield* adapterOptions.resolveRuntime.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterOpenSessionError({
+                      driver: CODEX_PROVIDER,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: adapterOptions.settings,
-          environment: adapterOptions.environment,
+          settings: resolvedRuntime?.config ?? adapterOptions.settings,
+          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
@@ -1592,7 +1614,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }
 
           yield* client.request("initialize", {
-            clientInfo: CODEX_CLIENT_INFO,
+            // Codex uses the client name as the request originator, so sessions
+            // identify themselves exactly like the provider probe.
+            clientInfo: buildCodexInitializeParams().clientInfo,
             capabilities: CODEX_CLIENT_CAPABILITIES,
           });
           yield* client.notify("initialized", undefined);
@@ -5512,6 +5536,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+                omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);

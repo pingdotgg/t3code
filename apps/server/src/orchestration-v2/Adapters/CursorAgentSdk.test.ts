@@ -5,12 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
-import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
-import {
-  CursorAgentSdkRunner,
-  CursorAgentSdkRunnerError,
-  cursorAgentSdkRunnerLiveLayer,
-} from "./CursorAgentSdk.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 
 const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
@@ -108,9 +104,9 @@ vi.mock("../../provider/cursorSdk.ts", () => ({
   },
 }));
 
-const testLayer = cursorAgentSdkRunnerLiveLayer.pipe(
+const testLayer = CursorAgentSdk.cursorAgentSdkRunnerLiveLayer.pipe(
   Layer.provide(
-    Layer.succeed(ProviderEventLoggers, {
+    Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, {
       native: {
         filePath: "cursor-agent-sdk-test.log",
         write: (event: unknown) =>
@@ -137,7 +133,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.runOperations.length = 0;
       cursorSdkMock.setStaleRunActive(false);
 
-      const runner = yield* CursorAgentSdkRunner;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "resume",
         agentId: "agent-cursor-agent-sdk-test",
@@ -161,7 +157,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.cancelRun.mockClear();
       cursorSdkMock.setStaleRunActive(true);
 
-      const runner = yield* CursorAgentSdkRunner;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "resume",
         agentId: "agent-cursor-agent-sdk-test",
@@ -201,7 +197,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.closeExecutionOrder.length = 0;
       cursorSdkMock.setAgentCloseFailure(undefined);
 
-      const runner = yield* CursorAgentSdkRunner;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "create",
         options: {
@@ -235,7 +231,7 @@ describe("CursorAgentSdkRunner", () => {
       const closeFailure = new Error("agent close failed");
       cursorSdkMock.setAgentCloseFailure(closeFailure);
 
-      const runner = yield* CursorAgentSdkRunner;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "create",
         options: {
@@ -254,7 +250,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.closeExecutionOrder.length = 0;
       const error = yield* Effect.flip(session.close);
 
-      assert.instanceOf(error, CursorAgentSdkRunnerError);
+      assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
       assert.equal(error.method, "agent.close");
       assert.strictEqual(error.cause, closeFailure);
       assert.deepStrictEqual(cursorSdkMock.closeExecutionOrder, [
@@ -272,7 +268,7 @@ describe("CursorAgentSdkRunner", () => {
       cursorSdkMock.runWait.mockClear();
       cursorSdkMock.send.mockClear();
 
-      const runner = yield* CursorAgentSdkRunner;
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const session = yield* runner.open({
         operation: "create",
         options: {
@@ -297,7 +293,7 @@ describe("CursorAgentSdkRunner", () => {
 
       const error = yield* Effect.flip(run.wait);
 
-      assert.instanceOf(error, CursorAgentSdkRunnerError);
+      assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
       assert.equal(error.method, "run.wait");
       assert.strictEqual(error.cause, callbackFailure);
       assert.equal(cursorSdkMock.create.mock.calls.length, 1);

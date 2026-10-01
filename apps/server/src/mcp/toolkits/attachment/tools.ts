@@ -13,19 +13,19 @@ import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
-import { ServerSecretStore } from "../../../auth/ServerSecretStore.ts";
-import { ServerConfig } from "../../../config.ts";
-import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
   dependencies: [
-    McpInvocationContext,
-    ThreadManagementService,
-    ServerConfig,
-    ServerSecretStore,
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ServerConfig.ServerConfig,
+    ServerSecretStore.ServerSecretStore,
     FileSystem.FileSystem,
     Crypto.Crypto,
   ],

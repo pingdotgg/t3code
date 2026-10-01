@@ -21,18 +21,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionStoreV2,
-  ProjectionStoreThreadNotFoundError,
-  layer,
-  layerMemory,
-} from "./ProjectionStore.ts";
-import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import {
-  layer as controlLayer,
-  ProviderTurnControlServiceV2,
-} from "./ProviderTurnControlService.ts";
-import { layer as replyLayer, RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
 const threadId = ThreadId.make("thread:control-reads");
 const providerThreadId = ProviderThreadId.make("provider-thread:control-reads");
@@ -196,10 +188,12 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
 
 for (const storage of ["sqlite", "memory"] as const) {
   const storeLayer =
-    storage === "sqlite" ? layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)) : layerMemory;
+    storage === "sqlite"
+      ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+      : ProjectionStore.layerMemory;
   it.effect(`${storage}: finds the active root turn without an attempt reverse link`, () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const events = fixtureEvents(now).map((event) =>
         event.type === "run-attempt.created"
@@ -219,7 +213,7 @@ for (const storage of ["sqlite", "memory"] as const) {
   );
   it.effect(`${storage}: controls and replies read only their exact durable targets`, () =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const events = fixtureEvents(now);
       yield* Effect.forEach(events, (event) => store.apply(event), { discard: true });
@@ -270,11 +264,11 @@ for (const storage of ["sqlite", "memory"] as const) {
       const missingThread = yield* store
         .getRuntimeRequest(ThreadId.make("thread:missing"), requestId)
         .pipe(Effect.flip);
-      assert.instanceOf(missingThread, ProjectionStoreThreadNotFoundError);
+      assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
       let hasBackgroundWork = false;
-      const sessions = Layer.mock(ProviderSessionManagerV2)({
+      const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeed(
             Option.some({
@@ -300,8 +294,8 @@ for (const storage of ["sqlite", "memory"] as const) {
           ),
       });
       yield* Effect.gen(function* () {
-        const control = yield* ProviderTurnControlServiceV2;
-        const reply = yield* RuntimeRequestServiceV2;
+        const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+        const reply = yield* RuntimeRequestService.RuntimeRequestServiceV2;
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
         yield* control.steer({
           threadId,
@@ -349,7 +343,13 @@ for (const storage of ["sqlite", "memory"] as const) {
         hasBackgroundWork = true;
         yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
-      }).pipe(Effect.provide(Layer.merge(controlLayer, replyLayer).pipe(Layer.provide(sessions))));
+      }).pipe(
+        Effect.provide(
+          Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
+            Layer.provide(sessions),
+          ),
+        ),
+      );
     }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
   );
 }

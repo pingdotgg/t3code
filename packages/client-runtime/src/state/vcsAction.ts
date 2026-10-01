@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 import { runStream } from "../rpc/client.ts";
 import {
   createRuntimeCommand,
@@ -413,7 +413,7 @@ export function applyVcsActionProgressEvent(
 }
 
 export function createVcsActionManager<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
 ) {
   const runStackedActionCommands = new Map<
     string,
@@ -435,7 +435,7 @@ export function createVcsActionManager<R, E>(
     const target = targetKey === null ? null : parseVcsActionTargetKey(targetKey);
     const stateAtom = targetKey === null ? EMPTY_VCS_ACTION_ATOM : vcsActionStateAtom(targetKey);
     const command = createRuntimeCommand<
-      EnvironmentRegistry | EnvironmentCacheStore | R,
+      EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
       E,
       RunVcsStackedActionInput,
       GitRunStackedActionResult,

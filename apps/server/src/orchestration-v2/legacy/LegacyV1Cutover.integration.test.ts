@@ -13,7 +13,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { layer as nodeSqliteClientLayer } from "@t3tools/shared/nodeSqliteClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -37,25 +37,19 @@ import Migration0047 from "../../persistence/Migrations/047_ProjectionProjectIco
 import Migration0048 from "../../persistence/Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0049 from "../../persistence/Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
-import { layer as eventSinkLayer } from "../EventSink.ts";
-import { layer as eventStoreLayer } from "../EventStore.ts";
-import {
-  LegacyV1ThreadImporter,
-  layer as legacyV1ThreadImporterLayer,
-} from "./LegacyV1ThreadImporter.ts";
-import { OrchestratorV2 } from "../Orchestrator.ts";
-import {
-  ProjectionMaintenanceV2,
-  layer as projectionMaintenanceLayer,
-} from "../ProjectionMaintenance.ts";
-import { ProjectionStoreV2, layer as projectionStoreLayer } from "../ProjectionStore.ts";
+import * as EffectWorker from "../EffectWorker.ts";
+import * as EventSink from "../EventSink.ts";
+import * as EventStore from "../EventStore.ts";
+import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
+import * as Orchestrator from "../Orchestrator.ts";
+import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
 import {
   ProviderAdapterProtocolError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
 } from "../ProviderAdapter.ts";
-import { makeSingleLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 
@@ -418,7 +412,7 @@ const seedV1Database = (fixturePath: string, workspace: string) =>
       });
 
       yield* sql`PRAGMA wal_checkpoint(TRUNCATE);`;
-    }).pipe(Effect.provide(nodeSqliteClientLayer({ filename: fixturePath }))),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: fixturePath }))),
   );
 
 interface CapturedTurn {
@@ -570,7 +564,7 @@ const makeCodexAdapter = (capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>) =
   }) satisfies ProviderAdapterV2Shape;
 
 const waitForIdle = Effect.fn("LegacyV1Cutover.waitForIdle")(function* (threadId: ThreadId) {
-  const orchestrator = yield* OrchestratorV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   for (let attempt = 0; attempt < 1_000; attempt += 1) {
     const projection = yield* orchestrator.getThreadProjection(threadId);
     if (
@@ -594,14 +588,14 @@ const makeBootLayer = (input: {
   const databaseLayer = makeSqlitePersistenceLive(input.dbPath).pipe(
     Layer.provide(NodeServices.layer),
   );
-  const eventStoreProvided = eventStoreLayer.pipe(Layer.provideMerge(databaseLayer));
-  const projectionStoreProvided = projectionStoreLayer.pipe(Layer.provideMerge(databaseLayer));
+  const eventStoreProvided = EventStore.layer.pipe(Layer.provideMerge(databaseLayer));
+  const projectionStoreProvided = ProjectionStore.layer.pipe(Layer.provideMerge(databaseLayer));
   const storesProvided = Layer.mergeAll(databaseLayer, eventStoreProvided, projectionStoreProvided);
-  const eventSinkProvided = eventSinkLayer.pipe(Layer.provide(storesProvided));
-  const importerProvided = legacyV1ThreadImporterLayer.pipe(
+  const eventSinkProvided = EventSink.layer.pipe(Layer.provide(storesProvided));
+  const importerProvided = LegacyV1ThreadImporter.layer.pipe(
     Layer.provide(Layer.mergeAll(storesProvided, eventSinkProvided)),
   );
-  const maintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesProvided));
+  const maintenanceProvided = ProjectionMaintenance.layer.pipe(Layer.provide(storesProvided));
   const orchestratorProvided = makeOrchestratorV2ReplayLayerWithRegistry(
     {
       name: input.name,
@@ -615,7 +609,7 @@ const makeBootLayer = (input: {
         },
       },
     },
-    makeSingleLayer(makeCodexAdapter(input.capturedTurns)),
+    ProviderAdapterRegistry.makeSingleLayer(makeCodexAdapter(input.capturedTurns)),
     { databaseLayer },
   );
   return Layer.mergeAll(
@@ -675,10 +669,10 @@ describe("orchestration v2 legacy v1 cutover", () => {
           const firstBoot = yield* Effect.scoped(
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
-              const importer = yield* LegacyV1ThreadImporter;
-              const maintenance = yield* ProjectionMaintenanceV2;
-              const projections = yield* ProjectionStoreV2;
-              const orchestrator = yield* OrchestratorV2;
+              const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+              const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+              const projections = yield* ProjectionStore.ProjectionStoreV2;
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
 
               assert.equal(yield* importer.pendingThreadCount, ALL_THREADS.length);
               const shellImport = yield* importer.reconcileShells;
@@ -875,7 +869,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
 
               // Drain the outbox worker so the persisted event count is settled
               // before the restart boot re-reads it.
-              const worker = yield* OrchestrationEffectWorkerV2;
+              const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
               yield* worker.drain();
 
               const migrationEventCount = yield* sql<{ readonly count: number }>`
@@ -960,8 +954,8 @@ describe("orchestration v2 legacy v1 cutover", () => {
           yield* Effect.scoped(
             Effect.gen(function* () {
               const sql = yield* SqlClient.SqlClient;
-              const importer = yield* LegacyV1ThreadImporter;
-              const projections = yield* ProjectionStoreV2;
+              const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+              const projections = yield* ProjectionStore.ProjectionStoreV2;
 
               assert.equal(yield* importer.pendingThreadCount, 1);
               assert.deepStrictEqual(yield* importer.reconcileShells, {

@@ -60,7 +60,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { ServerConfig } from "../../config.ts";
+import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   expandPiSkillReference,
@@ -69,31 +69,8 @@ import {
   type PiCompactCommand,
 } from "../../provider/PiCommands.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
-import { IdAllocatorV2 } from "../IdAllocator.ts";
-import {
-  ProviderAdapterEnsureThreadError,
-  ProviderAdapterEventStreamError,
-  ProviderAdapterForkThreadError,
-  ProviderAdapterInterruptError,
-  ProviderAdapterOpenSessionError,
-  ProviderAdapterProtocolError,
-  ProviderAdapterReadThreadSnapshotError,
-  ProviderAdapterResumeThreadError,
-  ProviderAdapterRollbackThreadError,
-  ProviderAdapterRuntimeRequestResponseError,
-  ProviderAdapterSteerRunError,
-  ProviderAdapterTurnStartError,
-  ProviderAdapterV2,
-  type ProviderAdapterV2Error,
-  type ProviderAdapterV2Event,
-  type ProviderAdapterV2EnsureThreadInput,
-  type ProviderAdapterV2OpenSessionInput,
-  type ProviderAdapterV2SessionRuntime,
-  type ProviderAdapterV2Shape,
-  type ProviderAdapterV2SteerInput,
-  type ProviderAdapterV2ThreadSnapshot,
-  type ProviderAdapterV2TurnInput,
-} from "../ProviderAdapter.ts";
+import * as IdAllocator from "../IdAllocator.ts";
+import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -248,8 +225,8 @@ export interface PiAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
-  readonly idAllocator: IdAllocatorV2["Service"];
-  readonly serverConfig: ServerConfig["Service"];
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly serverConfig: ServerConfig.ServerConfig["Service"];
 }
 
 /** Concatenate the `text` fields of a Pi content-block array. */
@@ -313,7 +290,7 @@ function compactionTitle(status: PiCompactionStatus): string {
 }
 
 interface ActivePiTurn {
-  readonly turnInput: ProviderAdapterV2TurnInput;
+  readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
@@ -390,23 +367,25 @@ interface PiThreadState {
 
 // ── adapter ───────────────────────────────────────────────────
 
-export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2Shape {
+export function makePiAdapterV2(
+  options: PiAdapterV2Options,
+): ProviderAdapter.ProviderAdapterV2Shape {
   const { idAllocator } = options;
 
   const protocolError = (detail: string, payload?: unknown) =>
-    new ProviderAdapterProtocolError({
+    new ProviderAdapter.ProviderAdapterProtocolError({
       driver: PI_PROVIDER,
       detail,
       ...(payload === undefined ? {} : { payload }),
     });
 
-  return ProviderAdapterV2.of({
+  return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: PI_PROVIDER,
     getCapabilities: () => Effect.succeed(PiProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("PiAdapterV2.openSession")(function* (
-      input: ProviderAdapterV2OpenSessionInput,
+      input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
@@ -416,7 +395,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           Effect.provideService(FileSystem.FileSystem, options.fileSystem),
           Effect.mapError(
             (cause) =>
-              new ProviderAdapterOpenSessionError({
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver: PI_PROVIDER,
                 providerSessionId: input.providerSessionId,
                 cause,
@@ -449,7 +428,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
         Effect.mapError(
           (cause) =>
-            new ProviderAdapterOpenSessionError({
+            new ProviderAdapter.ProviderAdapterOpenSessionError({
               driver: PI_PROVIDER,
               providerSessionId: input.providerSessionId,
               cause,
@@ -479,8 +458,8 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         lastError: null,
       };
       const events = yield* Queue.unbounded<
-        ProviderAdapterV2Event,
-        ProviderAdapterV2Error | Cause.Done
+        ProviderAdapter.ProviderAdapterV2Event,
+        ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const sessionApprovals = new Set<string>();
@@ -544,7 +523,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           ? { type: "compact" }
           : { type: "compact", customInstructions: command.customInstructions };
 
-      const emit = (event: ProviderAdapterV2Event) =>
+      const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
 
       const updateProviderSession = (
@@ -1981,7 +1960,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 );
                 yield* Queue.fail(
                   events,
-                  new ProviderAdapterEventStreamError({
+                  new ProviderAdapter.ProviderAdapterEventStreamError({
                     driver: PI_PROVIDER,
                     providerSessionId: input.providerSessionId,
                     cause,
@@ -2007,7 +1986,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       // ── session runtime ───────────────────────────────────
 
       const registerThread = Effect.fnUntraced(function* (
-        threadInput: ProviderAdapterV2EnsureThreadInput,
+        threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
         publish = true,
       ) {
         if (threadState !== null && threadState.activeTurn !== null) {
@@ -2222,7 +2201,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         return { message, images };
       });
 
-      const runtime: ProviderAdapterV2SessionRuntime = {
+      const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
         instanceId: options.instanceId,
         driver: PI_PROVIDER,
         providerSessionId: input.providerSessionId,
@@ -2244,7 +2223,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           registerThread(threadInput).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterEnsureThreadError({
+                new ProviderAdapter.ProviderAdapterEnsureThreadError({
                   driver: PI_PROVIDER,
                   threadId: threadInput.threadId,
                   cause,
@@ -2261,7 +2240,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterResumeThreadError({
+                new ProviderAdapter.ProviderAdapterResumeThreadError({
                   driver: PI_PROVIDER,
                   providerSessionId: input.providerSessionId,
                   providerThreadId: threadInput.providerThread.id,
@@ -2416,7 +2395,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterTurnStartError({
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: PI_PROVIDER,
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
@@ -2425,7 +2404,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 }),
             ),
           ),
-        steerTurn: (steerInput: ProviderAdapterV2SteerInput) =>
+        steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
           Effect.gen(function* () {
             const turn = threadState?.activeTurn ?? null;
             if (turn === null || turn.providerTurn.id !== steerInput.providerTurnId) {
@@ -2476,7 +2455,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterSteerRunError({
+                new ProviderAdapter.ProviderAdapterSteerRunError({
                   driver: PI_PROVIDER,
                   providerThreadId: steerInput.providerThread.id,
                   providerTurnId: steerInput.providerTurnId,
@@ -2523,7 +2502,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterInterruptError({
+                new ProviderAdapter.ProviderAdapterInterruptError({
                   driver: PI_PROVIDER,
                   providerThreadId: interruptInput.providerThread.id,
                   providerTurnId: interruptInput.providerTurnId,
@@ -2582,7 +2561,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             sessionEventPermit.withPermits(1),
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterRuntimeRequestResponseError({
+                new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
                   driver: PI_PROVIDER,
                   requestId: requestInput.requestId,
                   cause,
@@ -2649,7 +2628,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterReadThreadSnapshotError({
+                new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
                   driver: PI_PROVIDER,
                   providerThreadId: snapshotInput.providerThread.id,
                   cause,
@@ -2719,7 +2698,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterRollbackThreadError({
+                new ProviderAdapter.ProviderAdapterRollbackThreadError({
                   driver: PI_PROVIDER,
                   providerThreadId: rollbackInput.providerThread.id,
                   checkpointId: rollbackInput.target.checkpointId,
@@ -2831,7 +2810,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           }).pipe(
             Effect.mapError(
               (cause) =>
-                new ProviderAdapterForkThreadError({
+                new ProviderAdapter.ProviderAdapterForkThreadError({
                   driver: PI_PROVIDER,
                   providerThreadId: forkInput.sourceProviderThread.id,
                   cause,
@@ -2904,7 +2883,7 @@ function piExtensionDisplayName(extensionPath: string | undefined): string {
 
 function piThreadSnapshot(
   providerThread: OrchestrationV2ProviderThread,
-): ProviderAdapterV2ThreadSnapshot {
+): ProviderAdapter.ProviderAdapterV2ThreadSnapshot {
   return { providerThread, providerTurns: [], messages: [], runtimeRequests: [] };
 }
 
@@ -2964,8 +2943,8 @@ function piUiResponse(
 export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
-  | IdAllocatorV2
-  | ServerConfig;
+  | IdAllocator.IdAllocatorV2
+  | ServerConfig.ServerConfig;
 
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
   driverKind: PI_DRIVER_KIND,
@@ -2976,8 +2955,8 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
       const hostEnvironment = yield* HostProcessEnvironment;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocatorV2;
-      const serverConfig = yield* ServerConfig;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const serverConfig = yield* ServerConfig.ServerConfig;
       return makePiAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
@@ -3003,22 +2982,23 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
   ),
 };
 
-const layer: Layer.Layer<ProviderAdapterV2, never, PiAdapterV2DriverEnv> = Layer.effect(
-  ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcessEnvironment;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocatorV2;
-    const serverConfig = yield* ServerConfig;
-    return makePiAdapterV2({
-      instanceId: PI_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_PI_SETTINGS,
-      environment: hostEnvironment,
-      spawner,
-      fileSystem,
-      idAllocator,
-      serverConfig,
-    });
-  }),
-);
+const layer: Layer.Layer<ProviderAdapter.ProviderAdapterV2, never, PiAdapterV2DriverEnv> =
+  Layer.effect(
+    ProviderAdapter.ProviderAdapterV2,
+    Effect.gen(function* () {
+      const hostEnvironment = yield* HostProcessEnvironment;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      return makePiAdapterV2({
+        instanceId: PI_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_PI_SETTINGS,
+        environment: hostEnvironment,
+        spawner,
+        fileSystem,
+        idAllocator,
+        serverConfig,
+      });
+    }),
+  );

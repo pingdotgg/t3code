@@ -14,14 +14,7 @@ import * as Effect from "effect/Effect";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "./Adapters/CursorAdapterV2.ts";
 import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
-import {
-  type CommandPolicyCapability,
-  CommandPolicyCapabilityUnsupportedError,
-  CommandPolicyV2,
-  layer as commandPolicyLayer,
-  resolveMessageDispatchIntent,
-  type SteeringExecutionPolicyV2,
-} from "./CommandPolicy.ts";
+import * as CommandPolicy from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");
 const threadId = ThreadId.make("command-policy-thread");
@@ -56,11 +49,15 @@ function dispatchProjection(
 
 it("resolves automatic message delivery from authoritative provider capabilities", () => {
   assert.deepEqual(
-    resolveMessageDispatchIntent(dispatchProjection(), { type: "start_immediately" }, "auto"),
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(),
+      { type: "start_immediately" },
+      "auto",
+    ),
     { type: "start_immediately" },
   );
   assert.deepEqual(
-    resolveMessageDispatchIntent(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(baseCapabilities),
       { type: "start_immediately" },
       "auto",
@@ -68,7 +65,7 @@ it("resolves automatic message delivery from authoritative provider capabilities
     { type: "steer_active", targetRunId: activeRunId },
   );
   assert.deepEqual(
-    resolveMessageDispatchIntent(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(
         capabilities((current) => ({
           ...current,
@@ -86,7 +83,7 @@ it("resolves automatic message delivery from authoritative provider capabilities
     { type: "queue_after_active" },
   );
   assert.deepEqual(
-    resolveMessageDispatchIntent(
+    CommandPolicy.resolveMessageDispatchIntent(
       dispatchProjection(
         capabilities((current) => ({
           ...current,
@@ -110,7 +107,7 @@ it.each(["preparing", "starting"] as const)(
   (status) => {
     const projection = dispatchProjection(baseCapabilities);
     assert.deepEqual(
-      resolveMessageDispatchIntent(
+      CommandPolicy.resolveMessageDispatchIntent(
         { ...projection, runs: projection.runs.map((run) => ({ ...run, status })) },
         { type: "start_immediately" },
         "auto",
@@ -123,25 +120,33 @@ it.each(["preparing", "starting"] as const)(
 it("targets the latest active run for explicit steer and restart intent", () => {
   const projection = dispatchProjection(baseCapabilities);
   assert.deepEqual(
-    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
     { type: "steer_active", targetRunId: activeRunId },
   );
   assert.deepEqual(
-    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "restart"),
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
     { type: "restart_active", targetRunId: activeRunId },
   );
   assert.deepEqual(
-    resolveMessageDispatchIntent(dispatchProjection(), { type: "start_immediately" }, "steer"),
+    CommandPolicy.resolveMessageDispatchIntent(
+      dispatchProjection(),
+      { type: "start_immediately" },
+      "steer",
+    ),
     { type: "start_immediately" },
   );
 });
 
-const layer = it.layer(commandPolicyLayer);
+const layer = it.layer(CommandPolicy.layer);
 
 layer("CommandPolicyV2", (it) => {
   it.effect("prefers direct active steering when the provider supports it", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideSteeringExecution({
         commandId,
@@ -156,7 +161,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("uses interrupt-and-restart steering when direct steering is unavailable", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideSteeringExecution({
         commandId,
@@ -179,7 +184,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("uses interrupt-and-restart steering for Grok ACP", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideSteeringExecution({
         commandId,
@@ -194,7 +199,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("honors an explicit interrupt-and-restart request", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideSteeringExecution({
         commandId,
@@ -210,7 +215,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("reports the actually missing capability across the steering matrix", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
       const providerInstanceId = ProviderInstanceId.make("codex");
       const fallbackDetail =
         "providerInstanceId cannot steer active turns directly or by interrupt-and-restart";
@@ -223,10 +228,10 @@ layer("CommandPolicyV2", (it) => {
         readonly supportsInterrupt: boolean;
         readonly supportsSteeringByInterruptRestart: boolean;
         readonly expected:
-          | { readonly type: "policy"; readonly value: SteeringExecutionPolicyV2 }
+          | { readonly type: "policy"; readonly value: CommandPolicy.SteeringExecutionPolicyV2 }
           | {
               readonly type: "error";
-              readonly capability: CommandPolicyCapability;
+              readonly capability: CommandPolicy.CommandPolicyCapability;
               readonly detail: string;
             };
       }> = [
@@ -401,7 +406,7 @@ layer("CommandPolicyV2", (it) => {
         }
 
         const error = yield* decision.pipe(Effect.flip);
-        assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+        assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
         assert.equal(error.commandId, commandId);
         assert.equal(error.threadId, threadId);
         assert.equal(error.providerInstanceId, providerInstanceId);
@@ -413,7 +418,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("returns typed capability errors for unsupported active steering", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .decideSteeringExecution({
@@ -432,14 +437,14 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "active_steering");
     }),
   );
 
   it.effect("guards native fork behind fork and identity capabilities", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .ensureNativeFork({
@@ -457,14 +462,14 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "native_fork");
     }),
   );
 
   it.effect("uses a native fork when the provider supports the requested source point", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideForkExecution({
         commandId,
@@ -483,7 +488,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("falls back to portable context when Cursor cannot fork natively", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideForkExecution({
         commandId,
@@ -502,7 +507,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("falls back to portable context when Grok ACP cannot fork natively", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const result = yield* policy.decideForkExecution({
         commandId,
@@ -521,7 +526,7 @@ layer("CommandPolicyV2", (it) => {
 
   it.effect("returns a typed error when neither native nor portable fork is available", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .decideForkExecution({
@@ -546,14 +551,14 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "context_handoff");
     }),
   );
 
   it.effect("guards rollback behind provider rollback snapshot support", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .ensureRollback({
@@ -570,14 +575,14 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "rollback_snapshot");
     }),
   );
 
   it.effect("guards fork-delta handoff behind context handoff capabilities", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .ensureContextHandoff({
@@ -595,14 +600,14 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "context_handoff");
     }),
   );
 
   it.effect("guards queued turns behind queued-message support", () =>
     Effect.gen(function* () {
-      const policy = yield* CommandPolicyV2;
+      const policy = yield* CommandPolicy.CommandPolicyV2;
 
       const error = yield* policy
         .ensureQueuedMessages({
@@ -619,7 +624,7 @@ layer("CommandPolicyV2", (it) => {
         })
         .pipe(Effect.flip);
 
-      assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+      assert.instanceOf(error, CommandPolicy.CommandPolicyCapabilityUnsupportedError);
       assert.equal(error.capability, "queued_messages");
     }),
   );

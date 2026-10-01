@@ -18,7 +18,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -58,7 +58,7 @@ const asOperationFailed = (prefix: string) =>
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
-  const threadManagement = yield* ThreadManagementService;
+  const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
@@ -483,7 +483,7 @@ export const layer: Layer.Layer<
   never,
   | Crypto.Crypto
   | Path.Path
-  | ThreadManagementService
+  | ThreadManagementService.ThreadManagementService
   | ProjectService.ProjectService
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService

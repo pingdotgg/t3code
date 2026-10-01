@@ -32,7 +32,10 @@ interface PendingActionState {
 interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
+  /** The turn is running: sending steers or queues instead of starting a turn. */
   isRunning: boolean;
+  /** Stop can reach a run, including one still preparing or starting. */
+  canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
   alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
@@ -84,6 +87,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  canInterrupt,
   followUpBehavior = "steer",
   alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
@@ -148,7 +152,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   if (pendingAction) {
     return (
       <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
-        {isRunning ? renderStopGenerationButton(true) : null}
+        {canInterrupt ? renderStopGenerationButton(true) : null}
         {pendingAction.questionIndex > 0 ? (
           compact ? (
             <Button
@@ -248,7 +252,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (isRunning && !hasSendableContent && !isEditingQueuedMessage) {
+  if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
     return renderStopGenerationButton(false);
   }
 

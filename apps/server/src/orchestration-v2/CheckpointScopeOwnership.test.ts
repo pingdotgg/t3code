@@ -15,7 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -23,11 +23,11 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 const projectionLayer = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
   SqlitePersistenceMemory,
-  idAllocatorLayer,
+  IdAllocator.layer,
 );
 it.effect("resolves the thread baseline after a second root run replaces scope ownership", () =>
   Effect.gen(function* () {
-    const ids = yield* IdAllocatorV2;
+    const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const now = DateTime.makeUnsafe("2026-09-08T12:00:00.000Z");
     const threadId = ThreadId.make("thread:audit-root-scope");

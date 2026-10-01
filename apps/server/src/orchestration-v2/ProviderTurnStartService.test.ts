@@ -26,7 +26,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { ProviderAuthService } from "../provider/Services/ProviderAuthService.ts";
+import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -125,7 +125,9 @@ it("does not commit running state when inherited background routing cannot be re
           },
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
-        Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
+        Layer.mock(ProviderAuthService.ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
       ),
@@ -486,7 +488,7 @@ function makeLocalCommandHarness(input: {
             ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
-        Layer.mock(ProviderAuthService)({ tryHandlePromptCommand }),
+        Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),

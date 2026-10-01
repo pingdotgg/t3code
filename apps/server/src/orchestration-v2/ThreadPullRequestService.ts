@@ -27,7 +27,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -98,7 +98,7 @@ interface RefreshRequest {
 }
 
 export const make = Effect.gen(function* () {
-  const orchestrator = yield* OrchestratorV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;

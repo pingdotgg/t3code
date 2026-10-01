@@ -24,7 +24,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
-import { ServerConfig } from "../src/config.ts";
+import * as ServerConfig from "../src/config.ts";
 import {
   GROK_DEFAULT_INSTANCE_ID,
   GROK_PROVIDER,
@@ -457,7 +457,7 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
         crypto: yield* Crypto.Crypto,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
-        serverConfig: yield* ServerConfig,
+        serverConfig: yield* ServerConfig.ServerConfig,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         // Production's runtime factory, with the protocol logger teeing raw lines.
@@ -498,9 +498,10 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.effect(ServerConfig, makeReplayServerConfig(`grok-record-${fixtureName}`)).pipe(
-          Layer.provide(NodeServices.layer),
-        ),
+        Layer.effect(
+          ServerConfig.ServerConfig,
+          makeReplayServerConfig(`grok-record-${fixtureName}`),
+        ).pipe(Layer.provide(NodeServices.layer)),
         NodeServices.layer,
         IdAllocator.layer,
       ),

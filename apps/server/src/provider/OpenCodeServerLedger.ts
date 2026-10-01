@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../config.ts";
+import { signalProcessGroup } from "../process/processGroup.ts";
 
 const ProcessIdentity = Schema.Struct({ pid: Schema.Int, startTime: Schema.String });
 type ProcessIdentity = typeof ProcessIdentity.Type;
@@ -91,7 +92,7 @@ const parseDarwinPs = (output: string): ReadonlyArray<ObservedProcess> =>
 
 const signalGroup = (pgid: number, signal: NodeJS.Signals) => {
   try {
-    process.kill(-pgid, signal);
+    signalProcessGroup(pgid, signal);
   } catch {
     // The group may already be gone.
   }
@@ -99,7 +100,7 @@ const signalGroup = (pgid: number, signal: NodeJS.Signals) => {
 
 const groupExists = (pgid: number) => {
   try {
-    process.kill(-pgid, 0);
+    signalProcessGroup(pgid, 0);
     return true;
   } catch (cause) {
     return (cause as NodeJS.ErrnoException | undefined)?.code !== "ESRCH";

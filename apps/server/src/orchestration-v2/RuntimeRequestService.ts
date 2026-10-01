@@ -11,8 +11,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<RuntimeRequestResponseExecutionError>()(
   "RuntimeRequestResponseExecutionError",
@@ -66,12 +66,12 @@ export class RuntimeRequestServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   RuntimeRequestServiceV2,
   never,
-  ProjectionStoreV2 | ProviderSessionManagerV2
+  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   RuntimeRequestServiceV2,
   Effect.gen(function* () {
-    const projections = yield* ProjectionStoreV2;
-    const sessions = yield* ProviderSessionManagerV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
     return RuntimeRequestServiceV2.of({
       respond: (input) =>

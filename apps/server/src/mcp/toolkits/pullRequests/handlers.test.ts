@@ -16,16 +16,12 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/unstable/ai";
 
-import {
-  OrchestratorV2,
-  type OrchestratorV2Shape,
-  OrchestratorDispatchError,
-} from "../../../orchestration-v2/Orchestrator.ts";
+import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
-import { ProjectService } from "../../../project/ProjectService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { listThreadPullRequests, PullRequestsToolkitHandlersLive } from "./handlers.ts";
 import { PullRequestLinkFailedError, PullRequestsToolkit } from "./tools.ts";
@@ -140,11 +136,11 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const thread = options.thread === undefined ? makeThread([]) : options.thread;
   const project = options.project === undefined ? makeProject() : options.project;
-  const dispatch: OrchestratorV2Shape["dispatch"] = (command) =>
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Effect.gen(function* () {
       const rejection = options.reject?.(command) ?? null;
       if (rejection !== null)
-        return yield* new OrchestratorDispatchError({
+        return yield* new Orchestrator.OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: rejection,
@@ -153,10 +149,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const dependencies = Layer.mergeAll(
-    Layer.mock(ProjectService)({
+    Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
     }),
-    Layer.mock(OrchestratorV2)({
+    Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
         Effect.succeed(id === THREAD_ID && thread ? v2PullRequestThread(thread) : null),
       dispatch,

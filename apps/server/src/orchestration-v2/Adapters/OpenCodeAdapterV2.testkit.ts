@@ -1,4 +1,4 @@
-import type { Event as OpenCodeEvent, OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderReplayEntry, type ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -6,19 +6,12 @@ import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { ServerConfig } from "../../config.ts";
-import {
-  OpenCodeRuntime,
-  OpenCodeRuntimeError,
-  type OpenCodeRuntimeShape,
-} from "../../provider/opencodeRuntime.ts";
-import {
-  NoOpProviderEventLoggers,
-  ProviderEventLoggers,
-} from "../../provider/Layers/ProviderEventLoggers.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import * as ServerConfig from "../../config.ts";
+import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
-import { makeDriverLayer as makeProviderAdapterRegistryDriverLayer } from "../ProviderAdapterRegistry.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
   type OrchestratorV2ProviderReplayHarness,
@@ -133,14 +126,19 @@ function materializeMessageIds(value: unknown, messageIds: ReadonlyMap<string, s
   );
 }
 
-class OpenCodeReplayController {
+/**
+ * Replays one transcript at a client boundary: each outbound call must match the
+ * next `expect_outbound`, then answers with its `sdk.response`; `sdk.event`
+ * frames feed the event stream. Shared by the 1.x SDK and 2.x HTTP transports.
+ */
+export class OpenCodeReplayController {
   private cursor = 0;
   private readonly waiters = new Set<() => void>();
   private failure: unknown = null;
-  private readonly transcript: OpenCodeSdkReplayTranscript;
+  private readonly transcript: ProviderReplayTranscript;
   private messageIds = new Map<string, string>();
 
-  constructor(transcript: OpenCodeSdkReplayTranscript) {
+  constructor(transcript: ProviderReplayTranscript) {
     this.transcript = transcript;
   }
 
@@ -221,7 +219,21 @@ class OpenCodeReplayController {
     }
   }
 
-  async *events(signal?: AbortSignal): AsyncIterable<OpenCodeEvent> {
+  /**
+   * Resolves once the server events recorded before the next entry have been
+   * delivered. For transports whose events and requests travel separately, a
+   * request is matched at its recorded point instead of racing those events.
+   */
+  async untilEventsDelivered(): Promise<void> {
+    while (true) {
+      this.throwFailure();
+      const entry = this.transcript.entries[this.cursor];
+      if (entry?.type !== "emit_inbound" || frameRecord(entry.frame)?.type !== "sdk.event") return;
+      await this.changed();
+    }
+  }
+
+  async *events(signal?: AbortSignal): AsyncIterable<unknown> {
     while (true) {
       if (signal?.aborted === true) return;
       this.throwFailure();
@@ -232,7 +244,7 @@ class OpenCodeReplayController {
           if (entry.afterMs !== undefined && entry.afterMs > 0) {
             await Effect.runPromise(Effect.sleep(Duration.millis(entry.afterMs)));
           }
-          const event = materializeMessageIds(frame.event, this.messageIds) as OpenCodeEvent;
+          const event = materializeMessageIds(frame.event, this.messageIds);
           this.advance();
           yield event;
           continue;
@@ -341,7 +353,7 @@ function makeReplayClient(controller: OpenCodeReplayController): OpencodeClient 
 
 function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript) {
   return Layer.effect(
-    OpenCodeRuntime,
+    OpenCodeRuntime.OpenCodeRuntime,
     Effect.gen(function* () {
       const controller = new OpenCodeReplayController(transcript);
       yield* Effect.addFinalizer(() =>
@@ -350,10 +362,10 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
         }),
       );
       const client = makeReplayClient(controller);
-      return OpenCodeRuntime.of({
+      return OpenCodeRuntime.OpenCodeRuntime.of({
         startOpenCodeServerProcess: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "startOpenCodeServerProcess",
               detail: "OpenCode replay uses an external in-memory SDK boundary.",
             }),
@@ -367,7 +379,7 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
           }),
         runOpenCodeCommand: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "runOpenCodeCommand",
               detail: "OpenCode replay does not execute commands.",
             }),
@@ -375,43 +387,43 @@ function makeOpenCodeReplayRuntimeLayer(transcript: OpenCodeSdkReplayTranscript)
         createOpenCodeSdkClient: () => client,
         loadOpenCodeInventory: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeInventory",
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
         loadInventoryFromCli: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadInventoryFromCli",
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
         loadOpenCodeSkills: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeSkills",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
         loadSkillsFromCli: () =>
           Effect.fail(
-            new OpenCodeRuntimeError({
+            new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadSkillsFromCli",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
-      } satisfies OpenCodeRuntimeShape);
+      } satisfies OpenCodeRuntime.OpenCodeRuntimeShape);
     }),
   );
 }
 
 function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkReplayTranscript) {
   const serverConfigLayer = Layer.effect(
-    ServerConfig,
+    ServerConfig.ServerConfig,
     makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return makeProviderAdapterRegistryDriverLayer({
+  return ProviderAdapterRegistry.makeDriverLayer({
     drivers: [OpenCodeAdapterV2Driver],
     configMap: {
       [OPENCODE_DEFAULT_INSTANCE_ID]: {
@@ -425,8 +437,11 @@ function makeOpenCodeProviderAdapterRegistryReplayLayer(transcript: OpenCodeSdkR
         makeOpenCodeReplayRuntimeLayer(transcript),
         serverConfigLayer,
         NodeServices.layer,
-        idAllocatorLayer,
-        Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
+        IdAllocator.layer,
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
       ),
     ),
   );

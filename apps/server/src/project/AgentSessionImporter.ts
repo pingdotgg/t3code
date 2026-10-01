@@ -31,12 +31,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
-import { IdAllocatorV2 } from "../orchestration-v2/IdAllocator.ts";
-import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
-import { ProjectService } from "./ProjectService.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
@@ -167,10 +167,10 @@ function messageEvents(input: {
 
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-  const orchestrator = yield* OrchestratorV2;
-  const projects = yield* ProjectService;
-  const eventSink = yield* EventSinkV2;
-  const idAllocator = yield* IdAllocatorV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projects = yield* ProjectService.ProjectService;
+  const eventSink = yield* EventSink.EventSinkV2;
+  const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,

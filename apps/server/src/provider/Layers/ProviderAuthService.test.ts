@@ -20,18 +20,12 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import {
-  ProjectionStoreReadError,
-  ProjectionStoreV2,
-} from "../../orchestration-v2/ProjectionStore.ts";
-import {
-  ProviderSessionManagerV2,
-  ProviderSessionReleaseError,
-} from "../../orchestration-v2/ProviderSessionManager.ts";
+import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import type { ProviderAuthController } from "../Services/ProviderAuthService.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import { makeProviderAuthService } from "./ProviderAuthService.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-personal");
@@ -252,7 +246,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
   const service = yield* makeProviderAuthService.pipe(
     Effect.provide(
       Layer.mergeAll(
-        Layer.mock(ProviderInstanceRegistry)({
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.gen(function* () {
               const found = instances.find((instance) => instance.instanceId === id);
@@ -262,7 +256,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
           listInstances: Effect.succeed(instances),
           subscribeChanges: PubSub.subscribe(registryChanges),
         }),
-        Layer.mock(ProjectionStoreV2)({
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () =>
             Effect.gen(function* () {
               assert.isTrue(gateClosed);
@@ -271,7 +265,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
               yield* input.beforeListSessions ?? Effect.void;
               return yield* input.shellError
                 ? Effect.fail(
-                    new ProjectionStoreReadError({
+                    new ProjectionStore.ProjectionStoreReadError({
                       threadId: ThreadId.make("shell"),
                       cause: new Error("private database diagnostics"),
                     }),
@@ -286,7 +280,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
               } as never;
             }),
         }),
-        Layer.mock(ProviderSessionManagerV2)({
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           release: ({ providerSessionId, reason }) =>
             Effect.gen(function* () {
               assert.isTrue(gateClosed);
@@ -294,7 +288,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
               yield* input.beforeStop ?? Effect.void;
               if (input.stopError) {
                 return yield* Effect.fail(
-                  new ProviderSessionReleaseError({
+                  new ProviderSessionManager.ProviderSessionReleaseError({
                     providerSessionId,
                     reason,
                     cause: new Error("private process diagnostics"),
@@ -368,7 +362,7 @@ const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscrip
     const service = yield* makeProviderAuthService.pipe(
       Effect.provide(
         Layer.mergeAll(
-          Layer.mock(ProviderInstanceRegistry)({
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
             subscribeChanges: Effect.gen(function* () {
               const subscription = yield* PubSub.subscribe(changes);
               subscribed = true;
@@ -386,8 +380,8 @@ const makeSubscriptionHarness = Effect.fn("ProviderAuthService.test.makeSubscrip
                 return instance;
               }),
           }),
-          Layer.mock(ProjectionStoreV2)({}),
-          Layer.mock(ProviderSessionManagerV2)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
         ),
       ),
     );

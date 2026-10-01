@@ -21,22 +21,16 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import {
-  AcpRegistryError,
-  acpRegistryManagedBinaryDirectories,
-  makeAcpRegistryCatalog,
-  resolveAcpRegistryDistribution,
-  resolveAcpRegistryPlatformTarget,
-  toAcpRegistryOperationError,
-  type AcpRegistryAgent,
-} from "./AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
 const decodeAcpRegistrySettings = Schema.decodeSync(AcpRegistrySettings);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-function makeAgent(distribution: AcpRegistryAgent["distribution"]): AcpRegistryAgent {
+function makeAgent(
+  distribution: AcpRegistrySupport.AcpRegistryAgent["distribution"],
+): AcpRegistrySupport.AcpRegistryAgent {
   return {
     id: "example-agent",
     name: "Example Agent",
@@ -46,7 +40,7 @@ function makeAgent(distribution: AcpRegistryAgent["distribution"]): AcpRegistryA
   };
 }
 
-function makeRegistry(agent: AcpRegistryAgent): string {
+function makeRegistry(agent: AcpRegistrySupport.AcpRegistryAgent): string {
   return JSON.stringify({ version: "1.0.0", agents: [agent] });
 }
 
@@ -190,13 +184,13 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
 describe("AcpRegistrySupport", () => {
   it("preserves the registry failure when translating it for clients", () => {
     const cause = new Error("registry unavailable");
-    const failure = new AcpRegistryError({
+    const failure = new AcpRegistrySupport.AcpRegistryError({
       reason: "registry_unavailable",
       detail: "Could not load the ACP Registry.",
       cause,
     });
 
-    expect(toAcpRegistryOperationError(failure)).toMatchObject({
+    expect(AcpRegistrySupport.toAcpRegistryOperationError(failure)).toMatchObject({
       reason: "registry_unavailable",
       message: "Could not load the ACP Registry.",
       cause: failure,
@@ -204,11 +198,17 @@ describe("AcpRegistrySupport", () => {
   });
 
   it("maps supported Node platforms to ACP Registry target keys", () => {
-    expect(resolveAcpRegistryPlatformTarget("darwin", "arm64")).toBe("darwin-aarch64");
-    expect(resolveAcpRegistryPlatformTarget("linux", "x64")).toBe("linux-x86_64");
-    expect(resolveAcpRegistryPlatformTarget("win32", "arm64")).toBe("windows-aarch64");
-    expect(resolveAcpRegistryPlatformTarget("freebsd", "x64")).toBeUndefined();
-    expect(resolveAcpRegistryPlatformTarget("linux", "ia32")).toBeUndefined();
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("darwin", "arm64")).toBe(
+      "darwin-aarch64",
+    );
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("linux", "x64")).toBe(
+      "linux-x86_64",
+    );
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("win32", "arm64")).toBe(
+      "windows-aarch64",
+    );
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("freebsd", "x64")).toBeUndefined();
+    expect(AcpRegistrySupport.resolveAcpRegistryPlatformTarget("linux", "ia32")).toBeUndefined();
   });
 
   it("selects the preferred compatible distribution", () => {
@@ -227,14 +227,14 @@ describe("AcpRegistrySupport", () => {
     });
 
     expect(
-      resolveAcpRegistryDistribution({
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
         agent,
         preference: "auto",
         platformTarget: "linux-x86_64",
       }),
     ).toMatchObject({ kind: "binary", args: ["acp"] });
     expect(
-      resolveAcpRegistryDistribution({
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
         agent,
         preference: "npx",
         platformTarget: "linux-x86_64",
@@ -246,7 +246,7 @@ describe("AcpRegistrySupport", () => {
       env: {},
     });
     expect(
-      resolveAcpRegistryDistribution({
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
         agent,
         preference: "binary",
         platformTarget: "darwin-aarch64",
@@ -274,7 +274,7 @@ describe("AcpRegistrySupport", () => {
       const commandPath = `${cacheDir}/example-agent`;
       yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
       yield* fileSystem.chmod(commandPath, 0o755);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -319,7 +319,7 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-global-package-",
       });
       const toolchain = yield* makeFakeNpmToolchain(cacheDir);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -365,7 +365,7 @@ describe("AcpRegistrySupport", () => {
         HOME: userHome,
         FAKE_NPM_PREFIX: systemPrefix,
       };
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -397,7 +397,7 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-global-uv-tool-",
       });
       const toolchain = yield* makeFakeUvToolchain(cacheDir);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -433,7 +433,7 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-windows-package-path-",
       });
       const toolchain = yield* makeFakeUvToolchain(cacheDir);
-      const linuxResolver = yield* makeAcpRegistryCatalog({
+      const linuxResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -445,7 +445,7 @@ describe("AcpRegistrySupport", () => {
         Path: "C:\\host\\bin",
         PATH: "C:\\provider\\bin",
       };
-      const windowsResolver = yield* makeAcpRegistryCatalog({
+      const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -494,7 +494,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-install-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -562,7 +562,7 @@ describe("AcpRegistrySupport", () => {
         yield* fileSystem.chmod(systemBinary, 0o755);
         const environment = { PATH: systemBinDir };
 
-        const resolver = yield* makeAcpRegistryCatalog({
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir,
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
@@ -635,7 +635,7 @@ describe("AcpRegistrySupport", () => {
       );
       expect(yield* tar.exitCode).toBe(0);
       const archive = yield* fileSystem.readFile(archivePath);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -680,13 +680,13 @@ describe("AcpRegistrySupport", () => {
       website: "https://example.test/codex",
       repository: "https://example.test/codex/source",
       icon: "https://example.test/codex.svg",
-    } satisfies AcpRegistryAgent;
+    } satisfies AcpRegistrySupport.AcpRegistryAgent;
     const descriptionMatch = {
       ...makeAgent({ npx: { package: "other-agent@1.2.3" } }),
       id: "other-agent",
       name: "Other Agent",
       description: "An adapter for Codex workflows",
-    } satisfies AcpRegistryAgent;
+    } satisfies AcpRegistrySupport.AcpRegistryAgent;
     const incompatible = {
       ...makeAgent({
         binary: {
@@ -695,14 +695,14 @@ describe("AcpRegistrySupport", () => {
       }),
       id: "darwin-only",
       name: "Codex Darwin",
-    } satisfies AcpRegistryAgent;
+    } satisfies AcpRegistrySupport.AcpRegistryAgent;
 
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-search-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -744,7 +744,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-refresh-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -780,13 +780,13 @@ describe("AcpRegistrySupport", () => {
       }),
       id: "binary-agent",
       name: "Binary Agent",
-    } satisfies AcpRegistryAgent;
+    } satisfies AcpRegistrySupport.AcpRegistryAgent;
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-runner-filter-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -818,7 +818,7 @@ describe("AcpRegistrySupport", () => {
       binary: {
         "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
       },
-    } satisfies AcpRegistryAgent["distribution"];
+    } satisfies AcpRegistrySupport.AcpRegistryAgent["distribution"];
     const valid = makeAgent(distribution);
     const blankName = { ...valid, id: "blank-name", name: "   " };
     const blankVersion = { ...valid, id: "blank-version", version: "\t" };
@@ -828,7 +828,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-blank-fields-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -863,7 +863,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-unpinned-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -894,7 +894,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-runner-syntax-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -942,7 +942,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-checksum-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -977,7 +977,7 @@ describe("AcpRegistrySupport", () => {
         prefix: "t3-acp-registry-runner-",
       });
       const toolchain = yield* makeFakeNpmToolchain(cacheDir);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1024,7 +1024,7 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
       yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
       const toolchain = yield* makeFakeNpmToolchain(cacheDir);
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1062,7 +1062,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-invalid-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1096,7 +1096,7 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
       yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
 
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1125,7 +1125,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-empty-inspect-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1157,7 +1157,7 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
       const toolchain = yield* makeFakeNpmToolchain(cacheDir);
 
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1205,7 +1205,7 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
       yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
 
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1248,7 +1248,7 @@ describe("AcpRegistrySupport", () => {
       });
       yield* fileSystem.writeFileString(runnerCache, "{}");
 
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1281,7 +1281,7 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.writeFileString(`${versionRoot}/linux-x86_64/agent`, "binary");
       yield* fileSystem.makeDirectory(`${versionRoot}/npm/bin`, { recursive: true });
       yield* fileSystem.writeFileString(`${versionRoot}/npm/bin/agent`, "package command");
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1324,7 +1324,7 @@ describe("AcpRegistrySupport", () => {
         const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-uninstall-race-",
         });
-        const resolver = yield* makeAcpRegistryCatalog({
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir,
           toolsDir: `${cacheDir}/tools`,
           registryUrl,
@@ -1401,7 +1401,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-uninstall-reservation-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1449,7 +1449,7 @@ describe("AcpRegistrySupport", () => {
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-uninstall-expiry-",
       });
-      const resolver = yield* makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
@@ -1556,7 +1556,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         }),
       );
 
-      const directories = yield* acpRegistryManagedBinaryDirectories({
+      const directories = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
         fileSystem,
         path,
         cacheDir,
@@ -1570,7 +1570,7 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         path.join(cacheDir, "tools", "kimi", "1.49.0", "linux-x86_64", "bin"),
       ]);
 
-      const missing = yield* acpRegistryManagedBinaryDirectories({
+      const missing = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
         fileSystem,
         path,
         cacheDir: path.join(cacheDir, "does-not-exist"),

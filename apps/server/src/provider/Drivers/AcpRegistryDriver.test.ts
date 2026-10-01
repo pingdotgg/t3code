@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { AcpRegistryCatalog, type AcpRegistryInspection } from "../acp/AcpRegistrySupport.ts";
+import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
 import {
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
@@ -34,7 +34,9 @@ const noSessionManagement = {
   canConfigureProviders: false,
 } as const;
 
-function catalogWithInspection(inspection: AcpRegistryInspection): AcpRegistryCatalog["Service"] {
+function catalogWithInspection(
+  inspection: AcpRegistrySupport.AcpRegistryInspection,
+): AcpRegistrySupport.AcpRegistryCatalog["Service"] {
   return {
     search: () => Effect.die("unused search"),
     prepare: () => Effect.die("unused prepare"),
@@ -386,7 +388,7 @@ describe("acpRegistrySnapshotReadiness", () => {
           }),
       ).pipe(
         Effect.provideService(
-          AcpRegistryCatalog,
+          AcpRegistrySupport.AcpRegistryCatalog,
           catalogWithInspection({
             status: "ready",
             agentId: "test-agent",
@@ -414,7 +416,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         environment: { PATH: "/provider/bin" },
       }).pipe(
         Effect.provideService(
-          AcpRegistryCatalog,
+          AcpRegistrySupport.AcpRegistryCatalog,
           catalogWithInspection({
             status: "ready",
             agentId: "test-agent",

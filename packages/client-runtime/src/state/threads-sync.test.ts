@@ -37,17 +37,14 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import {
-  ThreadHistoryController,
-  threadHistoryControllerLayer,
-} from "./threadHistoryController.ts";
+import * as ThreadHistoryController from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
-  ThreadSnapshotLoader,
   type EnvironmentThreadState,
   type ThreadSnapshotLoadResult,
 } from "./threads.ts";
+import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -160,7 +157,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
   );
-  const snapshotLoader = ThreadSnapshotLoader.of({
+  const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
     load: (_prepared, threadId) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
         Effect.as(
@@ -221,7 +218,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
-    Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
+    Effect.provideService(ThreadSnapshotLoader.ThreadSnapshotLoader, snapshotLoader),
     Effect.provideService(
       ConnectionWakeups.ConnectionWakeups,
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
@@ -236,12 +233,12 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ),
     );
   }
-  const historyController = yield* ThreadHistoryController.pipe(
-    Effect.provide(threadHistoryControllerLayer),
+  const historyController = yield* ThreadHistoryController.ThreadHistoryController.pipe(
+    Effect.provide(ThreadHistoryController.layer),
   );
   if (options?.historyPaging !== "no-controller") {
     makeThreadState = makeThreadState.pipe(
-      Effect.provideService(ThreadHistoryController, historyController),
+      Effect.provideService(ThreadHistoryController.ThreadHistoryController, historyController),
     );
   }
   const threadState = yield* makeThreadState;

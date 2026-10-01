@@ -21,7 +21,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { CursorSdkCatalog } from "./CursorSdkCatalog.ts";
+import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
@@ -250,7 +250,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
   authenticationType: "api-key" | "browser" = "api-key",
-): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog> {
+): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog.CursorSdkCatalog> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
@@ -287,7 +287,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     });
   }
 
-  const sdkCatalog = yield* CursorSdkCatalog;
+  const sdkCatalog = yield* CursorSdkCatalog.CursorSdkCatalog;
   const catalogResult = yield* sdkCatalog
     .read(sdkApiKey)
     .pipe(Effect.timeoutOption(CURSOR_SDK_CATALOG_TIMEOUT_MS), Effect.result);

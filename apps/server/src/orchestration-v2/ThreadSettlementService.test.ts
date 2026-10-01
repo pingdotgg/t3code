@@ -14,7 +14,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
-  type ServerSettings,
+  type ServerSettings as ContractServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -29,26 +29,15 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
-import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
-import {
-  PullRequestService,
-  type PullRequestMergeEvent,
-} from "../pullRequest/PullRequestService.ts";
-import { ServerActivation } from "../serverActivation.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import { TerminalManager } from "../terminal/Manager.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerActivation from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { OrchestratorV2, type OrchestratorV2Shape } from "./Orchestrator.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
-
-import {
-  autoSettlementSettingsKey,
-  isAutoSettlementCandidate,
-  QUEUED_TURN_START_GRACE_MS,
-  resolveAutoSettlementAt,
-  threadHasQueuedTurnStart,
-} from "./ThreadSettlementService.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -108,15 +97,39 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
 
 describe("isAutoSettlementCandidate", () => {
   it("excludes overridden, pinned, blocked, and working threads", () => {
-    expect(isAutoSettlementCandidate(shell(), NOW_MS)).toBe(true);
-    expect(isAutoSettlementCandidate(shell({ archivedAt: at(-1) }), NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ settledOverride: "settled" }), NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ settledOverride: "active" }), NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ pinnedAt: at(-1) }), NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ autoSettleDisabledAt: at(-1) }), NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ activityRunStatus: "running" }), NOW_MS)).toBe(false);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(shell(), NOW_MS)).toBe(true);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(shell({ archivedAt: at(-1) }), NOW_MS),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ settledOverride: "settled" }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ settledOverride: "active" }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(shell({ pinnedAt: at(-1) }), NOW_MS),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ autoSettleDisabledAt: at(-1) }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ activityRunStatus: "running" }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({
           pendingRuntimeRequest: { kind: "approval" } as never,
         }),
@@ -124,7 +137,7 @@ describe("isAutoSettlementCandidate", () => {
       ),
     ).toBe(false);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ pendingBackgroundTasks: [{ label: "task" }] as never }),
         NOW_MS,
       ),
@@ -136,51 +149,54 @@ describe("isAutoSettlementCandidate", () => {
       snoozedUntil: at(60 * 60 * 1_000),
       snoozedAt: at(-60 * 60 * 1_000),
     });
-    expect(isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: snoozed.snoozedAt }),
         NOW_MS,
       ),
     ).toBe(false);
     expect(
-      isAutoSettlementCandidate(
+      ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: null }),
         NOW_MS,
       ),
     ).toBe(false);
     // Expired snooze is no longer a park.
-    expect(isAutoSettlementCandidate(shell({ ...snoozed, snoozedUntil: at(-1) }), NOW_MS)).toBe(
-      true,
-    );
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ ...snoozed, snoozedUntil: at(-1) }),
+        NOW_MS,
+      ),
+    ).toBe(true);
   });
 });
 
 describe("threadHasQueuedTurnStart", () => {
   it("holds a fresh unadopted user message inside the grace window only", () => {
     const fresh = shell({ latestUserMessageAt: at(-1_000) });
-    expect(threadHasQueuedTurnStart(fresh, NOW_MS)).toBe(true);
+    expect(ThreadSettlementService.threadHasQueuedTurnStart(fresh, NOW_MS)).toBe(true);
     // Adoption stamps the run with the message time, clearing the hold.
     expect(
-      threadHasQueuedTurnStart(
+      ThreadSettlementService.threadHasQueuedTurnStart(
         shell({
           latestUserMessageAt: at(-1_000),
           latestRunId: "run-1" as never,
@@ -191,21 +207,21 @@ describe("threadHasQueuedTurnStart", () => {
     ).toBe(false);
     // Outside the grace window the stale message no longer blocks.
     expect(
-      threadHasQueuedTurnStart(
-        shell({ latestUserMessageAt: at(-QUEUED_TURN_START_GRACE_MS - 1) }),
+      ThreadSettlementService.threadHasQueuedTurnStart(
+        shell({ latestUserMessageAt: at(-ThreadSettlementService.QUEUED_TURN_START_GRACE_MS - 1) }),
         NOW_MS,
       ),
     ).toBe(false);
     // Client clocks ahead of the server must not extend the hold.
     expect(
-      threadHasQueuedTurnStart(
-        shell({ latestUserMessageAt: at(QUEUED_TURN_START_GRACE_MS + 1) }),
+      ThreadSettlementService.threadHasQueuedTurnStart(
+        shell({ latestUserMessageAt: at(ThreadSettlementService.QUEUED_TURN_START_GRACE_MS + 1) }),
         NOW_MS,
       ),
     ).toBe(false);
     // A failed start clears the hold immediately.
     expect(
-      threadHasQueuedTurnStart(
+      ThreadSettlementService.threadHasQueuedTurnStart(
         shell({ latestUserMessageAt: at(-1_000), status: "failed" }),
         NOW_MS,
       ),
@@ -228,10 +244,16 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: 2,
       autoSettleOnMerge: true,
     };
-    expect(resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
-    expect(resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 5 })).toBeNull();
-    expect(resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null })).toBeNull();
-    expect(resolveAutoSettlementAt({ ...input, thread: shell() })).toBeNull();
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-3 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 5 }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: shell() }),
+    ).toBeNull();
   });
 
   it("settles on merge only after the user's last action and preserves the activity time", () => {
@@ -249,17 +271,19 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: null,
       autoSettleOnMerge: true,
     };
-    expect(resolveAutoSettlementAt(input)).toEqual(at(-90 * 60 * 1_000));
-    expect(resolveAutoSettlementAt({ ...input, autoSettleOnMerge: false })).toBeNull();
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-90 * 60 * 1_000));
     expect(
-      resolveAutoSettlementAt({
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleOnMerge: false }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-3 * 60 * 60 * 1_000)) },
       }),
     ).toBeNull();
     // A thread without messages still has a stable timestamp when its PR closes.
     expect(
-      resolveAutoSettlementAt({
+      ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
         thread: shell(),
         pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
@@ -276,10 +300,12 @@ describe("resolveAutoSettlementAt", () => {
       autoSettleAfterDays: 2,
       autoSettleOnMerge: true,
     };
-    expect(resolveAutoSettlementAt(input)).toEqual(at(-30 * DAY_MS));
-    expect(resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null })).toBeNull();
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-30 * DAY_MS));
     expect(
-      resolveAutoSettlementAt({
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
         thread: shell({ latestUserMessageAt: at(-DAY_MS) }),
       }),
@@ -293,11 +319,11 @@ const LINKED_PROJECT_ID = ProjectId.make("linked-settlement-project");
 
 describe("autoSettlementSettingsKey", () => {
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
-    const inherits = autoSettlementSettingsKey({
+    const inherits = ThreadSettlementService.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
     });
-    const never = autoSettlementSettingsKey({
+    const never = ThreadSettlementService.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
@@ -307,11 +333,11 @@ describe("autoSettlementSettingsKey", () => {
   });
 
   it("ignores project overrides that do not touch settlement", () => {
-    const base = autoSettlementSettingsKey({
+    const base = ThreadSettlementService.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: false } },
     });
-    const unrelated = autoSettlementSettingsKey({
+    const unrelated = ThreadSettlementService.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
       projectSettingsOverrides: {
         [LINKED_PROJECT_ID]: { defaultThreadEnvMode: "worktree" },
@@ -405,14 +431,14 @@ function makeBranchPullRequest(state: "open" | "closed" | "merged") {
     updatedAt: NOW,
     closedAt: state === "closed" ? NOW : null,
     mergedAt: state === "merged" ? NOW : null,
-  } satisfies GitBranchPullRequest;
+  } satisfies GitManager.GitBranchPullRequest;
 }
 
 interface HarnessOptions {
   readonly snapshot: OrchestrationV2ShellSnapshot;
-  readonly settings?: ServerSettings;
-  readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
-  readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
+  readonly settings?: ContractServerSettings;
+  readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
+  readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
   /** Threads `getThread` returns when a `thread.settled` event is handled. */
@@ -426,8 +452,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReads = yield* Queue.unbounded<number>();
   const candidateReads = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
-  const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
-  const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
+  const settingsChanges = yield* PubSub.unbounded<ContractServerSettings>();
+  const mergedPullRequests = yield* PubSub.unbounded<PullRequestService.PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
@@ -452,11 +478,14 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       return next;
     });
 
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = (input) =>
+  const branchPullRequest: GitManager.GitManager["Service"]["branchPullRequest"] = (input) =>
     Ref.update(branchCalls, (calls) => [...calls, input]).pipe(
       Effect.andThen(options.branchPullRequest?.(input) ?? Effect.succeed(null)),
     );
-  const pullRequestSummary: PullRequestService["Service"]["summary"] = (input, readOptions) =>
+  const pullRequestSummary: PullRequestService.PullRequestService["Service"]["summary"] = (
+    input,
+    readOptions,
+  ) =>
     Effect.gen(function* () {
       yield* Ref.update(summaryCalls, (calls) => [...calls, input]);
       yield* Ref.update(summaryRecovery, (values) => [
@@ -474,7 +503,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       );
     });
 
-  const dispatch: OrchestratorV2Shape["dispatch"] = (command) => {
+  const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) => {
     if (command.type !== "thread.auto-settle") {
       return Effect.die(new Error(`Unexpected command: ${command.type}`));
     }
@@ -484,7 +513,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     );
   };
 
-  const serverSettings = ServerSettingsService.of({
+  const serverSettings = ServerSettings.ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),
@@ -501,7 +530,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
     }),
-    Layer.mock(ProjectionStoreV2)({
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getSettlementCandidates: (threadId) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
           Effect.andThen(Ref.updateAndGet(snapshotReadCount, (count) => count + 1)),
@@ -520,25 +549,25 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           : Effect.die(new Error(`Unexpected thread read: ${threadId}`));
       },
     }),
-    Layer.mock(OrchestratorV2)({
+    Layer.mock(Orchestrator.OrchestratorV2)({
       streamDomainEvents: Stream.fromPubSub(domainEvents),
       dispatch,
     }),
-    Layer.mock(TerminalManager)({
+    Layer.mock(TerminalManager.TerminalManager)({
       closeIdle: (input) => Queue.offer(closedIdle, input).pipe(Effect.asVoid),
     }),
-    Layer.mock(GitManager)({
+    Layer.mock(GitManager.GitManager)({
       branchPullRequest,
       invalidateStatus: (cwd) => Ref.update(invalidatedCwds, (cwds) => [...cwds, cwd]),
     }),
-    Layer.mock(PullRequestService)({
+    Layer.mock(PullRequestService.PullRequestService)({
       summary: pullRequestSummary,
       subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),
     }),
-    Layer.succeed(ServerSettingsService, serverSettings),
-    Layer.succeed(ServerActivation, Deferred.await(activation)),
+    Layer.succeed(ServerSettings.ServerSettingsService, serverSettings),
+    Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
     FileSystem.layerNoop({
       exists: (path) => Effect.succeed(options.existingWorktreePaths?.includes(path) ?? false),

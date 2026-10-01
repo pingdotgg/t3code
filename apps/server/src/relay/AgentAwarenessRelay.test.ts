@@ -2,10 +2,17 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   EnvironmentId,
+  EventId,
+  MessageId,
+  NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
@@ -13,28 +20,25 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
-import { SecretStoreReadError, ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
-import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
-import { ProjectService } from "../project/ProjectService.ts";
-import {
-  make,
-  makeAgentAwarenessPublishWorker,
-  resolveAgentAwarenessRelayActiveThreadIds,
-  shouldPublishAgentAwarenessEvent,
-} from "./AgentAwarenessRelay.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -97,7 +101,7 @@ describe("startup agent activity", () => {
     const newCompleted = ThreadId.make("new-completed");
     const oldFailed = ThreadId.make("old-failed");
     const newFailed = ThreadId.make("new-failed");
-    const ids = resolveAgentAwarenessRelayActiveThreadIds({
+    const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
       startedAt,
       projects: [{ id: PROJECT_ID, title: "Project" }],
@@ -137,6 +141,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly failSecretRead?: (name: string) => boolean;
     /** Starts unlinked with publishing off when false. */
     readonly linked?: boolean;
+    /** Serves shells from this source instead of `currentShell`. */
+    readonly readShell?: (threadId: ThreadId) => Effect.Effect<OrchestrationV2ThreadShell | null>;
+    readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
   } = {},
 ) {
   const values = new Map<string, Uint8Array>(
@@ -150,13 +157,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
         ],
   );
   const secretReads: string[] = [];
-  const secrets = ServerSecretStore.of({
+  const secrets = ServerSecretStore.ServerSecretStore.of({
     get: (name) =>
       Effect.suspend(() => {
         secretReads.push(name);
         if (options.failSecretRead?.(name)) {
           return Effect.fail(
-            new SecretStoreReadError({ resource: name, cause: "temporary read failure" }),
+            new ServerSecretStore.SecretStoreReadError({
+              resource: name,
+              cause: "temporary read failure",
+            }),
           );
         }
         return Effect.succeed(Option.fromUndefinedOr(values.get(name)));
@@ -170,9 +180,11 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const shellReads: ThreadId[] = [];
   // Catch-up publishes read the whole shell once each.
   const catchUp = { shellSnapshotReads: 0 };
-  const threads = ThreadManagementService.of({
+  const threads = ThreadManagementService.ThreadManagementService.of({
     getThreadShell: (threadId) =>
-      Effect.sync(() => shellReads.push(threadId)).pipe(Effect.andThen(Ref.get(currentShell))),
+      Effect.sync(() => shellReads.push(threadId)).pipe(
+        Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),
+      ),
     getShellSnapshot: () =>
       Effect.sync(() => {
         catchUp.shellSnapshotReads += 1;
@@ -196,7 +208,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadEventSequence: unused,
     streamStoredEvents: Stream.empty,
     streamStoredEventsFrom: () => Stream.empty,
-    streamDomainEvents: Stream.empty,
+    streamDomainEvents: options.domainEvents ?? Stream.empty,
   });
   const publications: Array<{
     readonly url: string;
@@ -226,14 +238,14 @@ const makeTestRelay = Effect.fnUntraced(function* (
     },
     { preconnect: () => {} },
   );
-  const relay = yield* make.pipe(
-    Effect.provideService(ServerSecretStore, secrets),
-    Effect.provideService(ThreadManagementService, threads),
-    Effect.provideService(ServerEnvironment, {
+  const relay = yield* AgentAwarenessRelay.make.pipe(
+    Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+    Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+    Effect.provideService(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("relay-environment")),
       getDescriptor: unused(),
     }),
-    Effect.provideService(ProjectService, {
+    Effect.provideService(ProjectService.ProjectService, {
       create: unused,
       bootstrap: unused,
       update: unused,
@@ -271,12 +283,15 @@ describe("AgentAwarenessRelay", () => {
       "thread.visited",
       "thread.pinned",
     ] as const) {
-      assert.isFalse(shouldPublishAgentAwarenessEvent({ type }));
+      assert.isFalse(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
     for (const type of [
       "run.created",
       "run.updated",
       "runtime-request.updated",
+      // Pending background work changes can release a held completion.
+      "subagent.updated",
+      "provider-thread.updated",
       "thread.metadata-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
@@ -284,18 +299,20 @@ describe("AgentAwarenessRelay", () => {
       "thread.unarchived",
       "thread.deleted",
     ] as const) {
-      assert.isTrue(shouldPublishAgentAwarenessEvent({ type }));
+      assert.isTrue(AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type }));
     }
   });
 
   it("does not publish imported thread creation as new agent activity", () => {
     assert.isFalse(
-      shouldPublishAgentAwarenessEvent({
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
         type: "thread.created",
         payload: { historyOrigin: "v1_import" },
       }),
     );
-    assert.isTrue(shouldPublishAgentAwarenessEvent({ type: "thread.created", payload: {} }));
+    assert.isTrue(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({ type: "thread.created", payload: {} }),
+    );
   });
 
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
@@ -306,7 +323,7 @@ describe("AgentAwarenessRelay", () => {
       const releaseRerun = yield* Deferred.make<void>();
       const processed: Array<{ threadId: ThreadId; revision: number }> = [];
       let revision = 1;
-      const worker = yield* makeAgentAwarenessPublishWorker((threadId) =>
+      const worker = yield* AgentAwarenessRelay.makeAgentAwarenessPublishWorker((threadId) =>
         Effect.gen(function* () {
           const currentRevision = revision;
           const index = processed.length;
@@ -665,10 +682,170 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.length, 1);
     }),
   );
+  it.effect("publishes a held completion when its background item ends, not on tool output", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      // The relay pulls the next event only after it has handled the previous one.
+      const pulls = yield* Queue.unbounded<void>();
+      const { relay, shellReads, publications } = yield* makeTestRelay({
+        readShell: (threadId) => store.getThreadShell(threadId).pipe(Effect.orDie),
+        domainEvents: Stream.fromEffectRepeat(
+          Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+        ),
+      });
+      yield* relay.start();
+      yield* Queue.take(pulls);
+      const deliver = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        yield* store.apply(event);
+        yield* Queue.offer(events, event);
+        yield* Queue.take(pulls);
+        yield* relay.drain;
+      });
+
+      const now = yield* DateTime.now;
+      const runId = RunId.make("run:held-item");
+      const run = {
+        id: runId,
+        threadId: THREAD_ID,
+        ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:held-item"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const item = (
+        id: string,
+        fields: Pick<OrchestrationV2TurnItem, "status"> &
+          (
+            | { readonly type: "dynamic_tool"; readonly toolName: string; readonly input: unknown }
+            | {
+                readonly type: "assistant_message";
+                readonly messageId: MessageId;
+                readonly text: string;
+                readonly streaming: boolean;
+              }
+          ),
+      ): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: THREAD_ID,
+        runId,
+        nodeId: NodeId.make("node:held-item"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        ...fields,
+      });
+      const itemEvent = (id: string, payload: OrchestrationV2TurnItem) =>
+        ({
+          id: EventId.make(id),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          runId,
+          occurredAt: now,
+          payload,
+        }) satisfies OrchestrationV2DomainEvent;
+      const background = { type: "dynamic_tool" as const, toolName: "watch", input: {} };
+
+      yield* deliver({
+        id: EventId.make("event:held-item:thread"),
+        type: "thread.created",
+        threadId: THREAD_ID,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* deliver({
+        id: EventId.make("event:held-item:run"),
+        type: "run.created",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: run,
+      });
+      yield* deliver(
+        itemEvent("event:held-item:tool", item("item:tool", { ...background, status: "running" })),
+      );
+      yield* deliver({
+        id: EventId.make("event:held-item:run-completed"),
+        type: "run.updated",
+        threadId: THREAD_ID,
+        runId,
+        occurredAt: now,
+        payload: { ...run, status: "completed", completedAt: now },
+      });
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running"],
+      );
+
+      // Streaming output never reaches the shell read.
+      const readsBeforeOutput = shellReads.length;
+      yield* deliver(
+        itemEvent(
+          "event:held-item:reply",
+          item("item:reply", {
+            type: "assistant_message",
+            messageId: MessageId.make("message:held-item:reply"),
+            text: "Still watching",
+            streaming: true,
+            status: "running",
+          }),
+        ),
+      );
+      yield* deliver(
+        itemEvent("event:held-item:tick", item("item:tool", { ...background, status: "running" })),
+      );
+      assert.equal(shellReads.length, readsBeforeOutput);
+
+      yield* deliver(
+        itemEvent("event:held-item:end", item("item:tool", { ...background, status: "completed" })),
+      );
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase),
+        ["running", "completed"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(ProjectionStore.layerMemory)),
+  );
 });
 
 describe.sequential("startup catch-up", () => {
-  const link = (secrets: ServerSecretStore["Service"]) =>
+  const link = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
     Effect.all(
       [
         secrets.set(RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")),
@@ -677,7 +854,7 @@ describe.sequential("startup catch-up", () => {
       ],
       { discard: true },
     );
-  const enablePublishing = (secrets: ServerSecretStore["Service"]) =>
+  const enablePublishing = (secrets: ServerSecretStore.ServerSecretStore["Service"]) =>
     secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true"));
   const linkChecks = (secretReads: ReadonlyArray<string>) =>
     secretReads.filter((name) => name === RELAY_URL_SECRET).length;

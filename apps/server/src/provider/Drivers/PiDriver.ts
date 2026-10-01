@@ -15,8 +15,8 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import {
   PiAdapterV2Driver,
@@ -63,8 +63,8 @@ export type PiDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ServerConfig
-  | ServerSettingsService;
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService;
 
 const withInstanceIdentity =
   (input: {
@@ -96,8 +96,8 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const { cwd } = yield* ServerConfig;
-      const serverSettings = yield* ServerSettingsService;
+      const { cwd } = yield* ServerConfig.ServerConfig;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,

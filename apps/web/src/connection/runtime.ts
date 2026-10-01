@@ -1,10 +1,10 @@
 import { Connection } from "@t3tools/client-runtime/connection";
-import { shellSnapshotLoaderLayer } from "@t3tools/client-runtime/state/shell";
+import { ShellSnapshotLoader } from "@t3tools/client-runtime/state/shell";
 import {
   boundedThreadSnapshotLoaderLayer,
-  threadHistoryControllerLayer,
+  ThreadHistoryController,
 } from "@t3tools/client-runtime/state/threads";
-import { pullRequestDiffLoaderLayer } from "@t3tools/client-runtime/state/pull-requests";
+import { PullRequestDiffLoader } from "@t3tools/client-runtime/state/pull-requests";
 import * as Layer from "effect/Layer";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -21,9 +21,9 @@ const providedConnectionPlatformLayer = connectionPlatformLayer.pipe(
 
 const snapshotLoaderLayer = Layer.mergeAll(
   boundedThreadSnapshotLoaderLayer,
-  shellSnapshotLoaderLayer,
-  threadHistoryControllerLayer,
-  pullRequestDiffLoaderLayer,
+  ShellSnapshotLoader.layer,
+  ThreadHistoryController.layer,
+  PullRequestDiffLoader.layer,
 );
 
 type ConnectionLayerSource =

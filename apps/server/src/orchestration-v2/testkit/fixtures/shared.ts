@@ -27,7 +27,7 @@ import type {
   OrchestratorV2ScenarioResult,
   OrchestratorV2ScenarioStep,
 } from "../OrchestratorScenario.ts";
-import { IdAllocatorV2, type IdAllocatorV2Error } from "../../IdAllocator.ts";
+import * as IdAllocator from "../../IdAllocator.ts";
 import type { RuntimePolicyV2Override } from "../../RuntimePolicy.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
@@ -64,6 +64,13 @@ export const SUBAGENT_CONTINUE_PROMPT =
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
   "Have the same subagent you spawned earlier reply exactly: continued subagent response";
 export const SUBAGENT_CONTINUE_CHILD_PROMPT = "Reply exactly: continued subagent response";
+/** Prompts the OpenCode 2 spike recorded against 2.0.18 (`opencode2_*` fixtures). */
+export const OPENCODE2_SIMPLE_PROMPT =
+  "Think carefully step by step about whether 391 is prime, showing your reasoning, then answer in one short sentence.";
+export const OPENCODE2_TOOL_CALL_PROMPT =
+  "Use the read tool to read hello.txt, then run the shell command `echo TOOL_OK` with the bash tool, then reply DONE.";
+export const OPENCODE2_INTERRUPT_PROMPT =
+  "Run the shell command `sleep 60 && echo LATE` with the bash tool, then reply DONE.";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
@@ -337,6 +344,13 @@ export const OPENCODE_MODEL_SELECTION = {
   options: [{ id: "agent", value: "build" }],
 } satisfies ModelSelection;
 
+/** The free OpenCode Zen model and variant the OpenCode 2 spike recorded its reasoning run with. */
+export const OPENCODE2_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("opencode"),
+  model: "opencode/space-bunny-free",
+  options: [{ id: "variant", value: "high" }],
+} satisfies ModelSelection;
+
 /** Pi fixtures are recorded against this pinned OpenRouter model; the slug is `provider/model`. */
 export const PI_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("pi"),
@@ -460,9 +474,13 @@ export function materializeFixtureInput(input: {
   readonly fixtureInput: OrchestratorFixtureInput;
   readonly driver: ProviderDriverKind;
   readonly modelSelection: ModelSelection;
-}): Effect.Effect<MaterializedOrchestratorFixtureInput, IdAllocatorV2Error, IdAllocatorV2> {
+}): Effect.Effect<
+  MaterializedOrchestratorFixtureInput,
+  IdAllocator.IdAllocatorV2Error,
+  IdAllocator.IdAllocatorV2
+> {
   return Effect.gen(function* () {
-    const idAllocator = yield* IdAllocatorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const projectId = yield* idAllocator.allocate.project({ fixtureName: input.scenario });
     const threadId = yield* idAllocator.allocate.thread({
       fixtureName: input.scenario,

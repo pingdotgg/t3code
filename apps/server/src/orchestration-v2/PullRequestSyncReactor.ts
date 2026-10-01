@@ -27,15 +27,15 @@ import * as Stream from "effect/Stream";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
-import { ProjectionStoreV2, type ProjectionThreadPullRequests } from "./ProjectionStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
 interface LinkEntry {
-  readonly thread: ProjectionThreadPullRequests;
+  readonly thread: ProjectionStore.ProjectionThreadPullRequests;
   readonly link: ThreadPullRequestLink;
 }
 
@@ -103,7 +103,7 @@ function stacksEqual(
   );
 }
 
-function isUnsettled(thread: ProjectionThreadPullRequests): boolean {
+function isUnsettled(thread: ProjectionStore.ProjectionThreadPullRequests): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
 
@@ -125,8 +125,8 @@ export class PullRequestSyncReactor extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestratorV2;
-  const projections = yield* ProjectionStoreV2;
+  const engine = yield* Orchestrator.OrchestratorV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
 

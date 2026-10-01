@@ -14,23 +14,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import {
-  ProjectionStoreV2,
-  ProjectionStoreThreadNotFoundError,
-  layer,
-  layerMemory,
-} from "./ProjectionStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const databaseLayer = Layer.mergeAll(
   SqlitePersistenceMemory,
-  layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+  ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
 );
 
 it.effect.each(["sqlite", "memory"] as const)(
   "checks queue eligibility and delivery ownership without unrelated history in %s",
   (storage) =>
     Effect.gen(function* () {
-      const store = yield* ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:completion-reads");
       const runId = RunId.make("run:completion-reads");
@@ -151,15 +146,17 @@ it.effect.each(["sqlite", "memory"] as const)(
       const missing = ThreadId.make("missing-thread");
       assert.instanceOf(
         yield* store.canStartQueuedRun(missing).pipe(Effect.flip),
-        ProjectionStoreThreadNotFoundError,
+        ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
       assert.instanceOf(
         yield* store.getRunMessage(missing, runId).pipe(Effect.flip),
-        ProjectionStoreThreadNotFoundError,
+        ProjectionStore.ProjectionStoreThreadNotFoundError,
       );
     }).pipe(
       Effect.provide(
-        storage === "sqlite" ? databaseLayer : Layer.merge(SqlitePersistenceMemory, layerMemory),
+        storage === "sqlite"
+          ? databaseLayer
+          : Layer.merge(SqlitePersistenceMemory, ProjectionStore.layerMemory),
       ),
     ),
 );

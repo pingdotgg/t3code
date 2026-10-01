@@ -17,15 +17,18 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveActivePlanState,
+  deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
+  derivePhase,
   findLatestProposedPlan,
   isLatestRunSettled,
   selectHandoffImageResources,
@@ -66,6 +69,44 @@ describe("V2 session presentation", () => {
         { status: "running", activeRunId: RunId.make("run-active") },
       ),
     ).toBe(false);
+  });
+
+  it("offers Stop while a run is preparing/starting, not just once it's running (#13392)", () => {
+    const runtimeWithStatus = (
+      status: ThreadRuntimeSummary["status"],
+      activeRunId: RunId | null = null,
+    ): ThreadRuntimeSummary => ({
+      status,
+      activeRunId,
+      providerInstanceId: ProviderInstanceId.make("claude-default"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-09-29T00:00:00.000Z",
+    });
+    const runId = RunId.make("run-stop-while-starting");
+
+    for (const status of ["preparing", "starting", "running"] as const) {
+      const runtime = runtimeWithStatus(status, runId);
+      expect(deriveCanInterruptRunningThread(true, runtime)).toBe(true);
+    }
+
+    // No active thread: never offer Stop, regardless of run status.
+    expect(deriveCanInterruptRunningThread(false, runtimeWithStatus("running", runId))).toBe(false);
+
+    // Queued with nothing interruptible: the server rejects interrupting a
+    // queued run, so Stop stays hidden.
+    expect(derivePhase(runtimeWithStatus("queued"))).toBe("connecting");
+    expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("queued"))).toBe(false);
+    // Queued behind a run that is still interruptible: Stop targets that run.
+    expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("queued", runId))).toBe(true);
+
+    // Waiting (e.g. on a subagent) is treated as "running" by derivePhase and
+    // keeps offering Stop, unchanged from before.
+    expect(derivePhase(runtimeWithStatus("waiting"))).toBe("running");
+    expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("waiting"))).toBe(true);
+
+    // No runtime at all: nothing to interrupt.
+    expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

@@ -7,13 +7,13 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
-import { PreviewManager } from "../../../preview/Manager.ts";
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
+import * as PreviewManager from "../../../preview/Manager.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
   failure: Schema.Union([OrchestratorMcpFailure, PreviewAutomationUnavailableError]),
   failureMode: "return" as const,
-  dependencies: [McpInvocationContext, PreviewManager],
+  dependencies: [McpInvocationContext.McpInvocationContext, PreviewManager.PreviewManager],
 };
 const PreviewListTool = Tool.make("t3_preview_list", {
   ...shared,

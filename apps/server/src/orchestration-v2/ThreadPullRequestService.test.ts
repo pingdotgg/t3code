@@ -20,17 +20,13 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { GitManager } from "../git/GitManager.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
-import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
-import { PullRequestService } from "../pullRequest/PullRequestService.ts";
-import { ServerActivation } from "../serverActivation.ts";
-import { OrchestratorV2 } from "./Orchestrator.ts";
-import {
-  make,
-  projectWorkspaceMatchesSnapshot,
-  resolveProjectForPullRequestDiscovery,
-} from "./ThreadPullRequestService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerActivation from "../serverActivation.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ThreadPullRequestService from "./ThreadPullRequestService.ts";
 
 describe("ThreadPullRequestServiceV2 project guard", () => {
   it.effect("discovers a repository from a project shell without enrichment", () =>
@@ -46,23 +42,26 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
         updatedAt: "2026-08-01T00:00:00.000Z",
       };
       let resolvedRoot: string | null = null;
-      const result = yield* resolveProjectForPullRequestDiscovery(project, {
-        resolve: (root) => {
-          resolvedRoot = root;
-          return Effect.succeed({
-            canonicalKey: "github.com/pingdotgg/t3code",
-            locator: {
-              source: "git-remote" as const,
-              remoteName: "origin",
-              remoteUrl: "git@github.com:pingdotgg/t3code.git",
-            },
-            provider: "github" as const,
-            displayName: "pingdotgg/t3code",
-            owner: "pingdotgg",
-            name: "t3code",
-          });
+      const result = yield* ThreadPullRequestService.resolveProjectForPullRequestDiscovery(
+        project,
+        {
+          resolve: (root) => {
+            resolvedRoot = root;
+            return Effect.succeed({
+              canonicalKey: "github.com/pingdotgg/t3code",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@github.com:pingdotgg/t3code.git",
+              },
+              provider: "github" as const,
+              displayName: "pingdotgg/t3code",
+              owner: "pingdotgg",
+              name: "t3code",
+            });
+          },
         },
-      });
+      );
       expect(resolvedRoot).toBe("/workspace/project");
       expect(result.repository).toBe("pingdotgg/t3code");
       expect(result.project.repositoryIdentity?.canonicalKey).toBe("github.com/pingdotgg/t3code");
@@ -88,8 +87,10 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
           return Effect.succeed(null);
         },
       };
-      yield* resolveProjectForPullRequestDiscovery(project, resolver);
-      yield* resolveProjectForPullRequestDiscovery(project, resolver, { refresh: true });
+      yield* ThreadPullRequestService.resolveProjectForPullRequestDiscovery(project, resolver);
+      yield* ThreadPullRequestService.resolveProjectForPullRequestDiscovery(project, resolver, {
+        refresh: true,
+      });
       expect(refreshes).toEqual([false, true]);
     }),
   );
@@ -99,12 +100,17 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
       workspaceRoot: "/workspace/replaced",
     } satisfies Pick<OrchestrationProjectShell, "workspaceRoot">);
 
-    expect(projectWorkspaceMatchesSnapshot(currentProject, "/workspace/original")).toBe(false);
+    expect(
+      ThreadPullRequestService.projectWorkspaceMatchesSnapshot(
+        currentProject,
+        "/workspace/original",
+      ),
+    ).toBe(false);
   });
 
   it("rejects a pull-request result when the project was deleted before dispatch", () => {
     expect(
-      projectWorkspaceMatchesSnapshot(
+      ThreadPullRequestService.projectWorkspaceMatchesSnapshot(
         Option.none<Pick<OrchestrationProjectShell, "workspaceRoot">>(),
         "/workspace/original",
       ),
@@ -116,7 +122,12 @@ describe("ThreadPullRequestServiceV2 project guard", () => {
       workspaceRoot: "/workspace/original",
     } satisfies Pick<OrchestrationProjectShell, "workspaceRoot">);
 
-    expect(projectWorkspaceMatchesSnapshot(currentProject, "/workspace/original")).toBe(true);
+    expect(
+      ThreadPullRequestService.projectWorkspaceMatchesSnapshot(
+        currentProject,
+        "/workspace/original",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -170,7 +181,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           ThreadId | { readonly location?: string; readonly unsettledOnly?: boolean }
         >();
         const dependencies = Layer.mergeAll(
-          Layer.mock(OrchestratorV2)({
+          Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromPubSub(events),
             getShellSnapshot: (options) =>
               Queue.offer(reads, options ?? {}).pipe(
@@ -190,10 +201,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           Layer.mock(ProjectStore.ProjectStoreV2)({
             listShells: () => Effect.succeed([]),
           }),
-          Layer.mock(GitManager)({}),
-          Layer.mock(PullRequestService)({}),
-          Layer.mock(RepositoryIdentityResolver)({}),
-          Layer.succeed(ServerActivation, Deferred.await(activation)),
+          Layer.mock(GitManager.GitManager)({}),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
           Layer.succeed(
             Crypto.Crypto,
             Crypto.make({
@@ -205,7 +216,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         );
 
         yield* Effect.gen(function* () {
-          const service = yield* make;
+          const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
           // Startup backfill reads every active thread.
@@ -263,7 +274,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           readonly unsettledOnly?: boolean;
         }>();
         const dependencies = Layer.mergeAll(
-          Layer.mock(OrchestratorV2)({
+          Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.never,
             getShellSnapshot: (options) =>
               Queue.offer(reads, options ?? {}).pipe(
@@ -279,10 +290,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           Layer.mock(ProjectStore.ProjectStoreV2)({
             listShells: () => Effect.succeed([]),
           }),
-          Layer.mock(GitManager)({}),
-          Layer.mock(PullRequestService)({}),
-          Layer.mock(RepositoryIdentityResolver)({}),
-          Layer.succeed(ServerActivation, Deferred.await(activation)),
+          Layer.mock(GitManager.GitManager)({}),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
           Layer.succeed(
             Crypto.Crypto,
             Crypto.make({
@@ -294,7 +305,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         );
 
         yield* Effect.gen(function* () {
-          const service = yield* make;
+          const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
           // Backfill finds the settled branch thread and must read it again.

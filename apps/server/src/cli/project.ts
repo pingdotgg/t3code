@@ -24,7 +24,7 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 
 import * as ServerConfig from "../config.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "../persistence/Layers/Sqlite.ts";
 import { ProjectServiceLayerLive } from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -206,7 +206,7 @@ const ProjectCliRuntimeLive = ProjectServiceLayerLive.pipe(
     ),
   ),
   Layer.provideMerge(WorkspacePaths.layer),
-  Layer.provideMerge(SqlitePersistenceLayerLive),
+  Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
 const PROJECT_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);

@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { layer as scheduledTaskServiceLayer, listDueTasks } from "./ScheduledTaskService.ts";
+import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -113,7 +113,7 @@ it.effect("loads only due tasks and skips corrupt due rows without decoding sett
       yield* insertRow(sql, { ...row, prompt: secret }, now);
     }
     const warnings: unknown[] = [];
-    const tasks = yield* listDueTasks(DateTime.makeUnsafe(now)).pipe(
+    const tasks = yield* ScheduledTaskService.listDueTasks(DateTime.makeUnsafe(now)).pipe(
       Effect.provide(
         Logger.layer([
           Logger.make(({ message }) => {
@@ -195,7 +195,7 @@ it.effect(
         Effect.gen(function* () {
           yield* Layer.build(
             Layer.provideMerge(
-              scheduledTaskServiceLayer,
+              ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>
@@ -292,7 +292,7 @@ it.effect(
         Effect.gen(function* () {
           yield* Layer.build(
             Layer.provideMerge(
-              scheduledTaskServiceLayer,
+              ScheduledTaskService.layer,
               Layer.mergeAll(
                 Layer.mock(ThreadLaunchService.ThreadLaunchService)({
                   launch: () =>

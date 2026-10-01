@@ -26,7 +26,7 @@ import {
 } from "../../orchestration-v2/LiveStreamBudget.ts";
 import { PersistenceDecodeError } from "../Errors.ts";
 import { toShellApplicationEvent } from "../../orchestration-v2/ShellStream.ts";
-import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
+import * as OrchestrationEventStore from "../Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
@@ -39,7 +39,7 @@ layer("OrchestrationEventStore", (it) => {
   it.effect("retains only shell metadata from oversized replay and live application events", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* OrchestrationEventStore;
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
         const afterSequence = yield* store.latestApplicationSequence;
         const now = yield* DateTime.now;
         const threadId = ThreadId.make("thread:large-shell-body");
@@ -104,7 +104,7 @@ layer("OrchestrationEventStore", (it) => {
 
   it.effect("stores json columns as strings and replays CLI-origin events", () =>
     Effect.gen(function* () {
-      const eventStore = yield* OrchestrationEventStore;
+      const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-01-01T00:00:00.000Z";
 
@@ -170,7 +170,7 @@ layer("OrchestrationEventStore", (it) => {
 
   it.effect("fails with PersistenceDecodeError when stored json is invalid", () =>
     Effect.gen(function* () {
-      const eventStore = yield* OrchestrationEventStore;
+      const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
       const now = "2026-01-01T00:00:00.000Z";
 
@@ -222,7 +222,7 @@ layer("OrchestrationEventStore", (it) => {
 
   it.effect("orders project and V2 agent events in the retained application event source", () =>
     Effect.gen(function* () {
-      const eventStore = yield* OrchestrationEventStore;
+      const eventStore = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectId = ProjectId.make("project-shared-stream");
       const threadId = ThreadId.make("thread-shared-stream");
       const providerInstanceId = ProviderInstanceId.make("codex");
@@ -321,7 +321,7 @@ layer("OrchestrationEventStore", (it) => {
   );
   it.effect("measures only a bounded thread replay before decoding its payloads", () =>
     Effect.gen(function* () {
-      const store = yield* OrchestrationEventStore;
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
       const threadId = ThreadId.make("measured-replay-thread");
       const baseline = yield* store.latestApplicationSequence;
@@ -398,7 +398,7 @@ for (const phase of ["high-water", "replay"] as const) {
   it.effect(`bounds application live events while the ${phase} query is blocked`, () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const store = yield* OrchestrationEventStore;
+        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
         const now = "2026-01-03T00:00:00.000Z";
         const projectId = ProjectId.make(`project:blocked-${phase}`);
         const projectEvent = yield* store.appendProjectEvent({
@@ -469,7 +469,7 @@ for (const phase of ["high-water", "replay"] as const) {
 
 it.effect("releases consumed application replay pages", () =>
   Effect.gen(function* () {
-    const store = yield* OrchestrationEventStore;
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
     const afterSequence = yield* store.latestApplicationSequence;
     yield* Effect.forEach(
       Array.from({ length: 1501 }, (_, index) => index),

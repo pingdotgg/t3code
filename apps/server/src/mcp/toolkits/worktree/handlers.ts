@@ -5,14 +5,14 @@ import * as Project from "../../../project/ProjectService.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
 import * as Effect from "effect/Effect";
 
-import { McpInvocationContext } from "../../McpInvocationContext.ts";
-import { WorktreeMcpService } from "../../WorktreeMcpService.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
 const handlers = {
   t3_worktree_list: (input) =>
     Effect.gen(function* () {
-      const context = yield* McpInvocationContext;
+      const context = yield* McpInvocationContext.McpInvocationContext;
       if (!context.capabilities.has("worktree"))
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
@@ -33,14 +33,14 @@ const handlers = {
     }),
   t3_worktree_handoff: (input) =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext;
-      const service = yield* WorktreeMcpService;
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
       return yield* service.handoff(scope, input);
     }),
   t3_worktree_status: () =>
     Effect.gen(function* () {
-      const scope = yield* McpInvocationContext;
-      const service = yield* WorktreeMcpService;
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* WorktreeMcpService.WorktreeMcpService;
       return yield* service.status(scope);
     }),
 } satisfies Parameters<typeof WorktreeToolkit.toLayer>[0];

@@ -13,17 +13,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import type { ProviderAdapterV2RuntimeRequestResponseInput } from "./ProviderAdapter.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
-import {
-  ProviderSessionLookupError,
-  ProviderSessionManagerV2,
-  type ProviderSessionManagerV2Shape,
-} from "./ProviderSessionManager.ts";
-import {
-  layer as runtimeRequestServiceLayer,
-  RuntimeRequestResponseExecutionError,
-  RuntimeRequestServiceV2,
-} from "./RuntimeRequestService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
 function projectionWithRuntimeRequest(
   runtimeRequest?: OrchestrationV2RuntimeRequest,
@@ -55,16 +47,16 @@ function resolvedRuntimeRequest(
 
 function runtimeRequestTestLayer(
   projection: OrchestrationV2ThreadProjection,
-  getSession: ProviderSessionManagerV2Shape["get"],
+  getSession: ProviderSessionManager.ProviderSessionManagerV2Shape["get"],
 ) {
-  return runtimeRequestServiceLayer.pipe(
+  return RuntimeRequestService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProjectionStoreV2)({
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRuntimeRequest: (_threadId, requestId) =>
             Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
-        Layer.mock(ProviderSessionManagerV2)({
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           get: getSession,
         }),
       ),
@@ -104,14 +96,14 @@ it.effect("forwards orchestrator-resolved runtime requests to the live adapter",
       },
     ],
   } as unknown as OrchestrationV2ThreadProjection;
-  const testLayer = runtimeRequestServiceLayer.pipe(
+  const testLayer = RuntimeRequestService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProjectionStoreV2)({
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRuntimeRequest: (_threadId, requestId) =>
             Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
-        Layer.mock(ProviderSessionManagerV2)({
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           get: getSession,
         }),
       ),
@@ -119,7 +111,7 @@ it.effect("forwards orchestrator-resolved runtime requests to the live adapter",
   );
 
   return Effect.gen(function* () {
-    const service = yield* RuntimeRequestServiceV2;
+    const service = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     yield* service.respond({
       threadId,
       providerSessionId,
@@ -168,14 +160,14 @@ it.effect("rejects expired runtime requests before invoking the live adapter", (
       },
     ],
   } as unknown as OrchestrationV2ThreadProjection;
-  const testLayer = runtimeRequestServiceLayer.pipe(
+  const testLayer = RuntimeRequestService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(ProjectionStoreV2)({
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRuntimeRequest: (_threadId, requestId) =>
             Effect.succeed(projection.runtimeRequests.find((request) => request.id === requestId)),
         }),
-        Layer.mock(ProviderSessionManagerV2)({
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           get: getSession,
         }),
       ),
@@ -183,7 +175,7 @@ it.effect("rejects expired runtime requests before invoking the live adapter", (
   );
 
   return Effect.gen(function* () {
-    const service = yield* RuntimeRequestServiceV2;
+    const service = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     const error = yield* service
       .respond({
         threadId,
@@ -225,7 +217,7 @@ it.effect("classifies runtime request response validation failures", () => {
     () => Effect.succeed(Option.none()),
   );
   const respond = Effect.gen(function* () {
-    const service = yield* RuntimeRequestServiceV2;
+    const service = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     return yield* service
       .respond({
         threadId,
@@ -270,7 +262,7 @@ it.effect("preserves genuine provider session lookup failures as the cause", () 
     "provider-session-runtime-request-lookup-failure",
   );
   const requestId = RuntimeRequestId.make("request-lookup-failure");
-  const lookupFailure = new ProviderSessionLookupError({
+  const lookupFailure = new ProviderSessionManager.ProviderSessionLookupError({
     providerSessionId,
     cause: "lookup failed",
   });
@@ -280,7 +272,7 @@ it.effect("preserves genuine provider session lookup failures as the cause", () 
   );
 
   return Effect.gen(function* () {
-    const service = yield* RuntimeRequestServiceV2;
+    const service = yield* RuntimeRequestService.RuntimeRequestServiceV2;
     const error = yield* service
       .respond({
         threadId,
@@ -290,7 +282,7 @@ it.effect("preserves genuine provider session lookup failures as the cause", () 
       })
       .pipe(Effect.flip);
 
-    assert.instanceOf(error, RuntimeRequestResponseExecutionError);
+    assert.instanceOf(error, RuntimeRequestService.RuntimeRequestResponseExecutionError);
     assert.equal(error.reason, "unexpected-failure");
     assert.equal(
       error.message,
