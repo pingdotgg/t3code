@@ -806,8 +806,63 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         profileDirectory: path.join(temporaryDirectory, "discovered-profile"),
         platform: "linux",
         baseEnv: { PATH: binDirectory },
-      });
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (file, encoding) =>
+            file === "/proc/self/limits"
+              ? Effect.succeed(
+                  "Max realtime timeout      0                    0                    us        \n",
+                )
+              : file === "/proc/self/status"
+                ? Effect.succeed("Seccomp:\t0\n")
+                : fs.readFileString(file, encoding),
+        }),
+      );
       expect(discoveredProfile.pythonExecutable).toBe(mockPython);
+    }),
+  );
+
+  it.effect("keeps Linux launches direct outside the observed zero-limit, unfiltered case", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const cases = [
+        { limit: "unlimited unlimited", seccomp: "0" },
+        { limit: "1000000 1000000", seccomp: "0" },
+        { limit: "0 unlimited", seccomp: "0" },
+        { limit: "0 0", seccomp: "2" },
+        { limit: "0 0", seccomp: "" },
+        { limit: "", seccomp: "0" },
+      ];
+      for (const [index, { limit, seccomp }] of cases.entries()) {
+        const profile = yield* prepareAntigravityProfile({
+          profileDirectory: path.join(directory, String(index)),
+          platform: "linux",
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readFileString: (file, encoding) =>
+              file === "/proc/self/limits"
+                ? limit
+                  ? Effect.succeed(`Max realtime timeout      ${limit}                    us\n`)
+                  : fs.readFileString(path.join(directory, "missing-limits"), encoding)
+                : file === "/proc/self/status"
+                  ? seccomp
+                    ? Effect.succeed(`Seccomp:\t${seccomp}\n`)
+                    : fs.readFileString(path.join(directory, "missing-status"), encoding)
+                  : fs.readFileString(file, encoding),
+          }),
+        );
+        const spawn = buildAntigravityAcpSpawnInput({
+          installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+          profile,
+          cwd: directory,
+        });
+        expect(spawn.command, `${limit}, Seccomp=${seccomp}`).toBe("/release/acp");
+        expect(profile.pythonExecutable).toBeUndefined();
+      }
     }),
   );
 });

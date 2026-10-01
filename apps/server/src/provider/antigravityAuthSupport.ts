@@ -297,6 +297,16 @@ const resolvePythonExecutable = Effect.fn("antigravityAuthSupport.resolvePythonE
   function* (platform: NodeJS.Platform, environment?: NodeJS.ProcessEnv) {
     if (platform !== "linux") return undefined;
     const fs = yield* FileSystem.FileSystem;
+    // ACP 1.1.1 reproduces SIGKILL with a zero hard realtime limit and no
+    // seccomp filter. Keep other environments on the direct launch path.
+    const limits = yield* fs
+      .readFileString("/proc/self/limits")
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (!/^Max realtime timeout\s+0\s+0\s+us[ \t]*$/m.test(limits)) return undefined;
+    const status = yield* fs
+      .readFileString("/proc/self/status")
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (!/^Seccomp:\s+0$/m.test(status)) return undefined;
     const path = yield* Path.Path;
     const candidates = ["python3"];
     for (const candidate of candidates) {
@@ -455,14 +465,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 /**
- * On Linux, Google's hermetic `agy_acp_server.par` requires seccomp confinement
- * to be active. In desktop/launcher environments without pre-existing seccomp
- * confinement, internal security checks fail and terminate the process with
- * SIGKILL. Installing an allow-all BPF seccomp filter before exec satisfies
- * this check and prevents the crash.
+ * ACP 1.1.1 can receive SIGKILL with RLIMIT_RTTIME=(0, 0) and no seccomp
+ * filter. An allow-all filter lets it start under the same limit. The runtime's
+ * internal cause is unknown; this is a workaround, not a syscall sandbox.
+ * Setup failures abort before exec. PR_SET_NO_NEW_PRIVS also prevents the
+ * runtime and its descendants from gaining privileges through setuid binaries.
  *
- * Using `os.execv` replaces the Python launcher process in-place with zero
- * lingering wrapper overhead or pipe indirection.
+ * os.execv preserves the PID, pipes, and direct signal delivery.
  */
 export const LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER = [
   "import ctypes, os, sys",
