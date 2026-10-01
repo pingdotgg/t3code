@@ -1,6 +1,6 @@
 import { describe, it, test } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Context, Effect, References, Scope, Stream } from "effect"
+import { Context, Effect, Option, References, Scope, Stream, Tracer } from "effect"
 import * as Layer from "effect/Layer"
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import {
@@ -36,6 +36,33 @@ describe("HttpEffect", () => {
   })
 
   describe("toWebHandler", () => {
+    test("skips the server span with the default tracer", async () => {
+      let hasParentSpan = false
+      const handler = HttpEffect.toWebHandler(Effect.gen(function*() {
+        hasParentSpan = Option.isSome(yield* Effect.serviceOption(Tracer.ParentSpan))
+        return HttpServerResponse.empty()
+      }))
+
+      await handler(new Request("http://localhost:3000/"))
+
+      strictEqual(hasParentSpan, false)
+    })
+
+    test("provides a parent span with a configured tracer", async () => {
+      let hasParentSpan = false
+      const tracer = Tracer.make({
+        span: (options) => new Tracer.NativeSpan(options)
+      })
+      const handler = HttpEffect.toWebHandler(Effect.gen(function*() {
+        hasParentSpan = Option.isSome(yield* Effect.serviceOption(Tracer.ParentSpan))
+        return HttpServerResponse.empty()
+      }))
+
+      await handler(new Request("http://localhost:3000/"), Context.make(Tracer.Tracer, tracer))
+
+      strictEqual(hasParentSpan, true)
+    })
+
     test("json", async () => {
       const handler = HttpEffect.toWebHandler(HttpServerResponse.json({ foo: "bar" }))
       const response = await handler(new Request("http://localhost:3000/"))
@@ -108,6 +135,48 @@ describe("HttpEffect", () => {
       strictEqual(streamFinalized < handlerFinalized, true)
     })
 
+    test("streaming HEAD closes the request scope", async () => {
+      let finalized = false
+      const handler = HttpEffect.toWebHandler(Effect.gen(function*() {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            finalized = true
+          })
+        )
+        return HttpServerResponse.stream(Stream.make("body").pipe(Stream.encodeText))
+      }))
+
+      await handler(new Request("http://localhost:3000/", { method: "HEAD" }))
+
+      strictEqual(finalized, true)
+    })
+
+    test.each([204, 205, 304])("status %i closes the request scope without starting the stream", async (status) => {
+      let finalized = false
+      let streamStarted = false
+      const handler = HttpEffect.toWebHandler(Effect.gen(function*() {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            finalized = true
+          })
+        )
+        return HttpServerResponse.stream(
+          Stream.fromEffect(Effect.sync(() => {
+            streamStarted = true
+            return new Uint8Array([1])
+          })),
+          { status }
+        )
+      }))
+
+      const response = await handler(new Request("http://localhost:3000/"))
+
+      strictEqual(response.status, status)
+      strictEqual(response.body, null)
+      strictEqual(streamStarted, false)
+      strictEqual(finalized, true)
+    })
+
     test("stream runtime", async () => {
       const handler = Effect.succeed(HttpServerResponse.stream(
         Stream.fromEffect(TestValue).pipe(Stream.map(String), Stream.encodeText)
@@ -158,6 +227,54 @@ describe("HttpEffect", () => {
     const response = await handler(new Request("http://localhost:3000/"), Env.context({ foo: "baz" }))
     deepStrictEqual(await response.json(), {
       foo: "baz"
+    })
+  })
+
+  describe("toWebHandlerLayer", () => {
+    test("builds the layer when the handler is created", async () => {
+      let builds = 0
+      const { dispose, handler } = HttpEffect.toWebHandlerLayer(
+        Effect.map(TestValue, (value) => HttpServerResponse.text(String(value))),
+        Layer.effect(
+          TestValue,
+          Effect.sync(() => {
+            builds++
+            return 420
+          })
+        )
+      )
+      strictEqual(builds, 1)
+      const response = await handler(new Request("http://localhost:3000/"))
+      strictEqual(await response.text(), "420")
+      strictEqual(builds, 1)
+      await dispose()
+    })
+
+    test("a failing layer rejects every request without an unhandled rejection", async () => {
+      const unhandled: Array<unknown> = []
+      const onUnhandled = (reason: unknown) => {
+        unhandled.push(reason)
+      }
+      process.on("unhandledRejection", onUnhandled)
+      try {
+        const error = new Error("boom")
+        const { handler } = HttpEffect.toWebHandlerLayer(
+          Effect.succeed(HttpServerResponse.empty()),
+          Layer.effectDiscard(Effect.fail(error))
+        )
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        for (let i = 0; i < 2; i++) {
+          const rejected = await handler(new Request("http://localhost:3000/")).then(
+            () => undefined,
+            (cause) => cause
+          )
+          strictEqual(rejected, error)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        deepStrictEqual(unhandled, [])
+      } finally {
+        process.off("unhandledRejection", onUnhandled)
+      }
     })
   })
 

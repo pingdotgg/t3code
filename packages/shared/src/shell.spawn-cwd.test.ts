@@ -1,22 +1,22 @@
-// @effect-diagnostics nodeBuiltinImport:off - exercise native executable lookup against controlled Windows paths.
-import * as NodeFS from "node:fs";
 import { it } from "@effect/vitest";
 import { afterEach, expect, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { HostProcessPlatform } from "./hostProcess.ts";
 import { resolveSpawnCommand } from "./shell.ts";
 
+const native = vi.hoisted(() => ({ statSync: vi.fn() }));
+
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
-  return { ...original, statSync: vi.fn(original.statSync) };
+  return { ...original, statSync: native.statSync };
 });
 
 afterEach(() => vi.restoreAllMocks());
 
 const mockExecutables = (paths: ReadonlyArray<string>) =>
-  vi.mocked(NodeFS.statSync).mockImplementation((path) => {
+  native.statSync.mockImplementation((path) => {
     if (!paths.includes(String(path))) throw new Error("ENOENT");
-    return { isFile: () => true } as NodeFS.Stats;
+    return { isFile: () => true };
   });
 
 it.effect("resolves relative Windows commands from the child directory", () =>

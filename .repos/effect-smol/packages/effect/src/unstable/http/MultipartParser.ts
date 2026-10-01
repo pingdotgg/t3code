@@ -3,6 +3,7 @@
  *
  * @since 4.0.0
  */
+import type * as ByteSize from "../../ByteSize.ts"
 import type * as HeadersParser from "./MultipartParser/HeadersParser.ts"
 import * as internal from "./MultipartParser/internal/multipart.ts"
 
@@ -61,9 +62,9 @@ export type BaseConfig = {
   readonly headers: Record<string, string>
   readonly isFile?: ((info: PartInfo) => boolean) | undefined
   readonly maxParts?: number | undefined
-  readonly maxTotalSize?: number | undefined
-  readonly maxPartSize?: number | undefined
-  readonly maxFieldSize?: number | undefined
+  readonly maxTotalSize?: ByteSize.Input | undefined
+  readonly maxPartSize?: ByteSize.Input | undefined
+  readonly maxFieldSize?: ByteSize.Input | undefined
 }
 
 /**

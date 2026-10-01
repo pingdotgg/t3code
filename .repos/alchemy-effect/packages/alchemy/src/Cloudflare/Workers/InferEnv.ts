@@ -58,8 +58,8 @@ export type GetBindingType<T> =
   // A named-entrypoint service binding (`Cloudflare.WorkerEntrypoint`).
   // Tested first: the marker *contains* a Worker, so the later Worker
   // branches must never see it.
-  T extends WorkerEntrypointBinding
-    ? Fetcher
+  T extends WorkerEntrypointBinding<infer Entrypoint>
+    ? Service<Entrypoint>
     : // A Container bound in `env` is a container-backed Durable Object class —
       // the runtime binding is the class's namespace. Must be tested BEFORE the
       // generic Effect unwrap: a Container declaration is itself an Effect.

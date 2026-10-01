@@ -118,7 +118,7 @@ function EnvironmentUpdateRow({
   let trailing: ReactNode;
   switch (status.kind) {
     case "loading":
-      trailing = <Spinner className="size-4 text-muted-foreground" />;
+      trailing = <Spinner size="md" tone="muted" />;
       break;
     case "success":
       trailing = <CheckIcon aria-hidden="true" className="size-4 text-success" />;

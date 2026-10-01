@@ -67,7 +67,7 @@ function DesktopUpdateDownloadingIcon({ percent }: { readonly percent: number | 
           cy="16"
           r={DOWNLOAD_PROGRESS_RADIUS}
           fill="none"
-          stroke="color-mix(in srgb, currentColor 22%, transparent)"
+          className="stroke-current/22"
           strokeWidth="1.5"
         />
         <circle

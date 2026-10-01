@@ -9,14 +9,13 @@
  *
  * @since 4.0.0
  */
-import type { Array } from "effect"
+import * as Arr from "effect/Array"
 import * as Channel from "effect/Channel"
 import * as Context from "effect/Context"
-import * as Deferred from "effect/Deferred"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
-import * as FiberSet from "effect/FiberSet"
 import * as Function from "effect/Function"
+import { constVoid } from "effect/Function"
 import * as Latch from "effect/Latch"
 import * as Layer from "effect/Layer"
 import * as Scope from "effect/Scope"
@@ -56,6 +55,17 @@ export class Conn extends Context.Service<Conn, Deno.Conn>()(
 /**
  * Adapts a Deno connection into an Effect socket.
  *
+ * **Details**
+ *
+ * Readers over TCP connections can upgrade in place with `Deno.startTls`.
+ * Deno exposes only the client side of this transition; Unix connections fail
+ * the upgrade with a `SocketUpgradeError`.
+ *
+ * `Deno.startTls` does not support client certificates, so `key`, `cert`,
+ * `passphrase`, and `requestCert` do not affect Deno upgrades. Setting
+ * `rejectUnauthorized` to `false` disables hostname verification only;
+ * certificate-chain validation still applies.
+ *
  * @category constructors
  * @since 4.0.0
  */
@@ -66,89 +76,140 @@ export const fromConn = <RO>(
     let current: {
       readonly conn: Deno.Conn
       readonly writer: WritableStreamDefaultWriter<Uint8Array>
+      readonly fail: (error: Socket.SocketError) => void
     } | undefined
     let tearingDown = false
     let writeClosed = false
     const latch = Latch.makeUnsafe(false)
     const openServices = fiber.context as Context.Context<RO>
 
-    const run = <R, E, _>(handler: (_: Uint8Array) => Effect.Effect<_, E, R> | void, options?: {
-      readonly onOpen?: Effect.Effect<void> | undefined
-    }) =>
-      Effect.scopedWith(Effect.fnUntraced(function*(scope) {
-        const fiberSet = yield* FiberSet.make<any, E | Socket.SocketError>().pipe(
-          Scope.provide(scope)
-        )
-        let conn: Deno.Conn | undefined
-        yield* Scope.addFinalizer(
-          scope,
-          Effect.suspend(() => {
-            tearingDown = true
-            return conn === undefined ? Effect.void : close(conn)
-          })
-        )
-        conn = yield* Scope.provide(open, scope)
-        const reader = conn.readable.getReader()
-        const writer = conn.writable.getWriter()
-        const runFork = yield* Effect.provideService(FiberSet.runtime(fiberSet)<R>(), Conn, conn)
-
-        current = { conn, writer }
-        tearingDown = false
-        if (writeClosed) {
-          writeClosed = false
-          writer.releaseLock()
-          yield* closeWrite(conn)
-        }
-        latch.openUnsafe()
-
-        const read = Effect.tryPromise(
-          () => reader.read()
-        ).pipe(
-          Effect.catchIf(
-            (error) => tearingDown && isTeardownError(error.cause),
-            () => Effect.succeed({ done: true, value: undefined } as ReadableStreamReadDoneResult<Uint8Array>)
-          ),
-          Effect.mapError((error) =>
-            new Socket.SocketError({
-              reason: new Socket.SocketReadError({ cause: error.cause })
-            })
-          )
-        )
-        const readLoop: Effect.Effect<void, Socket.SocketError> = Effect.suspend(() =>
-          Effect.flatMap(read, ({ done, value }) => {
-            if (done) {
-              Deferred.doneUnsafe(fiberSet.deferred, Effect.void)
-              return Effect.void
-            }
-            const result = handler(value)
-            if (Effect.isEffect(result)) {
-              runFork(result)
-            }
-            return readLoop
-          })
-        )
-        yield* FiberSet.run(fiberSet, readLoop)
-
-        if (options?.onOpen) {
-          yield* options.onOpen
-        }
-        return yield* FiberSet.join(fiberSet)
-      })).pipe(
-        Effect.updateContext((input: Context.Context<R>) => Context.merge(openServices, input)),
-        Effect.onExit(() =>
-          Effect.sync(() => {
-            tearingDown = true
-            latch.closeUnsafe()
-            current = undefined
-          })
-        )
+    const reader: Socket.Socket["reader"] = Effect.gen(function*() {
+      const scope = yield* Effect.scope
+      let conn: Deno.Conn | undefined
+      let upgradeAvailable = true
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.suspend(() => {
+          tearingDown = true
+          latch.closeUnsafe()
+          current = undefined
+          upgradeAvailable = false
+          return conn === undefined ? Effect.void : close(conn)
+        })
       )
+      conn = yield* Scope.provide(open, scope)
+      let readerHandle = conn.readable.getReader()
+      let writerHandle = conn.writable.getWriter()
+
+      let error: Socket.SocketError | undefined
+      const fail = (err: Socket.SocketError) => {
+        if (error === undefined) error = err
+        tearingDown = true
+        readerHandle.cancel().catch(constVoid)
+      }
+      current = {
+        conn,
+        writer: writerHandle,
+        fail
+      }
+      tearingDown = false
+      if (writeClosed) {
+        writeClosed = false
+        writerHandle.releaseLock()
+        yield* closeWrite(conn)
+      }
+      latch.openUnsafe()
+
+      const read = Effect.tryPromise({
+        try: () => readerHandle.read(),
+        catch: (cause) =>
+          tearingDown && isTeardownError(cause)
+            ? error ?? new Socket.SocketError({
+              reason: new Socket.SocketCloseError({ code: 1000 })
+            })
+            : new Socket.SocketError({
+              reason: new Socket.SocketReadError({ cause })
+            })
+      })
+      const upgrade: Socket.Reader["upgrade"] = (options = {}) =>
+        Effect.suspend(() => {
+          if (!upgradeAvailable) {
+            return Effect.fail(
+              new Socket.SocketError({
+                reason: new Socket.SocketUpgradeError({
+                  cause: new Error("socket is already upgraded or closed")
+                })
+              })
+            )
+          }
+          if (conn!.remoteAddr.transport !== "tcp") {
+            return Effect.fail(
+              new Socket.SocketError({
+                reason: new Socket.SocketUpgradeError({
+                  cause: new Error("TLS upgrade requires a TCP connection")
+                })
+              })
+            )
+          }
+          upgradeAvailable = false
+          const raw = conn as Deno.TcpConn
+          readerHandle.releaseLock()
+          writerHandle.releaseLock()
+          return Effect.tryPromise({
+            try: async () => {
+              const tls = await Deno.startTls(raw, {
+                hostname: raw.remoteAddr.hostname,
+                caCerts: options.ca === undefined ? [] : toStrings(options.ca),
+                unsafelyDisableHostnameVerification: options.rejectUnauthorized === false,
+                ...(options.alpnProtocols === undefined ? {} : { alpnProtocols: [...options.alpnProtocols] })
+              })
+              await tls.handshake()
+              return tls
+            },
+            catch: (cause) =>
+              new Socket.SocketError({
+                reason: new Socket.SocketUpgradeError({ cause })
+              })
+          }).pipe(
+            Effect.tap((tls) =>
+              Effect.sync(() => {
+                conn = tls
+                readerHandle = tls.readable.getReader()
+                writerHandle = tls.writable.getWriter()
+                current = { conn: tls, writer: writerHandle, fail }
+              })
+            ),
+            Effect.tapError((upgradeError) => Effect.sync(() => fail(upgradeError))),
+            Effect.asVoid
+          )
+        })
+      return {
+        pull: Effect.suspend(() => {
+          if (error !== undefined) return Effect.fail(error)
+          return Effect.flatMap(read, ({ done, value }) =>
+            done
+              ? Effect.fail(
+                error ?? new Socket.SocketError({
+                  reason: new Socket.SocketCloseError({ code: 1000 })
+                })
+              )
+              : Effect.succeed([value] as const))
+        }),
+        upgrade
+      }
+    }).pipe(
+      Effect.updateContext((input: Context.Context<Scope.Scope>) => Context.merge(openServices, input))
+    ) as Socket.Socket["reader"]
 
     const write = (chunk: Uint8Array | string | Socket.CloseEvent) =>
       latch.whenOpen(Effect.suspend(() => {
-        const { conn, writer } = current!
+        const { conn, fail, writer } = current!
         if (Socket.isCloseEvent(chunk)) {
-          tearingDown = true
+          fail(
+            new Socket.SocketError({
+              reason: new Socket.SocketCloseError({ code: chunk.code, closeReason: chunk.reason })
+            })
+          )
           return close(conn)
         }
         const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk
@@ -161,10 +222,27 @@ export const fromConn = <RO>(
         })
       }))
 
-    const writer = Effect.acquireRelease(
+    const writeAll = (chunks: Arr.NonEmptyReadonlyArray<Uint8Array | string>) =>
+      latch.whenOpen(Effect.tryPromise({
+        try: async () => {
+          const { writer } = current!
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i]
+            const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk
+            await writer.ready
+            await writer.write(bytes)
+          }
+        },
+        catch: (cause) =>
+          new Socket.SocketError({
+            reason: new Socket.SocketWriteError({ cause })
+          })
+      }))
+
+    const writer: Socket.Socket["writer"] = Effect.acquireRelease(
       Effect.sync(() => {
         writeClosed = false
-        return write
+        return { write, writeAll }
       }),
       () =>
         Effect.suspend(() => {
@@ -178,11 +256,7 @@ export const fromConn = <RO>(
         })
     )
 
-    return Effect.succeed(Socket.make({
-      run,
-      runRaw: run,
-      writer
-    }))
+    return Effect.succeed(Socket.make({ reader, writer }))
   })
 
 /**
@@ -261,10 +335,10 @@ export const makeTcp = (options: TcpOptions): Effect.Effect<Socket.Socket> => {
 export const makeTcpChannel = <IE = never>(
   options: ConnectOptions
 ): Channel.Channel<
-  Array.NonEmptyReadonlyArray<Uint8Array>,
+  Arr.NonEmptyReadonlyArray<Uint8Array>,
   Socket.SocketError | IE,
   void,
-  Array.NonEmptyReadonlyArray<Uint8Array | string | Socket.CloseEvent>,
+  Arr.NonEmptyReadonlyArray<Uint8Array | string | Socket.CloseEvent>,
   IE
 > => Channel.unwrap(Effect.map(makeTcp(options), Socket.toChannelWith<IE>()))
 
@@ -286,7 +360,9 @@ export const layerTcp: (options: ConnectOptions) => Layer.Layer<
  * @since 4.0.0
  */
 export const layerWebSocket = (url: string, options?: {
-  readonly closeCodeIsError?: (code: number) => boolean
+  readonly openTimeout?: Duration.Input | undefined
+  readonly protocols?: string | globalThis.Array<string> | undefined
+  readonly highWaterMark?: number | undefined
 }): Layer.Layer<Socket.Socket> =>
   Layer.effect(Socket.Socket, Socket.makeWebSocket(url, options)).pipe(
     Layer.provide(layerWebSocketConstructor)
@@ -302,6 +378,10 @@ export const layerWebSocketConstructor: Layer.Layer<Socket.WebSocketConstructor>
   Socket.layerWebSocketConstructorGlobal
 
 const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+const toStrings = (values: string | Uint8Array | ReadonlyArray<string | Uint8Array>): Array<string> =>
+  Arr.map(Arr.ensure(values), (value) => typeof value === "string" ? value : decoder.decode(value))
 
 const isBadResource = (cause: unknown): cause is Deno.errors.BadResource => cause instanceof Deno.errors.BadResource
 

@@ -16,9 +16,8 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, useCallback } from "react";
-import type { VariantProps } from "class-variance-authority";
-import { ZapIcon } from "lucide-react";
-import { buttonVariants } from "../ui/button";
+import { BrainIcon, ZapIcon } from "lucide-react";
+import { UltrafastIcon } from "../Icons";
 import {
   Menu,
   MenuGroup,
@@ -32,13 +31,14 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerControl,
   ComposerControlChevron,
   ComposerControlIcon,
   type ComposerControlSize,
 } from "./ComposerControl";
-import { composerFloatingLayerProps } from "./composerEventScope";
+import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
@@ -94,10 +94,7 @@ const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
   return (
-    <Badge
-      variant="outline"
-      className="inline-flex h-4 w-fit min-w-0 items-center justify-center gap-0 border-border/70 bg-muted/60 px-1.5 py-0 font-semibold text-[10px] text-muted-foreground leading-none sm:h-4"
-    >
+    <Badge variant="outline" size="sm" className="min-w-0">
       Default
     </Badge>
   );
@@ -279,7 +276,6 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
-  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
   isComposerOwned?: boolean;
 }
@@ -479,26 +475,22 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
 });
 
 /**
- * Build the traits trigger's text label plus whether the fast-mode bolt should
- * render. Claude and Cursor expose fast mode as a boolean, while Codex exposes
- * it through the Standard/Fast service tiers. In either form, fast mode is a
- * lightning bolt when on and nothing at all when off. The one exception is when
- * fast mode is the only trait, where a bare bolt (or bare chevron) would leave
- * the trigger unreadable.
+ * Fast mode uses one bolt; Codex Ultrafast uses two. Keep a text label when
+ * speed is the only trait so the trigger remains readable.
  */
 export function buildTraitsTriggerDisplay(input: {
   provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
-}): { label: string; showFastModeIcon: boolean } {
+}): { label: string; speedIcon: "fast" | "ultrafast" | null } {
   let fastModeFallbackLabel: string | null = null;
-  let fastModeEnabled = false;
+  let speedIcon: "fast" | "ultrafast" | null = null;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
-      fastModeEnabled = descriptor.currentValue === true;
-      fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal";
+      speedIcon = descriptor.currentValue === true ? "fast" : null;
+      fastModeFallbackLabel = speedIcon ? "Fast" : "Normal";
       continue;
     }
     if (
@@ -508,11 +500,20 @@ export function buildTraitsTriggerDisplay(input: {
     ) {
       const currentValue = getProviderOptionCurrentValue(descriptor);
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
-      if (fastTier && (currentValue === "default" || currentValue === fastTier.id)) {
-        fastModeEnabled = currentValue === fastTier.id;
+      const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
+      if (
+        ((fastTier || ultrafastTier) && currentValue === "default") ||
+        (fastTier && currentValue === fastTier.id) ||
+        (ultrafastTier && currentValue === ultrafastTier.id)
+      ) {
+        speedIcon =
+          ultrafastTier && currentValue === ultrafastTier.id
+            ? "ultrafast"
+            : fastTier && currentValue === fastTier.id
+              ? "fast"
+              : null;
         fastModeFallbackLabel =
-          descriptor.options.find(({ id }) => id === currentValue)?.label ??
-          (fastModeEnabled ? "Fast" : "Normal");
+          descriptor.options.find(({ id }) => id === currentValue)?.label ?? "Normal";
         continue;
       }
     }
@@ -531,9 +532,9 @@ export function buildTraitsTriggerDisplay(input: {
   // off an empty label list alone would also catch descriptors that resolved to
   // no label at all, printing a bogus "Normal" for a model without fast mode.
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel, showFastModeIcon: false };
+    return { label: fastModeFallbackLabel, speedIcon: null };
   }
-  return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
+  return { label: labels.join(" · "), speedIcon };
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
@@ -546,7 +547,6 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
-  triggerVariant,
   triggerClassName,
   isComposerOwned,
   size = "sm",
@@ -557,6 +557,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     size?: ComposerControlSize;
     hidden?: boolean;
   }) {
+  const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
@@ -582,16 +583,18 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+  const { label: triggerLabel, speedIcon } = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
   });
-  const fastModeIcon = showFastModeIcon ? (
+  const speedLabel = speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on";
+  const accessibleLabel = speedIcon ? `${triggerLabel}, ${speedLabel}` : triggerLabel;
+  const fastModeIcon = speedIcon ? (
     <>
       <ComposerControlIcon
-        icon={ZapIcon}
+        icon={speedIcon === "ultrafast" ? UltrafastIcon : ZapIcon}
         size={size}
         className={cn(
           "fill-current opacity-80",
@@ -602,7 +605,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               : "text-foreground",
         )}
       />
-      <span className="sr-only">Fast mode on</span>
+      <span className="sr-only">{speedLabel}</span>
     </>
   ) : null;
 
@@ -615,38 +618,65 @@ export const TraitsPicker = memo(function TraitsPicker({
         setIsMenuOpen(open);
       }}
     >
-      <MenuTrigger
-        render={
-          <ComposerControl
-            variant={triggerVariant ?? "ghost"}
-            size={size}
-            className={cn(
-              isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                : "shrink-0 whitespace-nowrap",
-              triggerClassName,
-            )}
-          />
-        }
-      >
-        {isCodexStyle ? (
-          // The label truncates itself; clipping the wrapper too would cut off
-          // the chevron, whose negative end margin overhangs the wrapper edge.
-          <span
-            className={cn("flex min-w-0 w-full items-center", size === "xs" ? "gap-1" : "gap-1.5")}
-          >
-            {fastModeIcon}
-            <span className="min-w-0 truncate">{triggerLabel}</span>
-            <ComposerControlChevron size={size} />
-          </span>
-        ) : (
-          <>
-            {fastModeIcon}
-            <span>{triggerLabel}</span>
-            <ComposerControlChevron size={size} />
-          </>
-        )}
-      </MenuTrigger>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              render={
+                <ComposerControl
+                  aria-label={accessibleLabel}
+                  data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
+                  size={size}
+                  className={cn(
+                    isCodexStyle
+                      ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                      : "shrink-0 whitespace-nowrap",
+                    triggerClassName,
+                  )}
+                />
+              }
+            />
+          }
+        >
+          {isCodexStyle ? (
+            // The label truncates itself; clipping the wrapper too would cut off
+            // the chevron, whose negative end margin overhangs the wrapper edge.
+            <span
+              className={cn(
+                "flex min-w-0 w-full items-center",
+                size === "xs" ? "gap-1" : "gap-1.5",
+              )}
+            >
+              {fastModeIcon ?? (
+                <span
+                  data-composer-control-compact-icon
+                  className="pointer-events-none invisible absolute"
+                >
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
+                </span>
+              )}
+              <span data-composer-control-label className="min-w-0 truncate">
+                {triggerLabel}
+              </span>
+              <ComposerControlChevron size={size} />
+            </span>
+          ) : (
+            <>
+              {fastModeIcon ?? (
+                <span
+                  data-composer-control-compact-icon
+                  className="pointer-events-none invisible absolute"
+                >
+                  <ComposerControlIcon icon={BrainIcon} size={size} />
+                </span>
+              )}
+              <span data-composer-control-label>{triggerLabel}</span>
+              <ComposerControlChevron size={size} />
+            </>
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{accessibleLabel}</TooltipPopup>
+      </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent
           provider={provider}
