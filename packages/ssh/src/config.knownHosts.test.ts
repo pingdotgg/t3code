@@ -22,16 +22,25 @@ it.effect("preserves distinct known-host ports and IPv6 destinations", () =>
         "[host.example.com]:2222 ssh-rsa BBBB",
         "[2001:db8::1]:2200 ssh-ed25519 AAAA",
         "[invalid.example.com]:65536 ssh-ed25519 AAAA",
+        "[invalid.example.com]:abc ssh-ed25519 AAAA",
+        "[invalid.example.com]: ssh-ed25519 AAAA",
+        "invalid.example.com:70000x ssh-ed25519 AAAA",
+        "invalid.example.com:abc ssh-ed25519 AAAA",
+        "invalid.example.com: ssh-ed25519 AAAA",
+        "plain.example.com:2201 ssh-ed25519 AAAA",
+        "2001:db8::2 ssh-ed25519 AAAA",
       ].join("\n"),
     );
     const hosts = yield* discoverSshHosts({ homeDir });
     assert.deepEqual(
       hosts.map(({ alias, hostname, port }) => ({ alias, hostname, port })),
       [
+        { alias: "2001:db8::2", hostname: "2001:db8::2", port: null },
         { alias: "host.example.com", hostname: "host.example.com", port: null },
         { alias: "ssh://[2001:db8::1]:2200", hostname: "2001:db8::1", port: 2200 },
         { alias: "ssh://host.example.com:2222", hostname: "host.example.com", port: 2222 },
         { alias: "ssh://host.example.com:2223", hostname: "host.example.com", port: 2223 },
+        { alias: "ssh://plain.example.com:2201", hostname: "plain.example.com", port: 2201 },
       ],
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

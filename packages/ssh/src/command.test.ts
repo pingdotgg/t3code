@@ -8,11 +8,13 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
+  collectProcessOutput,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
   runSshCommand,
@@ -86,7 +88,7 @@ describe("ssh command", () => {
     Effect.gen(function* () {
       for (const [alias, hostname, expected] of [
         ["ssh://host.example:2222", "host.example", "ssh://alice@host.example:2222"],
-        ["ssh://[::1]:2222", "::1", "ssh://alice@[::1]:2222"],
+        ["ssh://[::1]:2222", "::1", "alice@::1"],
       ]) {
         const resolved = parseSshResolveOutput(
           alias!,
@@ -96,6 +98,31 @@ describe("ssh command", () => {
         assert.include(baseSshArgs(resolved), "2222");
       }
     }),
+  );
+
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "passes discovered IPv6 destinations to OpenSSH without losing the user or port",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        for (const username of [null, "developer"]) {
+          const target = {
+            alias: "ssh://[2001:db8::1]:2222",
+            hostname: "2001:db8::1",
+            username,
+            port: null,
+          };
+          const hostSpec = yield* buildSshHostSpecEffect(target);
+          const child = yield* spawner.spawn(
+            ChildProcess.make("ssh", ["-F", "/dev/null", "-G", ...baseSshArgs(target), hostSpec]),
+          );
+          const stdout = yield* collectProcessOutput(child.stdout);
+          assert.equal(Number(yield* child.exitCode), 0);
+          assert.include(stdout, "port 2222\n");
+          assert.include(stdout, "hostname 2001:db8::1\n");
+          if (username) assert.include(stdout, `user ${username}\n`);
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("builds interactive ssh args without forcing batch mode", () =>

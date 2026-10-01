@@ -155,21 +155,6 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   return [...aliases].toSorted((left, right) => left.localeCompare(right));
 });
 
-function normalizeKnownHostsHostname(rawHost: string): string {
-  const bracketMatch = /^\[([^\]]+)\]:(\d+)$/u.exec(rawHost);
-  if (bracketMatch?.[1]) {
-    return bracketMatch[1];
-  }
-
-  if (!rawHost.includes(":")) {
-    return rawHost;
-  }
-
-  const firstColonIndex = rawHost.indexOf(":");
-  const lastColonIndex = rawHost.lastIndexOf(":");
-  return firstColonIndex === lastColonIndex ? rawHost.slice(0, lastColonIndex) : rawHost;
-}
-
 function parseKnownHostsTargets(raw: string): ReadonlyArray<DesktopDiscoveredSshHost> {
   const targets = new Map<string, DesktopDiscoveredSshHost>();
 
@@ -188,12 +173,13 @@ function parseKnownHostsTargets(raw: string): ReadonlyArray<DesktopDiscoveredSsh
     }
 
     for (const rawHost of hostField.split(",")) {
-      const host = normalizeKnownHostsHostname(rawHost).trim();
+      const withPort = /^\[([^\]]+)\]:(.*)$/u.exec(rawHost) ?? /^([^:]+):([^:]*)$/u.exec(rawHost);
+      const host = (withPort?.[1] ?? rawHost).trim();
       if (host.length === 0 || hasSshPattern(host)) {
         continue;
       }
-      const portText =
-        /^\[[^\]]+\]:(\d+)$/.exec(rawHost)?.[1] ?? /^[^:]+:(\d+)$/.exec(rawHost)?.[1];
+      const portText = withPort?.[2];
+      if (portText !== undefined && !/^\d+$/u.test(portText)) continue;
       const port = portText === undefined ? null : Number(portText);
       if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) continue;
       const alias =

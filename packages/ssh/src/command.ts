@@ -84,10 +84,17 @@ function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
   if (destination.length === 0) {
     throw new Error("SSH target is missing its alias/hostname.");
   }
-  if (target.username && destination.startsWith("ssh://")) {
+  if (destination.startsWith("ssh://")) {
     const uri = new URL(destination);
-    uri.username = target.username;
-    return uri.toString();
+    if (uri.hostname.startsWith("[")) {
+      const username = target.username ?? (uri.username ? decodeURIComponent(uri.username) : null);
+      const hostname = uri.hostname.slice(1, -1);
+      return username ? `${username}@${hostname}` : hostname;
+    }
+    if (target.username) {
+      uri.username = target.username;
+      return uri.toString();
+    }
   }
   return target.username ? `${target.username}@${destination}` : destination;
 }
@@ -107,12 +114,14 @@ export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly batchMode?: "yes" | "no" },
 ): string[] {
+  const destination = target.alias.trim() || target.hostname.trim();
+  const port = target.port ?? (destination.startsWith("ssh://") ? new URL(destination).port : null);
   return [
     "-o",
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
-    ...(target.port !== null ? ["-p", String(target.port)] : []),
+    ...(port ? ["-p", String(port)] : []),
   ];
 }
 
