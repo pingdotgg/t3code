@@ -37,13 +37,21 @@ struct FileInfo {
     identity: (u64, u128),
 }
 
+// `st_blocks` counts 512-byte units regardless of the filesystem block size.
+#[cfg(unix)]
+fn block_bytes(blocks: u64) -> io::Result<u64> {
+    blocks
+        .checked_mul(512)
+        .ok_or_else(|| io::Error::other("file allocation size overflows u64"))
+}
+
 #[cfg(unix)]
 fn file_info(path: &Path) -> io::Result<FileInfo> {
     use std::os::unix::fs::MetadataExt;
     let metadata = fs::symlink_metadata(path)?;
     Ok(FileInfo {
         directory: metadata.is_dir(),
-        bytes: metadata.blocks() * 512,
+        bytes: block_bytes(metadata.blocks())?,
         links: metadata.nlink(),
         identity: (metadata.dev(), u128::from(metadata.ino())),
     })

@@ -153,12 +153,16 @@ export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const observers = yield* TxRef.make({ count: 0, requestedAt: 0 });
+  const interested = (state: { count: number; requestedAt: number }, now: number) =>
+    state.count > 0 || now - state.requestedAt < 30_000;
+  const hasInterest = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    return interested(yield* TxRef.get(observers), now);
+  });
   const awaitInterest = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     yield* TxRef.get(observers).pipe(
-      Effect.tap((state) =>
-        state.count > 0 || now - state.requestedAt < 30_000 ? Effect.void : Effect.txRetry,
-      ),
+      Effect.tap((state) => (interested(state, now) ? Effect.void : Effect.txRetry)),
       Effect.tx,
     );
   });
@@ -591,24 +595,31 @@ export const make = Effect.gen(function* () {
   const measurementWorker = yield* makeDrainableWorker((folder: string) =>
     Effect.gen(function* () {
       const measurement = measurements.get(folder)!;
-      yield* awaitInterest;
-      yield* worktreeSize.measure(folder).pipe(
-        Stream.runForEach((progress) =>
-          Effect.gen(function* () {
-            measurement.bytes = progress.bytes;
-            measurement.done = progress.done;
-            yield* publish;
-            yield* Effect.yieldNow;
-            if (!progress.done) yield* awaitInterest;
-          }),
-        ),
-        Effect.catch(() =>
-          Effect.sync(() => {
-            measurement.failed = true;
-            measurement.done = true;
-          }),
-        ),
-      );
+      // A scan that loses its observers is closed rather than paused, so no scanner
+      // process or directory handle outlives interest. It restarts once interest returns.
+      let abandoned: boolean;
+      do {
+        abandoned = false;
+        yield* awaitInterest;
+        yield* worktreeSize.measure(folder).pipe(
+          Stream.runForEachWhile((progress) =>
+            Effect.gen(function* () {
+              measurement.bytes = progress.bytes;
+              measurement.done = progress.done;
+              yield* publish;
+              yield* Effect.yieldNow;
+              abandoned = !progress.done && !(yield* hasInterest);
+              return !abandoned;
+            }),
+          ),
+          Effect.catch(() =>
+            Effect.sync(() => {
+              measurement.failed = true;
+              measurement.done = true;
+            }),
+          ),
+        );
+      } while (abandoned);
       measurement.at = yield* Clock.currentTimeMillis;
       yield* measurementsPending() ? publish : publishImmediately;
     }),

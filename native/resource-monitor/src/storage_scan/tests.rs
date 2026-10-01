@@ -330,6 +330,11 @@ fn rejects_inexact_byte_totals_including_cross_worker_sums_and_hardlinks() {
     assert_eq!(add_bytes(MAX_SAFE_BYTES - 1, 1).unwrap(), MAX_SAFE_BYTES);
     assert!(add_bytes(MAX_SAFE_BYTES, 1).is_err());
     assert!(add_bytes(1, u64::MAX).is_err());
+    #[cfg(unix)]
+    {
+        assert_eq!(block_bytes(8).unwrap(), 4096);
+        assert!(block_bytes(u64::MAX / 512 + 1).is_err());
+    }
     let fixture = Fixture::new();
     for hardlink in [false, true] {
         let mut scan = Scan::new(fixture.0.clone());

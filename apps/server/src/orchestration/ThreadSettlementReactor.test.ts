@@ -1560,6 +1560,7 @@ describe("storage cleanup", () => {
     "preview-days",
     "preview-project-queued",
     "preview-paused",
+    "preview-abandoned",
     "preview-discovery",
     "preview-activity",
     "none",
@@ -1715,6 +1716,9 @@ describe("storage cleanup", () => {
           let fetches = 0;
           let measuredBytes = 4096;
           let pauseOnce = false;
+          let scans = 0;
+          let openScans = 0;
+          const scanClosed = yield* Deferred.make<void>();
           const scanPaused = yield* Deferred.make<void>();
           const scanReleased = yield* Deferred.make<void>();
           const classificationEntered = yield* Deferred.make<void>();
@@ -1764,7 +1768,30 @@ describe("storage cleanup", () => {
                 Layer.succeed(ServerConfig, config),
                 Layer.succeed(ServerSettingsService, settingsService),
                 Layer.succeed(WorktreeSize, {
-                  measure: () => Stream.succeed({ bytes: measuredBytes, done: true }),
+                  measure: () =>
+                    protection === "preview-abandoned"
+                      ? Stream.unwrap(
+                          Effect.gen(function* () {
+                            const scan = ++scans;
+                            yield* Effect.acquireRelease(
+                              Effect.sync(() => openScans++),
+                              () =>
+                                Effect.sync(() => openScans--).pipe(
+                                  Effect.andThen(Deferred.succeed(scanClosed, undefined)),
+                                ),
+                            );
+                            // The first scan outlives the request's grace period mid-walk.
+                            return Stream.fromEffect(
+                              (scan === 1
+                                ? TestClock.setTime(Date.parse(NOW) + 31_000)
+                                : Effect.void
+                              ).pipe(Effect.as({ bytes: 1024, done: false })),
+                            ).pipe(
+                              Stream.concat(Stream.succeed({ bytes: measuredBytes, done: true })),
+                            );
+                          }),
+                        )
+                      : Stream.succeed({ bytes: measuredBytes, done: true }),
                 }),
                 Layer.succeed(FileSystem.FileSystem, {
                   ...fs,
@@ -2116,6 +2143,21 @@ describe("storage cleanup", () => {
             assert.strictEqual(finished.scanning, false);
             assert.strictEqual(finished.total.measured, 1);
             assert.isAbove(finished.total.bytes, 0);
+            assert.deepStrictEqual(removals, []);
+            return;
+          }
+          if (protection === "preview-abandoned") {
+            assert.strictEqual((yield* cleanup.preview({ projectId: null })).scanning, true);
+            // Without observers the partial scan is closed, not left holding its scanner.
+            yield* Deferred.await(scanClosed);
+            assert.strictEqual(openScans, 0);
+            assert.strictEqual(scans, 1);
+            const finished = yield* settledPreview({ projectId: null });
+            assert.strictEqual(scans, 2);
+            assert.strictEqual(openScans, 0);
+            assert.strictEqual(finished.scanning, false);
+            assert.strictEqual(finished.total.measured, 1);
+            assert.strictEqual(finished.total.bytes, measuredBytes);
             assert.deepStrictEqual(removals, []);
             return;
           }
