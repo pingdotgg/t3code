@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as OpenApi from "effect/unstable/httpapi/OpenApi";
 import * as Schema from "effect/Schema";
 
-import { RelayApi, RelayDeviceRegistrationRequest } from "./relay.ts";
+import {
+  RelayApi,
+  RelayDeviceRegistrationRequest,
+  RelayEnvironmentLinkUnavailableError,
+} from "./relay.ts";
 
 const decodeDevice = Schema.decodeUnknownExit(RelayDeviceRegistrationRequest);
 const device = {
@@ -45,6 +49,30 @@ describe("mobile device platforms", () => {
         pushToStartToken: "apple-token",
       })._tag,
     ).toBe("Failure");
+  });
+});
+
+describe("relay provisioning error compatibility", () => {
+  const error = {
+    _tag: "RelayEnvironmentLinkUnavailableError",
+    code: "environment_link_unavailable",
+    reason: "managed_endpoint_provisioning_failed",
+    traceId: "trace-1",
+  };
+
+  it("decodes errors from older relays that omit the provisioning stage", () => {
+    expect(
+      Schema.decodeUnknownSync(RelayEnvironmentLinkUnavailableError)(error).provisioningStage,
+    ).toBeUndefined();
+  });
+
+  it("preserves a stage introduced by a newer relay", () => {
+    expect(
+      Schema.decodeUnknownSync(RelayEnvironmentLinkUnavailableError)({
+        ...error,
+        provisioningStage: "future-provisioning-stage",
+      }).provisioningStage,
+    ).toBe("future-provisioning-stage");
   });
 });
 
