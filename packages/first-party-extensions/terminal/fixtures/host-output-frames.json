@@ -1,0 +1,149 @@
+{
+  "evictedQueryClaim": {
+    "frames": [
+      {
+        "type": "snapshot",
+        "value": {
+          "kind": "snapshot",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "status": "running",
+          "contents": "",
+          "retainedByteLength": 0,
+          "truncated": false,
+          "clearGeneration": 0,
+          "contentsUnitStart": 0,
+          "boundarySequence": 1
+        }
+      },
+      {
+        "type": "data",
+        "value": {
+          "kind": "output",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "sequence": 2,
+          "chunkIndex": 0,
+          "chunkCount": 1,
+          "data": "\u001b[6n"
+        }
+      },
+      {
+        "type": "data",
+        "value": {
+          "kind": "output",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "sequence": 3,
+          "chunkIndex": 0,
+          "chunkCount": 1,
+          "data": "\u001bZ\n"
+        }
+      },
+      {
+        "type": "snapshot",
+        "value": {
+          "kind": "snapshot",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "status": "running",
+          "contents": "x\u001bZ\nz\nz\nz\nz\n",
+          "retainedByteLength": 12,
+          "truncated": false,
+          "clearGeneration": 0,
+          "contentsUnitStart": 7,
+          "boundarySequence": 4
+        }
+      }
+    ]
+  },
+  "evictedQueryClaimInertTail": {
+    "frames": [
+      {
+        "type": "snapshot",
+        "value": {
+          "kind": "snapshot",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "status": "running",
+          "contents": "",
+          "retainedByteLength": 0,
+          "truncated": false,
+          "clearGeneration": 0,
+          "contentsUnitStart": 0,
+          "boundarySequence": 1
+        }
+      },
+      {
+        "type": "data",
+        "value": {
+          "kind": "output",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "sequence": 2,
+          "chunkIndex": 0,
+          "chunkCount": 1,
+          "data": "\u001b[6n"
+        }
+      },
+      {
+        "type": "data",
+        "value": {
+          "kind": "output",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "sequence": 3,
+          "chunkIndex": 0,
+          "chunkCount": 1,
+          "data": "\u001bZ\n"
+        }
+      },
+      {
+        "type": "snapshot",
+        "value": {
+          "kind": "snapshot",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "status": "running",
+          "contents": "xyz\nz\nz\nz\nz\n",
+          "retainedByteLength": 12,
+          "truncated": false,
+          "clearGeneration": 0,
+          "contentsUnitStart": 7,
+          "boundarySequence": 4
+        }
+      }
+    ]
+  },
+  "subscriptionSplitModeSetter": {
+    "frames": [
+      {
+        "type": "snapshot",
+        "value": {
+          "kind": "snapshot",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "status": "running",
+          "contents": "\u001b[?2004",
+          "retainedByteLength": 7,
+          "truncated": false,
+          "clearGeneration": 0,
+          "contentsUnitStart": 0,
+          "boundarySequence": 2
+        }
+      },
+      {
+        "type": "data",
+        "value": {
+          "kind": "output",
+          "terminalId": "term-1",
+          "streamEpoch": "host-epoch-1",
+          "sequence": 3,
+          "chunkIndex": 0,
+          "chunkCount": 1,
+          "data": "h"
+        }
+      }
+    ]
+  }
+}

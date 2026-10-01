@@ -1045,6 +1045,40 @@ importers:
         specifier: 7.8.5
         version: 7.8.5
 
+  packages/first-party-extensions/terminal:
+    dependencies:
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../extension-sdk
+      '@t3tools/ghostty-terminal':
+        specifier: workspace:*
+        version: link:../../ghostty-terminal
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.3.0
+      '@types/react-test-renderer':
+        specifier: 19.1.0
+        version: 19.1.0
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      react-test-renderer:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.3.0)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/ghostty-terminal:
     devDependencies:
       vite-plus:
@@ -20337,6 +20371,12 @@ snapshots:
   react-test-renderer@19.2.6(react@19.2.6):
     dependencies:
       react: 19.2.6
+      react-is: 19.2.7
+      scheduler: 0.27.0
+
+  react-test-renderer@19.2.6(react@19.3.0):
+    dependencies:
+      react: 19.3.0
       react-is: 19.2.7
       scheduler: 0.27.0
 

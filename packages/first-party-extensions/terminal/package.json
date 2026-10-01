@@ -1,0 +1,28 @@
+{
+  "name": "@t3tools/extension-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "node stageGhosttyAssets.mjs",
+    "build": "node stageGhosttyAssets.mjs && t3-extension build .",
+    "check": "t3-extension check .t3-extension",
+    "test": "node --test --experimental-strip-types *.test.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "audit": "node ../scripts/audit-imports.mjs . --allow esbuild --allow react-test-renderer --allow @t3tools/ghostty-terminal"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "workspace:*",
+    "@t3tools/ghostty-terminal": "workspace:*",
+    "@t3tools/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "^19.2.14",
+    "@types/react-test-renderer": "19.1.0",
+    "esbuild": "0.28.1",
+    "react": "^19.0.0",
+    "react-test-renderer": "19.2.6",
+    "typescript": "catalog:"
+  }
+}

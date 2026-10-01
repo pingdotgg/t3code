@@ -1,0 +1,1 @@
+user@host:proj$ [?1049h[2J[?25l[1;1H[7m  RAW-MODE APP [0m[3;1Hbody line one[4;1H[32mbody line two[0m[24;1H[7m :normal  4,1 [0m[24;1H[7m :insert  4,1 [0m[?25h[?1049luser@host:proj$ 
