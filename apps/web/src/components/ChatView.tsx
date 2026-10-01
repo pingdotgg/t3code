@@ -2903,7 +2903,12 @@ export default function ChatView(props: ChatViewProps) {
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).
   // sessionLive derives interruption for agents orphaned by session death.
-  const agentSessionLive = phase !== "disconnected";
+  // Past the turn, only the server's background liveness proves an agent is
+  // still alive: a server restart keeps the idle session but kills its agents.
+  const agentSessionLive =
+    phase === "running" ||
+    phase === "connecting" ||
+    (activeThreadShell?.backgroundLiveness ?? null) !== null;
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
