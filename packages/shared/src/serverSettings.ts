@@ -171,6 +171,7 @@ export function resolveSpeechPostProcessingModelSelection(
   let selection = settings.speechPostProcessingModelSelection;
   if (!canUse(selection)) {
     for (const [driver, defaults] of Object.entries(DEFAULT_SPEECH_POST_PROCESSING_MODELS)) {
+      if (!defaults) continue;
       const instanceIds = [
         ProviderInstanceId.make(driver),
         ...Object.entries(settings.providerInstances)
