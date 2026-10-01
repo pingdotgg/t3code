@@ -3,6 +3,7 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
   const workerPool = useWorkerPool();
@@ -46,7 +47,9 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       }}
       highlighterOptions={{
         theme: diffThemeName,
+        preferredHighlighter: PREFERRED_HIGHLIGHTER,
         tokenizeMaxLineLength: 1_000,
+        useTokenTransformer: true,
       }}
     >
       <DiffWorkerThemeSync themeName={diffThemeName} />

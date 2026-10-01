@@ -150,7 +150,7 @@
     "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --app-font-mono-stack:
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
-  --app-code-font-size: 12px;
+  --app-code-font-size: 13px;
   --app-chat-font-size: 14px;
   --app-sidebar-font-size: 11px;
   /* The thread title is the row's anchor, so it scales just above the sidebar
@@ -197,6 +197,10 @@
     transparent
   );
   --card-foreground: var(--color-neutral-800);
+  --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --code-foreground: var(--foreground);
+  --diff-addition: var(--success);
+  --diff-deletion: var(--destructive);
   --popover: var(--color-white);
   --popover-foreground: var(--color-neutral-800);
   --primary: oklch(0.488 0.217 264);

@@ -291,10 +291,39 @@ describe("FilePreviewPanel", () => {
       expect(host).not.toBeNull();
       collect(host!, "pre", pres);
       expect(pres.length).toBeGreaterThan(0);
-      // Settings default codeFontSize is 12px; the Pierre default is 13px.
+      // Settings default codeFontSize is 13px; the Pierre default is 13px.
       for (const pre of pres) {
-        expect(getComputedStyle(pre).fontSize).toBe("12px");
+        expect(getComputedStyle(pre).fontSize).toBe("13px");
       }
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("wraps long lines by default like upstream", async () => {
+    readFileMock.mockResolvedValueOnce({
+      relativePath: "wrap.ts",
+      contents: `export const wrapped = "${"x".repeat(400)}";`,
+    });
+    const screen = await render(
+      <div style={{ height: 400, width: 500, overflow: "hidden" }}>
+        <div className="h-full min-h-0">
+          <FilePreviewPanel
+            cwd="/repo/wrap-default"
+            relativePath="wrap.ts"
+            threadRef={threadRef}
+            onOpenFile={vi.fn()}
+          />
+        </div>
+      </div>,
+    );
+    try {
+      await vi.waitFor(() => {
+        const viewport = document.querySelector(".file-preview-virtualizer");
+        expect(viewport).not.toBeNull();
+        // Wrapped text never overflows horizontally.
+        expect(viewport!.scrollWidth).toBeLessThanOrEqual(viewport!.clientWidth + 1);
+      });
     } finally {
       await screen.unmount();
     }

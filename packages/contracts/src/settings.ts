@@ -48,7 +48,7 @@ export const FontSize = Schema.Int.check(Schema.isGreaterThanOrEqualTo(6)).check
   Schema.isLessThanOrEqualTo(24),
 );
 export type FontSize = typeof FontSize.Type;
-export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
+export const DEFAULT_CODE_FONT_SIZE: FontSize = 13 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_STATUS_LINE_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
@@ -142,7 +142,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   },
   comfortable: {
     chatFontSize: 15 as FontSize,
-    codeFontSize: 13 as FontSize,
+    codeFontSize: 14 as FontSize,
     inputFontSize: 15 as FontSize,
     sidebarFontSize: 12 as FontSize,
     sidebarMetaFontSize: 11 as FontSize,
@@ -152,7 +152,7 @@ export const RECOMMENDED_FONT_SIZES_BY_UI_DENSITY: Readonly<Record<UiDensity, De
   },
   spacious: {
     chatFontSize: 16 as FontSize,
-    codeFontSize: 14 as FontSize,
+    codeFontSize: 15 as FontSize,
     inputFontSize: 16 as FontSize,
     sidebarFontSize: 13 as FontSize,
     sidebarMetaFontSize: 12 as FontSize,

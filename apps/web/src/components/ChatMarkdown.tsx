@@ -29,6 +29,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { reportClientWarning } from "../lib/clientLogger";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -536,7 +537,7 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   const promise = getSharedHighlighter({
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
-    preferredHighlighter: "shiki-js",
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
   }).catch((err) => {
     highlighterPromiseCache.delete(language);
     if (language === "text") {

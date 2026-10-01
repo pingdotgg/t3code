@@ -16,17 +16,20 @@ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPre
 import { ensureEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
 import { useTheme } from "~/hooks/useTheme";
-import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import { projectFileCacheKey } from "./fileContentRevision";
 import { collapseBreadcrumbs, fileBreadcrumbs } from "./filePath";
 import { setMarkdownTaskChecked } from "./filePreviewMode";
@@ -163,31 +166,35 @@ function EditableFileSurface({
           </button>
         </div>
       ) : null}
-      <EditorProvider editor={editor}>
-        <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-          config={{
-            overscrollSize: 600,
-            intersectionObserverMargin: 1200,
-          }}
-        >
-          <File
-            file={{
-              name: relativePath,
-              contents: file.data?.contents ?? contents,
-              cacheKey: projectFileCacheKey(cwd, relativePath, file.data?.contents ?? contents),
+      <DiffWorkerPoolProvider>
+        <EditorProvider editor={editor}>
+          <Virtualizer
+            className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+            config={{
+              overscrollSize: 600,
+              intersectionObserverMargin: 1200,
             }}
-            options={{
-              disableFileHeader: true,
-              overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              themeType: resolvedTheme,
-            }}
-            className="min-h-full"
-            contentEditable
-          />
-        </Virtualizer>
-      </EditorProvider>
+          >
+            <File
+              file={{
+                name: relativePath,
+                contents: file.data?.contents ?? contents,
+                cacheKey: projectFileCacheKey(cwd, relativePath, file.data?.contents ?? contents),
+              }}
+              options={{
+                disableFileHeader: true,
+                overflow: wordWrap ? "wrap" : "scroll",
+                theme: resolveDiffThemeName(resolvedTheme),
+                preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                themeType: resolvedTheme,
+                unsafeCSS: DIFF_SURFACE_THEME_UNSAFE_CSS,
+              }}
+              className="min-h-full"
+              contentEditable
+            />
+          </Virtualizer>
+        </EditorProvider>
+      </DiffWorkerPoolProvider>
     </div>
   );
 }
@@ -367,9 +374,9 @@ function initialExplorerOpen(): boolean {
 
 function initialWordWrap(): boolean {
   try {
-    return window.localStorage.getItem(FILE_WORD_WRAP_STORAGE_KEY) === "true";
+    return window.localStorage.getItem(FILE_WORD_WRAP_STORAGE_KEY) !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -664,29 +671,12 @@ export function FilePreviewPanel({
                 threadRef={threadRef}
               />
             ) : file.data.truncated ? (
-              <Virtualizer
-                key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
-                className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                <File
-                  file={{
-                    name: relativePath,
-                    contents: file.data.contents,
-                    cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
-                  }}
-                  options={{
-                    disableFileHeader: true,
-                    overflow: wordWrap ? "wrap" : "scroll",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    themeType: resolvedTheme,
-                  }}
-                  className="min-h-full"
-                />
-              </Virtualizer>
+              <ReadOnlySourcePreview
+                name={relativePath}
+                text={file.data.contents}
+                wordWrap={wordWrap}
+                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
+              />
             ) : (
               <EditableFileSurface
                 key={`${relativePath}:${resolvedTheme}`}
