@@ -615,6 +615,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   voiceButton.className += " size-8 shrink-0 p-0 sm:size-7";
   voiceButton.hidden = true;
   voiceButton.setAttribute("aria-label", "Start voice input");
+  composerRow.appendChild(voiceButton);
   const voiceRow = document.createElement("div");
   voiceRow.className = "flex min-w-0 items-center justify-end gap-1 px-2 pb-2";
   voiceRow.hidden = true;
