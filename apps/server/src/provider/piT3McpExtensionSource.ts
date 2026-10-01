@@ -103,6 +103,33 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
+/**
+ * Normalizes an MCP tool input schema for strict function-calling providers.
+ * Pi forwards registered tools as strict functions, and strict validators
+ * reject object schemas without properties/required (e.g. the no-arg
+ * {type object, additionalProperties false} some tools advertise, which
+ * providers report as a missing object type). Well-formed schemas pass
+ * through untouched.
+ */
+function normalizeToolInputSchema(schema: Record<string, unknown> | undefined) {
+  if (schema === undefined || schema === null || typeof schema !== "object" || Array.isArray(schema)) {
+    return { type: "object", properties: {}, required: [] as Array<string> };
+  }
+  if (schema.type !== undefined && schema.type !== "object") {
+    return schema;
+  }
+  const properties =
+    typeof schema.properties === "object" && schema.properties !== null && !Array.isArray(schema.properties)
+      ? (schema.properties as Record<string, unknown>)
+      : {};
+  return {
+    ...schema,
+    type: "object",
+    properties,
+    ...(Array.isArray(schema.required) ? {} : { required: Object.keys(properties) }),
+  };
+}
+
 type ToolContent =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "image"; readonly data: string; readonly mimeType: string };
@@ -319,7 +346,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           promptGuidelines: [
             \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
           ],
-          parameters: jsonSchemaToTypebox(tool.inputSchema),
+          parameters: jsonSchemaToTypebox(normalizeToolInputSchema(tool.inputSchema)),
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
               name,
