@@ -21,6 +21,7 @@ const mockExecutables = (paths: Set<string>) =>
 
 it.effect("reuses a Windows PATH scan while validating the selected executable", () =>
   Effect.gen(function* () {
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
     const paths = new Set(["C:\\tools\\cache-probe.exe"]);
     const stat = mockExecutables(paths);
     const env = { PATH: "C:\\missing;C:\\tools", PATHEXT: ".EXE;.CMD" };
@@ -85,6 +86,7 @@ it.effect("does not cache missing commands or share scans across PATH and PATHEX
 
 it.effect("isolates Windows spawn scans between provided caches", () =>
   Effect.gen(function* () {
+    vi.spyOn(performance, "now").mockReturnValue(10_000);
     const paths = new Set(["C:\\second\\isolated-probe.exe"]);
     mockExecutables(paths);
     const env = { PATH: "C:\\first;C:\\second", PATHEXT: ".EXE" };
