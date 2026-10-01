@@ -33,35 +33,16 @@ const GITLAB_TEMPLATE_DIRECTORIES = [".gitlab/merge_request_templates"] as const
 // pull_request_template.md or pull_request_template.txt and uses the first default
 // template it finds. Filenames and folder locations are not case sensitive.
 // https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-templates
-const AZURE_DEVOPS_TEMPLATE_PATHS = [
-  ".azuredevops/pull_request_template.md",
-  ".azuredevops/pull_request_template.txt",
-  ".vsts/pull_request_template.md",
-  ".vsts/pull_request_template.txt",
-  "docs/pull_request_template.md",
-  "docs/pull_request_template.txt",
-  "pull_request_template.md",
-  "pull_request_template.txt",
-] as const;
+const AZURE_DEVOPS_TEMPLATE_FOLDERS = [".azuredevops", ".vsts", "docs", ""] as const;
+const AZURE_DEVOPS_TEMPLATE_NAME = "pull_request_template";
+const AZURE_DEVOPS_TEMPLATE_EXTENSIONS = ["md", "txt"] as const;
 
 // Azure Repos branch-specific templates live under `pull_request_template/branches/`
 // in the same folders searched for the default template. The filename matches the
 // first level of the branch the pull request targets (for example
 // `pull_request_template/branches/release.md` for a pull request into `release/1.2`).
 // https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-templates#branch-specific-templates
-const AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORIES = [
-  ".azuredevops/pull_request_template/branches",
-  ".vsts/pull_request_template/branches",
-  "docs/pull_request_template/branches",
-  "pull_request_template/branches",
-] as const;
-
-function azureDevOpsBranchTemplatePaths(baseBranch: string): ReadonlyArray<string> {
-  const branchTemplateName = baseBranch.split("/", 1)[0];
-  return AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORIES.flatMap((directory) =>
-    ["md", "txt"].map((extension) => `${directory}/${branchTemplateName}.${extension}`),
-  );
-}
+const AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORY = "branches";
 
 interface ChangeRequestTemplatePaths {
   readonly paths: ReadonlyArray<string>;
@@ -86,8 +67,10 @@ function templatePathsForProvider(
         readFromDefaultBranch: true,
       };
     case "azure-devops":
+      // Paths are resolved against the tree case-insensitively by
+      // resolveAzureDevOpsTemplatePaths.
       return {
-        paths: [...AZURE_DEVOPS_TEMPLATE_PATHS],
+        paths: [],
         directories: [],
         readFromDefaultBranch: true,
       };
@@ -149,6 +132,130 @@ function parseTemplateTreeEntries(output: string): ReadonlyArray<TemplateTreeEnt
     entries.push({ objectId, path: record.slice(separator + 1) });
   }
   return entries;
+}
+
+interface TreeLevelEntry {
+  readonly type: "blob" | "tree";
+  readonly path: string;
+  readonly name: string;
+}
+
+function parseTreeLevelEntries(output: string): ReadonlyArray<TreeLevelEntry> {
+  const entries: TreeLevelEntry[] = [];
+  for (const record of output.split("\0")) {
+    const separator = record.indexOf("\t");
+    if (separator < 0) {
+      continue;
+    }
+
+    const [mode, type] = record.slice(0, separator).split(" ");
+    const isTree = type === "tree" && mode === "040000";
+    const isBlob = type === "blob" && (mode === "100644" || mode === "100755");
+    if (!isTree && !isBlob) {
+      continue;
+    }
+
+    const path = record.slice(separator + 1);
+    entries.push({
+      type: isTree ? "tree" : "blob",
+      path,
+      name: path.slice(path.lastIndexOf("/") + 1),
+    });
+  }
+  return entries;
+}
+
+function findEntriesByName(
+  entries: ReadonlyArray<TreeLevelEntry>,
+  type: TreeLevelEntry["type"],
+  name: string,
+): ReadonlyArray<TreeLevelEntry> {
+  const expectedName = name.toLowerCase();
+  return entries.filter(
+    (entry) => entry.type === type && entry.name.toLowerCase() === expectedName,
+  );
+}
+
+// Azure Repos matches template folders and filenames case-insensitively, but git
+// pathspecs are case-sensitive and `ls-tree` rejects `:(icase)`. Walk the tree one
+// level at a time with non-recursive listings so the real casing is discovered without
+// listing large subtrees such as `docs/` recursively.
+function resolveAzureDevOpsTemplatePaths(input: {
+  readonly cwd: string;
+  readonly executeGit: ExecuteGit;
+  readonly treeish: string;
+  readonly baseBranch?: string | undefined;
+}): Effect.Effect<ReadonlyArray<string>, GitCommandError> {
+  return Effect.gen(function* () {
+    const levels = new Map<string, ReadonlyArray<TreeLevelEntry>>();
+    const listLevel = Effect.fn("PrTemplateDetection.listTreeLevel")(function* (directory: string) {
+      const cached = levels.get(directory);
+      if (cached) {
+        return cached;
+      }
+      const result = yield* input.executeGit({
+        operation: "PrTemplateDetection.listTreeLevel",
+        cwd: input.cwd,
+        args: [
+          "ls-tree",
+          "-z",
+          "--full-tree",
+          input.treeish,
+          ...(directory.length > 0 ? ["--", `${directory}/`] : []),
+        ],
+        maxOutputBytes: TREE_LIST_MAX_BYTES,
+        appendTruncationMarker: true,
+      });
+      const entries = result.stdoutTruncated ? [] : parseTreeLevelEntries(result.stdout);
+      levels.set(directory, entries);
+      return entries;
+    });
+
+    const rootEntries = yield* listLevel("");
+    const folders = AZURE_DEVOPS_TEMPLATE_FOLDERS.flatMap((folder) =>
+      folder.length === 0
+        ? [""]
+        : findEntriesByName(rootEntries, "tree", folder).map((entry) => entry.path),
+    );
+    const branchTemplateName = input.baseBranch?.split("/", 1)[0];
+
+    const branchTemplatePaths: string[] = [];
+    const defaultTemplatePaths: string[] = [];
+    for (const folder of folders) {
+      const folderEntries = yield* listLevel(folder);
+      for (const extension of AZURE_DEVOPS_TEMPLATE_EXTENSIONS) {
+        const templateName = `${AZURE_DEVOPS_TEMPLATE_NAME}.${extension}`;
+        for (const entry of findEntriesByName(folderEntries, "blob", templateName)) {
+          defaultTemplatePaths.push(entry.path);
+        }
+      }
+
+      if (!branchTemplateName) {
+        continue;
+      }
+      for (const templateDirectory of findEntriesByName(
+        folderEntries,
+        "tree",
+        AZURE_DEVOPS_TEMPLATE_NAME,
+      )) {
+        for (const branchDirectory of findEntriesByName(
+          yield* listLevel(templateDirectory.path),
+          "tree",
+          AZURE_DEVOPS_BRANCH_TEMPLATE_DIRECTORY,
+        )) {
+          const branchEntries = yield* listLevel(branchDirectory.path);
+          for (const extension of AZURE_DEVOPS_TEMPLATE_EXTENSIONS) {
+            const templateName = `${branchTemplateName}.${extension}`;
+            for (const entry of findEntriesByName(branchEntries, "blob", templateName)) {
+              branchTemplatePaths.push(entry.path);
+            }
+          }
+        }
+      }
+    }
+
+    return [...branchTemplatePaths, ...defaultTemplatePaths];
+  });
 }
 
 function readTemplateBlob(input: {
@@ -243,13 +350,20 @@ export const detectPrTemplate = Effect.fn("detectPrTemplate")(function* (
       templatePaths.readFromDefaultBranch && options.defaultTreeish
         ? options.defaultTreeish
         : treeish;
-    const pathEntries = [
-      ...(providerKind === "azure-devops" && options.baseBranch
-        ? azureDevOpsBranchTemplatePaths(options.baseBranch)
-        : []),
-      ...templatePaths.paths,
-    ] as const;
+    const pathEntries =
+      providerKind === "azure-devops"
+        ? yield* resolveAzureDevOpsTemplatePaths({
+            cwd,
+            executeGit,
+            treeish: templateTreeish,
+            baseBranch: options.baseBranch,
+          })
+        : templatePaths.paths;
     const treePaths = [...pathEntries, ...templatePaths.directories] as const;
+    // `ls-tree` without a pathspec lists the whole tree.
+    if (treePaths.length === 0) {
+      return Option.none();
+    }
     // Worktree paths can be replaced between validation and open. Read regular blobs from
     // the committed template tree so repository-controlled symlinks and path races never
     // reach the host filesystem.

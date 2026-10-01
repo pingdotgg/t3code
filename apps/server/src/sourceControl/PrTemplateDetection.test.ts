@@ -229,6 +229,74 @@ it.effect.each(AZURE_DEVOPS_TEMPLATE_PATHS)(
     ),
 );
 
+const AZURE_DEVOPS_MIXED_CASE_TEMPLATE_PATHS = [
+  ".AzureDevOps/Pull_Request_Template.md",
+  ".AZUREDEVOPS/PULL_REQUEST_TEMPLATE.TXT",
+  ".VSTS/pull_request_template.md",
+  "Docs/PULL_REQUEST_TEMPLATE.md",
+  "Pull_Request_Template.txt",
+] as const;
+
+it.effect.each(AZURE_DEVOPS_MIXED_CASE_TEMPLATE_PATHS)(
+  "recognizes the mixed-case Azure DevOps template at $0",
+  (relativePath) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+        assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
+      }),
+    ),
+);
+
+it.effect("keeps Azure folder precedence when folder names are mixed case", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".AZUREDEVOPS/Pull_Request_Template.md", "azuredevops template");
+      yield* writeTemplate(cwd, "docs/pull_request_template.md", "docs template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+      assert.strictEqual(Option.getOrUndefined(template), "azuredevops template");
+    }),
+  ),
+);
+
+it.effect("recognizes a mixed-case Azure branch template", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(
+        cwd,
+        ".AzureDevOps/Pull_Request_Template/Branches/Release.MD",
+        "release branch template",
+      );
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "default azure template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+        baseBranch: "release/1.2",
+      });
+      assert.strictEqual(Option.getOrUndefined(template), "release branch template");
+    }),
+  ),
+);
+
+it.effect("returns none for Azure when the tree has no template", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, "docs/guide.md", "guide");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops", {
+        baseBranch: "main",
+      });
+      assert.isTrue(Option.isNone(template));
+    }),
+  ),
+);
+
 it.effect("uses the first Azure DevOps template in folder precedence order", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
