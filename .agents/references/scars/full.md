@@ -394,6 +394,8 @@
 
 ## UI discovery and browser capture
 
+- Palette scope filters must run before recent-thread and transcript top-N limits; post-filtering global winners can hide all valid scoped hits. Project and thread scopes intersect rather than widening each other.
+- Base UI automatic highlight changes can omit the highlight callback or leave a removed row. Resolve a still-visible row or the first displayed row for Tab scoping, and preserve Shift+Tab focus navigation.
 - Settings rows without search IDs must not match an empty URL hash; ref-driven focus/scroll otherwise jumps to the last ID-less row when Settings opens.
 - Composer-triggered provider discovery must use the route's environment connection; the primary environment cannot safely resolve remote workspace paths or update a remote provider snapshot.
 - Sidebar device markers belong in trailing metadata, not title text: omit primary-machine markers and raw IDs, keep remote names in tooltips, and cover hosted clients with no primary environment in both sidebar layouts.

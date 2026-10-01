@@ -7,6 +7,7 @@ import {
   type KeybindingCommand,
   type FilesystemBrowseEntry,
   type EnvironmentId,
+  type ProjectId,
   type ThreadId,
   type ScopedThreadRef,
   type OrchestrationTranscriptSearchMatch,
@@ -29,7 +30,26 @@ export type PaletteMatchSource =
   | "PR"
   | "Path"
   | "Env"
+  | "ID"
   | "Command";
+
+export type PaletteScopeKind = "project" | "thread";
+
+export interface ProjectPaletteScope {
+  readonly kind: "project";
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly label: string;
+}
+
+export interface ThreadPaletteScope {
+  readonly kind: "thread";
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly label: string;
+}
+
+export type PaletteScope = ProjectPaletteScope | ThreadPaletteScope;
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -37,6 +57,8 @@ export interface CommandPaletteItem {
   readonly searchTerms: ReadonlyArray<string>;
   readonly searchIndex?: CommandPaletteSearchIndex;
   readonly searchTermSources?: ReadonlyArray<PaletteMatchSource>;
+  /** Pressing Tab on this row scopes search to this value. */
+  readonly scope?: PaletteScope;
   readonly title: ReactNode;
   readonly description?: string;
   readonly timestamp?: string;
@@ -51,6 +73,7 @@ export interface CommandPaletteItem {
 
 export interface CommandPaletteSearchIndex {
   readonly normalizedTerms: ReadonlyArray<string>;
+  readonly literalTermIndex?: number;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -98,6 +121,12 @@ export function buildTranscriptActionItems(input: {
         searchTerms,
         searchIndex,
         searchTermSources,
+        scope: {
+          kind: "thread",
+          environmentId,
+          threadId: match.threadId,
+          label: match.title,
+        },
         title: match.title,
         description: `${context ? `${context} · ` : ""}${match.role === "user" ? "You" : "Assistant"}: ${match.excerpt}`,
         icon: input.icon,
@@ -192,6 +221,9 @@ function buildPaletteSearchParts(
   return {
     searchIndex: {
       normalizedTerms,
+      ...(filteredSources.includes("ID")
+        ? { literalTermIndex: filteredSources.indexOf("ID") }
+        : {}),
     },
     searchTermSources: filteredSources,
   };
@@ -217,6 +249,12 @@ export function buildProjectActionItems(input: {
       searchTerms,
       searchIndex,
       searchTermSources,
+      scope: {
+        kind: "project",
+        environmentId: project.environmentId,
+        projectId: project.id,
+        label: project.name,
+      },
       title: project.name,
       environmentId: project.environmentId,
       description: project.cwd,
@@ -286,6 +324,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       projectTitle ?? ``,
       thread.branch ?? ``,
       thread.environmentId,
+      thread.id,
     ];
     const { searchIndex, searchTermSources } = buildPaletteSearchParts(searchTerms, [
       "Title",
@@ -293,6 +332,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       "Project",
       "Branch",
       "Env",
+      "ID",
     ]);
 
     return Object.assign(
@@ -302,6 +342,12 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         searchTerms,
         searchIndex,
         searchTermSources,
+        scope: {
+          kind: "thread",
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+          label: thread.title,
+        } satisfies ThreadPaletteScope,
         title: thread.title,
         environmentId: thread.environmentId,
         description: descriptionParts.join(` · `),
@@ -327,7 +373,12 @@ function getCommandPaletteSearchIndex(
   return item.searchIndex ?? buildCommandPaletteSearchIndex(item.searchTerms);
 }
 
-function scorePaletteToken(field: string, token: string, fieldBase: number): number | null {
+function scorePaletteToken(
+  field: string,
+  token: string,
+  fieldBase: number,
+  allowFuzzy: boolean,
+): number | null {
   return scoreQueryMatch({
     value: field,
     query: token,
@@ -335,7 +386,7 @@ function scorePaletteToken(field: string, token: string, fieldBase: number): num
     prefixBase: fieldBase + 2,
     boundaryBase: fieldBase + 4,
     includesBase: fieldBase + 6,
-    ...(token.length >= 3 ? { fuzzyBase: fieldBase + 100 } : {}),
+    ...(allowFuzzy && token.length >= 3 ? { fuzzyBase: fieldBase + 100 } : {}),
   });
 }
 
@@ -354,7 +405,12 @@ function scorePaletteIndex(
     let tokenBest: number | null = null;
     let tokenBestIndex = -1;
     for (const [termIndex, field] of index.normalizedTerms.entries()) {
-      const fieldScore = scorePaletteToken(field, token, termIndex * 10);
+      const fieldScore = scorePaletteToken(
+        field,
+        token,
+        termIndex * 10,
+        termIndex !== index.literalTermIndex,
+      );
       if (fieldScore === null) {
         continue;
       }
@@ -557,6 +613,303 @@ export function filterCommandPaletteGroups(input: {
 
     return [{ value: group.value, label: group.label, items }];
   });
+}
+
+export type PaletteScopeThreadInput = Pick<
+  SidebarThreadSummary,
+  "environmentId" | "id" | "projectId" | "parentThreadId" | "title"
+>;
+
+export type PaletteScopeProjectInput = Pick<Project, "id" | "environmentId" | "name">;
+
+export function paletteScopeKey(environmentId: EnvironmentId, threadId: ThreadId): string {
+  return threadSearchValue(environmentId, threadId);
+}
+
+export function isSamePaletteScope(left: PaletteScope, right: PaletteScope): boolean {
+  if (left.kind === "project" && right.kind === "project") {
+    return left.environmentId === right.environmentId && left.projectId === right.projectId;
+  }
+  return left.kind === "thread" && right.kind === "thread"
+    ? left.environmentId === right.environmentId && left.threadId === right.threadId
+    : false;
+}
+
+export function formatPaletteScopeLabels(scopes: ReadonlyArray<PaletteScope>): string {
+  return scopes.map((scope) => scope.label).join(", ");
+}
+
+/**
+ * Resolve scopes to the set of visible thread keys.
+ * Project scopes match member threads; thread scopes match the thread plus its
+ * subthreads. The scope root is always included even when it is absent from
+ * the list (archived or not yet loaded).
+ */
+export function resolvePaletteScopeThreadKeys(
+  scopes: ReadonlyArray<PaletteScope>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): Set<string> {
+  const projectKeys = new Set<string>();
+  const threadKeys = new Set<string>();
+  if (scopes.length === 0) {
+    return projectKeys;
+  }
+  const childrenByKey = new Map<string, string[]>();
+  for (const thread of threads) {
+    if (thread.parentThreadId === null) {
+      continue;
+    }
+    const parentKey = paletteScopeKey(thread.environmentId, thread.parentThreadId);
+    const siblings = childrenByKey.get(parentKey);
+    const key = paletteScopeKey(thread.environmentId, thread.id);
+    if (siblings) {
+      siblings.push(key);
+    } else {
+      childrenByKey.set(parentKey, [key]);
+    }
+  }
+  const collectSubtree = (rootKey: string): void => {
+    const stack = [rootKey];
+    while (stack.length > 0) {
+      const key = stack.pop()!;
+      if (threadKeys.has(key)) {
+        continue;
+      }
+      threadKeys.add(key);
+      for (const child of childrenByKey.get(key) ?? []) {
+        stack.push(child);
+      }
+    }
+  };
+  for (const scope of scopes) {
+    if (scope.kind === "project") {
+      for (const thread of threads) {
+        if (thread.environmentId === scope.environmentId && thread.projectId === scope.projectId) {
+          projectKeys.add(paletteScopeKey(thread.environmentId, thread.id));
+        }
+      }
+    } else {
+      collectSubtree(paletteScopeKey(scope.environmentId, scope.threadId));
+    }
+  }
+  if (!scopes.some((scope) => scope.kind === "project")) {
+    return threadKeys;
+  }
+  if (!scopes.some((scope) => scope.kind === "thread")) {
+    return projectKeys;
+  }
+  return new Set([...threadKeys].filter((key) => projectKeys.has(key)));
+}
+
+function isProjectScopeTarget(
+  scope: PaletteScope | undefined,
+  scopes: ReadonlyArray<PaletteScope>,
+): boolean {
+  if (scope?.kind !== "project") {
+    return false;
+  }
+  return scopes.some(
+    (active) =>
+      active.kind === "project" &&
+      active.environmentId === scope.environmentId &&
+      active.projectId === scope.projectId,
+  );
+}
+
+/**
+ * Narrow content rows to the active scopes. Thread and transcript rows pass
+ * when their thread key resolves inside a scope; project rows pass only when
+ * their own project is scoped. Actions, submenus, and browse rows always
+ * pass — callers decide which groups scopes apply to.
+ *
+ * Extension seam: add a PaletteScope union member, a qualifier case in
+ * parsePaletteScopeQualifiers, and a predicate case here.
+ */
+export function filterPaletteItemsByScopes<
+  TItem extends Pick<CommandPaletteItem, "scope" | "value">,
+>(
+  items: ReadonlyArray<TItem>,
+  scopes: ReadonlyArray<PaletteScope>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): ReadonlyArray<TItem> {
+  if (scopes.length === 0) {
+    return items;
+  }
+  const allowed = resolvePaletteScopeThreadKeys(scopes, threads);
+  return items.filter((item) => {
+    if (item.scope?.kind === "thread") {
+      return allowed.has(paletteScopeKey(item.scope.environmentId, item.scope.threadId));
+    }
+    if (item.scope?.kind === "project") {
+      return isProjectScopeTarget(item.scope, scopes);
+    }
+    return true;
+  });
+}
+
+export function filterTranscriptMatchesByScopes(
+  matches: ReadonlyArray<TranscriptSearchItem>,
+  scopes: ReadonlyArray<PaletteScope>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): ReadonlyArray<TranscriptSearchItem> {
+  if (scopes.length === 0) {
+    return matches;
+  }
+  const allowed = resolvePaletteScopeThreadKeys(scopes, threads);
+  return matches.filter(({ environmentId, match }) =>
+    allowed.has(paletteScopeKey(environmentId, match.threadId)),
+  );
+}
+
+export function selectPaletteScopeEnvironmentIds(
+  scopes: ReadonlyArray<PaletteScope>,
+): EnvironmentId[] | null {
+  if (scopes.length === 0) {
+    return null;
+  }
+  return [...new Set(scopes.map((scope) => scope.environmentId))];
+}
+
+function resolveProjectQualifier(
+  value: string,
+  projects: ReadonlyArray<PaletteScopeProjectInput>,
+): ProjectPaletteScope | null {
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized.length === 0) {
+    return null;
+  }
+  const ranked = projects
+    .map((project) => {
+      const name = project.name.toLocaleLowerCase();
+      if (name === normalized) {
+        return { project, rank: 0 };
+      }
+      if (name.startsWith(normalized)) {
+        return { project, rank: 1 };
+      }
+      return name.includes(normalized) ? { project, rank: 2 } : null;
+    })
+    .filter((entry): entry is { project: PaletteScopeProjectInput; rank: number } => entry !== null)
+    .toSorted((left, right) => left.rank - right.rank);
+  const winner = ranked[0]?.project;
+  return winner
+    ? {
+        kind: "project",
+        environmentId: winner.environmentId,
+        projectId: winner.id,
+        label: winner.name,
+      }
+    : null;
+}
+
+function resolveThreadQualifier(
+  value: string,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): ThreadPaletteScope | null {
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized.length === 0) {
+    return null;
+  }
+  const ranked = threads
+    .map((thread) => {
+      const title = thread.title.toLocaleLowerCase();
+      if (title === normalized) {
+        return { thread, rank: 0 };
+      }
+      if (title.startsWith(normalized)) {
+        return { thread, rank: 1 };
+      }
+      return title.includes(normalized) ? { thread, rank: 2 } : null;
+    })
+    .filter((entry): entry is { thread: PaletteScopeThreadInput; rank: number } => entry !== null)
+    .toSorted((left, right) => left.rank - right.rank);
+  const winner = ranked[0]?.thread;
+  return winner
+    ? {
+        kind: "thread",
+        environmentId: winner.environmentId,
+        threadId: winner.id,
+        label: winner.title,
+      }
+    : null;
+}
+
+const PALETTE_SCOPE_QUALIFIER_PATTERN = /^([A-Za-z]+):(?:"([^"]+)"|(\S+))\s+/;
+const PALETTE_TRAILING_QUALIFIER_PATTERN = /^([A-Za-z]+):(?:"([^"]+)"|(\S+))\s*$/;
+
+export interface ParsedPaletteScopes {
+  readonly scopes: PaletteScope[];
+  readonly text: string;
+}
+
+function resolveScopeQualifier(
+  keyword: string,
+  value: string,
+  projects: ReadonlyArray<PaletteScopeProjectInput>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): PaletteScope | null {
+  if (keyword === "project") {
+    return resolveProjectQualifier(value, projects);
+  }
+  if (keyword === "thread") {
+    return resolveThreadQualifier(value, threads);
+  }
+  return null;
+}
+
+/**
+ * Pull leading `project:name` / `thread:title` qualifiers off the query and
+ * resolve them to scope chips. The trailing-space requirement keeps a
+ * qualifier being typed (`project:t`) as plain text until it is committed
+ * with space or Tab. Unresolvable qualifiers stay in the text.
+ * Extension seam: add the qualifier keyword alongside its PaletteScope kind.
+ */
+export function parsePaletteScopeQualifiers(
+  query: string,
+  projects: ReadonlyArray<PaletteScopeProjectInput>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): ParsedPaletteScopes {
+  const scopes: PaletteScope[] = [];
+  let text = query;
+  for (;;) {
+    const match = PALETTE_SCOPE_QUALIFIER_PATTERN.exec(text);
+    if (!match) {
+      break;
+    }
+    const resolved = resolveScopeQualifier(
+      match[1]!.toLocaleLowerCase(),
+      match[2] ?? match[3] ?? "",
+      projects,
+      threads,
+    );
+    if (!resolved || scopes.some((scope) => isSamePaletteScope(scope, resolved))) {
+      break;
+    }
+    scopes.push(resolved);
+    text = text.slice(match[0].length);
+  }
+  return { scopes, text };
+}
+
+/**
+ * Match when the whole query is a single qualifier (`project:t3`), so Tab can
+ * commit it as a chip instead of scoping the highlighted row.
+ */
+export function parseTrailingPaletteScopeQualifier(
+  query: string,
+  projects: ReadonlyArray<PaletteScopeProjectInput>,
+  threads: ReadonlyArray<PaletteScopeThreadInput>,
+): PaletteScope | null {
+  const match = PALETTE_TRAILING_QUALIFIER_PATTERN.exec(query);
+  if (!match) {
+    return null;
+  }
+  return resolveScopeQualifier(
+    match[1]!.toLocaleLowerCase(),
+    match[2] ?? match[3] ?? "",
+    projects,
+    threads,
+  );
 }
 
 export function buildBrowseGroups(input: {

@@ -2227,6 +2227,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.ok(newest.matches.every((match) => match.role === "assistant"));
 
+      const scoped = yield* searchTranscript("needle", [ThreadId.make("thread-00")]);
+      assert.deepStrictEqual(
+        scoped.matches.map((match) => match.threadId),
+        [ThreadId.make("thread-00")],
+      );
+      assert.deepStrictEqual((yield* searchTranscript("needle", [])).matches, []);
+
       yield* sql`UPDATE projection_thread_messages SET updated_at = '2026-04-01T00:00:00.000Z'`;
       const tied = yield* searchTranscript("needle");
       assert.deepStrictEqual(
