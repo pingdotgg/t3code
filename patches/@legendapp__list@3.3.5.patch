@@ -241,7 +241,7 @@ index ce1fe00..3ccf6f1 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a30..5ac6bbe 100644
+index b3c5a30..46f36fb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -450,6 +450,15 @@ index b3c5a30..5ac6bbe 100644
                state.scroll = maxScroll;
                state.scrollPending = maxScroll;
                diff = 0;
+@@ -1934,7 +1992,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -2320,8 +2378,121 @@ function scrollToIndex(ctx, {
  }
  
@@ -809,7 +818,7 @@ index b3c5a30..5ac6bbe 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cd..93aac74 100644
+index 40e87cd..811fe63 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1018,6 +1027,15 @@ index 40e87cd..93aac74 100644
                state.scroll = maxScroll;
                state.scrollPending = maxScroll;
                diff = 0;
+@@ -1913,7 +1971,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -2299,8 +2357,121 @@ function scrollToIndex(ctx, {
  }
  
@@ -1377,9 +1395,18 @@ index 40e87cd..93aac74 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2da..8b88b09 100644
+index 914d2da..39e3753 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
+@@ -1771,7 +1771,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
@@ -1412,9 +1439,18 @@ index 914d2da..8b88b09 100644
      }
    }
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2..d7cbe1c 100644
+index 95465f2..4455097 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
+@@ -1750,7 +1750,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
@@ -1447,9 +1483,18 @@ index 95465f2..d7cbe1c 100644
      }
    }
 diff --git a/react.js b/react.js
-index 914d2da..0c2917d 100644
+index 914d2da..7c3dbef 100644
 --- a/react.js
 +++ b/react.js
+@@ -1771,7 +1771,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
@@ -1515,9 +1560,18 @@ index 914d2da..0c2917d 100644
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2..b73bfdf 100644
+index 95465f2..32f3413 100644
 --- a/react.mjs
 +++ b/react.mjs
+@@ -1750,7 +1750,7 @@ function prepareMVCP(ctx, dataChanged) {
+           anchorPositionForLock = newPosition;
+         }
+       }
+-      if (scrollingToViewPosition && scrollingToViewPosition > 0) {
++      if (scrollingToViewPosition && scrollingToViewPosition > 0 && targetId !== null && targetId !== void 0) {
+         const newSize = getItemSize(ctx, targetId, scrollTarget, state.props.data[scrollTarget]);
+         const prevSize = scrollingTo == null ? void 0 : scrollingTo.itemSize;
+         if (newSize !== void 0 && prevSize !== void 0 && newSize !== prevSize) {
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
