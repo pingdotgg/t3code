@@ -938,12 +938,7 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
         setup={
           mode === "editor" && row.driver === "chatgptWeb" ? (
-            <ChatGPTSetupSection
-              environmentId={environmentId}
-              instanceId={row.instanceId}
-              enabled={resolveProviderInstanceEnabled(row.instance)}
-              readOnly={readOnly}
-            />
+            <ChatGPTSetupSection />
           ) : mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection
               environmentId={environmentId}

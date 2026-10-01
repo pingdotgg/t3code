@@ -657,4 +657,30 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
-export const layer = Layer.effect(PreviewAutomationBroker, make);
+let activeBroker: PreviewAutomationBroker["Service"] | undefined;
+
+const acquireBroker = Effect.acquireRelease(
+  make.pipe(Effect.tap((broker) => Effect.sync(() => (activeBroker = broker)))),
+  (broker) =>
+    Effect.sync(() => {
+      if (activeBroker === broker) activeBroker = undefined;
+    }),
+);
+
+/** Invoke the one desktop preview broker owned by the running server. */
+export const invokeActive = <A = unknown>(
+  request: PreviewAutomationInvokeInput,
+): Effect.Effect<A, PreviewAutomationError> => {
+  if (activeBroker) return activeBroker.invoke<A>(request);
+  return Effect.fail(
+    new PreviewAutomationNoAvailableHostError({
+      operation: request.operation,
+      environmentId: request.scope.environmentId,
+      threadId: request.scope.threadId,
+      providerSessionId: request.scope.providerSessionId,
+      providerInstanceId: request.scope.providerInstanceId,
+    }),
+  );
+};
+
+export const layer = Layer.effect(PreviewAutomationBroker, acquireBroker);

@@ -1,13 +1,12 @@
 # ChatGPT Web
 
 ChatGPT Web is an experimental provider that sends model requests through your
-ChatGPT website session. Firefox must be installed and signed in to ChatGPT on
-the machine running the environment. OpenCode 1.14.19 or newer supplies the local
-coding tools and follows T3 Code's permission mode.
+ChatGPT website session in T3 Code's shared browser. OpenCode 1.14.19 or newer
+supplies the local coding tools and follows T3 Code's permission mode.
 This provider uses a separate OpenCode configuration; existing OpenCode plugins,
 provider settings, and project-specific OpenCode configuration are not imported.
 
-In **Settings > Providers**, select **ChatGPT Web** and choose **Sign in with Firefox**. Firefox opens visibly on the environment machine. Complete ChatGPT sign-in there. T3 verifies the signed-in page, stores only ChatGPT cookies in its private environment state, then restarts Firefox in background mode when enabled. The Settings panel shows sign-in progress. You can cancel or sign out there. Remote and mobile clients use Firefox on the environment machine.
+In **Settings > Providers**, select **ChatGPT Web**, then start a thread with that provider. T3 opens ChatGPT in the thread's visible shared browser. If the first request asks you to sign in, complete sign-in there and retry. The browser session stays in T3's persistent preview profile; T3 does not copy cookies or start a separate browser. Agent browser access must be enabled for the project, and a connected T3 Code desktop must host the preview.
 
 To keep automatic titles and generated text on this provider too, explicitly
 select its model in **Settings > General > Text generation**. Source control
@@ -15,12 +14,11 @@ writing can have a separate model override. Choosing ChatGPT for a thread does
 not change those settings. ChatGPT Web generates thread titles locally from the
 first message, without another website request.
 
-T3 uses temporary chats and the website's current model. Background mode uses
-standard headless Firefox after interactive sign-in finishes. Turn it off to keep
-model requests visible in Firefox. If ChatGPT asks for a browser check or sign-in
-during a request, the request stops without retry. Sign in again from provider
-settings. Disabling the provider closes Firefox and keeps its saved session. Use
-**Sign out** to close Firefox and remove saved ChatGPT cookies.
+T3 uses temporary chats and the website's current model. Requests run in the
+visible shared browser. If ChatGPT asks for verification, complete it in that tab.
+The failed request starts the configured cooldown before another request. T3
+does not bypass browser checks. Clear the preview browser's site data from its
+browser controls to sign out.
 
 ## Request limits and usage
 

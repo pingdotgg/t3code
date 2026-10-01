@@ -87,7 +87,7 @@ it("estimates visible UTF-8 text without claiming hidden reasoning", () => {
   expect(estimateChatGPTTokens("你好")).toBe(2);
 });
 
-it("rejects oversized web prompts before opening Firefox", () => {
+it("rejects oversized web prompts before opening the shared browser", () => {
   expect(() =>
     buildChatGPTPrompt({
       model: "auto",

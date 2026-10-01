@@ -11,16 +11,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-
 import { ServerConfig } from "../../config.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import { ProviderAdapterRequestError, ProviderDriverError } from "../Errors.ts";
 import { defaultProviderContinuationIdentity, type ProviderDriver } from "../ProviderDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./OpenCodeDriver.ts";
-import { makeChatGPTAuth } from "../chatgpt/ChatGPTAuth.ts";
-import { FirefoxChatGPT } from "../chatgpt/FirefoxChatGPT.ts";
+import { SharedBrowserChatGPT } from "../chatgpt/SharedBrowserChatGPT.ts";
 import { ChatGPTRateLimit } from "../chatgpt/ChatGPTRateLimit.ts";
 import { startChatGPTBridge } from "../chatgpt/ChatGPTBridge.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 
 const DRIVER = ProviderDriverKind.make("chatgptWeb");
 const MODEL = "t3-chatgpt-web/auto";
@@ -36,7 +35,6 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
   create: (input) =>
     Effect.gen(function* () {
       const settings = input.config;
-      const platform = yield* HostProcessPlatform;
       const paths = yield* ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -50,14 +48,7 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
       yield* fileSystem
         .makeDirectory(root, { recursive: true, mode: 0o700 })
         .pipe(Effect.mapError(fail));
-      const browser = new FirefoxChatGPT({
-        profile: "",
-        binary: settings.firefoxBinary,
-        headless: settings.headless,
-        platform,
-        sessionFile: path.join(root, "session.sqlite"),
-      });
-      const auth = yield* makeChatGPTAuth(input.instanceId, browser);
+      const browser = new SharedBrowserChatGPT();
       const bridge = yield* Effect.acquireRelease(
         Effect.tryPromise({
           try: async () => {
@@ -147,15 +138,11 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
         badgeLabel: "Experimental",
         continuation: { groupKey: continuationIdentity.continuationKey },
         reportsContextWindow: false,
-        setup: { canAuthenticate: true, canInstall: false },
-        auth: {
-          status: "unknown",
-          type: "firefox",
-          label: "Firefox session · sign in below",
-        },
+        setup: { canAuthenticate: false, canInstall: false },
+        auth: { status: "unknown", type: "preview", label: "T3 shared browser" },
         message:
           value.status === "ready"
-            ? "Uses ChatGPT web through Firefox. Token counts are estimates; reasoning and cache counts are unavailable. Rate limits are editable below."
+            ? "Uses ChatGPT in T3’s visible shared browser. Token counts are estimates; reasoning and cache counts are unavailable. Rate limits are editable below."
             : value.message,
         models: [
           {
@@ -168,17 +155,7 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
         ],
         slashCommands: [],
       });
-      const authenticatedSnapshot = (value: ServerProvider) =>
-        Effect.promise(async () => ({
-          ...snapshot(value),
-          auth: {
-            status: (await browser.hasSession())
-              ? ("authenticated" as const)
-              : ("unauthenticated" as const),
-            type: "firefox",
-            label: "ChatGPT website session",
-          },
-        }));
+      let activeThread: string | undefined;
       const session = (value: ProviderSession): ProviderSession => ({ ...value, provider: DRIVER });
       const event = (value: ProviderRuntimeEvent): ProviderRuntimeEvent => {
         if (value.type === "turn.completed" && value.payload.tokenUsage) {
@@ -195,33 +172,103 @@ export const ChatGPTWebDriver: ProviderDriver<ChatGPTWebSettings, OpenCodeDriver
       };
       return {
         ...base,
-        auth: auth.controller,
         driverKind: DRIVER,
         continuationIdentity,
         snapshot: {
           ...base.snapshot,
           resolveMaintenance: () =>
             Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
-          getSnapshot: base.snapshot.getSnapshot.pipe(Effect.flatMap(authenticatedSnapshot)),
-          refresh: base.snapshot.refresh.pipe(Effect.flatMap(authenticatedSnapshot)),
-          streamChanges: Stream.merge(
-            base.snapshot.streamChanges,
-            auth.changes.pipe(Stream.mapEffect(() => base.snapshot.getSnapshot)),
-          ).pipe(Stream.mapEffect(authenticatedSnapshot)),
+          getSnapshot: base.snapshot.getSnapshot.pipe(Effect.map(snapshot)),
+          refresh: base.snapshot.refresh.pipe(Effect.map(snapshot)),
+          streamChanges: base.snapshot.streamChanges.pipe(Stream.map(snapshot)),
         },
         ...(base.snapshotForCwd
           ? {
-              snapshotForCwd: (cwd: string) =>
-                base.snapshotForCwd!(cwd).pipe(Effect.flatMap(authenticatedSnapshot)),
+              snapshotForCwd: (cwd: string) => base.snapshotForCwd!(cwd).pipe(Effect.map(snapshot)),
             }
           : {}),
         adapter: {
           ...base.adapter,
           provider: DRIVER,
           startSession: (value) => base.adapter.startSession(value).pipe(Effect.map(session)),
+          sendTurn: (value) =>
+            Effect.gen(function* () {
+              if (activeThread)
+                return yield* new ProviderAdapterRequestError({
+                  provider: DRIVER,
+                  method: "sendTurn",
+                  detail:
+                    "ChatGPT Web handles one turn at a time. Wait for the active turn to finish.",
+                });
+              const mcpSession = McpProviderSession.readMcpProviderSession(value.threadId);
+              if (!mcpSession?.capabilities.has("preview"))
+                return yield* new ProviderAdapterRequestError({
+                  provider: DRIVER,
+                  method: "sendTurn",
+                  detail:
+                    "Enable Agent browser access for this project, then start a new ChatGPT Web thread.",
+                });
+              activeThread = value.threadId;
+              const scope: McpInvocationContext.McpInvocationScope | undefined = mcpSession
+                ? {
+                    environmentId: mcpSession.environmentId,
+                    threadId: mcpSession.threadId,
+                    providerSessionId: mcpSession.providerSessionId,
+                    providerInstanceId: mcpSession.providerInstanceId,
+                    capabilities: mcpSession.capabilities,
+                    issuedAt: mcpSession.issuedAt,
+                  }
+                : undefined;
+              browser.setScope(scope);
+              return yield* base.adapter.sendTurn(value).pipe(
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    browser.clearScope(value.threadId);
+                    if (activeThread === value.threadId) activeThread = undefined;
+                  }),
+                ),
+              );
+            }),
+          interruptTurn: (threadId, turnId) =>
+            base.adapter.interruptTurn(threadId, turnId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  browser.clearScope(threadId);
+                  if (activeThread === threadId) activeThread = undefined;
+                }),
+              ),
+            ),
+          stopSession: (threadId) =>
+            base.adapter.stopSession(threadId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  browser.clearScope(threadId);
+                  if (activeThread === threadId) activeThread = undefined;
+                }),
+              ),
+            ),
+          stopAll: () =>
+            base.adapter.stopAll().pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  browser.close();
+                  activeThread = undefined;
+                }),
+              ),
+            ),
           listSessions: () =>
             base.adapter.listSessions().pipe(Effect.map((sessions) => sessions.map(session))),
-          streamEvents: base.adapter.streamEvents.pipe(Stream.map(event)),
+          streamEvents: base.adapter.streamEvents.pipe(
+            Stream.tap((value) =>
+              Effect.sync(() => {
+                if (value.type === "turn.completed" || value.type === "turn.aborted") {
+                  browser.clearScope(value.threadId);
+                  if (activeThread === value.threadId) activeThread = undefined;
+                }
+              }),
+            ),
+            Stream.map(event),
+          ),
         },
         textGeneration: {
           ...base.textGeneration,

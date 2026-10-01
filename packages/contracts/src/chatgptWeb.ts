@@ -15,22 +15,6 @@ const limit = (value: string, maximum: number, title: string, description: strin
   );
 
 export const ChatGPTWebSettings = Schema.Struct({
-  firefoxBinary: TrimmedString.pipe(
-    Schema.withDecodingDefault(Effect.succeed("firefox")),
-    Schema.annotateKey({
-      title: "Firefox executable",
-      providerSettingsForm: { placeholder: "firefox" },
-    }),
-  ),
-  headless: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
-    Schema.annotateKey({
-      title: "Run Firefox in background",
-      description:
-        "Sign-in always opens an interactive Firefox window on the environment desktop. After sign-in, restart Firefox in background mode.",
-      providerSettingsForm: { control: "switch" },
-    }),
-  ),
   minimumIntervalSeconds: limit(
     "60",
     3600,

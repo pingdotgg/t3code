@@ -142,6 +142,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: scope.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
+          issuedAt,
           endpoint,
           authorizationHeader: `Bearer ${rawToken}`,
           capabilities: scope.capabilities,

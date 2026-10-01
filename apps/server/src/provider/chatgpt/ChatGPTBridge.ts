@@ -8,9 +8,10 @@ import * as NodeTimersPromises from "node:timers/promises";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as NodeTimers from "node:timers";
+import { ChatGPTInteractionRequiredError } from "./SharedBrowserChatGPT.ts";
 
 import { ChatGPTRateLimit } from "./ChatGPTRateLimit.ts";
-import type { FirefoxChatGPT } from "./FirefoxChatGPT.ts";
+import type { SharedBrowserChatGPT } from "./SharedBrowserChatGPT.ts";
 
 const Message = Schema.Struct({
   role: Schema.Literals(["system", "developer", "user", "assistant", "tool"]),
@@ -95,7 +96,7 @@ export const estimateChatGPTTokens = (text: string): number =>
   Math.ceil(Buffer.byteLength(text, "utf8") / 4);
 
 export async function startChatGPTBridge(input: {
-  readonly browser: Pick<FirefoxChatGPT, "complete" | "close">;
+  readonly browser: Pick<SharedBrowserChatGPT, "complete" | "close">;
   readonly limiter: ChatGPTRateLimit;
 }) {
   const key = NodeCrypto.randomUUID();
@@ -199,7 +200,11 @@ export async function startChatGPTBridge(input: {
           );
       }
     } catch (error) {
-      if (admitted && !controller.signal.aborted)
+      if (
+        admitted &&
+        !controller.signal.aborted &&
+        !(error instanceof ChatGPTInteractionRequiredError && !error.startCooldown)
+      )
         input.limiter.block(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       // Schema errors can embed the prompt; never send their diagnostic text.
       const message = Schema.isSchemaError(error)
