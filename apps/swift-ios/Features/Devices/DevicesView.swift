@@ -1,38 +1,111 @@
+import Observation
 import SwiftUI
 
-public struct DevicesView: View {
-    private let manager: any FeatureDeviceManaging
+/// Device access state. One access change runs at a time, and reloads that
+/// overlap it are discarded, so a slow read cannot restore a removed device or
+/// replace newer feedback.
+@MainActor
+@Observable
+final class DevicesModel {
+    private(set) var sessions: [FeatureDeviceSession] = []
+    private(set) var isLoading = true
+    private(set) var isRevoking = false
+    private(set) var errorMessage: String?
+    var revokeTarget: FeatureDeviceSession?
 
-    @State private var sessions: [FeatureDeviceSession] = []
-    @State private var isLoading = true
-    @State private var isRevoking = false
-    @State private var errorMessage: String?
-    @State private var revokeTarget: FeatureDeviceSession?
+    let manager: any FeatureDeviceManaging
+    private var loadGeneration: UInt64 = 0
+
+    init(manager: any FeatureDeviceManaging) {
+        self.manager = manager
+    }
+
+    var currentSession: FeatureDeviceSession? {
+        sessions.first(where: \.isCurrent)
+    }
+
+    var otherSessions: [FeatureDeviceSession] {
+        sessions.filter { !$0.isCurrent }
+    }
+
+    func reload() async {
+        guard !isRevoking else { return }
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        isLoading = true
+        do {
+            let loaded = FeatureDeviceSession.sortedForDisplay(
+                try await manager.loadDeviceSessions()
+            )
+            guard loadGeneration == generation else { return }
+            sessions = loaded
+            errorMessage = nil
+        } catch {
+            guard loadGeneration == generation else { return }
+            errorMessage = DeviceManagementErrorCopy.message(for: error)
+        }
+        isLoading = false
+    }
+
+    func revoke(_ session: FeatureDeviceSession) async {
+        await updateAccess(removing: { $0.id == session.id }) {
+            try await manager.revokeDeviceSession(id: session.id)
+        }
+        revokeTarget = nil
+    }
+
+    func revokeOthers() async {
+        await updateAccess(removing: { !$0.isCurrent }) {
+            try await manager.revokeOtherDeviceSessions()
+        }
+    }
+
+    private func updateAccess(
+        removing shouldRemove: (FeatureDeviceSession) -> Bool,
+        _ operation: () async throws -> Void
+    ) async {
+        guard !isRevoking else { return }
+        // Reloads cannot start while access is changing, so only earlier reads are stale.
+        loadGeneration &+= 1
+        isLoading = false
+        isRevoking = true
+        defer { isRevoking = false }
+        do {
+            try await operation()
+            sessions.removeAll(where: shouldRemove)
+            errorMessage = nil
+        } catch {
+            errorMessage = DeviceManagementErrorCopy.message(for: error)
+        }
+    }
+}
+
+public struct DevicesView: View {
+    @State private var model: DevicesModel
     @State private var showingRevokeOthers = false
-    @State private var operationGeneration: UInt64 = 0
 
     public init(manager: any FeatureDeviceManaging) {
-        self.manager = manager
+        _model = State(initialValue: DevicesModel(manager: manager))
     }
 
     public var body: some View {
         Group {
-            if isLoading, sessions.isEmpty {
+            if model.isLoading, model.sessions.isEmpty {
                 Text("Loading devices")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textTertiary)
-            } else if let errorMessage, sessions.isEmpty {
+            } else if let errorMessage = model.errorMessage, model.sessions.isEmpty {
                 ContentUnavailableView {
                     Label("Couldn’t load devices", systemImage: "exclamationmark.circle")
                 } description: {
                     Text(errorMessage)
                 } actions: {
                     Button("Try again") {
-                        Task { await reload() }
+                        Task { await model.reload() }
                     }
                     .buttonStyle(.borderedProminent)
                 }
-            } else if sessions.isEmpty {
+            } else if model.sessions.isEmpty {
                 ContentUnavailableView {
                     Label("No devices found", systemImage: "laptopcomputer.and.iphone")
                 } description: {
@@ -47,7 +120,7 @@ public struct DevicesView: View {
         .navigationTitle("Devices")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if !otherSessions.isEmpty {
+            if !model.otherSessions.isEmpty {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button(role: .destructive) {
@@ -58,29 +131,29 @@ public struct DevicesView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
-                    .disabled(isRevoking)
+                    .disabled(model.isRevoking)
                     .accessibilityLabel("Device actions")
                 }
             }
         }
         .task {
-            await reload()
+            await model.reload()
         }
         .alert(
             "Remove this device?",
             isPresented: Binding(
-                get: { revokeTarget != nil },
-                set: { if !$0 { revokeTarget = nil } }
+                get: { model.revokeTarget != nil },
+                set: { if !$0 { model.revokeTarget = nil } }
             ),
-            presenting: revokeTarget
+            presenting: model.revokeTarget
         ) { device in
-            Button(manager.managesServerSessions ? "Remove access" : "Remove device", role: .destructive) {
-                Task { await revoke(device) }
+            Button(model.manager.managesServerSessions ? "Remove access" : "Remove device", role: .destructive) {
+                Task { await model.revoke(device) }
             }
             Button("Cancel", role: .cancel) {}
         } message: { device in
             Text(
-                manager.managesServerSessions
+                model.manager.managesServerSessions
                     ? "\(device.displayName) will need a new pairing code to reconnect."
                     : "\(device.displayName) will stop receiving T3 Connect notifications."
             )
@@ -90,13 +163,13 @@ public struct DevicesView: View {
             isPresented: $showingRevokeOthers,
             titleVisibility: .visible
         ) {
-            Button("Remove \(otherSessions.count) devices", role: .destructive) {
-                Task { await revokeOthers() }
+            Button("Remove \(model.otherSessions.count) devices", role: .destructive) {
+                Task { await model.revokeOthers() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                manager.managesServerSessions
+                model.manager.managesServerSessions
                     ? "Every other phone, tablet, browser, and desktop will be signed out."
                     : "Other registered devices will stop receiving T3 Connect notifications."
             )
@@ -105,7 +178,7 @@ public struct DevicesView: View {
 
     private var deviceList: some View {
         List {
-            if let currentSession {
+            if let currentSession = model.currentSession {
                 Section {
                     DeviceSessionRow(session: currentSession)
                 } header: {
@@ -113,22 +186,24 @@ public struct DevicesView: View {
                 }
             }
 
-            if !otherSessions.isEmpty {
+            if !model.otherSessions.isEmpty {
                 Section {
-                    ForEach(otherSessions) { session in
+                    ForEach(model.otherSessions) { session in
                         DeviceSessionRow(session: session)
                             .contentShape(Rectangle())
                             .swipeActions {
                                 Button("Remove", role: .destructive) {
-                                    revokeTarget = session
+                                    model.revokeTarget = session
                                 }
+                                .disabled(model.isRevoking)
                             }
                             .contextMenu {
                                 Button(role: .destructive) {
-                                    revokeTarget = session
+                                    model.revokeTarget = session
                                 } label: {
                                     Label("Remove access", systemImage: "trash")
                                 }
+                                .disabled(model.isRevoking)
                             }
                     }
                 } header: {
@@ -136,14 +211,14 @@ public struct DevicesView: View {
                 }
             }
 
-            if let errorMessage {
+            if let errorMessage = model.errorMessage {
                 Section {
                     VStack(alignment: .leading, spacing: 10) {
                         Label(errorMessage, systemImage: "exclamationmark.circle")
                             .font(T3Typography.control)
                             .foregroundStyle(T3Colors.warning)
                         Button("Try again") {
-                            Task { await reload() }
+                            Task { await model.reload() }
                         }
                         .font(T3Typography.control.weight(.semibold))
                     }
@@ -155,10 +230,10 @@ public struct DevicesView: View {
         .scrollContentBackground(.hidden)
         .background(T3Colors.background)
         .refreshable {
-            await reload()
+            await model.reload()
         }
         .overlay(alignment: .top) {
-            if isRevoking {
+            if model.isRevoking {
                 Text("Updating device access")
                     .font(T3Typography.supporting)
                     .foregroundStyle(T3Colors.textTertiary)
@@ -173,79 +248,6 @@ public struct DevicesView: View {
             .foregroundStyle(T3Colors.textPrimary)
             .textCase(nil)
             .accessibilityAddTraits(.isHeader)
-    }
-
-    private var currentSession: FeatureDeviceSession? {
-        sessions.first(where: \.isCurrent)
-    }
-
-    private var otherSessions: [FeatureDeviceSession] {
-        sessions.filter { !$0.isCurrent }
-    }
-
-    @MainActor
-    private func reload() async {
-        guard !isRevoking else { return }
-        operationGeneration &+= 1
-        let generation = operationGeneration
-        isLoading = true
-        defer {
-            if operationGeneration == generation { isLoading = false }
-        }
-        do {
-            let loaded = FeatureDeviceSession.sortedForDisplay(
-                try await manager.loadDeviceSessions()
-            )
-            guard operationGeneration == generation else { return }
-            sessions = loaded
-            errorMessage = nil
-        } catch {
-            guard operationGeneration == generation else { return }
-            errorMessage = DeviceManagementErrorCopy.message(for: error)
-        }
-    }
-
-    @MainActor
-    private func revoke(_ session: FeatureDeviceSession) async {
-        operationGeneration &+= 1
-        let generation = operationGeneration
-        isLoading = false
-        isRevoking = true
-        defer {
-            if operationGeneration == generation {
-                isRevoking = false
-                revokeTarget = nil
-            }
-        }
-        do {
-            try await manager.revokeDeviceSession(id: session.id)
-            guard operationGeneration == generation else { return }
-            sessions.removeAll { $0.id == session.id }
-            errorMessage = nil
-        } catch {
-            guard operationGeneration == generation else { return }
-            errorMessage = DeviceManagementErrorCopy.message(for: error)
-        }
-    }
-
-    @MainActor
-    private func revokeOthers() async {
-        operationGeneration &+= 1
-        let generation = operationGeneration
-        isLoading = false
-        isRevoking = true
-        defer {
-            if operationGeneration == generation { isRevoking = false }
-        }
-        do {
-            try await manager.revokeOtherDeviceSessions()
-            guard operationGeneration == generation else { return }
-            sessions.removeAll { !$0.isCurrent }
-            errorMessage = nil
-        } catch {
-            guard operationGeneration == generation else { return }
-            errorMessage = DeviceManagementErrorCopy.message(for: error)
-        }
     }
 }
 
