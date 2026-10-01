@@ -1,5 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
-import { useRef, useState, use, type RefObject } from "react";
+import { useEffect, useRef, useState, use, type RefObject } from "react";
 
 import { ComposerContextActionsContext } from "../composerContextPresentation";
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
@@ -14,6 +14,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend,
   onCancel,
   onDraftChange,
+  onVoiceSetupOpenChange,
 }: {
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
@@ -21,6 +22,7 @@ export function AssistantCitationCommentEditor({
   onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
+  onVoiceSetupOpenChange: (open: boolean) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -44,6 +46,10 @@ export function AssistantCitationCommentEditor({
     onTextChange: updateComment,
   });
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
+  useEffect(() => {
+    onVoiceSetupOpenChange(speech.setup.open);
+    return () => onVoiceSetupOpenChange(false);
+  }, [onVoiceSetupOpenChange, speech.setup.open]);
   const submit = () => {
     if (!commentTooLong && !speech.blocksSubmission) onSubmit(comment);
   };
