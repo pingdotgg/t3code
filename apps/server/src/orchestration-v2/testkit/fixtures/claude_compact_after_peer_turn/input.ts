@@ -2,7 +2,7 @@ import type { OrchestratorFixtureInput } from "../shared.ts";
 
 export const CLAUDE_COMPACT_FIRST_PROMPT = "Reply with exactly: compact probe first turn";
 // Held until the continuation run settles, as the CLI process outlives it.
-export const CLAUDE_COMPACT_LAST_FRAME_LABEL = "command_lifecycle:compact-completed";
+const CLAUDE_COMPACT_LAST_FRAME_LABEL = "command_lifecycle:compact-completed";
 
 // A `/compact` that Claude answers only after a turn of its own: a peer
 // message woke it while the compaction was queued (the frames of a live
