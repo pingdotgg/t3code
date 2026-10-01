@@ -8,6 +8,8 @@ import {
   launchDetached,
   resolveAvailableEditors,
   resolveEditorLaunch,
+  Open,
+  OpenLive,
 } from "./open.ts";
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
@@ -637,3 +639,20 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
     assert.deepEqual(editors, []);
   });
 });
+
+it.layer(NodeServices.layer)("Open.availableEditors", (it) =>
+  it.effect("probes the filesystem once and serves later config reads from cache", () =>
+    Effect.gen(function* () {
+      const open = yield* Effect.provide(Open, OpenLive);
+
+      const first = yield* open.availableEditors;
+      const second = yield* open.availableEditors;
+
+      // Each filesystem probe allocates a fresh array, so identity proves the
+      // second read came from the cache instead of re-walking PATH. Without this
+      // the config path pays ~400 blocking stat calls per request.
+      assert.strictEqual(second, first);
+      assert.deepEqual(first, resolveAvailableEditors());
+    }),
+  ),
+);

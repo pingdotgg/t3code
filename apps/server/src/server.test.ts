@@ -566,6 +566,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(BackgroundPolicy.layer.pipe(Layer.provide(HostPowerMonitor.layer))),
       Layer.provide(
         Layer.mock(Open)({
+          availableEditors: Effect.succeed([]),
           ...options?.layers?.open,
         }),
       ),

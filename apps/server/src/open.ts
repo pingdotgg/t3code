@@ -15,7 +15,7 @@ import {
   resolveWindowsSpawn,
   type CommandAvailabilityOptions,
 } from "@t3tools/shared/shell";
-import { Context, Effect, Layer } from "effect";
+import { Cache, Context, Duration, Effect, Layer } from "effect";
 
 // ==============================
 // Definitions
@@ -130,6 +130,8 @@ export function resolveAvailableEditors(
   return available;
 }
 
+const AVAILABLE_EDITORS_TTL = Duration.seconds(30);
+
 /**
  * OpenShape - Service API for browser and editor launch actions.
  */
@@ -150,6 +152,17 @@ export interface OpenShape {
    * Reveal a file or folder in the platform file manager.
    */
   readonly revealInFileManager: (targetPath: string) => Effect.Effect<void, OpenError>;
+
+  /**
+   * Editors installed on this host.
+   *
+   * Probing walks every editor candidate against every PATH entry with blocking
+   * filesystem calls, and this is read on the config path that every
+   * `serverGetConfig` and every `subscribeServerConfig` subscription re-runs, so
+   * the result is memoized briefly and newly installed editors appear after the
+   * TTL.
+   */
+  readonly availableEditors: Effect.Effect<ReadonlyArray<EditorId>>;
 }
 
 /**
@@ -246,6 +259,11 @@ const make = Effect.gen(function* () {
     catch: (cause) => new OpenError({ message: "failed to load browser opener", cause }),
   });
 
+  const availableEditorsCache = yield* Cache.makeWith<void, ReadonlyArray<EditorId>>(
+    () => Effect.sync(resolveAvailableEditors),
+    { capacity: 1, timeToLive: () => AVAILABLE_EDITORS_TTL },
+  );
+
   return {
     openBrowser: (target) =>
       Effect.tryPromise({
@@ -255,6 +273,7 @@ const make = Effect.gen(function* () {
     openInEditor: (input) => Effect.flatMap(resolveEditorLaunch(input), launchDetached),
     revealInFileManager: (targetPath) =>
       launchDetached(resolveRevealInFileManagerLaunch(targetPath)),
+    availableEditors: Cache.get(availableEditorsCache, undefined),
   } satisfies OpenShape;
 });
 
