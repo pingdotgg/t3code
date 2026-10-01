@@ -36,9 +36,10 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
+export interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
   /** The path exists but is not a regular file, typically a directory. */
   readonly isNotFile: boolean;
+  readonly readError: ProjectReadFileError | null;
 }
 
 function getProjectEntriesQueryAtom(
@@ -217,11 +218,13 @@ export function useProjectFileQuery(
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
+  const readError = isProjectReadFileError(cause) ? cause : null;
 
   return {
     data: optimisticFile?.data ?? data,
     error: errorMessage(cause),
-    isNotFile: isProjectReadFileError(cause) && cause.failure === "path_not_file",
+    isNotFile: readError?.failure === "path_not_file",
+    readError,
     isPending: result.waiting,
     refresh,
   };

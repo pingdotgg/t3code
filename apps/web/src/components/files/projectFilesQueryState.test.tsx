@@ -309,4 +309,35 @@ describe("project query refresh", () => {
       atomHooks.registry = null;
     }
   });
+
+  it("exposes readError with failure and resolvedPath on failure", async () => {
+    const error = new ProjectReadFileError({
+      cwd: "/repo",
+      relativePath: "missing.ts",
+      failure: "operation_failed",
+      operation: "realpath-target",
+      resolvedPath: "/repo/missing.ts",
+      operationPath: "/repo/missing.ts",
+    });
+    const readAtom = Atom.make(Effect.fail(error));
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(readAtom);
+    projectMocks.readFile.mockReturnValue(readAtom);
+    projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+    atomHooks.registry = registry;
+
+    try {
+      await flushEffects();
+      reactHooks.beginRender();
+      const query = useProjectFileQuery(environmentId, "/repo", "missing.ts");
+      expect(query.readError).toBe(error);
+      expect(query.readError?.failure).toBe("operation_failed");
+      expect(query.readError?.resolvedPath).toBe("/repo/missing.ts");
+      expect(query.data).toBeNull();
+    } finally {
+      unmount();
+      registry.dispose();
+      atomHooks.registry = null;
+    }
+  });
 });

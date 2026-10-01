@@ -85,6 +85,7 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
+import { FilePreviewReadError } from "./FilePreviewReadError";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
@@ -1235,10 +1236,14 @@ export default function FilePreviewPanel({
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
-          ) : relativePath && file.error && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-              {file.error}
-            </div>
+          ) : relativePath && (file.error || file.readError) && file.data === null ? (
+            <FilePreviewReadError
+              cwd={cwd}
+              relativePath={relativePath}
+              readError={file.readError}
+              fallbackError={file.error}
+              onRetry={file.refresh}
+            />
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
               <Spinner size="lg" />
