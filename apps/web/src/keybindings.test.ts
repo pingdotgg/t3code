@@ -1202,7 +1202,7 @@ describe("plus key parsing", () => {
 
 describe("new thread without a project shortcut", () => {
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
-    it(`resolves mod+0 on ${platform} without stealing preview or terminal shortcuts`, () => {
+    it(`resolves mod+0 on ${platform} desktop without stealing browser, preview, or terminal shortcuts`, () => {
       const input = event({
         key: "0",
         code: "Digit0",
@@ -1210,25 +1210,45 @@ describe("new thread without a project shortcut", () => {
         ctrlKey: platform !== "MacIntel",
       });
       assert.strictEqual(
-        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { isDesktop: true },
+        }),
         "chat.newWithoutProject",
       );
+      for (const modelPickerOpen of [false, true]) {
+        assert.isNull(
+          resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { isDesktop: false, modelPickerOpen },
+          }),
+        );
+      }
       assert.strictEqual(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
           platform,
-          context: { previewFocus: true },
+          context: { isDesktop: true, previewFocus: true },
         }),
         "preview.resetZoom",
       );
       assert.isNull(
         resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
           platform,
-          context: { terminalFocus: true },
+          context: { isDesktop: true, terminalFocus: true },
         }),
       );
       assert.strictEqual(
-        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "chat.newWithoutProject", platform),
+        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "chat.newWithoutProject", {
+          platform,
+          context: { isDesktop: true },
+        }),
         platform === "MacIntel" ? "⌘0" : "Ctrl+0",
+      );
+      assert.isNull(
+        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "chat.newWithoutProject", {
+          platform,
+          context: { isDesktop: false },
+        }),
       );
     });
   }
@@ -1248,6 +1268,7 @@ describe("new thread without a project shortcut", () => {
     assert.isNull(
       resolveShortcutCommand(event({ key: "0", metaKey: true }), bindings, {
         platform: "MacIntel",
+        context: { isDesktop: true },
       }),
     );
   });
