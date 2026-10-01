@@ -339,6 +339,10 @@
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
     },
+    "./workspaceMutations": {
+      "types": "./src/workspaceMutations.ts",
+      "import": "./src/workspaceMutations.ts"
+    },
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"

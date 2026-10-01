@@ -548,6 +548,95 @@ describe("upgradeLegacyContextMessage", () => {
     ]);
   });
 
+  // Bodies written before the escaping codec carry no marker: their `&lt;` spellings are the
+  // literal text the author saved, and reinterpreting them as escapes rewrites history.
+  it.each([
+    "Use &lt;/review_comment> literally.",
+    "Use &lt;/review_comment&gt; literally.",
+    "Use &LT;/REVIEW_COMMENT&gt; literally.",
+    "&lt;div> &amp;lt;/review_comment> &lt;review_comments> &gt; &amp;",
+    '<review_comment note="&lt;/review_comment>">',
+    "<review_comment&gt; stays literal &gt; too",
+  ])("keeps literal entities in unmarked legacy bodies byte-identical: %s", (body) => {
+    const text = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\n${body}\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({ text: body });
+  });
+
+  it("keeps literal entities in unmarked legacy diffs byte-identical", () => {
+    const diff = "&lt;/review_comment&gt; quoted source &gt;";
+    const text = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\nNote\n\`\`\`diff\n${diff}\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({ text: "Note", diff });
+  });
+
+  it("decodes escaped entities only inside marked bodies", () => {
+    // The same wire spelling means different things: inside a marked body `&lt;` is a written
+    // escape for `<`; inside an unmarked body it is the historical literal text.
+    const unmarked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\nA &lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(unmarked).records[0]).toMatchObject({
+      text: "A &lt;/review_comment> B",
+    });
+
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\nA &lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: "A </review_comment> B",
+    });
+
+    // The writer shields a source `&lt;` as `&amp;lt;`, which decodes back to the literal.
+    const shielded = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\nA &amp;lt;/review_comment> B\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(shielded).records[0]).toMatchObject({
+      text: "A &lt;/review_comment> B",
+    });
+  });
+
+  // The writer emits only lowercase `&lt;`; any other prefix casing is body text the codec
+  // never produced, so it stays literal in text and fenced diff alike.
+  it.each(["&LT;", "&Lt;", "&lT;"])(
+    "keeps the non-emitted entity prefix %s literal in a marked body",
+    (prefix) => {
+      const body = `${prefix}/review_comment> is not a writer-emitted escape`;
+      const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+        text: body,
+        diff: body,
+      });
+    },
+  );
+
+  it("decodes a lowercase escape before an uppercase tag name", () => {
+    // Case-insensitivity applies to the tag name, not the entity spelling: the writer emits
+    // lowercase `&lt;` for a `<` before any casing of `review_comment`.
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n&lt;/REVIEW_COMMENT>\n\`\`\`diff\n&lt;REVIEW_COMMENT>\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: "</REVIEW_COMMENT>",
+      diff: "<REVIEW_COMMENT>",
+    });
+  });
+
+  it("keeps other entity spellings literal inside a marked body", () => {
+    const body = "&gt; &GT; &AMP;lt;/review_comment> &#60;/review_comment>";
+    const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+    expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+      text: body,
+      diff: body,
+    });
+  });
+
+  // The writer's `\b` is Unicode-aware: `ſ` (U+017F) and the Kelvin sign (U+212A, spelled
+  // as an escape below since its glyph reads as ASCII `K`) are word characters to it, so
+  // `<` is never escaped before these tag spellings. Inside a marked body they are body
+  // text, not escapes, and stay literal in text and fenced diff alike.
+  it.each(["ſ", "\u212A"])(
+    "keeps the tag spelling with Unicode suffix %s literal in a marked body",
+    (suffix) => {
+      const body = `&lt;/review_comment${suffix}> and &lt;review_comment${suffix}> are not writer-emitted escapes`;
+      const marked = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${body}\n\`\`\`diff\n${body}\n\`\`\`\n</review_comment>`;
+      expect(upgradeLegacyContextMessage(marked).records[0]).toMatchObject({
+        text: body,
+        diff: body,
+      });
+    },
+  );
+
   it("appends trailing review blocks after the other trailing blocks", () => {
     const text = [
       "prose",

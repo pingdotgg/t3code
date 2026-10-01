@@ -138,6 +138,30 @@ function escapeAttribute(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * The `bodyEncoding` value writers stamp on `<review_comment>` blocks whose text and diff went
+ * through {@link neutralizeReviewCommentTags}. Bodies written before the codec existed carry
+ * no marker, so readers must leave them byte-identical rather than reinterpreting literal
+ * entities as escapes.
+ */
+export const REVIEW_COMMENT_BODY_ENCODING = "escaped-tags";
+
+/**
+ * A comment's own words must not close the block they travel in. PR review bodies, PR
+ * metadata, and imported context can all supply text carrying a literal `</review_comment>`,
+ * which ends the record early on re-parse, and a crafted opener, which then becomes a second
+ * record naming any file. The wire keeps the text readable as `&lt;` and
+ * `upgradeLegacyContextMessage` decodes the same pattern, so a record round-trips
+ * byte-identical while its boundary stays unambiguous. `&` is escaped first so the codec's own
+ * escape spelling is protected: a literal `&lt;` in the source travels as `&amp;lt;` and can
+ * never be mistaken for a written escape. The diff is neutralized too: the sized fence already
+ * contains it for this parser, but readers whose block scan does not track fences (mobile's
+ * segment parser) end at the first closer wherever it appears.
+ */
+export function neutralizeReviewCommentTags(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/<(?=\/?review_comment\b)/giu, "&lt;");
+}
+
 function renderReviewComment(record: ComposerContextRecord): string {
   if (!("sectionId" in record)) return record.label;
   const attributes = [
@@ -147,6 +171,7 @@ function renderReviewComment(record: ComposerContextRecord): string {
     `rangeLabel="${escapeAttribute(record.rangeLabel)}"`,
     `startIndex="${record.startIndex}"`,
     `endIndex="${record.endIndex}"`,
+    `bodyEncoding="${REVIEW_COMMENT_BODY_ENCODING}"`,
   ].join(" ");
   // The fence must be longer than any run of backticks inside the diff so the body stays intact.
   const longestRun = Math.max(
@@ -155,7 +180,7 @@ function renderReviewComment(record: ComposerContextRecord): string {
   );
   const fence = "`".repeat(Math.max(3, longestRun + 1));
   const body = record.diff
-    ? `${record.text}\n\n${fence}${record.fenceLanguage ?? "diff"}\n${record.diff}\n${fence}`
-    : record.text;
+    ? `${neutralizeReviewCommentTags(record.text)}\n\n${fence}${record.fenceLanguage ?? "diff"}\n${neutralizeReviewCommentTags(record.diff)}\n${fence}`
+    : neutralizeReviewCommentTags(record.text);
   return `<review_comment ${attributes}>\n${body}\n</review_comment>`;
 }

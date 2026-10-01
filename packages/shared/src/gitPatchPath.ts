@@ -138,3 +138,24 @@ export function unquoteGitPatchPath(token: string): string {
   }
   return unescapeBody(token);
 }
+
+/**
+ * Deliver names outside ASCII as UTF-8 to diff readers that display their parsed header verbatim.
+ * Keep git's quoting for quotes, backslashes and controls so clients can still decode each path
+ * once. Only header tokens are rewritten; an identical escape in file contents stays literal.
+ */
+export function normalizeGitPatchPaths(patch: string): string {
+  if (!patch.includes('"')) return patch;
+  let inHunk = false;
+  return patch.replace(
+    /^(?:diff --git |@@|--- |\+\+\+ |rename from |rename to |copy from |copy to |Binary files ).*$/gm,
+    (line) => {
+      if (line.startsWith("diff --git ")) inHunk = false;
+      else if (line.startsWith("@@")) inHunk = true;
+      if (inHunk) return line;
+      return line.replace(/"(?:\\.|[^"\\])*"/g, (token) =>
+        quoteGitPatchPath(unquoteGitPatchPath(token)),
+      );
+    },
+  );
+}

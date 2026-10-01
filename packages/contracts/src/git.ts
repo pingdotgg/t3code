@@ -293,6 +293,12 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
    * over is older than the pull request.
    */
   isOnPullRequestHead: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
+  /**
+   * False when setting the branch to track the pull request's head branch failed, so it keeps
+   * whatever upstream it had, if any. Absent when unknown: nothing was attempted, or an older
+   * server answered.
+   */
+  isTrackingPullRequestHead: Schema.optionalKey(Schema.Boolean),
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
 

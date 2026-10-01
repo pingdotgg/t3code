@@ -1,0 +1,247 @@
+{
+  "format": 3,
+  "manifest": {
+    "id": "example.terminal-live-output",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.terminal-live-output/view",
+        "title": "Live terminal output",
+        "scope": "thread",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [],
+  "dependencies": [],
+  "requires": [
+    {
+      "id": "t3.terminal/output-events",
+      "versionRange": "^1.0.0"
+    }
+  ],
+  "provides": [
+    {
+      "id": "example.terminal-live-output/events",
+      "version": "1.0.0",
+      "methods": [],
+      "streams": [
+        {
+          "name": "subscribe",
+          "requiredGrants": ["t3.terminal/read-output"],
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["terminalId"],
+            "properties": {
+              "terminalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "eventSchema": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "terminalId",
+                  "streamEpoch",
+                  "status",
+                  "contents",
+                  "retainedByteLength",
+                  "truncated",
+                  "boundarySequence"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "snapshot"
+                  },
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "streamEpoch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "status": {
+                    "enum": ["starting", "running", "exited", "error"]
+                  },
+                  "contents": {
+                    "type": "string",
+                    "maxLength": 8192
+                  },
+                  "retainedByteLength": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "boundarySequence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "terminalId",
+                  "streamEpoch",
+                  "sequence",
+                  "chunkIndex",
+                  "chunkCount",
+                  "data"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "output"
+                  },
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "streamEpoch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sequence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "chunkIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63
+                  },
+                  "chunkCount": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  },
+                  "data": {
+                    "type": "string",
+                    "maxLength": 8192
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "terminalId", "streamEpoch", "sequence", "reason"],
+                "properties": {
+                  "kind": {
+                    "const": "reset"
+                  },
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "streamEpoch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sequence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "reason": {
+                    "const": "history-cleared"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "terminalId",
+                  "streamEpoch",
+                  "sequence",
+                  "exitCode",
+                  "exitSignal"
+                ],
+                "properties": {
+                  "kind": {
+                    "const": "exit"
+                  },
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "streamEpoch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "sequence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "exitCode": {
+                    "type": ["integer", "null"],
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "exitSignal": {
+                    "type": ["integer", "null"],
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "terminalId", "streamEpoch", "reason"],
+                "properties": {
+                  "kind": {
+                    "const": "closed"
+                  },
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "streamEpoch": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "reason": {
+                    "enum": ["terminal-closed", "identity-changed", "overflow", "terminal-error"]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

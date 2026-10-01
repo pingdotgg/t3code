@@ -1,0 +1,11 @@
+{
+  "package": "example.browser-sessions",
+  "root": "packages/extension-sdk/examples/browser-sessions/",
+  "files": {
+    "extension.ts": "d25e6da5f2aae9c53fe724339abefa73553d67bb1dffe4ba5d474da6147e7dac",
+    "server.ts": "d62648460dbba8da3cdda00c96a7046500257a1a1e88d41c3f5f0941be4c4277",
+    ".t3-extension/t3-extension.json": "f36f3a9bd164bb2b31288958081d4e7dc4a2edbfa5597dd8db5da32791b64905",
+    ".t3-extension/server.mjs": "d0d44317e1dc8fae78c978a585030b231bdc0739dcd6a6566dfe4fcc0374bd2c"
+  },
+  "findings": []
+}

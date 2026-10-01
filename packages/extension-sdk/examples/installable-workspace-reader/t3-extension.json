@@ -1,0 +1,49 @@
+{
+  "format": 1,
+  "manifest": {
+    "id": "example.installed-reader",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.installed-reader/view",
+        "title": "Workspace reader",
+        "scope": "project",
+        "placements": ["side-panel", "bottom-dock"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ],
+    "composerContexts": [
+      {
+        "id": "example.installed-reader/selection",
+        "title": "Selected workspace text",
+        "clients": ["web", "desktop"]
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [
+    {
+      "id": "example.installed-reader/read",
+      "title": "Read workspace text",
+      "description": "Read one UTF-8 text file relative to the authenticated project or thread workspace. Results are bounded and may be truncated.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "relativePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        "required": ["relativePath"],
+        "additionalProperties": false
+      },
+      "readOnly": true,
+      "capabilities": ["t3.workspace/read-text"]
+    }
+  ]
+}

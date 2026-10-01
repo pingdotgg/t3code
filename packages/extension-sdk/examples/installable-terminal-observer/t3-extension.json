@@ -1,0 +1,101 @@
+{
+  "format": 2,
+  "manifest": {
+    "id": "example.terminal-observer",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.terminal-observer/view",
+        "title": "Terminal status",
+        "scope": "thread",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [],
+  "requires": [
+    {
+      "id": "t3.terminal/sessions",
+      "versionRange": "^1.0.0"
+    }
+  ],
+  "dependencies": [],
+  "provides": [
+    {
+      "id": "example.terminal-observer/status",
+      "version": "1.0.0",
+      "methods": [
+        {
+          "name": "inspect",
+          "effect": "read",
+          "requiredGrants": ["t3.terminal/read"],
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["terminalId"],
+            "properties": {
+              "terminalId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            }
+          },
+          "outputSchema": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "terminalId",
+                  "status",
+                  "label",
+                  "hasRunningSubprocess",
+                  "exitCode",
+                  "exitSignal",
+                  "updatedAt"
+                ],
+                "properties": {
+                  "terminalId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "status": {
+                    "enum": ["starting", "running", "exited", "error"]
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "hasRunningSubprocess": {
+                    "type": "boolean"
+                  },
+                  "exitCode": {
+                    "type": ["integer", "null"]
+                  },
+                  "exitSignal": {
+                    "type": ["integer", "null"]
+                  },
+                  "updatedAt": {
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

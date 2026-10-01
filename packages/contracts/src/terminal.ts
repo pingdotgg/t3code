@@ -114,6 +114,14 @@ export const TerminalSessionSnapshot = Schema.Struct({
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
+/**
+ * Who created a session. Absent means a native client (drawer, panel, script)
+ * opened it; `"extension"` is set by the server when an extension view's
+ * terminal-control API created it, so native surfaces can leave it out.
+ */
+export const TerminalSessionOrigin = Schema.Literal("extension");
+export type TerminalSessionOrigin = typeof TerminalSessionOrigin.Type;
+
 export const TerminalSummary = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
@@ -127,6 +135,7 @@ export const TerminalSummary = Schema.Struct({
   /** Server-computed display title (idle shell vs subprocess command). */
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
+  origin: Schema.optional(TerminalSessionOrigin),
 });
 export type TerminalSummary = typeof TerminalSummary.Type;
 

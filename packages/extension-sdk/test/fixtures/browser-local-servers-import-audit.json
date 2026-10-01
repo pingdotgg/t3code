@@ -1,0 +1,10 @@
+{
+  "package": "example.browser-local-servers",
+  "files": {
+    "extension.ts": "690c2ceae263085af89d9e595cce726611fa3ac6e37f96bbf02160e0f2a5cb4f",
+    "server.ts": "7e337bd9953652a62ecee963948a2e18e7032e3709b6e77c5b5fa7d507b1f692",
+    ".t3-extension/t3-extension.json": "3d0daa7598289f46e90e39d5a757c7636653d7402e77595a6b0cc64286114258",
+    ".t3-extension/server.mjs": "0f309c745fc5ac6bc5743621c1ce37652523a2cf07a9e20fa40834cd99b0313d"
+  },
+  "findings": []
+}

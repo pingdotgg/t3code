@@ -77,6 +77,29 @@ describe("GitPreparePullRequestThreadResult", () => {
     expect(parsed.isOnPullRequestHead).toBe(true);
   });
 
+  it("leaves tracking unknown for legacy responses and keeps a reported failure", () => {
+    const legacy = {
+      pullRequest: {
+        number: 42,
+        title: "PR threads",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/42",
+        baseBranch: "main",
+        headBranch: "feature/pr-threads",
+        state: "open",
+      },
+      branch: "feature/pr-threads",
+      worktreePath: "/tmp/pr-threads",
+    };
+
+    expect(decodePreparePullRequestThreadResult(legacy)).not.toHaveProperty(
+      "isTrackingPullRequestHead",
+    );
+    expect(
+      decodePreparePullRequestThreadResult({ ...legacy, isTrackingPullRequestHead: false })
+        .isTrackingPullRequestHead,
+    ).toBe(false);
+  });
+
   it("preserves an explicit stale pull request checkout result", () => {
     const parsed = decodePreparePullRequestThreadResult({
       pullRequest: {

@@ -1,0 +1,40 @@
+{
+  "format": 2,
+  "manifest": {
+    "id": "example.files-consumer",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.files-consumer/view",
+        "title": "Files API consumer",
+        "scope": "project",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "tools": [],
+  "dependencies": [
+    {
+      "pluginId": "example.files",
+      "versionRange": "^1.0.0",
+      "apis": [
+        {
+          "id": "example.files/info",
+          "versionRange": "^1.0.0"
+        }
+      ]
+    }
+  ],
+  "provides": [],
+  "requires": [
+    {
+      "id": "example.files/info",
+      "versionRange": "^1.0.0"
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+{
+  "format": 3,
+  "manifest": {
+    "id": "example.stream-consumer",
+    "apiVersion": 1,
+    "version": "1.0.0",
+    "surfaces": [
+      {
+        "id": "example.stream-consumer/view",
+        "title": "Mirrored counter",
+        "scope": "project",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [],
+  "dependencies": [
+    {
+      "pluginId": "example.stream-provider",
+      "versionRange": "^1.0.0",
+      "apis": [
+        {
+          "id": "example.stream-provider/state",
+          "versionRange": "^1.0.0"
+        }
+      ]
+    }
+  ],
+  "requires": [],
+  "provides": [
+    {
+      "id": "example.stream-consumer/state",
+      "version": "1.0.0",
+      "methods": [],
+      "streams": [
+        {
+          "name": "changes",
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "eventSchema": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "epoch": {
+                "type": "string"
+              }
+            },
+            "required": ["count", "epoch"],
+            "additionalProperties": false
+          },
+          "requiredGrants": []
+        }
+      ]
+    }
+  ]
+}

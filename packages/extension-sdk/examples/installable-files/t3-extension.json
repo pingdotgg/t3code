@@ -1,0 +1,99 @@
+{
+  "format": 2,
+  "manifest": {
+    "id": "example.files",
+    "apiVersion": 1,
+    "version": "1.0.1",
+    "surfaces": [
+      {
+        "id": "example.files/view",
+        "title": "Files (public APIs)",
+        "scope": "project",
+        "placements": ["side-panel"],
+        "clients": ["web", "desktop"],
+        "capabilities": [],
+        "stateVersion": 1
+      }
+    ]
+  },
+  "clientEntry": "client.mjs",
+  "serverEntry": "server.mjs",
+  "tools": [],
+  "dependencies": [],
+  "provides": [
+    {
+      "id": "t3.file/presentation",
+      "version": "1.0.0",
+      "methods": [
+        {
+          "name": "open",
+          "effect": "read",
+          "requiredGrants": ["t3.file/open"],
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["relativePath"],
+            "properties": {
+              "relativePath": {
+                "type": "string",
+                "maxLength": 512
+              }
+            }
+          },
+          "outputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["surfaceId", "placement", "restoreState"],
+            "properties": {
+              "surfaceId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "placement": {
+                "enum": ["side-panel", "bottom-dock", "full-page", "compact-detail"]
+              },
+              "restoreState": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "example.files/info",
+      "version": "1.0.0",
+      "methods": [
+        {
+          "name": "describe",
+          "effect": "read",
+          "requiredGrants": [],
+          "inputSchema": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "readOnly"],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "readOnly": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "requires": [
+    {
+      "id": "t3.workspace/files",
+      "versionRange": "^1.0.0"
+    }
+  ]
+}

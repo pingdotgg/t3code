@@ -1,0 +1,599 @@
+{
+  "t3.ui/navigation": {
+    "id": "t3.ui/navigation",
+    "version": "1.0.0",
+    "methods": [
+      {
+        "name": "getCapabilities",
+        "effect": "read",
+        "requiredGrants": [],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "operations", "clients"],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["openThread", "openAgentSession"],
+              "properties": {
+                "openThread": {
+                  "type": "boolean"
+                },
+                "openAgentSession": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "clients": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["connectionId", "providers", "connectedAt"],
+                "properties": {
+                  "connectionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "announcedOrigin": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "surface": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "appVersion": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "os": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "deviceType": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "connectionMethod": {
+                        "type": "string",
+                        "maxLength": 40
+                      }
+                    }
+                  },
+                  "providers": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "version"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      }
+                    }
+                  },
+                  "connectedAt": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "openThread",
+        "effect": "write",
+        "requiredGrants": ["t3.ui/navigation.open"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threadId"],
+          "properties": {
+            "threadId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "surfaceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          }
+        },
+        "outputSchema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "threadId"],
+              "properties": {
+                "status": {
+                  "const": "opened"
+                },
+                "threadId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "surfaceId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason"],
+              "properties": {
+                "status": {
+                  "const": "refused"
+                },
+                "reason": {
+                  "enum": ["unknown-thread", "out-of-scope", "surface-not-found"]
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "openAgentSession",
+        "effect": "write",
+        "requiredGrants": ["t3.ui/navigation.open-session"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["agentId"],
+          "properties": {
+            "agentId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "outputSchema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "agentId", "opener"],
+              "properties": {
+                "status": {
+                  "const": "opened"
+                },
+                "agentId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "opener": {
+                  "enum": ["desktop-shell", "browser-window"]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason"],
+              "properties": {
+                "status": {
+                  "const": "refused"
+                },
+                "reason": {
+                  "enum": ["unknown-thread", "unknown-agent", "no-session", "opener-refused"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "t3.ui/preferences": {
+    "id": "t3.ui/preferences",
+    "version": "1.0.0",
+    "methods": [
+      {
+        "name": "getCapabilities",
+        "effect": "read",
+        "requiredGrants": [],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "operations", "clients"],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["getPreferences", "setPreferences", "subscribePreferences"],
+              "properties": {
+                "getPreferences": {
+                  "type": "boolean"
+                },
+                "setPreferences": {
+                  "type": "boolean"
+                },
+                "subscribePreferences": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "clients": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["connectionId", "providers", "connectedAt"],
+                "properties": {
+                  "connectionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "announcedOrigin": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "surface": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "appVersion": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "os": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "deviceType": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "connectionMethod": {
+                        "type": "string",
+                        "maxLength": 40
+                      }
+                    }
+                  },
+                  "providers": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "version"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      }
+                    }
+                  },
+                  "connectedAt": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "getPreferences",
+        "effect": "read",
+        "requiredGrants": ["t3.ui/preferences.read"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wordWrap"],
+          "properties": {
+            "wordWrap": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      {
+        "name": "setPreferences",
+        "effect": "write",
+        "requiredGrants": ["t3.ui/preferences.write"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wordWrap": {
+              "type": "boolean"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["applied", "preferences"],
+          "properties": {
+            "applied": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "preferences": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["wordWrap"],
+              "properties": {
+                "wordWrap": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "streams": [
+      {
+        "name": "subscribePreferences",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "eventSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wordWrap"],
+          "properties": {
+            "wordWrap": {
+              "type": "boolean"
+            }
+          }
+        },
+        "requiredGrants": ["t3.ui/preferences.read"]
+      }
+    ]
+  },
+  "t3.file/presentation": {
+    "id": "t3.file/presentation",
+    "version": "1.0.0",
+    "methods": [
+      {
+        "name": "open",
+        "effect": "read",
+        "requiredGrants": ["t3.file/open"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["relativePath"],
+          "properties": {
+            "relativePath": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["surfaceId", "placement", "restoreState"],
+          "properties": {
+            "surfaceId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "placement": {
+              "enum": ["side-panel", "bottom-dock", "full-page", "compact-detail"]
+            },
+            "restoreState": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "t3.ui/external": {
+    "id": "t3.ui/external",
+    "version": "1.0.0",
+    "methods": [
+      {
+        "name": "getCapabilities",
+        "effect": "read",
+        "requiredGrants": [],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "outputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["adapter", "operations", "clients"],
+          "properties": {
+            "adapter": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "operations": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["open"],
+              "properties": {
+                "open": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "clients": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["connectionId", "providers", "connectedAt"],
+                "properties": {
+                  "connectionId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160
+                  },
+                  "announcedOrigin": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "surface": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "appVersion": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "os": {
+                        "type": "string",
+                        "maxLength": 120
+                      },
+                      "deviceType": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "connectionMethod": {
+                        "type": "string",
+                        "maxLength": 40
+                      }
+                    }
+                  },
+                  "providers": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "version"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "version": {
+                          "type": "string",
+                          "maxLength": 40
+                        }
+                      }
+                    }
+                  },
+                  "connectedAt": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "open",
+        "effect": "write",
+        "requiredGrants": ["t3.ui/external.open"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url"],
+          "properties": {
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          }
+        },
+        "outputSchema": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "url", "opener"],
+              "properties": {
+                "status": {
+                  "const": "opened"
+                },
+                "url": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "opener": {
+                  "enum": ["desktop-shell", "browser-window"]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "reason"],
+              "properties": {
+                "status": {
+                  "const": "refused"
+                },
+                "reason": {
+                  "enum": ["invalid-url", "scheme-not-allowed", "opener-refused"]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

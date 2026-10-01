@@ -1,0 +1,41 @@
+{
+  "name": "@t3tools/extension-runtime",
+  "version": "0.1.0",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./worker": "./dist/worker.js",
+    "./worker-process": {
+      "types": "./dist/workerProcess.d.ts",
+      "default": "./dist/workerProcess.js"
+    },
+    "./resolution": {
+      "types": "./dist/resolution.d.ts",
+      "default": "./dist/resolution.js"
+    }
+  },
+  "scripts": {
+    "build": "vp run --filter @t3tools/extension-sdk build && tsc -p tsconfig.json",
+    "test": "vp run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "workspace:*",
+    "ajv": "8.20.0",
+    "semver": "7.8.5"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/semver": "7.7.1",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": "^22.16.0 || ^23.11.0 || >=24.10.0"
+  }
+}

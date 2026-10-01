@@ -142,7 +142,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
           ? "API rate limit exceeded."
           : failureKind === "not-found"
             ? context.command === "glab"
-              ? "Merge request not found."
+              ? "Not found on GitLab."
               : context.command === "gh" || context.command === "az"
                 ? "Pull request not found."
                 : "VCS resource not found."

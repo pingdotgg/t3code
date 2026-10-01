@@ -22,6 +22,7 @@
       "entry": [
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
+        "src/extension-worker.ts!",
         "scripts/cli.ts",
         "scripts/evaluate-thread-titles.ts",
         "scripts/measure-pr-preview.ts",
@@ -61,7 +62,9 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      "ignoreIssues": {
+        "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+      },
     },
     "apps/mobile": {
       // Expo loads plugins by string; Metro embeds the browser entry in the native WebView.
@@ -89,16 +92,36 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/extension-runtime": {
+      "includeEntryExports": true,
+      // Measurement harness invoked as `node perf/f5-baseline.mjs`, not imported.
+      "entry": ["perf/f5-baseline.mjs"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       // Generated upstream protocol definitions are retained as a complete set.
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
     },
+    "packages/first-party-extensions/*": {
+      "includeEntryExports": true,
+      // Pack sources build into committed .t3-extension bundles where a pack
+      // ships one (every first-party pack except agents today) and the host
+      // loads the bundle by filename, so no import graph reaches the sources.
+      // `!` keeps entry exports untracked for the same reason.
+      "entry": ["extension.ts!", "server.ts!"],
+    },
     "packages/effect-codex-app-server": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],
       "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/extension-sdk": {
+      "includeEntryExports": true,
+      // Example extensions ship in the package and are loaded by the host
+      // through runtime path joins, so no import graph reaches them. The `!`
+      // keeps their exports untracked for the same reason.
+      "entry": ["examples/**!"],
     },
   },
 }

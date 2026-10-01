@@ -1,0 +1,19 @@
+{
+  "name": "persisted-state-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "t3-extension build .",
+    "check": "t3-extension check .t3-extension",
+    "test": "node --test persistence.test.mjs"
+  },
+  "dependencies": {
+    "@t3tools/extension-sdk": "^0.1.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
+    "typescript": "^7.0.2"
+  }
+}

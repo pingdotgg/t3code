@@ -1,10 +1,48 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { quoteGitPatchPath, unquoteGitPatchPath } from "./gitPatchPath.ts";
+import { normalizeGitPatchPaths, quoteGitPatchPath, unquoteGitPatchPath } from "./gitPatchPath.ts";
 
 const BELL = "\u0007";
 const UNIT_SEPARATOR = "\u001f";
 const DELETE = "\u007f";
+
+describe("normalizeGitPatchPaths", () => {
+  it("normalizes rename and binary paths while retaining required C quoting", () => {
+    const patch = [
+      'diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251\\tnew.txt"',
+      'rename from "caf\\303\\251.txt"',
+      'rename to "caf\\303\\251\\tnew.txt"',
+      'Binary files "a/caf\\303\\251.txt" and "b/caf\\303\\251\\tnew.txt" differ',
+      "",
+    ].join("\r\n");
+    const expected = [
+      'diff --git a/café.txt "b/café\\tnew.txt"',
+      "rename from café.txt",
+      'rename to "café\\tnew.txt"',
+      'Binary files a/café.txt and "b/café\\tnew.txt" differ',
+      "",
+    ].join("\r\n");
+    expect(normalizeGitPatchPaths(patch)).toBe(expected);
+    expect(normalizeGitPatchPaths(expected)).toBe(expected);
+  });
+
+  it("does not decode an already literal backslash or a header-shaped hunk line", () => {
+    const patch = [
+      "diff --git a/first.txt b/first.txt",
+      "@@ -1 +1 @@",
+      '--- "a/caf\\303\\251.txt"',
+      '+++ "b/caf\\303\\251.txt"',
+      'diff --git "a/literal\\\\303.txt" "b/literal\\\\303.txt"',
+      '--- "a/literal\\\\303.txt"',
+      '+++ "b/literal\\\\303.txt"',
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+    expect(normalizeGitPatchPaths(patch)).toBe(patch);
+  });
+});
 
 describe("quoteGitPatchPath", () => {
   it("leaves a name a header can carry as itself", () => {
