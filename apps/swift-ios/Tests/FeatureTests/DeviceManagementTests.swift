@@ -279,7 +279,7 @@ private final class HeldDeviceManager: FeatureDeviceManaging {
 }
 
 @MainActor
-private final class HeldCalls<Value> {
+private final class HeldCalls<Value: Sendable> {
     private var pending: [CheckedContinuation<Value, Error>] = []
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
