@@ -36,14 +36,18 @@ enum T3ComposerClipboard {
   }
 }
 
+// Expo Modules 2.0: the clipboard function is a @JS member; the view stays in
+// definition() until the 2.0 view API lands.
+@ExpoModule("T3ComposerEditor")
 public class T3ComposerEditorModule: Module {
+  // UIPasteboard is main-thread only, so the member is main-actor isolated.
+  @JS
+  @MainActor
+  func writeContextClipboard(text: String, fragment: String) async {
+    T3ComposerClipboard.write(text: text, fragment: fragment)
+  }
+
   public func definition() -> ModuleDefinition {
-    Name("T3ComposerEditor")
-
-    AsyncFunction("writeContextClipboard") { (text: String, fragment: String) in
-      T3ComposerClipboard.write(text: text, fragment: fragment)
-    }.runOnQueue(.main)
-
     View(T3ComposerEditorView.self) {
       Prop("controlledDocumentJson") { (view: T3ComposerEditorView, documentJson: String) in
         view.setControlledDocumentJson(documentJson)
