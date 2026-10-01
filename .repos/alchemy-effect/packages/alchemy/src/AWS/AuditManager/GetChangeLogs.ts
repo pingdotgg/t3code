@@ -15,13 +15,14 @@ export interface GetChangeLogsRequest extends Omit<
  * Lists the changelog — who did what, when — for the bound
  * assessment, optionally narrowed to a control set or control. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.GetChangeLogsHttp)`.
- * @binding
- * @section Audit Trail
- * @example Read the Assessment Changelog
+ * ### Audit Trail
+ * **Example:** Read the Assessment Changelog
  * ```typescript
  * const getChangeLogs = yield* AWS.AuditManager.GetChangeLogs(assessment);
  * const result = yield* getChangeLogs({ maxResults: 20 });
  * ```
+ *
+ * @binding
  */
 export interface GetChangeLogs extends Binding.Service<
   GetChangeLogs,

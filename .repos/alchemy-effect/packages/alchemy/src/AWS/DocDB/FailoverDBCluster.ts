@@ -12,9 +12,8 @@ import type { DBCluster } from "./DBCluster.ts";
  * specific instance. The cluster identifier is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DocDB.FailoverDBClusterHttp)`.
- * @binding
- * @section Operating a Cluster
- * @example Force a Failover
+ * ### Operating a Cluster
+ * **Example:** Force a Failover
  * ```typescript
  * // init — bind the operation to the cluster
  * const failoverDBCluster = yield* AWS.DocDB.FailoverDBCluster(cluster);
@@ -24,6 +23,8 @@ import type { DBCluster } from "./DBCluster.ts";
  *   TargetDBInstanceIdentifier: replicaId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface FailoverDBCluster extends Binding.Service<
   FailoverDBCluster,

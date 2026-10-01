@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["alchemy.run.ts", "apps/**/*.ts", "apps/**/*.tsx"],
+  "compilerOptions": {
+    "noEmit": true,
+    "noCheck": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "jsx": "react-jsx"
+  },
+  "references": [{ "path": "../../packages/alchemy/tsconfig.json" }]
+}

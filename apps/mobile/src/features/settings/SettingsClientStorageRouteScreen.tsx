@@ -1,28 +1,32 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { type EnvironmentMachineKind, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { SymbolView } from "expo-symbols";
 import { useMemo } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { SymbolView } from "../../components/AppSymbol";
+import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   clearClientCacheAtom,
   clientCacheSummaryAtom,
   type EnvironmentClientCacheSummary,
 } from "../../state/client-cache-state";
+import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsScreen } from "./components/SettingsScreen";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();
-  const iconColor = useThemeColor("--color-icon");
-  const dangerForegroundColor = useThemeColor("--color-danger-foreground");
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
   const clearResult = useAtomValue(clearClientCacheAtom);
   const clearCache = useAtomSet(clearClientCacheAtom);
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const serverConfigs = useServerConfigs();
   const isClearing = clearResult.waiting;
   const summary = AsyncResult.isSuccess(summaryResult) ? summaryResult.value : null;
   const environmentSummaries = useMemo(
@@ -70,7 +74,7 @@ export function SettingsClientStorageRouteScreen() {
   };
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Client Storage">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -84,7 +88,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="exclamationmark.triangle"
                 size={28}
-                tintColor={dangerForegroundColor}
+                tintColorClassName="accent-danger-foreground"
                 type="monochrome"
                 weight="regular"
               />
@@ -109,6 +113,9 @@ export function SettingsClientStorageRouteScreen() {
                   savedConnectionsById[environment.environmentId]?.environmentLabel ??
                   environment.environmentId
                 }
+                machine={resolveEnvironmentMachineKind(
+                  serverConfigs.get(environment.environmentId) ?? null,
+                )}
                 disabled={isClearing}
                 first={index === 0}
                 onClear={() => confirmClearEnvironment(environment)}
@@ -119,7 +126,7 @@ export function SettingsClientStorageRouteScreen() {
               <SymbolView
                 name="checkmark.circle"
                 size={28}
-                tintColor={iconColor}
+                tintColorClassName="accent-icon"
                 type="monochrome"
                 weight="regular"
               />
@@ -133,24 +140,14 @@ export function SettingsClientStorageRouteScreen() {
 
         <View className="gap-3">
           <SettingsSection title="Actions">
-            <Pressable
-              accessibilityRole="button"
+            <SettingsActionRow
+              icon="trash"
+              label={summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
+              tone="danger"
               disabled={isClearing || !summary || summary.recordCount === 0}
+              loading={isClearing}
               onPress={confirmClearAll}
-              className="flex-row items-center gap-4 p-4 disabled:opacity-40"
-            >
-              <SymbolView
-                name="trash"
-                size={22}
-                tintColor={dangerForegroundColor}
-                type="monochrome"
-                weight="regular"
-              />
-              <Text className="flex-1 text-lg tabular-nums text-danger-foreground">
-                {summary ? `Clear ${formatBytes(summary.payloadBytes)}` : "Clear caches"}
-              </Text>
-              {isClearing ? <ActivityIndicator color={dangerForegroundColor} /> : null}
-            </Pressable>
+            />
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
             Clearing caches never removes environment connections, credentials, account data, or
@@ -163,18 +160,18 @@ export function SettingsClientStorageRouteScreen() {
           ) : null}
         </View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 
 function CacheEnvironmentRow(props: {
   readonly environment: EnvironmentClientCacheSummary;
   readonly environmentLabel: string;
+  readonly machine: EnvironmentMachineKind;
   readonly disabled: boolean;
   readonly first: boolean;
   readonly onClear: () => void;
 }) {
-  const iconColor = useThemeColor("--color-icon");
   return (
     <View
       className={
@@ -183,13 +180,7 @@ function CacheEnvironmentRow(props: {
           : "border-t border-border flex-row items-center gap-3 p-4"
       }
     >
-      <SymbolView
-        name="desktopcomputer"
-        size={22}
-        tintColor={iconColor}
-        type="monochrome"
-        weight="regular"
-      />
+      <EnvironmentMachineSymbol kind={props.machine} size={22} tintColorClassName="accent-icon" />
       <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
         {props.environmentLabel}
       </Text>

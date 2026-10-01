@@ -15,17 +15,9 @@
       "types": "./src/schema.ts",
       "import": "./src/schema.ts"
     },
-    "./rpc": {
-      "types": "./src/rpc.ts",
-      "import": "./src/rpc.ts"
-    },
     "./protocol": {
       "types": "./src/protocol.ts",
       "import": "./src/protocol.ts"
-    },
-    "./terminal": {
-      "types": "./src/terminal.ts",
-      "import": "./src/terminal.ts"
     },
     "./errors": {
       "types": "./src/errors.ts",
@@ -33,8 +25,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
-    "test": "vp test run",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "node scripts/generate.ts"
   },
   "dependencies": {

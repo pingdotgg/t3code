@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { serializeComposerFileLink, serializeComposerMentionPath } from "./composerTrigger.ts";
+import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
 
-describe("serializeComposerMentionPath", () => {
-  it("keeps simple mention paths unquoted", () => {
-    expect(serializeComposerMentionPath("src/index.ts")).toBe("src/index.ts");
-  });
-
-  it("quotes mention paths containing whitespace", () => {
-    expect(serializeComposerMentionPath("docs/My File.md")).toBe('"docs/My File.md"');
-  });
-
-  it("escapes quoted mention path content", () => {
-    expect(serializeComposerMentionPath('docs/My "File".md')).toBe('"docs/My \\"File\\".md"');
-  });
+describe("detectComposerTrigger", () => {
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "detects %s skill prefixes and their source range",
+    (prefix) => {
+      const text = `Use ${prefix}review`;
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind: "skill",
+        query: "review",
+        rangeStart: 4,
+        rangeEnd: text.length,
+      });
+    },
+  );
 });
 
 describe("serializeComposerFileLink", () => {

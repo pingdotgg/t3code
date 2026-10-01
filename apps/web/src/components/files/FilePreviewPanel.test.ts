@@ -5,7 +5,12 @@ import {
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
-import { isMarkdownPreviewFile, setMarkdownTaskChecked } from "./filePreviewMode";
+import {
+  isMarkdownPreviewFile,
+  resolveFilePreviewPath,
+  setMarkdownTaskChecked,
+  shouldShowFileExplorer,
+} from "./filePreviewMode";
 
 describe("file comment annotations", () => {
   it("normalizes and formats selected line ranges", () => {
@@ -66,6 +71,42 @@ describe("isMarkdownPreviewFile", () => {
   });
 });
 
+describe("shouldShowFileExplorer", () => {
+  it("hides the workspace tree for host files and attachments", () => {
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "/tmp/report.pdf",
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "report.pdf",
+        explorerOpen: true,
+        attachmentOpen: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the saved explorer preference for workspace files", () => {
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "docs/report.pdf",
+        explorerOpen: true,
+        attachmentOpen: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowFileExplorer({
+        relativePath: "docs/report.pdf",
+        explorerOpen: false,
+        attachmentOpen: false,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("setMarkdownTaskChecked", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
 
@@ -78,5 +119,26 @@ describe("setMarkdownTaskChecked", () => {
   it("leaves the document unchanged for a stale or invalid marker offset", () => {
     expect(setMarkdownTaskChecked(markdown, 0, true)).toBe(markdown);
     expect(setMarkdownTaskChecked(markdown, 200, true)).toBe(markdown);
+  });
+});
+
+describe("resolveFilePreviewPath", () => {
+  it.each([
+    ["/repo/project", null],
+    ["/repo/project/", null],
+    [".", null],
+    [null, null],
+    ["/repo/project/src", "/repo/project/src"],
+    ["/repo/project/src/main.ts", "/repo/project/src/main.ts"],
+    ["src/main.ts", "src/main.ts"],
+    ["/repo/project-other", "/repo/project-other"],
+  ])("opens %s in the appropriate workspace surface", (path, expected) => {
+    const relativePath = resolveFilePreviewPath(path, "/repo/project");
+    expect(relativePath).toBe(expected);
+    if (expected === null) {
+      expect(
+        shouldShowFileExplorer({ relativePath, explorerOpen: false, attachmentOpen: false }),
+      ).toBe(true);
+    }
   });
 });

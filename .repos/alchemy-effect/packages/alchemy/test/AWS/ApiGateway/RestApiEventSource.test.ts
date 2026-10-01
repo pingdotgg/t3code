@@ -1,6 +1,6 @@
 import * as AWS from "@/AWS";
-import { deleteRestApiAndWait } from "@/AWS/ApiGateway/common.ts";
 import { AWSEnvironment } from "@/AWS/Environment";
+import { createInternalTags, hasTags } from "@/Tags.ts";
 import * as Test from "./Test.ts";
 import * as ag from "@distilled.cloud/aws/api-gateway";
 import { expect } from "alchemy-test";
@@ -18,20 +18,18 @@ import RestApiEventSourceFunctionLive, {
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-// Fresh function URLs + stage propagation + the Lambda invoke permission
-// can take 30–90s to serve; cap exponential backoff at 10s so we keep a
-// steady cadence.
+// Allow bounded propagation of function URLs, stages, and invoke permissions.
 const readinessSchedule = Schedule.max([
   Schedule.exponential(500).pipe(
     Schedule.modifyDelay(({ duration: d }) =>
       Effect.succeed(
-        Duration.isGreaterThan(d, Duration.seconds(10))
-          ? Duration.seconds(10)
+        Duration.isGreaterThan(d, Duration.seconds(5))
+          ? Duration.seconds(5)
           : d,
       ),
     ),
   ),
-  Schedule.recurs(20),
+  Schedule.recurs(10),
 ]);
 
 const getJson = (url: string) =>
@@ -43,32 +41,21 @@ const getJson = (url: string) =>
     ),
   );
 
-// The RestApi's physical name is deterministic
-// (`{stack}-{logicalId}-{stage}-{suffix}`), so the deployed API is
-// discoverable out-of-band by the `-{logicalId}-test-` marker. Used both to
-// find the API under test and to reap strays from a previous killed run
-// (`deleteRestApi` is throttled account-wide, so a killed vitest process can
-// strand the API).
-const findRestApis = (logicalId: string) =>
-  ag.getRestApis.pages({}).pipe(
+// Ownership tags survive name truncation and isolate concurrent test stages.
+const findRestApis = Effect.fn(function* (logicalId: string) {
+  const tags = yield* createInternalTags(logicalId);
+  return yield* ag.getRestApis.pages({}).pipe(
     Stream.runCollect,
-    Effect.map((chunk) =>
-      Array.from(chunk).flatMap((page) =>
+    Effect.map((pages) =>
+      Array.from(pages).flatMap((page) =>
         (page.items ?? []).filter(
           (api): api is ag.RestApi & { id: string } =>
-            api.id != null &&
-            (api.name?.includes(`-${logicalId}-test-`) ?? false),
+            api.id != null && hasTags(tags, api.tags),
         ),
       ),
     ),
   );
-
-const reapRestApis = (logicalId: string) =>
-  findRestApis(logicalId).pipe(
-    Effect.flatMap(Effect.forEach((api) => deleteRestApiAndWait(api.id))),
-    Effect.asVoid,
-    Effect.orDie,
-  );
+});
 
 class RestApiNotVisible extends Data.TaggedError("RestApiNotVisible") {}
 
@@ -77,7 +64,6 @@ test.provider.skipIf(!!process.env.FAST)(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      yield* reapRestApis("AgEsApi");
       const { region } = yield* AWSEnvironment.current;
 
       const { functionUrl } = yield* stack.deploy(
@@ -91,16 +77,15 @@ test.provider.skipIf(!!process.env.FAST)(
       // Wait for the function URL to serve — the readiness signal that the
       // Lambda (and everything deployed with it) is live.
       yield* HttpClient.get(`${baseUrl}/`).pipe(
-        Effect.flatMap(
-          (response): Effect.Effect<void, Error> =>
-            response.status === 200
-              ? Effect.void
-              : Effect.fail(new Error(`probe returned ${response.status}`)),
+        Effect.flatMap((response): Effect.Effect<void, Error> =>
+          response.status === 200
+            ? Effect.void
+            : Effect.fail(new Error(`probe returned ${response.status}`)),
         ),
         Effect.retry({ schedule: readinessSchedule }),
       );
 
-      // Discover the REST API out-of-band by its deterministic name.
+      // Discover the REST API without awaiting outputs inside its host.
       const apis = yield* findRestApis("AgEsApi").pipe(
         Effect.filterOrFail(
           (found) => found.length === 1,
@@ -147,9 +132,14 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
 
-      // Zero-orphan proof: the deterministically named REST API is gone.
+      const deleted = yield* ag
+        .getRestApi({ restApiId: apis[0].id })
+        .pipe(
+          Effect.catchTag("NotFoundException", () => Effect.succeed(undefined)),
+        );
+      expect(deleted).toBeUndefined();
       const leftover = yield* findRestApis("AgEsApi");
       expect(leftover).toHaveLength(0);
-    }).pipe(Effect.ensuring(reapRestApis("AgEsApi"))),
-  { timeout: 600_000 },
+    }),
+  { timeout: 120_000 },
 );

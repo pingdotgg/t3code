@@ -60,9 +60,8 @@ export interface FirewallPolicy extends Resource<
  * behavior as a collection of stateless and stateful
  * {@link RuleGroup | rule group} references plus default actions. One policy
  * can be shared by multiple {@link Firewall | firewalls}.
- * @resource
- * @section Creating Policies
- * @example Pass-everything Policy
+ * ### Creating Policies
+ * **Example:** Pass-everything Policy
  * ```typescript
  * import * as NetworkFirewall from "alchemy/AWS/NetworkFirewall";
  *
@@ -74,7 +73,7 @@ export interface FirewallPolicy extends Resource<
  * });
  * ```
  *
- * @example Policy referencing Rule Groups
+ * **Example:** Policy referencing Rule Groups
  * ```typescript
  * const stateless = yield* NetworkFirewall.RuleGroup("Stateless", {
  *   type: "STATELESS",
@@ -92,6 +91,8 @@ export interface FirewallPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const FirewallPolicy = Resource<FirewallPolicy>(
   "AWS.NetworkFirewall.FirewallPolicy",

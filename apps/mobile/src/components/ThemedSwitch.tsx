@@ -1,21 +1,21 @@
-import { Platform, Switch, type SwitchProps } from "react-native";
+import { Platform, Switch } from "react-native";
 
-import { useThemeColor } from "../lib/useThemeColor";
+import { MaterialSwitch } from "./MaterialSwitch";
+import type { ThemedSwitchProps } from "./MaterialSwitch.types";
 
-export function ThemedSwitch(props: SwitchProps) {
-  const activeTrack = String(useThemeColor("--color-switch-active-track"));
-  const inactiveTrack = String(useThemeColor("--color-switch-inactive-track"));
-  const activeThumb = String(useThemeColor("--color-switch-active-thumb"));
-  const inactiveThumb = String(useThemeColor("--color-switch-inactive-thumb"));
+export type { ThemedSwitchProps } from "./MaterialSwitch.types";
+
+export function ThemedSwitch(props: ThemedSwitchProps) {
+  if (Platform.OS === "android") {
+    return <MaterialSwitch {...props} />;
+  }
 
   return (
     <Switch
       {...props}
-      ios_backgroundColor={inactiveTrack}
-      thumbColor={
-        Platform.OS === "android" ? (props.value ? activeThumb : inactiveThumb) : undefined
-      }
-      trackColor={{ false: inactiveTrack, true: activeTrack }}
+      ios_backgroundColorClassName="accent-switch-inactive-track"
+      trackColorOffClassName="accent-switch-inactive-track"
+      trackColorOnClassName="accent-switch-active-track"
     />
   );
 }

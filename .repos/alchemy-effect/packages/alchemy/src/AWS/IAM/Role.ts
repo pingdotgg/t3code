@@ -179,9 +179,8 @@ const mergeBoundAssumeRolePolicy = (
 
 /**
  * An IAM role for AWS services and runtimes.
- * @resource
- * @section Creating Roles
- * @example ECS Task Role
+ * ### Creating Roles
+ * **Example:** ECS Task Role
  * ```typescript
  * const role = yield* Role("TaskRole", {
  *   assumeRolePolicyDocument: {
@@ -195,8 +194,8 @@ const mergeBoundAssumeRolePolicy = (
  * });
  * ```
  *
- * @section Granting Permissions
- * @example Attach a Customer-Managed Policy
+ * ### Granting Permissions
+ * **Example:** Attach a Customer-Managed Policy
  * ```typescript
  * const policy = yield* Policy("AppPolicy", {
  *   policyDocument: {
@@ -231,6 +230,8 @@ const mergeBoundAssumeRolePolicy = (
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Role = Resource<Role>("AWS.IAM.Role");
 

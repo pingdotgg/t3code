@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * steps with `ListWaitingWorkflowSteps`). The idempotency `clientToken` is
  * generated automatically. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.SendWorkflowStepActionHttp)`.
- * @binding
- * @section Workflow Monitoring
- * @example Approve a Waiting Build Step
+ * ### Workflow Monitoring
+ * **Example:** Approve a Waiting Build Step
  * ```typescript
  * // init — account-level binding, no resource argument
  * const sendWorkflowStepAction =
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   reason: "approved by review function",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendWorkflowStepAction extends Binding.Service<
   SendWorkflowStepAction,

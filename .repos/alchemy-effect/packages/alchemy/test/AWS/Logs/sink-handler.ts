@@ -20,7 +20,7 @@ export class LogEventSinkFunction extends Lambda.Function<Lambda.Function>()(
 export default LogEventSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

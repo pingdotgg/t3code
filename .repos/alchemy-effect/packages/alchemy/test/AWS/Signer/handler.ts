@@ -42,7 +42,7 @@ export class SignerTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SignerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
     // The default 128 MB pins at the ceiling (~123 MB used) once the S3 +
     // Signer clients are warm and 500s under load — give it headroom.

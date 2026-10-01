@@ -7,12 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { cn } from "../../lib/cn";
-import { useThemeColor } from "../../lib/useThemeColor";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import {
   buildFileTree,
-  defaultExpandedTreePaths,
   flattenFileTree,
   type FileTreeNode,
   type VisibleFileTreeNode,
@@ -46,7 +44,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
   readonly item: VisibleFileTreeNode;
   readonly selected: boolean;
   readonly expanded: boolean;
-  readonly iconColor: string;
+  readonly loaded: boolean;
   readonly onPressDirectory: (path: string) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onPressFile: (path: string) => void;
@@ -79,7 +77,7 @@ const FileTreeRow = memo(function FileTreeRow(props: {
         <SymbolView
           name={props.expanded ? "chevron.down" : "chevron.right"}
           size={12}
-          tintColor={props.iconColor}
+          tintColorClassName="accent-icon-muted"
           type="monochrome"
         />
       ) : (
@@ -91,13 +89,15 @@ const FileTreeRow = memo(function FileTreeRow(props: {
           "min-w-0 flex-1 text-sm leading-normal",
           props.selected
             ? "font-t3-bold text-foreground"
-            : "font-t3-medium text-foreground-secondary",
+            : node.ignored
+              ? "font-t3-medium text-foreground-tertiary"
+              : "font-t3-medium text-foreground-secondary",
         )}
         numberOfLines={1}
       >
         {node.name}
       </Text>
-      {node.kind === "directory" ? (
+      {node.kind === "directory" && props.loaded ? (
         <Text className="text-2xs font-t3-medium text-foreground-tertiary">
           {node.children.length}
         </Text>
@@ -111,7 +111,10 @@ export function FileTreeBrowser(props: {
   readonly error: string | null;
   readonly isPending: boolean;
   readonly searchQuery: string;
+  readonly searchTruncated: boolean;
   readonly selectedPath: string | null;
+  readonly loadedDirectories: ReadonlySet<string>;
+  readonly onLoadDirectory: (path: string) => void;
   readonly onPreviewFile?: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
@@ -125,8 +128,13 @@ export function FileTreeBrowser(props: {
   // Native transparent-header height ≈ safe-area top + nav bar (~44). Matches the
   // observed adjustedContentInset bottom (~102) seen in the native trace.
   const headerInset = NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + IOS_NAV_BAR_HEIGHT : 0;
-  const iconColor = String(useThemeColor("--color-icon-muted"));
-  const { onPreviewFile, onSelectFile, selectedPath: controlledSelectedPath } = props;
+  const {
+    onLoadDirectory,
+    onPreviewFile,
+    onSelectFile,
+    loadedDirectories,
+    selectedPath: controlledSelectedPath,
+  } = props;
   const controlledSelectedPathRef = useRef(controlledSelectedPath);
   const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   controlledSelectedPathRef.current = controlledSelectedPath;
@@ -136,7 +144,6 @@ export function FileTreeBrowser(props: {
       ? pendingSelection.path
       : controlledSelectedPath;
   const tree = useMemo(() => cachedFileTree(props.entries), [props.entries]);
-  const defaultExpanded = useMemo(() => defaultExpandedTreePaths(tree), [tree]);
   const visibleNodes = useMemo(
     () =>
       flattenFileTree({
@@ -146,15 +153,6 @@ export function FileTreeBrowser(props: {
       }),
     [expandedPaths, props.searchQuery, tree],
   );
-
-  useEffect(() => {
-    setExpandedPaths((current) => {
-      if (current.size > 0 || defaultExpanded.size === 0) {
-        return current;
-      }
-      return new Set(defaultExpanded);
-    });
-  }, [defaultExpanded]);
 
   useEffect(() => {
     if (!controlledSelectedPath) {
@@ -172,6 +170,10 @@ export function FileTreeBrowser(props: {
       return next;
     });
   }, [controlledSelectedPath]);
+
+  useEffect(() => {
+    for (const path of expandedPaths) onLoadDirectory(path);
+  }, [expandedPaths, onLoadDirectory]);
 
   useEffect(
     () => () => {
@@ -216,23 +218,21 @@ export function FileTreeBrowser(props: {
         item={item}
         selected={item.node.kind === "file" && item.node.path === selectedPath}
         expanded={expandedPaths.has(item.node.path)}
-        iconColor={iconColor}
+        loaded={loadedDirectories.has(item.node.path)}
         onPressDirectory={toggleDirectory}
         onPreviewFile={onPreviewFile}
         onPressFile={handleSelectFile}
       />
     ),
-    [expandedPaths, handleSelectFile, iconColor, onPreviewFile, selectedPath, toggleDirectory],
+    [
+      expandedPaths,
+      handleSelectFile,
+      onPreviewFile,
+      loadedDirectories,
+      selectedPath,
+      toggleDirectory,
+    ],
   );
-
-  if (props.error && props.entries.length === 0) {
-    return (
-      <View className="flex-1 bg-sheet px-4 py-5">
-        <Text className="text-sm font-t3-bold text-foreground">Files unavailable</Text>
-        <Text className="mt-1 text-xs leading-normal text-foreground-muted">{props.error}</Text>
-      </View>
-    );
-  }
 
   // SPIKE: render the FlatList as the screen's DIRECT content (no wrapping View), and
   // mirror the Home ScrollView exactly — `contentInsetAdjustmentBehavior: "automatic"`
@@ -241,6 +241,7 @@ export function FileTreeBrowser(props: {
   // flex-1 Views is ignored, which is why the tree rendered under the header with no blur.
   return (
     <FlatList
+      alwaysBounceVertical
       className="flex-1"
       data={visibleNodes}
       keyExtractor={(item) => item.node.path}
@@ -259,9 +260,41 @@ export function FileTreeBrowser(props: {
       contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
       refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
       renderItem={renderItem}
+      ListHeaderComponent={
+        <>
+          {props.error && props.entries.length > 0 ? (
+            <Text accessibilityRole="alert" className="mx-4 my-2 text-xs text-foreground-muted">
+              {props.error}
+            </Text>
+          ) : null}
+          {props.searchTruncated ? (
+            <Text className="mx-4 my-2 text-xs text-foreground-muted">
+              More search results available. Refine your search to see them.
+            </Text>
+          ) : null}
+        </>
+      }
       ListEmptyComponent={
         <View className="px-4 py-5">
-          {props.isPending ? (
+          {props.error && props.entries.length === 0 ? (
+            <>
+              <Text className="text-sm font-t3-bold text-foreground">Files unavailable</Text>
+              <Text
+                accessibilityRole="alert"
+                className="mt-1 text-xs leading-normal text-foreground-muted"
+              >
+                {props.error}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={props.onRefresh}
+                disabled={props.isPending}
+                className="mt-3 min-h-11 self-start justify-center rounded-full bg-subtle px-4 active:opacity-70 disabled:opacity-50"
+              >
+                <Text className="text-sm font-t3-medium text-foreground">Try again</Text>
+              </Pressable>
+            </>
+          ) : props.isPending ? (
             <ActivityIndicator size="small" />
           ) : (
             <>
@@ -269,7 +302,7 @@ export function FileTreeBrowser(props: {
               <Text className="mt-1 text-xs leading-normal text-foreground-muted">
                 {props.searchQuery.trim().length > 0
                   ? "Try a different search."
-                  : "The workspace file index is empty."}
+                  : "The workspace is empty."}
               </Text>
             </>
           )}

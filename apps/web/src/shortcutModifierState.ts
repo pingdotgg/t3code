@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface ShortcutModifierState {
   metaKey: boolean;
@@ -28,26 +28,37 @@ export function areShortcutModifierStatesEqual(
 
 export function useShortcutModifierState(): ShortcutModifierState {
   const [state, setState] = useState(EMPTY_SHORTCUT_MODIFIER_STATE);
+  const stateRef = useRef(EMPTY_SHORTCUT_MODIFIER_STATE);
 
   useEffect(() => {
-    const onKeyboardEvent = (event: KeyboardEvent) => {
-      setState((current) => shortcutModifierStateAfterKeyboardEvent(current, event));
+    const updateState = (next: ShortcutModifierState) => {
+      // Even a no-op state dispatch can cost work in the sidebar's large tree.
+      // Ordinary typing must return before dispatching a React update.
+      if (areShortcutModifierStatesEqual(stateRef.current, next)) return;
+      stateRef.current = next;
+      setState(next);
     };
-    const onWindowBlur = () => {
-      setState((current) =>
-        areShortcutModifierStatesEqual(current, EMPTY_SHORTCUT_MODIFIER_STATE)
-          ? current
-          : EMPTY_SHORTCUT_MODIFIER_STATE,
-      );
+    const onKeyboardEvent = (event: KeyboardEvent) => {
+      updateState(shortcutModifierStateAfterKeyboardEvent(stateRef.current, event));
+    };
+    // Dictation tools (Wispr Flow) paste with a synthetic ⌘V whose Meta keyup
+    // never reaches the page, so the tracked state stays "⌘ held" forever and
+    // the thread jump hints stick on screen. A paste is never jump intent, so
+    // treat it like a blur and reset. A physically held modifier re-registers
+    // on the next real key event.
+    const onResetEvent = () => {
+      updateState(EMPTY_SHORTCUT_MODIFIER_STATE);
     };
 
     window.addEventListener("keydown", onKeyboardEvent, true);
     window.addEventListener("keyup", onKeyboardEvent, true);
-    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("paste", onResetEvent, true);
+    window.addEventListener("blur", onResetEvent);
     return () => {
       window.removeEventListener("keydown", onKeyboardEvent, true);
       window.removeEventListener("keyup", onKeyboardEvent, true);
-      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("paste", onResetEvent, true);
+      window.removeEventListener("blur", onResetEvent);
     };
   }, []);
 
@@ -84,11 +95,17 @@ export function shortcutModifierStateAfterKeyboardEvent(
       [normalizedModifierKey]: event.type === "keydown",
     };
   } else {
+    // Flags on non-modifier keys may only clear a bit, never set one. After a
+    // dictation tool's synthetic ⌘V (Wispr Flow), the browser can keep
+    // reporting metaKey=true on real key events (Enter to submit) until the
+    // user physically taps ⌘. Trusting that flag would mark ⌘ as held and
+    // stick the thread jump hints. Setting a bit requires a real modifier
+    // keydown, handled above.
     nextState = {
-      metaKey: event.metaKey,
-      ctrlKey: event.ctrlKey,
-      altKey: event.altKey,
-      shiftKey: event.shiftKey,
+      metaKey: currentState.metaKey && event.metaKey,
+      ctrlKey: currentState.ctrlKey && event.ctrlKey,
+      altKey: currentState.altKey && event.altKey,
+      shiftKey: currentState.shiftKey && event.shiftKey,
     };
   }
 

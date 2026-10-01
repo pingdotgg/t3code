@@ -1,5 +1,8 @@
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
-import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  orchestrationProtocolCompatibilityError,
+  type EnvironmentConnectionPhase,
+} from "@t3tools/client-runtime/connection";
 
 export interface AvailableCloudEnvironmentPresentation {
   readonly connectionError: string | null;
@@ -14,6 +17,18 @@ export function availableCloudEnvironmentPresentation(input: {
   readonly statusError: string | null;
   readonly statusErrorTraceId: string | null;
 }): AvailableCloudEnvironmentPresentation {
+  const compatibilityError =
+    input.status?.descriptor === undefined
+      ? null
+      : orchestrationProtocolCompatibilityError(input.status.descriptor);
+  if (compatibilityError !== null) {
+    return {
+      connectionError: compatibilityError.message,
+      connectionErrorTraceId: null,
+      connectionState: "unsupported",
+      statusText: "Client not supported",
+    };
+  }
   if (input.status?.status === "online") {
     return {
       connectionError: null,

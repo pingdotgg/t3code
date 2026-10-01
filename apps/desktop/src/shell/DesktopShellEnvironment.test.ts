@@ -320,7 +320,7 @@ describe("DesktopShellEnvironment", () => {
                 FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
                 FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
               })
-            : envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" });
+            : envOutput({ PATH: 'C:\\Custom\\Bin;C:";C:\\Windows\\System32' });
         },
       });
 
@@ -337,6 +337,7 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
           "C:\\Custom\\Bin",
+          "C:",
         ].join(";"),
       );
       assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");
@@ -395,16 +396,6 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
     }),
   );
-
-  it("resolves dbus runtime dir candidates with existence checks", () => {
-    const busPath = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
-      env: { XDG_RUNTIME_DIR: "/tmp/stale-runtime" },
-      uid: 1000,
-      exists: (path) => path === "/run/user/1000/bus",
-    });
-
-    assert.equal(busPath, "unix:path=/run/user/1000/bus");
-  });
 
   it.effect("logs command failures with safe probe context and the exact cause", () => {
     const env: NodeJS.ProcessEnv = {

@@ -1,19 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  fileContentRevision,
-  projectFileCacheKey,
-  projectFileEditorCacheKey,
-} from "./fileContentRevision";
+import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
 
-describe("fileContentRevision", () => {
+describe("file cache identity", () => {
   it("changes for same-length edits", () => {
-    expect(fileContentRevision("nodeVersion")).not.toBe(fileContentRevision("nodeVeasdrs"));
-  });
-
-  it("keeps identical contents stable", () => {
-    expect(projectFileCacheKey("/repo", "file.json", "contents")).toBe(
-      projectFileCacheKey("/repo", "file.json", "contents"),
+    expect(projectFileCacheKey("/repo", "file.json", "nodeVersion")).not.toBe(
+      projectFileCacheKey("/repo", "file.json", "nodeVeasdrs"),
     );
   });
 

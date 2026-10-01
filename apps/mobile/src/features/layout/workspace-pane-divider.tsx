@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
+import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { cn } from "../../lib/cn";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -20,10 +20,7 @@ interface WorkspacePaneDividerProps {
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
   latestProps.current = props;
-  const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const dividerColor = useThemeColor("--color-border");
-  const activeDividerColor = useThemeColor("--color-primary");
   const handleResizeStart = useCallback(() => {
     setDragging(true);
     latestProps.current.onResizeStart?.();
@@ -65,7 +62,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   return (
     <GestureDetector gesture={resizeGesture}>
       <Pressable
-        className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
+        className="relative z-[100] -mx-[22px] w-11 self-stretch justify-center"
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },
@@ -77,15 +74,14 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
           text: `${Math.round(props.currentWidth)} points wide`,
         }}
         onAccessibilityAction={handleAccessibilityAction}
-        onHoverIn={() => setHovered(true)}
-        onHoverOut={() => setHovered(false)}
       >
         <View
-          style={[
-            styles.line,
-            { backgroundColor: dividerColor },
-            (hovered || dragging) && [styles.activeLine, { backgroundColor: activeDividerColor }],
-          ]}
+          className={cn(
+            "h-full self-center bg-border opacity-70",
+            dragging ? "w-0.5 bg-primary opacity-100" : "w-px",
+            Platform.OS === "android" && !dragging && "opacity-0",
+          )}
+          style={[styles.line, dragging && styles.activeLine]}
         />
       </Pressable>
     </GestureDetector>
@@ -96,11 +92,9 @@ const styles = StyleSheet.create({
   line: {
     alignSelf: "center",
     height: "100%",
-    opacity: 0.7,
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    opacity: 1,
     width: 2,
   },
 });

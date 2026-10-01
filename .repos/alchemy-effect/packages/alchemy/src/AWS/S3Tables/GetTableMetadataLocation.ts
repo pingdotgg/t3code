@@ -12,9 +12,8 @@ import type { Table } from "./Table.ts";
  * metadata, write a new metadata file to the warehouse, then commit it with
  * {@link UpdateTableMetadataLocation}. Provide the implementation with
  * `Effect.provide(AWS.S3Tables.GetTableMetadataLocationHttp)`.
- * @binding
- * @section The Iceberg Commit Protocol
- * @example Read the current metadata location
+ * ### The Iceberg Commit Protocol
+ * **Example:** Read the current metadata location
  * ```typescript
  * const getTableMetadataLocation =
  *   yield* AWS.S3Tables.GetTableMetadataLocation(table);
@@ -22,6 +21,8 @@ import type { Table } from "./Table.ts";
  * const { versionToken, metadataLocation, warehouseLocation } =
  *   yield* getTableMetadataLocation();
  * ```
+ *
+ * @binding
  */
 export interface GetTableMetadataLocation extends Binding.Service<
   GetTableMetadataLocation,

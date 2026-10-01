@@ -1,40 +1,21 @@
-import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
-import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  navigate: vi.fn(),
+  canGoBack: true,
 }));
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return {
-    ...actual,
-    useState: vi.fn((initial: unknown) => [
-      typeof initial === "function"
-        ? {
-            days: 1,
-            window: {
-              sinceDay: "2026-08-10",
-              untilDay: "2026-08-11",
-              timeZone: "UTC",
-              resolution: "hour",
-              sinceTime: "2026-08-10T12:37:00.000Z",
-              untilTime: "2026-08-11T12:37:00.000Z",
-            },
-          }
-        : initial === "model"
-          ? "time"
-          : initial,
-      vi.fn(),
-    ]),
-  };
-});
-
 vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => testState.navigate,
+  useCanGoBack: () => testState.canGoBack,
+}));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
-vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -53,6 +34,7 @@ vi.mock("../WorkspaceBreadcrumb", () => ({
 vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
+vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -65,49 +47,106 @@ vi.mock("./usageProviders", async (importOriginal) => {
 });
 
 import { UsagePage } from "./UsagePage";
-
-const providerTotals = (codex: number, claude: number) =>
-  new Map([
-    ["codex", { costUsd: codex, totalTokens: codex * 1_000 }],
-    ["claude", { costUsd: claude, totalTokens: claude * 1_000 }],
-  ] as const);
+const environments = [
+  {
+    environmentId: EnvironmentId.make("test-environment"),
+    label: "Test environment",
+    isPending: false,
+    error: null,
+    summary: {
+      contractVersion: USAGE_CONTRACT_VERSION,
+      readAt: "2026-08-11T12:37:00.000Z",
+      sinceDay: UsageDay.make("2026-08-10"),
+      untilDay: UsageDay.make("2026-08-11"),
+      timeZone: "UTC",
+      buckets: [],
+      sources: [],
+      pricing: { status: "fresh", source: "test", fetchedAt: null, knownModels: 1 },
+      scanDurationMs: 1,
+    },
+  },
+];
 
 beforeEach(() => {
   testState.useUsage.mockReturnValue({
-    merged: {
-      ...mergeUsage([], USAGE_CONTRACT_VERSION),
-      hourly: [
-        {
-          day: "2026-08-10",
-          hourStart: "2026-08-10T13:37:00.000Z",
-          costUsd: 13,
-          totalTokens: 13_000,
-          byProvider: providerTotals(7, 6),
-        },
-        {
-          day: "2026-08-11",
-          hourStart: "2026-08-11T11:37:00.000Z",
-          costUsd: 11,
-          totalTokens: 11_000,
-          byProvider: providerTotals(6, 5),
-        },
-      ],
-    },
-    environments: [],
+    merged: mergeUsage([], USAGE_CONTRACT_VERSION),
+    environments,
+    selectedEnvironments: environments,
     isPending: false,
     isPartial: false,
     refresh: vi.fn(),
   });
 });
 
-describe("UsagePage hourly breakdown", () => {
-  it("keeps recent activity visible first without empty hourly rows", () => {
-    const markup = renderToStaticMarkup(<UsagePage />);
-    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+describe("UsagePage Escape navigation", () => {
+  let renderer: Root;
+  let container: HTMLDivElement;
+  let back: ReturnType<typeof vi.spyOn>;
 
-    expect(body.match(/<tr/g)).toHaveLength(2);
-    expect(body).toContain("$11.00");
-    expect(body).toContain("$13.00");
-    expect(body.indexOf("$11.00")).toBeLessThan(body.indexOf("$13.00"));
+  beforeEach(async () => {
+    back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    testState.navigate.mockClear();
+    testState.canGoBack = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    renderer = createRoot(container);
+    await act(() => {
+      renderer.render(<UsagePage />);
+    });
+  });
+
+  afterEach(async () => {
+    await act(() => renderer.unmount());
+    container.remove();
+    back.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  function escape(properties: { repeat?: boolean; isComposing?: boolean } = {}) {
+    return new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+      ...properties,
+    });
+  }
+
+  it("returns to the previous page on Escape", () => {
+    document.body.dispatchEvent(escape());
+    expect(back).toHaveBeenCalledOnce();
+    expect(testState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("returns home when there is no previous app page", async () => {
+    testState.canGoBack = false;
+    await act(() => renderer.render(<UsagePage />));
+
+    document.body.dispatchEvent(escape());
+    expect(testState.navigate).toHaveBeenCalledWith({ to: "/" });
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it("closes the environment menu before Escape navigates back", async () => {
+    const trigger = container.querySelector<HTMLButtonElement>('[data-slot="menu-trigger"]')!;
+    await act(() => trigger.click());
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    await act(() => {
+      document.activeElement!.dispatchEvent(escape());
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(back).not.toHaveBeenCalled();
+
+    document.body.dispatchEvent(escape());
+    expect(back).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ repeat: true }, { isComposing: true }])("ignores Escape with %j", (properties) => {
+    document.body.dispatchEvent(escape(properties));
+    expect(back).not.toHaveBeenCalled();
+    expect(testState.navigate).not.toHaveBeenCalled();
   });
 });
+
+// @vitest-environment jsdom

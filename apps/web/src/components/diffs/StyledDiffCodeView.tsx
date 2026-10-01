@@ -10,6 +10,7 @@ import {
 import type { Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
+import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 
 const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 :is(
@@ -199,6 +200,13 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   line-height: 1 !important;
 }
 
+/* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
+   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
+   inside its 32px min-height, which diffHeaderHeight assumes. */
+[data-diffs-header] :is([data-title], [data-prev-name]) {
+  line-height: 16px !important;
+}
+
 [data-diffs-header] [data-metadata] {
   align-items: center !important;
   line-height: 1 !important;
@@ -221,18 +229,12 @@ const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
 [data-title] {
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    text-decoration-color 120ms ease;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 2px;
+  transition: color 120ms ease;
   font-family: var(--font-sans) !important;
 }
 
 [data-title]:hover {
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
-  text-decoration-color: currentColor;
 }
 
 /* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
@@ -285,38 +287,40 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   return (
-    <CodeView<LAnnotation>
-      {...props}
-      {...(viewerRef ? { ref: viewerRef } : {})}
-      // The custom element itself is focusable for keyboard scrolling. Its native outline sits
-      // outside the panel clipping boundary; actual controls inside retain their own indicators.
-      className={
-        className
-          ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
-          : "diff-render-surface [--code-background:var(--background)] outline-none"
-      }
-      options={{
-        ...options,
-        unsafeCSS: unsafeCSSExtra
-          ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
-          : DIFF_VIEW_UNSAFE_CSS,
-        itemMetrics: {
-          diffHeaderHeight: 32,
-          hunkSeparatorHeight: 24,
-          // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
-          // Keep it zero alongside the explicit paddingTop or expanding the first file can
-          // reintroduce the library's default 8px gap above its header.
-          spacing: 0,
-          paddingTop: 0,
-          // Unlike the gap above, the 8px under a file's last line is painted
-          // unconditionally by Pierre's stylesheet (`--diffs-gap-fallback`), so the metric has
-          // to count it: at zero every expanded file's virtual height ran 8px short of its
-          // rendered height, and the end of the list sat past the reachable scroll range —
-          // one clipped file row per expanded file above it.
-          paddingBottom: 8,
-        },
-        layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-      }}
-    />
+    <DiffWorkerPoolProvider>
+      <CodeView<LAnnotation>
+        {...props}
+        {...(viewerRef ? { ref: viewerRef } : {})}
+        // The custom element itself is focusable for keyboard scrolling. Its native outline sits
+        // outside the panel clipping boundary; actual controls inside retain their own indicators.
+        className={
+          className
+            ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+            : "diff-render-surface [--code-background:var(--background)] outline-none"
+        }
+        options={{
+          ...options,
+          unsafeCSS: unsafeCSSExtra
+            ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+            : DIFF_VIEW_UNSAFE_CSS,
+          itemMetrics: {
+            diffHeaderHeight: 32,
+            hunkSeparatorHeight: 24,
+            // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
+            // Keep it zero alongside the explicit paddingTop or expanding the first file can
+            // reintroduce the library's default 8px gap above its header.
+            spacing: 0,
+            paddingTop: 0,
+            // Unlike the gap above, the 8px under a file's last line is painted
+            // unconditionally by Pierre's stylesheet (`--diffs-gap-fallback`), so the metric has
+            // to count it: at zero every expanded file's virtual height ran 8px short of its
+            // rendered height, and the end of the list sat past the reachable scroll range —
+            // one clipped file row per expanded file above it.
+            paddingBottom: 8,
+          },
+          layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+        }}
+      />
+    </DiffWorkerPoolProvider>
   );
 }

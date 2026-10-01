@@ -2,90 +2,106 @@
  * Single source of truth for Alchemy's brand mark — a Sri-Yantra-style
  * downward water triangle inscribed in a circle, with the centroid dot.
  *
- * Geometry (viewBox 24×24):
- *   - circle: cx=12, cy=12, r=9.5
- *   - apex (down) at (12, 12 + r=21.5)
- *   - top-left  at (12 - r·cos30°, 12 - r·sin30°) ≈ (3.77, 7.25)
- *   - top-right at (12 + r·cos30°, 12 - r·sin30°) ≈ (20.23, 7.25)
- *   - centroid coincides with the circle center → dot at (12, 12)
- *
  * Both the runtime Astro component and the build-time asset generators
  * (favicon, OG images) consume this module so the geometry is defined once.
  */
 
-export const YANTRA_VIEWBOX = "0 0 24 24" as const;
+const YANTRA = {
+  viewBox: [0, 0, 24, 24],
+  center: 12,
+  circleRadius: 9.5,
+  binduRadius: 1.1,
+  strokeWidth: 1.1,
+} as const;
 
 /**
- * Path for the inscribed equilateral triangle (apex down). Vertices live
- * exactly on the circle (cx=12, cy=12, r=9.5):
+ * Path for the equilateral triangle (apex down), centered on the circle:
  *
- *   apex    : (12,                  12 + r)             = (12,        21.5)
- *   top-left: (12 - r·cos30°, 12 - r·sin30°)            = (3.7728..., 7.25)
- *   top-right (12 + r·cos30°, 12 - r·sin30°)            = (20.2272..., 7.25)
+ *   apex     : (cx,             cy + r)
+ *   top-left : (cx - r·cos30°,  cy - r·sin30°)
+ *   top-right: (cx + r·cos30°,  cy - r·sin30°)
  *
- * Coordinates are kept at 4 decimals so that at any rasterized size the
- * vertex never lands a sub-pixel outside the circle.
+ * `r` is the circle's radius pulled in by a quarter stroke width. A round join
+ * extends half a stroke width past the vertex, so this lands each tip's outer
+ * edge midway between the ring's centerline and its outer edge: far enough in
+ * that the tips don't bulge the ring's silhouette, but still deep enough into
+ * the band that the corners read as merged rather than butted up against it.
+ * (A half-width inset stops the tips at the centerline, which opens a visible
+ * notch at each corner.) The triangle's centroid stays at the circle center
+ * regardless, so the bindu is shared.
+ *
+ * Derived rather than transcribed, so the coordinates cannot drift from the
+ * formulas above. Rounded to 4 decimals — well under a pixel at any size we
+ * rasterize.
  */
-export const YANTRA_TRIANGLE_PATH =
-  "M12 21.5 L3.7272 7.25 L20.2728 7.25 Z" as const;
+function yantraTrianglePath(): string {
+  const r = YANTRA.circleRadius - YANTRA.strokeWidth / 4;
+  const round = (n: number) => Number(n.toFixed(4));
+  const dx = round(r * Math.cos(Math.PI / 6));
+  const topY = round(YANTRA.center - r * Math.sin(Math.PI / 6));
+  const apexY = round(YANTRA.center + r);
+  return `M${YANTRA.center} ${apexY} L${YANTRA.center - dx} ${topY} L${YANTRA.center + dx} ${topY} Z`;
+}
 
-/** Brand color defaults — mirror tokens.css. */
-export const YANTRA_COLORS = {
-  /** Deep forest green — primary stroke. */
-  stroke: "#3f5a2a",
-  /** Centroid dot — same deep moss as the stroke. The runtime Astro
-   * component overrides this with a CSS variable so it can flip to
-   * terracotta in dark mode. */
-  dot: "#3f5a2a",
-  /** Parchment background (e.g. for OG cards). */
-  bg: "#f5efe3",
+/**
+ * Brand palette, one entry per theme — mirrors tokens.css. Every rendering of
+ * the mark is painted from one of these two entries, so the favicons, app
+ * icons, OG cards and README hero can't drift apart.
+ */
+export const YANTRA_THEMES = {
+  light: {
+    /** `--alc-accent-deep` */
+    stroke: "#3f5a2a",
+    /** `--alc-terracotta-deep`, mirrored by `--alc-yantra-dot` */
+    dot: "#9a4f27",
+    /** `--alc-bg`. Only used where an asset must be opaque. */
+    bg: "#f5efe3",
+  },
+  dark: {
+    /** `--alc-accent-deep` (dark block) */
+    stroke: "#a3c473",
+    /** `--alc-terracotta` (dark block), mirrored by `--alc-yantra-dot` */
+    dot: "#d8835a",
+    /** `--alc-bg` (dark block) */
+    bg: "#14110d",
+  },
 } as const;
+
+export type YantraTheme = keyof typeof YANTRA_THEMES;
 
 export interface YantraOptions {
   /** Pixel size of the rendered SVG (square). Default 24. */
   size?: number;
-  /** Stroke color for the circle + triangle. Default deep forest. */
-  stroke?: string;
-  /** Centroid dot fill. Default deep forest. */
-  dot?: string;
-  /**
-   * Optional background color for the enclosing rect — useful for
-   * favicons and OG images. When omitted, the SVG is transparent.
-   */
-  bg?: string;
-  /**
-   * Stroke width (in viewBox units, 24×24). Default 1.
-   * Bump for small favicons (e.g. 1.4 at 16px) so the lines stay legible.
-   */
-  strokeWidth?: number;
-  /**
-   * If true, applies `currentColor` for the stroke instead of an explicit
-   * color so the icon adopts the surrounding text color. Used by the
-   * inline Astro component on the homepage.
-   */
-  useCurrentColor?: boolean;
+  /** Brand palette. Default light; `auto` follows theme tokens in inline SVG. */
+  theme?: YantraTheme | "auto";
+  /** Output format. `svg` for inline SVG, `url` for data URL. Default `svg`. */
+  output?: "svg" | "url";
 }
 
-/**
- * Returns a complete, standalone SVG string for the brand mark.
- * Safe for both raster pipelines (resvg, satori) and direct embedding.
- */
-export function yantraSvg(opts: YantraOptions = {}): string {
-  const {
-    size = 24,
-    stroke = YANTRA_COLORS.stroke,
-    dot = YANTRA_COLORS.dot,
-    bg,
-    strokeWidth = 1,
-    useCurrentColor = false,
-  } = opts;
+export function yantraSvg({
+  size = 24,
+  theme = "light",
+  output = "svg",
+}: YantraOptions = {}): string {
+  const colors = YANTRA_THEMES[theme === "auto" ? "light" : theme];
 
-  const strokeColor = useCurrentColor ? "currentColor" : stroke;
-  const bgRect = bg ? `<rect width="24" height="24" fill="${bg}"/>` : "";
+  const stroke =
+    theme === "auto"
+      ? `var(--alc-accent-deep, ${colors.stroke})`
+      : colors.stroke;
 
-  // `stroke-linejoin="round"` is critical: at a 60° interior angle (equilateral
-  // triangle) a mitered join projects past the geometric vertex by ~1 stroke
-  // width, which makes the triangle tips visibly poke through the circle.
-  // Round joins keep the rendered tip flush with the circle's outer edge.
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${YANTRA_VIEWBOX}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">${bgRect}<circle cx="12" cy="12" r="9.5"/><path d="${YANTRA_TRIANGLE_PATH}"/><circle cx="12" cy="12" r="1.1" fill="${dot}" stroke="none"/></svg>`;
+  const dot =
+    theme === "auto" ? `var(--alc-yantra-dot, ${colors.dot})` : colors.dot;
+
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="${YANTRA.viewBox.join(" ")}" fill="none" stroke="${stroke}" stroke-width="${YANTRA.strokeWidth}" stroke-linecap="round" stroke-linejoin="round">`,
+    `<circle cx="${YANTRA.center}" cy="${YANTRA.center}" r="${YANTRA.circleRadius}"/>`,
+    `<path d="${yantraTrianglePath()}"/>`,
+    `<circle cx="${YANTRA.center}" cy="${YANTRA.center}" r="${YANTRA.binduRadius}" fill="${dot}" stroke="none"/>`,
+    `</svg>`,
+  ].join("");
+
+  return output === "url"
+    ? `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`
+    : svg;
 }

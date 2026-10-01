@@ -16,9 +16,8 @@ export interface ListLicenseSpecificationsForResourceRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListLicenseSpecificationsForResourceHttp)`.
- * @binding
- * @section Resource Inventory and Specifications
- * @example List a Resource's License Specifications
+ * ### Resource Inventory and Specifications
+ * **Example:** List a Resource's License Specifications
  * ```typescript
  * // init
  * const listSpecifications =
@@ -29,6 +28,8 @@ export interface ListLicenseSpecificationsForResourceRequest
  *   ResourceArn: amiArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListLicenseSpecificationsForResource extends Binding.Service<
   ListLicenseSpecificationsForResource,

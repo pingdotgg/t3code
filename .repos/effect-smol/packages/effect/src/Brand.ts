@@ -12,7 +12,7 @@ import * as Option from "./Option.ts"
 import * as Result from "./Result.ts"
 import type * as Schema from "./Schema.ts"
 import * as SchemaAST from "./SchemaAST.ts"
-import type * as SchemaIssue from "./SchemaIssue.ts"
+import * as SchemaIssue from "./SchemaIssue.ts"
 import type * as Types from "./Types.ts"
 
 const TypeId = "~effect/Brand"
@@ -92,8 +92,8 @@ export interface Constructor<in out B extends Brand<any>> {
  *
  * **Details**
  *
- * The error wraps a `SchemaIssue.Issue`, exposes `message` through
- * `issue.toString()`, and formats as `BrandError(<message>)`.
+ * The error wraps a `SchemaIssue.Issue`, renders `message` with the default
+ * schema issue formatter, and formats as `BrandError(<message>)`.
  *
  * **Gotchas**
  *
@@ -131,7 +131,7 @@ export class BrandError {
    * @since 4.0.0
    */
   get message() {
-    return this.issue.toString()
+    return SchemaIssue.defaultFormatter(this.issue)
   }
   /**
    * Formats the brand error together with its validation message.

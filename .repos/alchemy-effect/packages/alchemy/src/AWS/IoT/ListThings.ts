@@ -12,9 +12,8 @@ export interface ListThingsRequest extends iot.ListThingsRequest {}
  * Lists things in the registry, optionally filtered by attribute or thing
  * type. Provide the implementation with
  * `Effect.provide(AWS.IoT.ListThingsHttp)`.
- * @binding
- * @section Registry
- * @example List Things by Attribute
+ * ### Registry
+ * **Example:** List Things by Attribute
  * ```typescript
  * const listThings = yield* AWS.IoT.ListThings();
  *
@@ -23,6 +22,8 @@ export interface ListThingsRequest extends iot.ListThingsRequest {}
  *   attributeValue: "warehouse-a",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListThings extends Binding.Service<
   ListThings,

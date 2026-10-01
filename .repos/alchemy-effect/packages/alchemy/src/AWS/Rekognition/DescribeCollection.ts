@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DescribeCollectionHttp)`.
  *
- * @binding
- * @section Face Collections
- * @example Describe a Collection
+ * ### Face Collections
+ * **Example:** Describe a Collection
  * ```typescript
  * // init
  * const describeCollection = yield* AWS.Rekognition.DescribeCollection();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const info = yield* describeCollection({ CollectionId: "tenant-42" });
  * // info.FaceCount, info.FaceModelVersion
  * ```
+ *
+ * @binding
  */
 export interface DescribeCollection extends Binding.Service<
   DescribeCollection,

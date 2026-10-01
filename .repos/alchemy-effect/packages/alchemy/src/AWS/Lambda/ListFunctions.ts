@@ -10,15 +10,16 @@ export interface ListFunctionsRequest extends Lambda.ListFunctionsRequest {}
  * An account-level binding — call it with no arguments to get a callable
  * that lists function configurations in the region. Provide the
  * `ListFunctionsHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Function Metadata
- * @example List functions in the region
+ * ### Function Metadata
+ * **Example:** List functions in the region
  * ```typescript
  * const listFunctions = yield* AWS.Lambda.ListFunctions();
  *
  * const response = yield* listFunctions({ MaxItems: 50 });
  * const names = response.Functions?.map((f) => f.FunctionName);
  * ```
+ *
+ * @binding
  */
 export interface ListFunctions extends Binding.Service<
   ListFunctions,
