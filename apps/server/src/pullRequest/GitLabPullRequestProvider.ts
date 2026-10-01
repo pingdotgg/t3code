@@ -35,6 +35,11 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["rebase"],
   search: true,
   reactions: true,
+  // GitLab keeps a reader's viewed files in one browser's local storage, where nothing outside
+  // that browser can read or write them. So the marks made here are this environment's own: they
+  // follow the reader between the clients connected to it, but they are not the ones gitlab.com
+  // shows, and the surface says so rather than implying a review can be carried on from there.
+  viewedFiles: "environment",
   review: {
     inlineComment: true,
     reply: true,
@@ -147,24 +152,22 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(
-          ([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
-            ...mergeRequest,
-            mergeCapabilities,
-            viewerPermissions: gitLabViewerPermissions(mergeRequest),
-            // A GitLab too old to count the divergence says nothing here rather than "up to
-            // date": the banner is worth missing, and a wrong all-clear is not worth showing.
-            baseComparison:
-              mergeRequest.divergedCommits === undefined
-                ? "unknown"
-                : mergeRequest.divergedCommits > 0
-                  ? "behind"
-                  : "up-to-date",
-            ...(mergeRequest.divergedCommits === undefined
-              ? {}
-              : { behindBy: mergeRequest.divergedCommits }),
-          }),
-        ),
+        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
+          ...mergeRequest,
+          mergeCapabilities,
+          viewerPermissions: gitLabViewerPermissions(mergeRequest),
+          // A GitLab too old to count the divergence says nothing here rather than "up to
+          // date": the banner is worth missing, and a wrong all-clear is not worth showing.
+          baseComparison:
+            mergeRequest.divergedCommits === undefined
+              ? "unknown"
+              : mergeRequest.divergedCommits > 0
+                ? "behind"
+                : "up-to-date",
+          ...(mergeRequest.divergedCommits === undefined
+            ? {}
+            : { behindBy: mergeRequest.divergedCommits }),
+        })),
       ),
 
     getChangeRequestActivity: (input) =>
@@ -189,28 +192,26 @@ export const make = Effect.gen(function* () {
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-            reactions: awards.reactions,
-            comments: notes.comments.map((comment) => ({
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
+          reactions: awards.reactions,
+          comments: notes.comments.map((comment) => ({
+            ...comment,
+            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+          })),
+          // GitLab reports no count of its own, so the walk's own total is the host's: the
+          // notes endpoint carries every comment on the merge request, including the ones
+          // written under a discussion, and it is read until GitLab runs out.
+          commentCount: notes.comments.length,
+          commentsTruncated: notes.truncated || discussions.truncated,
+          reviewThreads: discussions.threads.map((thread) => ({
+            ...thread,
+            comments: thread.comments.map((comment) => ({
               ...comment,
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
-            // GitLab reports no count of its own, so the walk's own total is the host's: the
-            // notes endpoint carries every comment on the merge request, including the ones
-            // written under a discussion, and it is read until GitLab runs out.
-            commentCount: notes.comments.length,
-            commentsTruncated: notes.truncated || discussions.truncated,
-            reviewThreads: discussions.threads.map((thread) => ({
-              ...thread,
-              comments: thread.comments.map((comment) => ({
-                ...comment,
-                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-              })),
-            })),
-            commits,
-          }),
-        ),
+          })),
+          commits,
+        })),
       ),
 
     // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
@@ -221,6 +222,15 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+
+    // What each marked file is at the head, which is what tells a mark that still stands from one
+    // the branch has moved past. GitLab's own local-storage marks are keyed on the blob id too,
+    // so this stales at the same moment its web UI would.
+    getFileRevisions: (input) =>
+      cli.getFileRevisions(input).pipe(
+        Effect.mapError(fail("getFileRevisions")),
+        Effect.map((revisions) => ({ revisions })),
+      ),
 
     // Users only: GitLab requests a review of a person, and the groups that can stand in for one
     // appear in approval rules rather than in a merge request's reviewers.

@@ -15,7 +15,10 @@ import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
-import { allEnvironmentShellsBootstrappedAtom } from "./shell";
+import {
+  allEnvironmentProjectSnapshotsReadyAtom,
+  allEnvironmentShellsBootstrappedAtom,
+} from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -36,7 +39,7 @@ const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pip
   Atom.withLabel("web-thread-status:empty"),
 );
 
-export const activeEnvironmentIdAtom = Atom.make<EnvironmentId | null>(null).pipe(
+const activeEnvironmentIdAtom = Atom.make<EnvironmentId | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("web-active-environment-id"),
 );
@@ -77,6 +80,10 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {
   return useAtomValue(allEnvironmentShellsBootstrappedAtom);
+}
+
+export function useAllEnvironmentProjectSnapshotsReady(): boolean {
+  return useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
 }
 
 export function useThreadShellsForProjectRefs(
@@ -176,6 +183,14 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** The thread as `useThread` returns it, read outside React. */
+export function readThread(ref: ScopedThreadRef): EnvironmentThread | null {
+  return mergeEnvironmentThread(
+    appAtomRegistry.get(environmentThreadDetails.detailAtom(ref)),
+    readThreadShell(ref),
+  );
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
@@ -219,6 +234,22 @@ export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId):
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadPinReorder === true
+  );
+}
+
+/** Whether the environment's server understands thread.auto-settle.set.
+    Same version-skew contract as settlement. */
+export function readEnvironmentSupportsAutoSettleOptOut(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadAutoSettleOptOut === true
+  );
+}
+
+export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadActiveReorder === true
   );
 }
 

@@ -26,7 +26,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       appDelegate.reactNativeFactory?.startReactNative(
         withModuleName: "main",
         in: appWindow,
-        launchOptions: nil)
+        launchOptions: appDelegate.sceneLaunchOptions)
+      appDelegate.sceneLaunchOptions = nil
     }
 
     window = appWindow
@@ -90,8 +91,31 @@ module.exports = function withIosSceneLifecycle(config) {
       throw new Error("The iOS scene lifecycle plugin requires a Swift AppDelegate.");
     }
 
+    // Creating the window before a scene exists leaves iOS share scenes with
+    // incorrect geometry, even if windowScene is assigned afterward.
+    const startup =
+      /window = UIWindow\(frame: UIScreen\.main\.bounds\)\s+factory\.startReactNative\(\s+withModuleName: "main",\s+in: window,\s+launchOptions: launchOptions\)/;
+    if (startup.test(nextConfig.modResults.contents)) {
+      nextConfig.modResults.contents = nextConfig.modResults.contents.replace(
+        startup,
+        "sceneLaunchOptions = launchOptions",
+      );
+    } else if (!nextConfig.modResults.contents.includes("sceneLaunchOptions = launchOptions")) {
+      throw new Error("Could not move React Native startup into the iOS scene lifecycle.");
+    }
+    if (!nextConfig.modResults.contents.includes("var sceneLaunchOptions:")) {
+      nextConfig.modResults.contents = nextConfig.modResults.contents.replace(
+        "var window: UIWindow?",
+        "var window: UIWindow?\n  var sceneLaunchOptions: [UIApplication.LaunchOptionsKey: Any]?",
+      );
+    }
     if (!nextConfig.modResults.contents.includes("class SceneDelegate:")) {
       nextConfig.modResults.contents += SCENE_DELEGATE;
+    } else {
+      nextConfig.modResults.contents = nextConfig.modResults.contents.replace(
+        "in: appWindow,\n        launchOptions: nil)",
+        "in: appWindow,\n        launchOptions: appDelegate.sceneLaunchOptions)\n      appDelegate.sceneLaunchOptions = nil",
+      );
     }
 
     return nextConfig;

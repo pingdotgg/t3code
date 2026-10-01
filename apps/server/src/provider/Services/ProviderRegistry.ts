@@ -48,18 +48,27 @@ export interface ProviderRegistryShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+  /**
+   * Fill the skills and slash commands snapshot for one cwd. A cwd that
+   * already has a snapshot is left alone unless `fresh` is set. A fresh scan
+   * also refreshes the instance's machine snapshot and drops other
+   * instances' snapshots for the cwd.
+   */
   readonly refreshWorkspaceSnapshot: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly cwd: string;
+    readonly fresh?: boolean;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
    * Resolve the maintenance capabilities owned by one live provider instance.
    * Falls back to manual-only capabilities when the instance is not live.
+   * `fresh` re-derives ownership from the executable instead of the cache.
    */
   readonly getProviderMaintenanceCapabilitiesForInstance: (
     instanceId: ProviderInstanceId,
     provider: ProviderDriverKind,
+    options?: { readonly fresh?: boolean },
   ) => Effect.Effect<ProviderMaintenanceCapabilities>;
 
   /**

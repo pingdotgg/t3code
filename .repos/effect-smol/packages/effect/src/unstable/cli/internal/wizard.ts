@@ -16,17 +16,30 @@ export interface Options {
   readonly prefix?: ReadonlyArray<string> | undefined
 }
 
+export interface Result {
+  readonly args: Array<string>
+  readonly displayArgs: Array<string>
+}
+
+interface CommandLineArg {
+  readonly value: string
+  readonly displayValue: string
+}
+
 export const run: (
   command: Command.Command.Any,
   options?: Options
-) => Effect.Effect<Array<string>, CliError.CliError | Terminal.QuitError, Command.Environment> = Effect.fnUntraced(
+) => Effect.Effect<Result, CliError.CliError | Terminal.QuitError, Command.Environment> = Effect.fnUntraced(
   function*(command, options) {
     const commandPath = options?.commandPath ?? [command.name]
     const selected = getCommandAtPath(command, commandPath)
-    const commandLine = [...(options?.prefix ?? commandPath)]
+    const commandLine = (options?.prefix ?? commandPath).map((value) => commandLineArg(value))
     yield* logCurrentCommand(commandLine)
     yield* promptCommand(selected, commandLine, selected === command ? "ROOT" : selected.name)
-    return commandLine
+    return {
+      args: commandLine.map((arg) => arg.value),
+      displayArgs: commandLine.map((arg) => arg.displayValue)
+    }
   }
 )
 
@@ -49,12 +62,12 @@ const getCommandAtPath = (
 
 const promptCommand: (
   command: Command.Command.Any,
-  commandLine: Array<string>,
+  commandLine: Array<CommandLineArg>,
   sectionName: string
 ) => Effect.Effect<void, CliError.CliError | Terminal.QuitError, Command.Environment> = Effect.fnUntraced(
   function*(command, commandLine, sectionName) {
     const impl = toImpl(command)
-    const visibleSubcommands = command.subcommands.flatMap((group) => group.commands.filter((child) => !child.hidden))
+    const visibleSubcommands = command.subcommands.flatMap((group) => group.commands.filter((child) => !child.unlisted))
     const config = visibleSubcommands.length === 0 ? impl.config : impl.contextConfig
 
     if (config.flags.length > 0) {
@@ -81,7 +94,7 @@ const promptCommand: (
       return
     }
 
-    const child = yield* Prompt.run(Prompt.select({
+    const child = yield* Prompt.run(Prompt.Select({
       message: "Command",
       choices: visibleSubcommands.map((command) => ({
         title: command.name,
@@ -94,7 +107,7 @@ const promptCommand: (
       }))
     }))
     yield* Console.log()
-    commandLine.push(child.name)
+    commandLine.push(commandLineArg(child.name))
     if (hasWizardSteps(child)) {
       yield* logCurrentCommand(commandLine)
     }
@@ -103,19 +116,21 @@ const promptCommand: (
 )
 
 const hasWizardSteps = (command: Command.Command.Any): boolean => {
-  const hasVisibleSubcommands = command.subcommands.some((group) => group.commands.some((child) => !child.hidden))
+  const hasVisibleSubcommands = command.subcommands.some((group) => group.commands.some((child) => !child.unlisted))
   return hasVisibleSubcommands || toImpl(command).config.orderedParams.length > 0
 }
 
-const promptParam: (
-  param: Param.Any
-) => Effect.Effect<Array<string>, CliError.CliError | Terminal.QuitError, Command.Environment> = Effect.fnUntraced(
-  function*(param) {
+const promptParam = Effect.fnUntraced(
+  function*(param: Param.Any): Effect.fn.Return<
+    Array<CommandLineArg>,
+    CliError.CliError | Terminal.QuitError,
+    Command.Environment
+  > {
     const single = Param.getUnderlyingSingleOrThrow(param)
     const metadata = Param.getParamMetadata(param)
 
     if (metadata.isOptional) {
-      const include = yield* Prompt.run(Prompt.confirm({
+      const include = yield* Prompt.run(Prompt.Confirm({
         message: `Set ${renderParamLabel(single)}?`,
         initial: false
       }))
@@ -127,25 +142,25 @@ const promptParam: (
 
     const count = !metadata.isVariadic
       ? 1
-      : yield* Prompt.run(Prompt.integer({
+      : yield* Prompt.run(Prompt.Int({
         message: `${renderParamLabel(single)} count`,
         default: Option.getOrElse(metadata.variadicMin, () => 0),
         min: Option.getOrElse(metadata.variadicMin, () => 0),
         ...(Option.isSome(metadata.variadicMax) ? { max: metadata.variadicMax.value } : {})
       }))
-    const values: Array<string> = []
+    const values: Array<CommandLineArg> = []
     for (let i = 0; i < count; i++) {
       values.push(yield* promptSingle(single))
     }
 
     const parsed = single.kind === Param.flagKind
       ? {
-        flags: { [single.name]: values },
+        flags: { [single.name]: values.map((arg) => arg.value) },
         arguments: []
       }
       : {
         flags: {},
-        arguments: values
+        arguments: values.map((arg) => arg.value)
       }
     yield* param.parse(parsed)
     yield* Console.log()
@@ -153,18 +168,23 @@ const promptParam: (
     if (single.kind === Param.argumentKind) {
       return values
     }
-    return values.flatMap((value) => [`--${single.name}`, value])
+    // Inline option-looking values so the lexer cannot interpret them as flags or the -- delimiter.
+    return values.flatMap((value) =>
+      value.value.startsWith("-") && value.value.length > 1
+        ? [commandLineArg(`--${single.name}=${value.value}`, `--${single.name}=${value.displayValue}`)]
+        : [commandLineArg(`--${single.name}`), value]
+    )
   }
 )
 
 const promptSingle = (
   single: Param.Single<Param.ParamKind, unknown>
-): Effect.Effect<string, Terminal.QuitError, Command.Environment> => {
+): Effect.Effect<CommandLineArg, Terminal.QuitError, Command.Environment> => {
   const message = renderParamMessage(single)
   switch (single.primitiveType._tag) {
     case "Boolean":
       return Effect.map(
-        Prompt.run(Prompt.confirm({
+        Prompt.run(Prompt.Confirm({
           message,
           label: {
             confirm: "true",
@@ -175,27 +195,35 @@ const promptSingle = (
             defaultDeny: "(t/F)"
           }
         })),
-        String
+        (value) => commandLineArg(String(value))
       )
     case "Choice": {
       const choices = Primitive.getChoiceKeys(single.primitiveType) ?? []
-      return Prompt.run(Prompt.select({
-        message,
-        choices: choices.map((choice) => ({ title: choice, value: choice }))
-      }))
+      return Effect.map(
+        Prompt.run(Prompt.Select({
+          message,
+          choices: choices.map((choice) => ({ title: choice, value: choice }))
+        })),
+        commandLineArg
+      )
     }
     case "Date":
-      return Effect.map(Prompt.run(Prompt.date({ message })), (date) => date.toISOString())
-    case "Float":
-      return Effect.map(Prompt.run(Prompt.float({ message })), String)
-    case "Integer":
-      return Effect.map(Prompt.run(Prompt.integer({ message })), String)
+      return Effect.map(Prompt.run(Prompt.Date({ message })), (date) => commandLineArg(date.toISOString()))
+    case "Finite":
+      return Effect.map(Prompt.run(Prompt.Number({ message })), (value) => commandLineArg(String(value)))
+    case "Int":
+      return Effect.map(Prompt.run(Prompt.Int({ message })), (value) => commandLineArg(String(value)))
     case "Redacted":
-      return Effect.map(Prompt.run(Prompt.password({ message })), Redacted.value)
+      return Effect.map(
+        Prompt.run(Prompt.Password({ message })),
+        (value) => commandLineArg(Redacted.value(value), "<redacted>")
+      )
     default:
-      return Prompt.run(Prompt.text({ message }))
+      return Effect.map(Prompt.run(Prompt.String({ message })), commandLineArg)
   }
 }
+
+const commandLineArg = (value: string, displayValue: string = value): CommandLineArg => ({ value, displayValue })
 
 const formatName = (single: Param.Single<Param.ParamKind, unknown>): string =>
   single.kind === Param.flagKind ? `--${single.name}` : single.name
@@ -216,8 +244,8 @@ const humanize = (name: string): string => {
   return [words[0][0].toUpperCase() + words[0].slice(1), ...words.slice(1)].join(" ")
 }
 
-const logCurrentCommand = (commandLine: ReadonlyArray<string>): Effect.Effect<void> =>
-  Console.log(renderCommandBlock("Current command", commandLine, Ansi.magenta))
+const logCurrentCommand = (commandLine: ReadonlyArray<CommandLineArg>): Effect.Effect<void> =>
+  Console.log(renderCommandBlock("Current command", commandLine.map((arg) => arg.displayValue), Ansi.magenta))
 
 const renderSection = (commandName: string, section: string): string =>
   `${Ansi.annotate(commandName.toUpperCase(), Ansi.bold, Ansi.cyanBright)} ${Ansi.annotate("·", Ansi.blackBright)} ${

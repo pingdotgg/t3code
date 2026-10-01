@@ -16,7 +16,10 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  BrowserImportResult,
+  BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
+  DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
@@ -27,10 +30,13 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
+import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -45,6 +51,9 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeRecordingFrames((frame) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
+  );
+  yield* manager.subscribeRecordingInputs((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, event),
   );
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
@@ -176,11 +185,21 @@ export const cancelPickElement = tabMethod(
   "desktop.ipc.preview.cancelPickElement",
   (manager, tabId) => manager.cancelPickElement(tabId),
 );
-export const startRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
-  "desktop.ipc.preview.startRecording",
-  (manager, tabId) => manager.startRecording(tabId),
-);
+export const startRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.startRecording")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    const store = yield* DesktopClientSettings.DesktopClientSettings;
+    const settings = yield* store.get;
+    const options = Option.map(settings, (value) => ({
+      showKeyPresses: value.browserRecordingShowKeyPresses,
+      showMousePresses: value.browserRecordingShowMousePresses,
+    }));
+    yield* manager.startRecording(tabId, Option.getOrUndefined(options));
+  }),
+});
 export const stopRecording = tabMethod(
   IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
   "desktop.ipc.preview.stopRecording",
@@ -281,6 +300,45 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
+  }),
+});
+
+/**
+ * Registered separately from `methods`: these carry `BrowserImport` in their
+ * context and their own failure type, so they do not unify with the
+ * manager-backed handlers the shared loop iterates.
+ */
+export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(BrowserImportSource),
+  handler: Effect.fn("desktop.ipc.preview.listBrowserImportSources")(function* () {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    return yield* browserImport.listSources;
+  }),
+});
+
+export const importBrowserCookies = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_IMPORT_COOKIES_CHANNEL,
+  payload: DesktopPreviewImportCookiesInputSchema,
+  result: BrowserImportResult,
+  handler: Effect.fn("desktop.ipc.preview.importBrowserCookies")(function* ({
+    environmentId,
+    ...importInput
+  }) {
+    const browserImport = yield* BrowserImport.BrowserImport;
+    // Derived in main from the same helper the webview config uses, so cookies
+    // land in exactly the partition the profile's tabs attach to.
+    const { scope, persistent, namespace } = resolvePartitionScope(
+      environmentId,
+      importInput.targetProfileId,
+    );
+    return yield* browserImport.importCookies({
+      input: importInput,
+      scope,
+      persistent,
+      ...(namespace === undefined ? {} : { namespace }),
+    });
   }),
 });
 

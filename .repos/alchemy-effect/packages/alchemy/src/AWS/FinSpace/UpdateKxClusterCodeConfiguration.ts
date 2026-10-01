@@ -7,9 +7,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:UpdateKxClusterCodeConfiguration` — deploys new q code (and optionally a new initialization script or command-line arguments) to a running cluster with a rolling, forced, or no-restart strategy.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.UpdateKxClusterCodeConfigurationHttp)`.
- * @binding
- * @section Deploying to Clusters
- * @example Roll New Code onto a Cluster
+ * ### Deploying to Clusters
+ * **Example:** Roll New Code onto a Cluster
  * ```typescript
  * const updateClusterCode = yield* AWS.FinSpace.UpdateKxClusterCodeConfiguration(kdb);
  *
@@ -20,6 +19,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  *   clientToken: crypto.randomUUID(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateKxClusterCodeConfiguration extends Binding.Service<
   UpdateKxClusterCodeConfiguration,

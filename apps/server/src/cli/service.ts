@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -17,7 +18,11 @@ export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(Layer.provide(ProcessRunner.layer));
+  }).pipe(
+    Layer.provide(ProcessRunner.layer),
+    // Archive-distributed versions download the release archive here.
+    Layer.provide(FetchHttpClient.layer),
+  );
 
 export type ServiceReconcileResult =
   | {
@@ -33,6 +38,7 @@ export type ServiceReconcileResult =
 /** Install, update, or repair the service using the CLI version running this command. */
 export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
+  readonly start?: boolean;
 }) {
   const service = yield* BootService.BootService;
   const status = yield* service.status;
@@ -68,6 +74,9 @@ export function formatServiceStatus(
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
   }
   const installedVersion = status.installedVersion ?? cliVersion;
+  const problems = (status.problems ?? []).map(
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+  );
   if (
     !status.current &&
     status.installedVersion !== undefined &&
@@ -78,7 +87,8 @@ export function formatServiceStatus(
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
-      `  Next: Use \`npx t3@${installedVersion} service update\` to repair it, or pass \`--allow-downgrade\` explicitly.`,
+      ...problems,
+      `  Next: Run \`t3 update ${installedVersion}\` to match it, or pass \`--allow-downgrade\` to \`t3 service install\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -86,7 +96,8 @@ export function formatServiceStatus(
     `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
-    ...(status.current ? [] : ["  Next: Run `npx t3@latest service update`."]),
+    ...problems,
+    ...(status.current ? [] : ["  Next: Run `t3 service install` to repair it."]),
   ].join("\n");
 }
 
@@ -101,7 +112,7 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E>(
 
 const serviceReconcileFlags = {
   ...projectLocationFlags,
-  allowDowngrade: Flag.boolean("allow-downgrade").pipe(
+  allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
     Flag.withDescription("Allow replacing a newer installed service with this older CLI version."),
     Flag.withDefault(false),
   ),
@@ -128,14 +139,18 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
   ),
 );
 
+// Kept one release for muscle memory and old docs. It did what `t3 service
+// install` does; the way to move to a newer release is `t3 update`.
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
-  Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
-  ),
+  Command.withDescription("Deprecated. Run `t3 update` to move to a newer release."),
+  Command.unlisted,
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
       Effect.gen(function* () {
+        yield* Console.log(
+          "`t3 service update` is deprecated: run `t3 update` to move to a newer release, or `t3 service install` to repair the service. Repairing now.",
+        );
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
           yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
@@ -143,6 +158,27 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
         }
         yield* Console.log(
           `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`,
+        );
+      }),
+    ),
+  ),
+);
+
+const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe(
+  Command.withDescription(
+    "Restart the background service. Picks up a version installed by `t3 update` that was not restarted at the time.",
+  ),
+  Command.withHandler((flags) =>
+    runServiceCommand(
+      flags,
+      Effect.gen(function* () {
+        const service = yield* BootService.BootService;
+        const status = yield* service.status;
+        const restarted = yield* service.restart;
+        yield* Console.log(
+          restarted
+            ? `Restarted the T3 Code service${status.installedVersion === undefined ? "" : ` on t3@${status.installedVersion}`}.`
+            : "T3 Code service is not installed.",
         );
       }),
     ),
@@ -189,6 +225,9 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     yield* Console.log("T3 Code is already set up to run in the background on this machine.");
     return true;
   }
+  for (const problem of status.problems ?? []) {
+    yield* Console.warn(`[${problem}] ${BootService.formatBootServiceProblem(problem)}`);
+  }
   if (
     installed &&
     status.installedVersion !== undefined &&
@@ -204,7 +243,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
   // enable-linger equivalent on macOS. Do not promise more than that.
   const platform = yield* HostProcessPlatform;
   const wanted = yield* Prompt.run(
-    Prompt.confirm({
+    Prompt.Confirm({
       message: installed
         ? "The installed T3 Code service needs an update or repair. Update it now?"
         : platform === "darwin"
@@ -239,6 +278,8 @@ export const recoverServiceOnboardingOffer = <R>(
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceInstallError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
+      BootServicePrerequisiteError: (error) =>
+        Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceUpdatePendingError: (error) =>
         Console.warn(`Background setup did not finish: ${error.message}`).pipe(Effect.as(false)),
       BootServiceDowngradeRefusedError: (error) =>
@@ -250,8 +291,9 @@ export const serviceCommand = Command.make("service").pipe(
   Command.withDescription("Manage the T3 Code background service."),
   Command.withSubcommands([
     serviceInstallCommand,
+    serviceRestartCommand,
     serviceUninstallCommand,
-    serviceUpdateCommand,
     serviceStatusCommand,
+    serviceUpdateCommand,
   ]),
 );

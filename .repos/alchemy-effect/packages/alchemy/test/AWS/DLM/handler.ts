@@ -17,7 +17,7 @@ export class DlmTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DlmTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

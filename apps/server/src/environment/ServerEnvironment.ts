@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
@@ -20,8 +21,9 @@ import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
-export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
+export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
   {
     operation: Schema.Literals(["check", "read", "write", "initialize"]),
@@ -125,13 +127,12 @@ const makeIdentity = Effect.gen(function* () {
       });
       yield* fileSystem.writeFileString(tempPath, `${value}\n`);
       // Publish the completed file without replacing an ID created by another process.
-      yield* fileSystem
-        .link(tempPath, destinationPath)
-        .pipe(
-          Effect.catch((cause) =>
-            cause.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(cause),
-          ),
-        );
+      yield* fileSystem.link(tempPath, destinationPath).pipe(
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "AlreadyExists",
+          () => Effect.void,
+        ),
+      );
       if (mode === "recover") {
         // Keep the recovery ID so delayed initializers also publish the same winner.
         yield* fileSystem.remove(tempPath);
@@ -178,6 +179,7 @@ const makeIdentity = Effect.gen(function* () {
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -188,6 +190,7 @@ export const make = Effect.gen(function* () {
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const machine = yield* detectServerEnvironmentMachineKind();
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
@@ -206,22 +209,39 @@ export const make = Effect.gen(function* () {
     platform: {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
+      ...(machine === null ? {} : { machine }),
     },
     serverVersion: packageJson.version,
+    orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
+      questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
+      inlineMessageContext: true,
+      requiredWorktreeBootstrap: true,
       threadSettlement: true,
       threadAutoSettlement: true,
+      storageCleanup: true,
+      projectWorktreeCleanup: true,
+      threadRestartContinuation: true,
+      projectSettingsOverrides: true,
       threadSnooze: true,
       environmentThemes: true,
+      usageLimitSources: true,
+      usagePriceOverrides: true,
       threadPinning: true,
       threadPinReorder: true,
+      threadActiveReorder: true,
+      threadAutoSettleOptOut: true,
       threadTitleRegeneration: true,
+      threadPullRequests: true,
+      pullRequestStackActions: true,
       threadPullRequestLinking: true,
+      environmentIcon: true,
+      projectCloneTracking: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? {

@@ -16,9 +16,8 @@ export interface RetrieveMemoryRecordsRequest extends Omit<
  * Provide `AgentCore.RetrieveMemoryRecordsHttp` on the Function effect to
  * implement the binding.
  *
- * @binding
- * @section Retrieving Memory Records
- * @example Semantic Search over a Namespace
+ * ### Retrieving Memory Records
+ * **Example:** Semantic Search over a Namespace
  * ```typescript
  * // init
  * const retrieveMemoryRecords = yield* AgentCore.RetrieveMemoryRecords(memory);
@@ -39,6 +38,8 @@ export interface RetrieveMemoryRecordsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface RetrieveMemoryRecords extends Binding.Service<
   RetrieveMemoryRecords,

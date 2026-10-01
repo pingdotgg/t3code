@@ -16,9 +16,8 @@ export interface ResetJobBookmarkRequest extends Omit<
  * after a bad deploy consumed data incorrectly. The job name is injected
  * from the binding. Provide the implementation with
  * `Effect.provide(AWS.Glue.ResetJobBookmarkHttp)`.
- * @binding
- * @section Job Bookmarks
- * @example Reset the Bookmark
+ * ### Job Bookmarks
+ * **Example:** Reset the Bookmark
  * ```typescript
  * // init
  * const resetJobBookmark = yield* AWS.Glue.ResetJobBookmark(job);
@@ -26,6 +25,8 @@ export interface ResetJobBookmarkRequest extends Omit<
  * // runtime
  * yield* resetJobBookmark();
  * ```
+ *
+ * @binding
  */
 export interface ResetJobBookmark extends Binding.Service<
   ResetJobBookmark,

@@ -7,17 +7,29 @@ export function AssistantCitationCommentEditor({
   citation,
   inputRef,
   onSubmit,
+  onSubmitAndSend,
   onCancel,
+  onDraftChange,
 }: {
   citation: AssistantCitation;
   inputRef?: Ref<HTMLTextAreaElement>;
   onSubmit: (comment: string) => boolean;
+  onSubmitAndSend?: (comment: string) => boolean;
   onCancel: () => void;
+  onDraftChange?: (comment: string) => void;
 }) {
   const [comment, setComment] = useState(citation.comment ?? "");
   const commentTooLong = comment.length > ASSISTANT_CITATION_MAX_COMMENT_LENGTH;
   const submit = () => {
     if (!commentTooLong) onSubmit(comment);
+  };
+  const submitAndSend = () => {
+    if (commentTooLong) return;
+    if (onSubmitAndSend) {
+      onSubmitAndSend(comment);
+    } else {
+      onSubmit(comment);
+    }
   };
 
   return (
@@ -35,13 +47,16 @@ export function AssistantCitationCommentEditor({
       <textarea
         ref={inputRef}
         aria-label="Comment on selected text"
-        aria-description="Enter to save the citation comment; Shift+Enter for a new line."
+        aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
         aria-invalid={commentTooLong || undefined}
         placeholder="Add an optional comment..."
         rows={2}
         className="field-sizing-content block max-h-40 min-h-16 w-full resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground sm:text-sm"
         value={comment}
-        onChange={(event) => setComment(event.currentTarget.value)}
+        onChange={(event) => {
+          setComment(event.currentTarget.value);
+          onDraftChange?.(event.currentTarget.value);
+        }}
         onKeyDown={(event) => {
           if (
             event.key === "Enter" &&
@@ -50,7 +65,11 @@ export function AssistantCitationCommentEditor({
             event.keyCode !== 229
           ) {
             event.preventDefault();
-            submit();
+            if (event.metaKey || event.ctrlKey) {
+              submitAndSend();
+            } else {
+              submit();
+            }
           }
         }}
       />

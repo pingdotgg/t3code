@@ -22,9 +22,8 @@ export interface BatchGetItemRequest extends Omit<
  * Bind this operation to one or more tables and key the request by each bound
  * table's `LogicalId`. The binding resolves those logical IDs to physical table
  * names at runtime.
- * @binding
- * @section Reading Data
- * @example Read Items Across Multiple Tables
+ * ### Reading Data
+ * **Example:** Read Items Across Multiple Tables
  * ```typescript
  * const batchGetItem = yield* BatchGetItem(sourceTable, archiveTable);
  *
@@ -39,6 +38,8 @@ export interface BatchGetItemRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetItem extends Binding.Service<
   BatchGetItem,

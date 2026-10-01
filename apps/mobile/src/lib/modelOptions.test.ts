@@ -5,6 +5,7 @@ import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3t
 import {
   buildModelOptions,
   groupByProvider,
+  isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -191,8 +192,151 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, usable)).toBe(usable);
     expect(resolveSelectableModelSelection(config, disabled)).toBeNull();
     expect(resolveSelectableModelSelection(config, removed)).toBeNull();
-    // No config (environment offline) — nothing to validate against.
+    expect(isModelSelectionUnavailable(config, disabled)).toBe(false);
+    // An offline environment has no config to validate.
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
+  });
+
+  describe("Antigravity selections", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("google_work"),
+      model: "gemini-3.1-pro-high",
+      options: [{ id: "native-option", value: "saved/opaque-choice" }],
+    };
+    const model = {
+      slug: selection.model,
+      name: "Gemini 3.1 Pro High",
+      subProvider: "Google",
+      isCustom: false,
+      isDefault: true,
+      isLegacy: true,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "native-option",
+            label: "Native option",
+            type: "select",
+            options: [{ id: "current/default", label: "Default", isDefault: true }],
+            currentValue: "current/default",
+          },
+        ],
+      },
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: selection.instanceId,
+          driver: "antigravity",
+          displayName: "Google Work",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [model],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    it.each([
+      ["disabled", { enabled: false }],
+      ["uninstalled", { installed: false }],
+      ["signed out", { auth: { status: "unauthenticated" } }],
+      ["unavailable", { availability: "unavailable" }],
+    ] as const)("keeps a %s provider's selection and known model details", (_state, update) => {
+      const unavailableConfig = {
+        ...config,
+        providers: config.providers.map((provider) => ({ ...provider, ...update })),
+      };
+
+      expect(resolveSelectableModelSelection(unavailableConfig, selection)).toBe(selection);
+      expect(resolveDefaultableModelSelection(unavailableConfig, selection)).toBe(selection);
+      expect(isModelSelectionUnavailable(unavailableConfig, selection)).toBe(true);
+      expect(buildModelOptions(unavailableConfig, null)).toEqual([]);
+      const [option] = buildModelOptions(unavailableConfig, selection);
+      expect(option).toMatchObject({
+        key: `google_work:${selection.model}`,
+        label: model.name,
+        subtitle: "Google",
+        providerKey: "google_work",
+        providerLabel: "Google Work",
+        providerDriver: "antigravity",
+        isDefault: false,
+        isLegacy: true,
+        isUnavailable: true,
+        capabilities: model.capabilities,
+      });
+      expect(option?.selection).toBe(selection);
+    });
+
+    it("keeps an exact selection when its model leaves and returns to the catalog", () => {
+      const changedConfig = {
+        ...config,
+        providers: config.providers.map((provider) => ({
+          ...provider,
+          models: provider.models.map((model) => ({ ...model, slug: "gemini-3.1-pro-low" })),
+        })),
+      };
+
+      expect(resolveDefaultableModelSelection(changedConfig, selection)).toBe(selection);
+      expect(isModelSelectionUnavailable(changedConfig, selection)).toBe(true);
+      const options = buildModelOptions(changedConfig, selection);
+      const missing = options.find((option) => option.selection.model === selection.model);
+      expect(missing).toMatchObject({
+        label: selection.model,
+        providerLabel: "Google Work",
+        providerDriver: "antigravity",
+        isUnavailable: true,
+        capabilities: null,
+      });
+      expect(missing?.selection).toBe(selection);
+      expect(
+        resolveNewTaskModelSelection({
+          draftSelection: null,
+          projectDefaultSelection: resolveDefaultableModelSelection(changedConfig, selection),
+          stickySelection: null,
+          modelOptions: options,
+        }),
+      ).toBe(selection);
+
+      const [restored] = buildModelOptions(config, selection);
+      expect(isModelSelectionUnavailable(config, selection)).toBe(false);
+      expect(restored?.isUnavailable).not.toBe(true);
+      expect(restored?.selection).toBe(selection);
+      expect(resolveDefaultableModelSelection(config, selection)).toBe(selection);
+      expect(buildModelOptions(config, null)[0]?.selection.options).toBeUndefined();
+    });
+
+    it("uses configured instance metadata when provider status is missing", () => {
+      const missingStatusConfig = {
+        providers: [],
+        settings: {
+          providerInstances: {
+            [selection.instanceId]: { driver: "antigravity", displayName: "Google Work" },
+          },
+        },
+      } as unknown as ServerConfig;
+
+      expect(resolveDefaultableModelSelection(missingStatusConfig, selection)).toBe(selection);
+      expect(isModelSelectionUnavailable(missingStatusConfig, selection)).toBe(true);
+      expect(buildModelOptions(missingStatusConfig, selection)).toMatchObject([
+        {
+          providerDriver: "antigravity",
+          providerLabel: "Google Work",
+          isUnavailable: true,
+          selection,
+        },
+      ]);
+    });
+
+    it("keeps offline selections without assuming that an unknown instance is Antigravity", () => {
+      const unknownConfig = { ...config, providers: [] };
+
+      expect(resolveDefaultableModelSelection(null, selection)).toBe(selection);
+      expect(isModelSelectionUnavailable(null, selection)).toBe(false);
+      expect(buildModelOptions(null, selection)[0]?.selection).toBe(selection);
+      expect(buildModelOptions(null, selection)[0]?.isUnavailable).not.toBe(true);
+      expect(isModelSelectionUnavailable(unknownConfig, selection)).toBe(false);
+      expect(resolveSelectableModelSelection(unknownConfig, selection)).toBeNull();
+    });
   });
 
   it("keeps legacy models out of implicit defaults", () => {
@@ -253,5 +397,15 @@ describe("mobile model options", () => {
     expect(resolve(null, project, sticky)).toBe(project);
     expect(resolve(null, null, sticky)).toBe(sticky);
     expect(resolve(null, null, null)).toBe(providerDefault.selection);
+
+    const unavailable = { ...providerDefault, isUnavailable: true };
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: [unavailable],
+      }),
+    ).toBeNull();
   });
 });

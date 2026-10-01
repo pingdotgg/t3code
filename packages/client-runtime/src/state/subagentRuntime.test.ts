@@ -5,10 +5,6 @@ import {
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
-  isAgentAttributedToolActivity,
-  isSubagentActivityKind,
-  isTimelineBypassActivity,
-  workflowCardMembers,
 } from "./subagentRuntime.ts";
 
 let sequence = 0;
@@ -66,6 +62,45 @@ function fold(rows: ReadonlyArray<OrchestrationThreadActivity>) {
 }
 
 describe("foldSubagentActivities", () => {
+  it("shows the batch status limit after its parent turn ends without claiming a result", () => {
+    const running = activity("task.progress", {
+      taskId: "batch-1",
+      taskType: "subagent_batch",
+      title: "Antigravity subagent batch",
+      status: "running",
+      summary: "Launch readers",
+    });
+    const agents = fold([
+      running,
+      activity("task.updated", {
+        taskId: "batch-1",
+        taskType: "subagent_batch",
+        status: "idle",
+        detail: "Turn ended. Individual agent status is unavailable.",
+        timelineBypass: true,
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      title: "Antigravity subagent batch",
+      kind: "subagent_batch",
+      status: "idle",
+      progress: "Turn ended. Individual agent status is unavailable.",
+      result: null,
+      error: null,
+    });
+  });
+
+  it("learns batch identity from a later update and retains it on sparse updates", () => {
+    const agents = fold([
+      activity("task.progress", { taskId: "batch-1", taskType: "subagent", status: "running" }),
+      activity("task.updated", { taskId: "batch-1", taskType: "subagent_batch", status: "idle" }),
+      activity("task.updated", { taskId: "batch-1", status: "idle" }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ kind: "subagent_batch", status: "idle" });
+  });
+
   it("builds an agent from start → progress → completion", () => {
     const agents = fold([
       activity("task.started", {
@@ -515,64 +550,6 @@ describe("deriveAgentPanelModel", () => {
     const model = deriveAgentPanelModel({ agents: orphans });
     expect(model.workflows).toHaveLength(0);
     expect(model.directAgents.map((agent) => agent.id)).toEqual(["gone:wf:0"]);
-  });
-});
-
-describe("workflowCardMembers", () => {
-  it("orders by urgency (failed, running, waiting) and reports overflow", () => {
-    const roster = fold([
-      activity("task.started", { taskId: "wf-1", taskType: "local_workflow" }),
-      ...[..."abcdefghij"].map((letter, index) =>
-        activity("task.progress", {
-          taskId: `wf-1:wf:${index}`,
-          title: `agent-${letter}`,
-          status: index === 3 ? "failed" : index < 3 ? "completed" : "running",
-          ...(index === 3 ? { error: "died" } : {}),
-          parentAgentId: "wf-1",
-          agentIndex: index,
-          phaseIndex: 0,
-          phaseTitle: "Work",
-        }),
-      ),
-    ]);
-    const model = deriveAgentPanelModel({ agents: roster });
-    const { visible, overflow } = workflowCardMembers(model.workflows[0]!, 8);
-    expect(visible).toHaveLength(8);
-    expect(overflow).toBe(2);
-    expect(visible[0]!.status).toBe("failed");
-    expect(visible.filter((agent) => agent.status === "completed").length).toBeLessThanOrEqual(2);
-  });
-});
-
-describe("timeline predicates", () => {
-  it("recognizes subagent activity kinds as fold input", () => {
-    for (const kind of [
-      "task.started",
-      "task.progress",
-      "task.updated",
-      "task.completed",
-      "tool.progress",
-    ]) {
-      expect(isSubagentActivityKind(kind)).toBe(true);
-    }
-    expect(isSubagentActivityKind("tool.completed")).toBe(false);
-  });
-
-  it("attributed tool rows are re-homed; unattributed rows stay in the timeline", () => {
-    expect(isAgentAttributedToolActivity(activity("tool.completed", { agentId: "task-1" }))).toBe(
-      true,
-    );
-    expect(isAgentAttributedToolActivity(activity("tool.completed", {}))).toBe(false);
-    expect(isAgentAttributedToolActivity(activity("tool.completed", { agentId: "  " }))).toBe(
-      false,
-    );
-  });
-
-  it("timelineBypass rows never render in the parent chat", () => {
-    expect(isTimelineBypassActivity(activity("task.progress", { timelineBypass: true }))).toBe(
-      true,
-    );
-    expect(isTimelineBypassActivity(activity("task.progress", {}))).toBe(false);
   });
 });
 

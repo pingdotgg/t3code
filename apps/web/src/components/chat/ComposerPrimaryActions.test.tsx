@@ -15,7 +15,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
 
-import { ComposerPrimaryActions, formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
@@ -44,7 +44,7 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
-function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent: boolean) {
+function renderRunningActions(hasSendableContent: boolean) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -58,7 +58,6 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
       isEnvironmentUnavailable: false,
       isPreparingWorktree: false,
       hasSendableContent,
-      showSendWhileRunning,
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
@@ -90,96 +89,6 @@ function renderSendButton(sendDisabledReason: string | null = null) {
 afterEach(() => {
   stageArtworkState.mode = "none";
   stageArtworkState.variant = null;
-});
-
-describe("formatPendingPrimaryActionLabel", () => {
-  it("returns 'Submitting...' while responding", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: false,
-        isLastQuestion: false,
-        isResponding: true,
-        questionIndex: 0,
-      }),
-    ).toBe("Submitting...");
-  });
-
-  it("returns 'Submitting...' while responding regardless of other flags", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: true,
-        isLastQuestion: true,
-        isResponding: true,
-        questionIndex: 3,
-      }),
-    ).toBe("Submitting...");
-  });
-
-  it("returns 'Submit' in compact mode on the last question", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: true,
-        isLastQuestion: true,
-        isResponding: false,
-        questionIndex: 0,
-      }),
-    ).toBe("Submit");
-  });
-
-  it("returns 'Next' in compact mode when not the last question", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: true,
-        isLastQuestion: false,
-        isResponding: false,
-        questionIndex: 1,
-      }),
-    ).toBe("Next");
-  });
-
-  it("returns 'Next question' when not the last question", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: false,
-        isLastQuestion: false,
-        isResponding: false,
-        questionIndex: 0,
-      }),
-    ).toBe("Next question");
-  });
-
-  it("returns singular 'Submit answer' on the last question when it is the only question", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: false,
-        isLastQuestion: true,
-        isResponding: false,
-        questionIndex: 0,
-      }),
-    ).toBe("Submit answer");
-  });
-
-  it("returns plural 'Submit answers' on the last question when there are multiple questions", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: false,
-        isLastQuestion: true,
-        isResponding: false,
-        questionIndex: 1,
-      }),
-    ).toBe("Submit answers");
-  });
-
-  it("returns plural 'Submit answers' for higher question indices", () => {
-    expect(
-      formatPendingPrimaryActionLabel({
-        compact: false,
-        isLastQuestion: true,
-        isResponding: false,
-        questionIndex: 5,
-      }),
-    ).toBe("Submit answers");
-  });
 });
 
 describe("ComposerPrimaryActions", () => {
@@ -215,25 +124,18 @@ describe("ComposerPrimaryActions", () => {
     expect(markup).not.toContain("stage-nightly");
   });
 
-  it("only renders stop while running when Enter-to-send is available", () => {
-    const markup = renderRunningActions(false, true);
+  it("renders a queue action alongside stop while running with a sendable draft", () => {
+    const markup = renderRunningActions(true);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain('aria-label="Send message"');
-  });
-
-  it("renders send alongside stop while running when Enter-to-send is unavailable", () => {
-    const markup = renderRunningActions(true, true);
-
-    expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).toContain('aria-label="Send message"');
+    expect(markup).toContain('aria-label="Queue message"');
     expect(markup).toContain('type="submit"');
   });
 
   it("keeps stop as the only action while running with an empty composer", () => {
-    const markup = renderRunningActions(true, false);
+    const markup = renderRunningActions(false);
 
     expect(markup).toContain('aria-label="Stop generation"');
-    expect(markup).not.toContain('aria-label="Send message"');
+    expect(markup).not.toContain('aria-label="Queue message"');
   });
 });

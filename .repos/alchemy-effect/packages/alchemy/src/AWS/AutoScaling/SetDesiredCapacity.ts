@@ -20,9 +20,8 @@ export interface SetDesiredCapacityRequest extends Omit<
  * scales a fleet up ahead of a known traffic spike or down to zero overnight.
  * Provide the implementation with
  * `Effect.provide(AWS.AutoScaling.SetDesiredCapacityHttp)`.
- * @binding
- * @section Manual Scaling
- * @example Scale the fleet to a fixed size
+ * ### Manual Scaling
+ * **Example:** Scale the fleet to a fixed size
  * ```typescript
  * // init — bind the operation to the group
  * const setDesiredCapacity = yield* AWS.AutoScaling.SetDesiredCapacity(group);
@@ -30,6 +29,8 @@ export interface SetDesiredCapacityRequest extends Omit<
  * // runtime — set the fleet size, honoring the group's cooldown
  * yield* setDesiredCapacity({ DesiredCapacity: 4, HonorCooldown: true });
  * ```
+ *
+ * @binding
  */
 export interface SetDesiredCapacity extends Binding.Service<
   SetDesiredCapacity,

@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useMediaActions } from "../lib/mediaActions";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
-import type { ResolvedFilePreviewSource } from "./FilePreviewModal";
+import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { MediaSourceCaption } from "./MediaSourceCaption";
 
@@ -42,7 +42,7 @@ function ImagePreviewHeader() {
   );
 }
 
-/** Chat and workspace media retain source actions on both platforms; other files use native previews. */
+/** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
   return (
     <ImagePreviewContext value={props}>

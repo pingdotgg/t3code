@@ -1,4 +1,5 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
@@ -17,10 +18,10 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useSettingsScope } from "./SettingsScopeContext";
+import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
@@ -51,9 +52,11 @@ import {
   GitHubIcon,
   GitIcon,
   GitLabIcon,
+  ForgejoIcon,
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { BitbucketCredentialsSettings } from "./BitbucketCredentialsSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -65,6 +68,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -74,6 +78,7 @@ const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
 const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, Icon>> = {
   github: GitHubIcon,
   gitlab: GitLabIcon,
+  forgejo: ForgejoIcon,
   "azure-devops": AzureDevOpsIcon,
   bitbucket: BitbucketIcon,
 };
@@ -230,7 +235,9 @@ function itemSummary({
       );
     }
 
-    if (!item.executable) {
+    // API integrations have no CLI to sign in with; an unverified saved credential falls
+    // through to the "could not verify" detail instead of repeating the setup hint.
+    if (!item.executable && auth.status === "unauthenticated") {
       return <span>Available. {item.installHint}</span>;
     }
 
@@ -238,8 +245,8 @@ function itemSummary({
       return (
         <span>
           {item.label} is not authenticated on this server. Sign in or configure credentials using
-          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
-          tool on the server host to enable change request features.
+          the <code className="rounded bg-muted px-1 py-px text-2xs">{item.executable}</code> tool
+          on the server host to enable change request features.
         </span>
       );
     }
@@ -273,7 +280,11 @@ function DiscoveryItemRow({
   const searchTargetId = useSettingsSearchTargetId();
 
   useEffect(() => {
-    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+    if (
+      (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
+      (item.kind === "bitbucket" &&
+        searchTargetId === searchableSetting("bitbucket-credentials").id)
+    ) {
       setIsExpanded(true);
     }
   }, [item.kind, searchTargetId]);
@@ -281,7 +292,7 @@ function DiscoveryItemRow({
   return (
     <div
       className={cn(
-        "rounded-xl transition-colors hover:bg-muted/20",
+        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20",
         isVcsNotReady(item) && "opacity-80",
       )}
     >
@@ -290,9 +301,7 @@ function DiscoveryItemRow({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <span className="truncate text-sm font-medium tracking-[-0.005em] text-foreground">
-                {item.label}
-              </span>
+              <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
@@ -305,7 +314,7 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-[13px] leading-[1.45] text-muted-foreground/80">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
@@ -342,8 +351,8 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -390,8 +399,7 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
-            or security keys should only be prompted by explicit Git actions.
+            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -432,25 +440,26 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
+        <div key={row} className="first:rounded-t-xl last:rounded-b-xl px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <Skeleton className="size-4.5 rounded-md" />
+                  <Skeleton className="size-4.5" />
                   <Skeleton
-                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background"
+                    shape="pill"
+                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2"
                     aria-hidden
                   />
                 </span>
-                <Skeleton className="h-4 w-28 rounded-full" />
-                <Skeleton className="h-5 w-14 rounded-full" />
+                <Skeleton shape="pill" className="h-4 w-28" />
+                <Skeleton shape="pill" className="h-5 w-14" />
               </div>
-              <Skeleton className="h-3 w-full max-w-xs rounded-full" />
+              <Skeleton shape="pill" className="h-3 w-full max-w-xs" />
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Skeleton className="size-7 rounded-md" />
-              <Skeleton className="h-5 w-9 rounded-full" />
+              <Skeleton className="size-7" />
+              <Skeleton shape="pill" className="h-5 w-9" />
             </div>
           </div>
         </div>
@@ -472,9 +481,9 @@ function EmptySourceControlDiscovery({
 
   return (
     <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
-      <Empty className="min-h-88">
+      <Empty>
         <EmptyMedia variant="icon">
-          <GitPullRequestIcon />
+          <PullRequestGlyph.pullRequest />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
@@ -488,7 +497,7 @@ function EmptySourceControlDiscovery({
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
-            <RefreshCwIcon className={cn("size-3.5", isPending && "animate-spin")} />
+            <RefreshIcon size="sm" refreshing={isPending} />
             Scan
           </Button>
         </EmptyContent>
@@ -498,15 +507,14 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const { environments } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  const fallbackEnvironment =
-    environments.find((environment) => environment.connection.phase === "connected") ??
-    environments[0] ??
-    null;
+  const { scope, environment, connectedEnvironments } = useSettingsScope();
+  // Discovery scans one machine's tools, so it shows the representative
+  // environment (named in the section title when several are selected);
+  // the settings rows above it fan out like everywhere else.
   const environmentId =
-    primaryEnvironment?.environmentId ?? fallbackEnvironment?.environmentId ?? null;
-  const isPrimaryEnvironment = environmentId === primaryEnvironment?.environmentId;
+    environment?.connection.phase === "connected" ? environment.environmentId : null;
+  const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
+  const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -533,7 +541,7 @@ export function SourceControlSettingsPanel() {
             disabled={discovery.isPending}
             aria-label="Rescan server environment"
           >
-            <RefreshCwIcon className={cn(discovery.isPending && "animate-spin")} />
+            <RefreshIcon refreshing={discovery.isPending} />
           </Button>
         }
       />
@@ -543,10 +551,19 @@ export function SourceControlSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SharedSettingsMismatchAlert />
-      {isInitialScanPending ? (
+      <ProjectDefaultsSettings category="source-control" />
+      {environmentId === null ? (
+        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            Connect an environment to inspect its version control tools and hosting integrations.
+          </p>
+        </SettingsSection>
+      ) : isInitialScanPending ? (
         <>
-          <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
+          <SourceControlSectionSkeleton
+            title={`Version Control${environmentSuffix}`}
+            headerAction={scanButton}
+          />
           <SourceControlSectionSkeleton title="Source Control Providers" />
         </>
       ) : hasDiscoveryItems ? (
@@ -554,14 +571,12 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title="Version Control"
+              title={`Version Control${environmentSuffix}`}
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" && isPrimaryEnvironment ? (
-                    <GitFetchIntervalSettings />
-                  ) : undefined}
+                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -570,11 +585,26 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title="Source Control Providers"
+              title={
+                hasVersionControlSystems
+                  ? "Source Control Providers"
+                  : `Source Control Providers${environmentSuffix}`
+              }
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {item.kind === "bitbucket" ? (
+                    <SettingsSearchTarget id={searchableSetting("bitbucket-credentials").id}>
+                      <BitbucketCredentialsSettings
+                        // Drafts belong to one environment; switching must not carry them over.
+                        key={environmentId}
+                        environmentId={environmentId}
+                        onSaved={handleScan}
+                      />
+                    </SettingsSearchTarget>
+                  ) : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}
@@ -587,8 +617,6 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {/* Its rows are serverScoped: without a primary they render inert with
-          an explanation, which beats disappearing. */}
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

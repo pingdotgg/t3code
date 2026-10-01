@@ -47,16 +47,6 @@ export function resolveDesktopUpdateButtonAction(
   return "none";
 }
 
-export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null): boolean {
-  if (!state || !state.enabled) {
-    return false;
-  }
-  if (state.status === "downloading") {
-    return true;
-  }
-  return resolveDesktopUpdateButtonAction(state) !== "none";
-}
-
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }

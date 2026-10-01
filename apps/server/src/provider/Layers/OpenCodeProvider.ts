@@ -3,6 +3,7 @@ import {
   type OpenCodeSettings,
   type ServerProviderModel,
   type ServerProviderSkill,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -13,6 +14,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   nonEmptyTrimmed,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -171,7 +173,30 @@ function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
 }
 
 const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [],
+  optionDescriptors: [
+    {
+      id: "variant",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium", isDefault: true },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+      ],
+      currentValue: "medium",
+    },
+    {
+      id: "agent",
+      label: "Agent",
+      type: "select",
+      options: [
+        { id: "build", label: "Build", isDefault: true },
+        { id: "plan", label: "Plan" },
+      ],
+      currentValue: "build",
+    },
+  ],
 });
 
 function openCodeCapabilitiesForModel(input: {
@@ -179,7 +204,14 @@ function openCodeCapabilitiesForModel(input: {
   readonly model: ProviderListResponse["all"][number]["models"][string];
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
-  const variantValues = Object.keys(input.model.variants ?? {});
+  const rawVariantValues = Object.keys(input.model.variants ?? {});
+  // When a model advertises no variants, synthesize the standard reasoning
+  // levels so the composer still offers a Reasoning selector (mirrors the
+  // Codex/Grok experience where reasoning is always configurable). The set
+  // covers the common OpenCode variant spectrum; `inferDefaultVariant`
+  // picks the provider-appropriate default (e.g. medium for openai/opencode).
+  const variantValues =
+    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -201,7 +233,7 @@ function openCodeCapabilitiesForModel(input: {
         ? [
             {
               id: "variant",
-              label: "Variant",
+              label: "Reasoning",
               type: "select" as const,
               options: variantOptions,
               ...(defaultVariant ? { currentValue: defaultVariant } : {}),
@@ -282,6 +314,26 @@ export function openCodeSkillsToServerProviderSkills(
   }
 
   return skills.toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+export function openCodeCommandsToServerProviderSlashCommands(
+  input: OpenCodeInventory["commands"],
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const commands: ServerProviderSlashCommand[] = [COMPACT_SLASH_COMMAND];
+  const names = new Set([COMPACT_SLASH_COMMAND.name]);
+  for (const command of input ?? []) {
+    const name = trimOptional(command.name);
+    if (!name || names.has(name) || command.source === "skill") continue;
+    names.add(name);
+    const description = trimOptional(command.description);
+    const hint = trimOptional(command.hints.join(" "));
+    commands.push({
+      name,
+      ...(description ? { description } : {}),
+      ...(hint ? { input: { hint } } : {}),
+    });
+  }
+  return commands;
 }
 
 export const makePendingOpenCodeProvider = (
@@ -495,6 +547,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     checkedAt,
     models,
     skills,
+    slashCommands: openCodeCommandsToServerProviderSlashCommands(
+      inventoryExit.value.inventory.commands,
+    ),
     probe: {
       installed: true,
       version,

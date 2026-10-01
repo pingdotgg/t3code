@@ -6,8 +6,6 @@ import {
   isTerminalLinkActivation,
   isTerminalUrl,
   resolvePathLinkTarget,
-  resolveWrappedTerminalLinkRange,
-  wrappedTerminalLinkRangeIntersectsBufferLine,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -99,6 +97,24 @@ describe("extractTerminalLinks", () => {
       },
     ]);
   });
+
+  it("keeps a trailing colon on URLs", () => {
+    expect(extractTerminalLinks("GET https://example.test/items/foo:")).toEqual([
+      { kind: "url", text: "https://example.test/items/foo:", start: 4, end: 35 },
+    ]);
+  });
+
+  it.each([
+    ["./main.go:10:5: undefined: x", "./main.go:10:5"],
+    ["/home/dev/app/src/main.c:10:5: error: expected ';'", "/home/dev/app/src/main.c:10:5"],
+    ["C:\\dev\\app\\src\\main.c:10:5: error: expected ';'", "C:\\dev\\app\\src\\main.c:10:5"],
+    ["wrote ./out/report.txt:", "./out/report.txt"],
+  ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
+    const start = line.indexOf(text);
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end: start + text.length },
+    ]);
+  });
 });
 
 describe("collectWrappedTerminalLinkLine", () => {
@@ -154,46 +170,6 @@ describe("collectWrappedTerminalLinkLine", () => {
   });
 });
 
-describe("resolveWrappedTerminalLinkRange", () => {
-  it("maps wrapped URL matches back to the correct buffer rows", () => {
-    const prefix = "see ";
-    const firstSegment = `${prefix}https://example.com/a`;
-    const secondSegment = "/bc?x=1";
-    const lines = [
-      createBufferLine("prompt> "),
-      createBufferLine(firstSegment),
-      createBufferLine(secondSegment, true),
-    ];
-    const wrappedLine = collectWrappedTerminalLinkLine(2, (index) => lines[index]);
-
-    expect(wrappedLine).not.toBeNull();
-    if (!wrappedLine) {
-      throw new Error("Expected wrapped terminal line to be present.");
-    }
-
-    const [match] = extractTerminalLinks(wrappedLine.text);
-    expect(match).toEqual({
-      kind: "url",
-      text: "https://example.com/a/bc?x=1",
-      start: prefix.length,
-      end: firstSegment.length + secondSegment.length,
-    });
-    if (!match) {
-      throw new Error("Expected wrapped URL match to be present.");
-    }
-
-    const range = resolveWrappedTerminalLinkRange(wrappedLine, match);
-
-    expect(range).toEqual({
-      start: { x: prefix.length + 1, y: 2 },
-      end: { x: secondSegment.length, y: 3 },
-    });
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 2)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 3)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 4)).toBe(false);
-  });
-});
-
 describe("resolvePathLinkTarget", () => {
   it("resolves relative paths against cwd", () => {
     expect(
@@ -214,6 +190,13 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
     ).toBe("C:/Users/julius/project/src/main.ts:12");
+  });
+
+  it("keeps the line and column of a compiler diagnostic", () => {
+    const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
+    expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
+      "/Users/julius/project/main.c:10:5",
+    );
   });
 });
 

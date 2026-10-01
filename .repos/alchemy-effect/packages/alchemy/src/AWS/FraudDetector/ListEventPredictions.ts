@@ -18,15 +18,14 @@ export interface ListEventPredictionsRequest extends Omit<
  * the effectful search call made from a deployed Lambda or Task, e.g. to find
  * the `predictionTimestamp` needed by `GetEventPredictionMetadata`.
  *
- * @binding
- * @section Auditing Predictions
+ * ### Auditing Predictions
  * Provide the `ListEventPredictionsHttp` implementation layer on the Function
  * effect, bind the detector in the init phase, then call the returned client
  * at runtime. The binding grants `frauddetector:ListEventPredictions` (the
  * action supports no resource-level scoping) and filters results to the bound
  * detector automatically.
  *
- * @example List from a Lambda
+ * **Example:** List from a Lambda
  * ```typescript
  * // init
  * const listEventPredictions =
@@ -46,6 +45,8 @@ export interface ListEventPredictionsRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.ListEventPredictionsHttp))
  * ```
+ *
+ * @binding
  */
 export interface ListEventPredictions extends Binding.Service<
   ListEventPredictions,

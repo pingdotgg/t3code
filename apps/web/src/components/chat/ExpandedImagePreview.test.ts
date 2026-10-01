@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
+  wrapExpandedImageIndex,
   attachVideoThumbnail,
+  buildAttachmentVideoPreview,
   buildExpandedImagePreview,
   resolveMarkdownMediaPreview,
 } from "./ExpandedImagePreview";
@@ -42,6 +45,41 @@ describe("resolveMarkdownMediaPreview", () => {
 });
 
 describe("buildExpandedImagePreview", () => {
+  it("builds a signed-asset preview for a persisted video attachment", () => {
+    const preview = buildAttachmentVideoPreview(EnvironmentId.make("environment-1"), {
+      type: "file",
+      id: "attachment-video-1",
+      name: "demo.mp4",
+      mimeType: "video/mp4",
+      sizeBytes: 42,
+    });
+
+    expect(preview).toEqual({
+      images: [
+        {
+          src: null,
+          name: "demo.mp4",
+          type: "video",
+          actionsSource: {
+            kind: "video",
+            name: "demo.mp4",
+            src: null,
+            asset: {
+              environmentId: "environment-1",
+              resource: {
+                _tag: "attachment",
+                attachmentId: "attachment-video-1",
+                fileName: "demo.mp4",
+                mimeType: "video/mp4",
+              },
+            },
+          },
+        },
+      ],
+      index: 0,
+    });
+  });
+
   it("builds a video preview for a local video attachment", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "demo.mp4", { type: "video/mp4" });
     const attachment: ComposerFileAttachment = {
@@ -74,4 +112,16 @@ describe("buildExpandedImagePreview", () => {
     detach();
     await expect(fetch(url)).rejects.toThrow();
   });
+});
+
+it("keeps backward media navigation visible beyond a complete cycle", () => {
+  const images = ["first", "second"];
+  expect(
+    Array.from({ length: 7 }, (_, step) => images[wrapExpandedImageIndex(-step, images.length)]),
+  ).toEqual(["first", "second", "first", "second", "first", "second", "first"]);
+  let index = 0;
+  for (let step = 1; step <= 7; step++) {
+    index = wrapExpandedImageIndex(index - 1, images.length);
+    expect(images[index]).toBe(step % 2 === 1 ? "second" : "first");
+  }
 });

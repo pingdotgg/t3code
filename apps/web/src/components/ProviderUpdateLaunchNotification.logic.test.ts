@@ -18,17 +18,15 @@ import {
   environmentGroupsWithUpdates,
   firstFailedProviderUpdateMessage,
   firstRejectedProviderUpdateMessage,
-  firstUnsuccessfulSecondaryProviderOutcome,
   getProviderUpdateInitialToastView,
   getProviderUpdateProgressToastView,
   getProviderUpdateRejectedToastView,
   getProviderUpdateSidebarPillView,
-  getSingleProviderUpdateProgressToastView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
+  isProviderSettingsUpdateCandidate,
   isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
-  parseWslDistroFromInstanceId,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
   shouldShowPrimaryProviderUpdateToast,
@@ -368,28 +366,6 @@ describe("provider update launch notification logic", () => {
     });
   });
 
-  it("resolves a single-provider completion view from the returned provider snapshot", () => {
-    const view = getSingleProviderUpdateProgressToastView(
-      provider({
-        driver: driver("codex"),
-        updateState: {
-          status: "failed",
-          startedAt: checkedAt,
-          finishedAt: checkedAt,
-          message: "command failed",
-          output: "stderr",
-        },
-      }),
-    );
-
-    expect(view).toMatchObject({
-      phase: "failed",
-      type: "error",
-      title: "Codex v1.1.0 update failed",
-      description: "command failed",
-    });
-  });
-
   it("keeps unchanged providers actionable from settings", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
@@ -441,31 +417,6 @@ describe("provider update launch notification logic", () => {
       title: "Provider updated",
       description: "New sessions will use the updated provider.",
       dismissAfterVisibleMs: 3_000,
-    });
-  });
-
-  it("uses the updated version in the single-provider success toast title", () => {
-    const view = getSingleProviderUpdateProgressToastView(
-      provider({
-        driver: driver("codex"),
-        version: "1.1.0",
-        latestVersion: "1.1.0",
-        advisoryStatus: "current",
-        updateState: {
-          status: "succeeded",
-          startedAt: checkedAt,
-          finishedAt: checkedAt,
-          message: "Provider updated.",
-          output: null,
-        },
-      }),
-    );
-
-    expect(view).toMatchObject({
-      phase: "succeeded",
-      type: "success",
-      title: "Codex updated: v1.1.0",
-      description: "New sessions will use the updated provider.",
     });
   });
 
@@ -814,39 +765,6 @@ describe("provider update launch notification logic", () => {
       expect(snapshots).toEqual([primary]);
     });
 
-    it("flags the first unsuccessful secondary outcome, skipping the primary and successes", () => {
-      const primaryFailed = provider({
-        driver: driver("codex"),
-        updateState: terminalState("failed", "primary boom"),
-      });
-
-      expect(
-        firstUnsuccessfulSecondaryProviderOutcome([
-          fulfilledOutcome(true, primaryFailed),
-          fulfilledOutcome(
-            false,
-            provider({
-              driver: driver("codex"),
-              updateState: terminalState("succeeded", "ok"),
-            }),
-          ),
-        ]),
-      ).toBeNull();
-
-      expect(
-        firstUnsuccessfulSecondaryProviderOutcome([
-          fulfilledOutcome(true, primaryFailed),
-          fulfilledOutcome(
-            false,
-            provider({
-              driver: driver("codex"),
-              updateState: terminalState("failed", "wsl boom"),
-            }),
-          ),
-        ]),
-      ).toMatchObject({ status: "failed", provider: { updateState: { message: "wsl boom" } } });
-    });
-
     it("treats a rejected dispatch as not contributing a snapshot", () => {
       const primary = provider({
         driver: driver("codex"),
@@ -995,14 +913,6 @@ describe("provider update launch notification logic", () => {
         }),
       ).toBe("My Device");
     });
-
-    it("parses the WSL distro from the backend instance id", () => {
-      expect(parseWslDistroFromInstanceId("wsl:ubuntu")).toBe("ubuntu");
-      expect(parseWslDistroFromInstanceId("wsl:default")).toBeNull();
-      expect(parseWslDistroFromInstanceId("wsl:")).toBeNull();
-      expect(parseWslDistroFromInstanceId("ssh:host")).toBeNull();
-      expect(parseWslDistroFromInstanceId(undefined)).toBeNull();
-    });
   });
 
   describe("isTerminalProviderUpdatePhase", () => {
@@ -1128,4 +1038,23 @@ describe("provider update launch notification logic", () => {
       ).toMatchObject({ kind: "idle", text: "Codex" });
     });
   });
+});
+
+it("does not offer incompatible latest versions and restores suggestions after policy relaxation", () => {
+  const installed = provider({ driver: driver("codex") });
+  for (const latestVersionStatus of ["broken", "unsupported", "supported", "unknown"] as const) {
+    const snapshot: ServerProvider = {
+      ...installed,
+      compatibilityAdvisory: {
+        status: "supported",
+        latestVersionStatus,
+        message: null,
+        recommendedRange: null,
+        recommendedVersion: null,
+      },
+    };
+    const expected = latestVersionStatus === "supported" || latestVersionStatus === "unknown";
+    expect(isProviderUpdateCandidate(snapshot)).toBe(expected);
+    expect(isProviderSettingsUpdateCandidate(snapshot)).toBe(expected);
+  }
 });

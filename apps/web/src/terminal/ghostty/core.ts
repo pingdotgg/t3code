@@ -174,6 +174,7 @@ function sameColor(left: GhosttyColor, right: GhosttyColor): boolean {
  * every codepoint into String.fromCodePoint at once.
  */
 export function ghosttyCellText(codepointView: DataView, graphemeLength: number): string {
+  if (graphemeLength === 1) return String.fromCodePoint(codepointView.getUint32(0, true));
   const CHUNK_SIZE = 4_096;
   let text = "";
   for (let start = 0; start < graphemeLength; start += CHUNK_SIZE) {
@@ -206,6 +207,8 @@ export class GhosttyTerminalCore {
   private ptyWriterId = 0;
   private ptyWriter: ((data: string) => void) | null = null;
   private scratch = 0;
+  private graphemes = 0;
+  private graphemeCapacity = 0;
   private style = 0;
   private scrollbar = 0;
   private rows: GhosttyRow[] = [];
@@ -878,6 +881,7 @@ export class GhosttyTerminalCore {
       this.runtime.free(this.scrollbar, this.runtime.layout("GhosttyTerminalScrollbar").size);
     }
     if (this.scratch) this.runtime.free(this.scratch, 16);
+    if (this.graphemes) this.runtime.free(this.graphemes, this.graphemeCapacity);
     for (const slot of [
       this.mouseEventSlot,
       this.mouseEncoderSlot,
@@ -944,6 +948,7 @@ export class GhosttyTerminalCore {
       ),
     );
     const cellsIterator = this.runtime.readPointer(this.rowCellsSlot);
+    const { size: styleSize, fields: styleFields } = this.runtime.layout("GhosttyStyle");
     const cells: GhosttyCell[] = [];
     while (
       cells.length < cols &&
@@ -951,7 +956,6 @@ export class GhosttyTerminalCore {
     ) {
       let foreground = this.getCellColor(cellsIterator, CELL_DATA.foreground, defaultForeground);
       let background = this.getCellColor(cellsIterator, CELL_DATA.background, defaultBackground);
-      const styleSize = this.runtime.layout("GhosttyStyle").size;
       this.runtime.bytes(this.style, styleSize).fill(0);
       this.runtime.setField(this.style, "GhosttyStyle", "size", styleSize);
       this.runtime.call(
@@ -960,30 +964,30 @@ export class GhosttyTerminalCore {
         CELL_DATA.style,
         this.style,
       );
-      const inverse = this.runtime.readField(this.style, "GhosttyStyle", "inverse") !== 0;
-      if (inverse) [foreground, background] = [background, foreground];
-      if (this.runtime.readField(this.style, "GhosttyStyle", "faint") !== 0) {
-        foreground = blend(foreground, background);
-      }
       const graphemeLength = this.getCellU32(cellsIterator, CELL_DATA.graphemesLength);
       let text = "";
       if (graphemeLength > 0) {
         const bufferSize = graphemeLength * 4;
-        const codepoints = this.runtime.alloc(bufferSize);
+        if (bufferSize > this.graphemeCapacity) {
+          const capacity = Math.max(bufferSize, this.graphemeCapacity * 2);
+          const buffer = this.runtime.alloc(capacity);
+          this.runtime.free(this.graphemes, this.graphemeCapacity);
+          this.graphemes = buffer;
+          this.graphemeCapacity = capacity;
+        }
         if (
           this.runtime.call(
             "ghostty_render_state_row_cells_get",
             cellsIterator,
             CELL_DATA.graphemes,
-            codepoints,
+            this.graphemes,
           ) === GHOSTTY_SUCCESS
         ) {
           // Read through a DataView: the byte-array allocator guarantees no
           // 4-byte alignment, which a Uint32Array view would require.
-          const codepointView = this.runtime.view(codepoints, bufferSize);
+          const codepointView = this.runtime.view(this.graphemes, bufferSize);
           text = ghosttyCellText(codepointView, graphemeLength);
         }
-        this.runtime.free(codepoints, bufferSize);
       }
       let wide = 0;
       if (text.length === 0 && cells.at(-1)?.text.length) {
@@ -1004,18 +1008,27 @@ export class GhosttyTerminalCore {
         );
         wide = this.runtime.view(this.scratch + 8, 4).getUint32(0, true);
       }
+      const selected = this.getCellBool(cellsIterator, CELL_DATA.selected);
+      // Read the style after allocation and ABI calls, which can grow WASM memory.
+      const styleView = this.runtime.view(this.style, styleSize);
+      if (styleView.getUint8(styleFields.inverse!.offset) !== 0) {
+        [foreground, background] = [background, foreground];
+      }
+      if (styleView.getUint8(styleFields.faint!.offset) !== 0) {
+        foreground = blend(foreground, background);
+      }
       cells.push({
         text,
         wide,
         foreground,
         background,
-        bold: this.runtime.readField(this.style, "GhosttyStyle", "bold") !== 0,
-        italic: this.runtime.readField(this.style, "GhosttyStyle", "italic") !== 0,
-        invisible: this.runtime.readField(this.style, "GhosttyStyle", "invisible") !== 0,
-        strikethrough: this.runtime.readField(this.style, "GhosttyStyle", "strikethrough") !== 0,
-        overline: this.runtime.readField(this.style, "GhosttyStyle", "overline") !== 0,
-        underline: this.runtime.readField(this.style, "GhosttyStyle", "underline") !== 0,
-        selected: this.getCellBool(cellsIterator, CELL_DATA.selected),
+        bold: styleView.getUint8(styleFields.bold!.offset) !== 0,
+        italic: styleView.getUint8(styleFields.italic!.offset) !== 0,
+        invisible: styleView.getUint8(styleFields.invisible!.offset) !== 0,
+        strikethrough: styleView.getUint8(styleFields.strikethrough!.offset) !== 0,
+        overline: styleView.getUint8(styleFields.overline!.offset) !== 0,
+        underline: styleView.getInt32(styleFields.underline!.offset, true) !== 0,
+        selected,
       });
     }
     while (cells.length < cols) cells.push(this.emptyCell(defaultForeground, defaultBackground));

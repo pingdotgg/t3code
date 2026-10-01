@@ -21,14 +21,27 @@ import {
   readPullRequestListSnapshot,
   writePullRequestListSnapshot,
   rankPullRequestMatches,
+  rankPullRequestsBlockedOnAuthor,
+  rankPullRequestsBlockedOnReviewer,
+  rankPullRequestsByMergeReadiness,
   scorePullRequestMatch,
+  sortPullRequestGroups,
   retainVisiblePullRequestStatsBatches,
   withDiffStat,
   resolveProjectScope,
   resolveQueryEnvironmentIds,
   resolveSelectedEnvironmentId,
   type EnvironmentPullRequestEntry,
+  applyPullRequestOverrides,
+  pullRequestOverrideAfterAction,
+  reusePullRequestEntries,
+  settlePullRequestOverrides,
 } from "./pullRequestList.logic";
+import {
+  pullRequestListPreferences,
+  readPullRequestListPreferences,
+  writePullRequestListPreferences,
+} from "./pullRequestListPreferences";
 
 const VIEWERS = { "github.com": "Bilal" } as const;
 const NO_VIEWERS = {} as const;
@@ -62,8 +75,30 @@ function entry(
 }
 
 describe("visible pull request line-count targets", () => {
+  it("reuses counts supplied by the listing and only requests missing counts", () => {
+    const entries = [
+      entry({ number: 1, additions: 12, deletions: 0 }),
+      entry({ number: 2, additions: 0, deletions: 7 }),
+      entry({ number: 3, additions: 0, deletions: 0 }),
+    ];
+    const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
+    const keys = pullRequestStatsKeysToRequest(
+      entriesByKey,
+      new Set(entries.map(pullRequestEntryKey)),
+      [],
+      new Map(),
+    );
+
+    expect(pullRequestStatsBatches(entriesByKey, keys)[0]?.input.refs).toEqual([
+      { projectId: "project-1", repository: "pingdotgg/t3code", number: 3 },
+    ]);
+  });
+
   it("does not request a row again after its received batch is pruned", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const firstKey = pullRequestEntryKey(entries[0]!);
     const secondKey = pullRequestEntryKey(entries[1]!);
@@ -90,7 +125,9 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("drops historical rows after a long scroll so refresh stays bounded to the viewport", () => {
-    const entries = Array.from({ length: 500 }, (_, index) => entry({ number: index + 1 }));
+    const entries = Array.from({ length: 500 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const batches = entries.map(
       (item) => pullRequestStatsBatches(entriesByKey, new Set([pullRequestEntryKey(item)]))[0]!,
@@ -105,7 +142,9 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
-    const entries = Array.from({ length: 501 }, (_, index) => entry({ number: index + 1 }));
+    const entries = Array.from({ length: 501 }, (_, index) =>
+      entry({ additions: 0, deletions: 0, number: index + 1 }),
+    );
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const batches = pullRequestStatsBatches(
       entriesByKey,
@@ -118,9 +157,9 @@ describe("visible pull request line-count targets", () => {
 
   it("selects visible rows for date modes and every uncached row for size modes", () => {
     const entries = [
-      entry({ number: 1 }),
-      entry({ number: 2 }),
-      entry({ number: 3, environmentId: "env-2" as EnvironmentId }),
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+      entry({ additions: 0, deletions: 0, number: 3, environmentId: "env-2" as EnvironmentId }),
     ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const [firstKey, secondKey] = entries.map(pullRequestEntryKey);
@@ -155,7 +194,11 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("refreshes only visible rows unless size sorting needs every loaded row", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 }), entry({ number: 3 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+      entry({ additions: 0, deletions: 0, number: 3 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const visibleKeys = new Set([pullRequestEntryKey(entries[1]!)]);
     const cachedStats = mergePullRequestDiffStats(
@@ -191,7 +234,10 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("ignores a late refresh after the filter or stats policy changes", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const visibleKeys = new Set([pullRequestEntryKey(entries[1]!)]);
     const requestedScope = { key: "open", policy: "visible" } as const;
@@ -210,7 +256,10 @@ describe("visible pull request line-count targets", () => {
   });
 
   it("does not add request batches again while rows are active or cached", () => {
-    const entries = [entry({ number: 1 }), entry({ number: 2 })];
+    const entries = [
+      entry({ additions: 0, deletions: 0, number: 1 }),
+      entry({ additions: 0, deletions: 0, number: 2 }),
+    ];
     const entriesByKey = new Map(entries.map((item) => [pullRequestEntryKey(item), item]));
     const first = pullRequestStatsRequestBatches({
       entriesByKey,
@@ -322,8 +371,8 @@ describe("pull request grouping", () => {
       VIEWERS,
     );
     expect(groups.map((group) => [group.key, group.entries.length])).toEqual([
-      ["reviewRequested", 1],
       ["authored", 1],
+      ["reviewRequested", 1],
     ]);
   });
 
@@ -656,6 +705,282 @@ describe("ranking what a search found", () => {
   });
 });
 
+describe("default merge-readiness ranking", () => {
+  it("puts ready work first, finished work after open work, and every conflict last", () => {
+    const conflict = entry({
+      number: 1,
+      mergeability: "conflicting",
+      checksState: "passing",
+      reviewDecision: "approved",
+      updatedAt: "2026-09-01T00:00:00Z",
+    });
+    const other = entry({
+      number: 2,
+      checksState: "pending",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const green = entry({
+      number: 3,
+      checksState: "passing",
+      reviewDecision: "review-required",
+      updatedAt: "2026-07-01T00:00:00Z",
+    });
+    const approved = entry({
+      number: 4,
+      checksState: "passing",
+      reviewDecision: "approved",
+      additions: 1_000,
+      updatedAt: "2026-06-01T00:00:00Z",
+    });
+    const draft = entry({
+      number: 5,
+      isDraft: true,
+      checksState: "passing",
+      reviewDecision: "approved",
+      updatedAt: "2026-09-02T00:00:00Z",
+    });
+    const finished = entry({
+      number: 6,
+      state: "merged",
+      checksState: "passing",
+      reviewDecision: "approved",
+      updatedAt: "2026-09-03T00:00:00Z",
+    });
+
+    expect(
+      rankPullRequestsByMergeReadiness([conflict, other, green, approved, draft, finished]).map(
+        (row) => row.number,
+      ),
+    ).toEqual([4, 3, 5, 2, 6, 1]);
+  });
+
+  it("uses recency when readiness and diff size tie", () => {
+    const older = entry({ number: 1, checksState: "passing" });
+    const newer = entry({
+      number: 2,
+      checksState: "passing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+
+    expect(rankPullRequestsByMergeReadiness([older, newer]).map((row) => row.number)).toEqual([
+      2, 1,
+    ]);
+  });
+
+  it("ranks smaller measured diffs first within a readiness tier as counts arrive", () => {
+    const larger = entry({
+      number: 1,
+      checksState: "passing",
+      reviewDecision: "approved",
+      additions: 1,
+      deletions: 49,
+      updatedAt: "2026-09-01T00:00:00Z",
+    });
+    const smaller = entry({
+      number: 2,
+      checksState: "passing",
+      reviewDecision: "approved",
+      additions: 3,
+      deletions: 2,
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const unknown = entry({
+      number: 3,
+      checksState: "passing",
+      reviewDecision: "approved",
+      additions: 0,
+      deletions: 0,
+      updatedAt: "2026-09-02T00:00:00Z",
+    });
+
+    expect(
+      rankPullRequestsByMergeReadiness([larger, unknown, smaller]).map((row) => row.number),
+    ).toEqual([2, 1, 3]);
+    expect(
+      rankPullRequestsByMergeReadiness([
+        larger,
+        { ...unknown, additions: 1, deletions: 0 },
+        smaller,
+      ]).map((row) => row.number),
+    ).toEqual([3, 2, 1]);
+  });
+
+  it("distinguishes measured empty diffs from missing counts when sorting groups", () => {
+    const unknown = entry({ number: 1, additions: 0, deletions: 0 });
+    const measured = entry({ number: 2 });
+    const empty = entry({ number: 3, additions: 0, deletions: 0 });
+    const groups = [
+      { key: "others", label: "Others", entries: [unknown, measured, empty] },
+    ] as const;
+
+    const sorted = sortPullRequestGroups(groups, "ready", "", (row) => row.number !== 1);
+
+    expect(sorted[0]!.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect(sortPullRequestGroups(groups, "ready", "sidebar", (row) => row.number !== 1)).toEqual(
+      groups,
+    );
+  });
+
+  it("keeps authored work first and ranks each group by readiness", () => {
+    const authoredWaiting = entry({ number: 1, checksState: "pending" });
+    const authoredReady = entry({
+      number: 2,
+      checksState: "passing",
+      reviewDecision: "approved",
+    });
+    const otherReady = entry({
+      number: 3,
+      checksState: "passing",
+      reviewDecision: "approved",
+    });
+    const sorted = sortPullRequestGroups(
+      [
+        { key: "authored", label: "Authored", entries: [authoredWaiting, authoredReady] },
+        { key: "others", label: "Others", entries: [otherReady] },
+      ],
+      "ready",
+      "",
+    );
+
+    expect(sorted.map((group) => group.key)).toEqual(["authored", "others"]);
+    expect(sorted.flatMap((group) => group.entries).map((row) => row.number)).toEqual([2, 1, 3]);
+  });
+
+  it.each([
+    ["updated", [1, 2]],
+    ["newest", [2, 1]],
+    ["oldest", [1, 2]],
+    ["largest", [1, 2]],
+    ["smallest", [2, 1]],
+  ] as const)("keeps authored first while applying the %s sort inside groups", (sort, order) => {
+    const olderLarger = entry({
+      number: 1,
+      additions: 20,
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const newerSmaller = entry({
+      number: 2,
+      additions: 2,
+      createdAt: "2026-08-01T00:00:00Z",
+      updatedAt: "2026-07-01T00:00:00Z",
+    });
+    const sorted = sortPullRequestGroups(
+      [
+        { key: "authored", label: "Authored", entries: [olderLarger, newerSmaller] },
+        { key: "others", label: "Others", entries: [entry({ number: 3 })] },
+      ],
+      sort,
+      "",
+    );
+
+    expect(sorted.map((group) => group.key)).toEqual(["authored", "others"]);
+    expect(sorted[0]!.entries.map((row) => row.number)).toEqual(order);
+  });
+});
+
+describe("blocked-on-me ranking", () => {
+  it("ranks authored work by how surely it is the author's to unblock, newest first within a tier", () => {
+    const conflict = entry({
+      number: 1,
+      mergeability: "conflicting",
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const olderFailing = entry({
+      number: 2,
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const changesRequested = entry({
+      number: 3,
+      reviewDecision: "changes-requested",
+      checksState: "failing",
+      updatedAt: "2026-08-02T00:00:00Z",
+    });
+    const approved = entry({ number: 4, checksState: "passing", reviewDecision: "approved" });
+    const draft = entry({ number: 5, isDraft: true, checksState: "passing" });
+    const waiting = entry({ number: 6 });
+    const merged = entry({ number: 7, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerClosed = entry({ number: 8, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+    const newerFailing = entry({
+      number: 9,
+      checksState: "failing",
+      updatedAt: "2026-08-03T00:00:00Z",
+    });
+
+    expect(
+      rankPullRequestsBlockedOnAuthor([
+        waiting,
+        merged,
+        olderFailing,
+        draft,
+        approved,
+        changesRequested,
+        newerClosed,
+        conflict,
+        newerFailing,
+      ]).map((row) => row.number),
+    ).toEqual([1, 3, 9, 2, 5, 6, 4, 8, 7]);
+  });
+
+  it("ranks reviewer work with open rows first, newest first", () => {
+    const olderOpen = entry({ number: 1, updatedAt: "2026-08-01T00:00:00Z" });
+    const newerOpen = entry({ number: 2, updatedAt: "2026-08-02T00:00:00Z" });
+    const olderFinished = entry({ number: 3, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerFinished = entry({ number: 4, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+
+    expect(
+      rankPullRequestsBlockedOnReviewer([newerFinished, newerOpen, olderFinished, olderOpen]).map(
+        (row) => row.number,
+      ),
+    ).toEqual([2, 1, 4, 3]);
+  });
+
+  it("ranks blocked groups according to their involvement", () => {
+    const authored = [
+      entry({ number: 1, isDraft: true }),
+      entry({ number: 2, checksState: "failing" }),
+    ];
+    const reviewing = [
+      entry({ number: 3, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 4, updatedAt: "2026-08-01T00:00:00Z" }),
+    ];
+    const others = [
+      entry({ number: 5, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 6, isDraft: true }),
+    ];
+    const groups = [
+      { key: "authored", label: "Authored", entries: authored },
+      { key: "reviewRequested", label: "Review requested", entries: reviewing },
+      { key: "others", label: "Others", entries: others },
+    ] as const;
+
+    expect(
+      sortPullRequestGroups(groups, "blocked", "", undefined, "all").map((group) =>
+        group.entries.map((row) => row.number),
+      ),
+    ).toEqual([
+      [2, 1],
+      [3, 4],
+      [5, 6],
+    ]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "authored")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([6, 5]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "reviewing")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([5, 6]);
+    expect(sortPullRequestGroups(groups, "blocked", "needle", undefined, "authored")).toEqual(
+      groups,
+    );
+  });
+});
+
 describe("line counts that arrive after the rows", () => {
   const stats = new Map([["env-1 project-1 7", { additions: 42, deletions: 3 }]]);
 
@@ -744,9 +1069,9 @@ describe("partitioning with the hosts' own priority reads", () => {
       updatedAt: "2026-06-02T00:00:00Z",
     });
     const groups = partitionPullRequestsWithPriority([], [both], [both, requestedOlder, requested]);
-    expect(groups.map((group) => group.key)).toEqual(["reviewRequested", "authored"]);
-    expect(groups[0]!.entries.map((item) => item.number)).toEqual([2, 3]);
-    expect(groups[1]!.entries.map((item) => item.number)).toEqual([1]);
+    expect(groups.map((group) => group.key)).toEqual(["authored", "reviewRequested"]);
+    expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
+    expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
 
   it("lets the feed's copy of a partitioned row replace the partition's", () => {
@@ -855,6 +1180,74 @@ describe("the list snapshot across a reload", () => {
     expect(snapshot?.data.entries).toHaveLength(99);
     expect(snapshot?.data.viewers).toEqual(viewers);
     expect(snapshot?.data.providers).toEqual(providers);
+  });
+});
+
+describe("remembered pull request list controls", () => {
+  const makeStorage = () => {
+    const held = new Map<string, string>();
+    return {
+      getItem: (key: string) => held.get(key) ?? null,
+      setItem: (key: string, value: string) => void held.set(key, value),
+    };
+  };
+
+  it("restores every filter and the selected sort", () => {
+    const storage = makeStorage();
+    const preferences = {
+      involvement: "reviewing",
+      state: "merged",
+      environmentId: "env-1" as EnvironmentId,
+      projectId: "project-1" as ProjectId,
+      host: "github.com",
+      q: "workflow",
+      draft: "hide",
+      review: "approved",
+      checks: "passing",
+      author: "octocat",
+      labels: ["bug", "priority"],
+      sort: "largest",
+    } as const;
+
+    writePullRequestListPreferences(preferences, storage);
+    expect(readPullRequestListPreferences(storage)).toEqual(preferences);
+  });
+
+  it("omits the default sort from storage", () => {
+    expect(
+      pullRequestListPreferences({
+        involvement: "all",
+        state: "open",
+        sort: "ready",
+      }),
+    ).toEqual({ involvement: "all", state: "open" });
+  });
+
+  it("keeps an explicit recency sort", () => {
+    expect(
+      pullRequestListPreferences({ involvement: "all", state: "open", sort: "updated" }),
+    ).toEqual({ involvement: "all", state: "open", sort: "updated" });
+  });
+
+  it("falls back to the default controls when storage is corrupt", () => {
+    const storage = makeStorage();
+    storage.setItem("t3.pullRequests.preferences", "{not json");
+    expect(readPullRequestListPreferences(storage)).toEqual({ involvement: "all", state: "open" });
+  });
+
+  it("falls back when browser policy denies storage", () => {
+    const denied = {
+      getItem: () => {
+        throw new Error("storage denied");
+      },
+      setItem: () => {
+        throw new Error("storage denied");
+      },
+    };
+    expect(readPullRequestListPreferences(denied)).toEqual({ involvement: "all", state: "open" });
+    expect(() =>
+      writePullRequestListPreferences({ involvement: "all", state: "open" }, denied),
+    ).not.toThrow();
   });
 });
 
@@ -1209,5 +1602,95 @@ describe("the priority groups against a paginated feed", () => {
     expect(
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
+  });
+});
+
+describe("pull request list overrides", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number,
+      state,
+      isDraft: false,
+      updatedAt: "2026-07-01T00:00:00Z",
+      labels: [],
+    }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("maps the actions that change a row's state and nothing else", () => {
+    const now = new Date("2026-07-02T00:00:00Z");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "close", now, 7)).toEqual({
+      state: "closed",
+      updatedAt: "2026-07-02T00:00:00.000Z",
+      token: 7,
+      at: now.getTime(),
+    });
+    expect(pullRequestOverrideAfterAction(entry(1, "closed"), "reopen", now, 1)?.state).toBe(
+      "open",
+    );
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "merge", now, 1)?.state).toBe("merged");
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "draft", now, 1)?.isDraft).toBe(true);
+    expect(pullRequestOverrideAfterAction(entry(1, "open"), "update-branch", now, 1)).toBeNull();
+  });
+
+  it("writes the override over the row and drops it from a list whose state it left", () => {
+    const rows = [entry(1, "open"), entry(2, "open")];
+    const overrides = new Map([
+      ["#1", { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at: 0 }],
+    ]);
+    expect(
+      applyPullRequestOverrides(rows, overrides, key, "open").map((row) => row.number),
+    ).toEqual([2]);
+    const all = applyPullRequestOverrides(rows, overrides, key, "all");
+    expect(all.map((row) => [row.number, row.state])).toEqual([
+      [1, "closed"],
+      [2, "open"],
+    ]);
+    expect(applyPullRequestOverrides(rows, new Map(), key, "open")).toBe(rows);
+  });
+
+  it("hands back the held object for a row a refresh did not change", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const next = [{ ...entry(1, "open") }, { ...entry(2, "open"), state: "merged" as const }];
+    const reused = reusePullRequestEntries(previous, next, key);
+    expect(reused[0]).toBe(previous[0]);
+    expect(reused[1]).toBe(next[1]);
+    expect(
+      reusePullRequestEntries(previous, [{ ...entry(1, "open") }, { ...entry(2, "open") }], key),
+    ).toBe(previous);
+  });
+});
+
+describe("pull request list override settlement", () => {
+  const entry = (number: number, state: "open" | "closed" | "merged") =>
+    ({ number, state, isDraft: false, labels: [] }) as unknown as PullRequestListEntry;
+  const key = (row: { number: number }) => `#${row.number}`;
+
+  it("keeps an override until an answer agrees with it", () => {
+    const at = 1_000_000;
+    const closed = { state: "closed" as const, updatedAt: "2026-07-03T00:00:00Z", token: 1, at };
+    const overrides = new Map([["#1", closed]]);
+    // A read from before the action still says open: the override stands.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 5_000)).toBe(
+      overrides,
+    );
+    // Absent from the answer says nothing: the row may live in another group or page.
+    expect(settlePullRequestOverrides(overrides, [entry(2, "open")], key, at + 5_000).size).toBe(1);
+    // Present as closed: confirmed.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "closed")], key, at + 5_000).size).toBe(
+      0,
+    );
+    // Present as open a good while later: the host's news, which outranks the note.
+    expect(settlePullRequestOverrides(overrides, [entry(1, "open")], key, at + 90_000).size).toBe(
+      0,
+    );
+  });
+
+  it("does not hand back the old order when only the order changed", () => {
+    const previous = [entry(1, "open"), entry(2, "open")];
+    const swapped = reusePullRequestEntries(previous, [entry(2, "open"), entry(1, "open")], key);
+    expect(swapped).not.toBe(previous);
+    expect(swapped.map((row) => row.number)).toEqual([2, 1]);
   });
 });

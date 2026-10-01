@@ -21,8 +21,8 @@
     }
   },
   "scripts": {
-    "typecheck": "tsgo --noEmit",
-    "test": "vp test run",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "generate": "node scripts/generate.ts",
     "probe": "node test/examples/codex-app-server-probe.ts"
   },

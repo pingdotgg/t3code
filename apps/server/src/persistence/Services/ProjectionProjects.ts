@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ModelSelection,
+  ProjectIconOverride,
   ProjectId,
   ProjectScript,
   ThreadEnvMode,
@@ -28,6 +29,7 @@ export const ProjectionProject = Schema.Struct({
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
   autoPull: Schema.Boolean,
   faviconPath: Schema.optional(Schema.NullOr(Schema.String)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -39,11 +41,6 @@ export const GetProjectionProjectInput = Schema.Struct({
   projectId: ProjectId,
 });
 export type GetProjectionProjectInput = typeof GetProjectionProjectInput.Type;
-
-export const DeleteProjectionProjectInput = Schema.Struct({
-  projectId: ProjectId,
-});
-export type DeleteProjectionProjectInput = typeof DeleteProjectionProjectInput.Type;
 
 /**
  * ProjectionProjectRepositoryShape - Service API for projected project records.
@@ -62,23 +59,6 @@ export interface ProjectionProjectRepositoryShape {
   readonly getById: (
     input: GetProjectionProjectInput,
   ) => Effect.Effect<Option.Option<ProjectionProject>, ProjectionRepositoryError>;
-
-  /**
-   * List all projected project rows.
-   *
-   * Returned in deterministic creation order.
-   */
-  readonly listAll: () => Effect.Effect<
-    ReadonlyArray<ProjectionProject>,
-    ProjectionRepositoryError
-  >;
-
-  /**
-   * Soft-delete a projected project row by id.
-   */
-  readonly deleteById: (
-    input: DeleteProjectionProjectInput,
-  ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
 /**

@@ -4,13 +4,16 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import * as Provider from "../../Provider.ts";
 import { toWireSeconds } from "../../Util/Duration.ts";
-import { Resource } from "../../Resource.ts";
+import { Resource, type ResourceBinding } from "../../Resource.ts";
 import type { Providers } from "../Providers.ts";
 import { createInternalTags, createTagsList, diffTags } from "../../Tags.ts";
+import { AWSEnvironment } from "../Environment.ts";
 
 const CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2" as const;
 
@@ -295,7 +298,7 @@ export interface DistributionOriginGroup {
 }
 
 const isFunctionAssociationPending = (error: cloudfront.InvalidArgument) => {
-  const message = error.Message ?? "";
+  const message = error.message ?? "";
   return (
     message.includes("FunctionAssociationArn") &&
     message.includes("not found or is not published")
@@ -396,6 +399,44 @@ export interface DistributionProps {
   tags?: Record<string, string>;
 }
 
+/**
+ * Binding contract of {@link Distribution}: composites contribute additional
+ * alternate domain names without a circular input prop (e.g. a site attached
+ * to an `AWS.Website.Router` binds its hostnames onto the Router's
+ * distribution). Bound aliases are merged with the declared `aliases` prop
+ * at reconcile time; the viewer certificate must cover them.
+ */
+export type DistributionBinding = {
+  /**
+   * Additional alternate domain names (CNAMEs) attached to the
+   * distribution.
+   */
+  aliases?: string[];
+};
+
+/**
+ * Union of declared and bound aliases (see {@link DistributionBinding}),
+ * deduped, preserving declared order first. Tolerates both `{ sid, data }`
+ * rows (provider lifecycle) and bare binding payloads.
+ * @internal
+ */
+const resolveEffectiveAliases = (
+  declared: string[] | undefined,
+  bindings:
+    | ReadonlyArray<DistributionBinding | ResourceBinding<DistributionBinding>>
+    | undefined,
+): string[] | undefined => {
+  const bound = (bindings ?? []).flatMap((binding) =>
+    "data" in binding && binding.data !== undefined
+      ? ((binding as ResourceBinding<DistributionBinding>).data.aliases ?? [])
+      : ((binding as DistributionBinding).aliases ?? []),
+  );
+  if (bound.length === 0) {
+    return declared;
+  }
+  return [...new Set([...(declared ?? []), ...bound])];
+};
+
 export interface Distribution extends Resource<
   "AWS.CloudFront.Distribution",
   DistributionProps,
@@ -412,6 +453,17 @@ export interface Distribution extends Resource<
      * CloudFront-assigned domain name.
      */
     domainName: string;
+    /**
+     * The distribution's own URL — what a viewer opens.
+     *
+     * `https://{domainName}` on AWS. Under `alchemy dev` the emulator has no
+     * such hostname to offer (`*.cloudfront.net` resolves to nothing on a
+     * developer's machine), so it serves the distribution's edge on a local
+     * port and this is `http://localhost:{port}`. Reading `url` instead of
+     * building one from {@link domainName} is what makes a consumer work
+     * unchanged in both modes.
+     */
+    url: string;
     /**
      * Route 53 hosted zone ID for CloudFront aliases.
      */
@@ -449,7 +501,7 @@ export interface Distribution extends Resource<
      */
     tags: Record<string, string>;
   },
-  never,
+  DistributionBinding,
   Providers
 > {}
 
@@ -459,9 +511,8 @@ export interface Distribution extends Resource<
  * `Distribution` manages the CDN layer for static sites and HTTP origins such
  * as Lambda Function URLs and ALBs. It exposes the distribution domain and
  * hosted zone ID needed for Route 53 alias records.
- * @resource
- * @section Creating Distributions
- * @example CDN in Front of an HTTP Origin
+ * ### Creating Distributions
+ * **Example:** CDN in Front of an HTTP Origin
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -483,7 +534,7 @@ export interface Distribution extends Resource<
  * });
  * ```
  *
- * @example Private S3 Origin
+ * **Example:** Private S3 Origin
  * ```typescript
  * const distribution = yield* Distribution("WebsiteCdn", {
  *   aliases: ["www.example.com"],
@@ -508,8 +559,8 @@ export interface Distribution extends Resource<
  * });
  * ```
  *
- * @section Invalidating the Cache
- * @example Purge Paths on Deploy
+ * ### Invalidating the Cache
+ * **Example:** Purge Paths on Deploy
  * ```typescript
  * // declaratively, whenever `version` changes:
  * yield* AWS.CloudFront.Invalidation("PurgeBlog", {
@@ -521,6 +572,8 @@ export interface Distribution extends Resource<
  *
  * To purge at runtime from a Lambda Function, bind
  * `CloudFront.CreateInvalidation(distribution)` instead.
+ *
+ * @resource
  */
 export const Distribution = Resource<Distribution>(
   "AWS.CloudFront.Distribution",
@@ -535,6 +588,16 @@ export const DistributionProvider = () =>
           `CloudFront Distribution wait: polling deployment for ${distributionId}`,
         );
         return yield* cloudfront.getDistribution({ Id: distributionId }).pipe(
+          // Bound each poll — a wedged read must count as "not deployed
+          // yet" and retry, never hang the deploy (see the delete-wait).
+          Effect.timeout(30_000),
+          Effect.catchTag("TimeoutError", () =>
+            Effect.fail(
+              new DistributionPendingDeployment({
+                message: `Timed out reading distribution ${distributionId} while polling deployment`,
+              }),
+            ),
+          ),
           Effect.map((response) => response.Distribution),
           Effect.flatMap((distribution) =>
             distribution?.Status === "Deployed"
@@ -670,7 +733,23 @@ export const DistributionProvider = () =>
         return yield* Effect.logInfo(
           `CloudFront Distribution delete: waiting for ${distributionId} to become disabled and deployed`,
         ).pipe(
-          Effect.andThen(() => getCurrent(distributionId)),
+          // Bound each poll: a single wedged HTTP read (stale keep-alive
+          // socket) otherwise hangs the whole destroy — observed as a
+          // disable-wait that logged one poll and then sat silent past a
+          // 60-minute test budget. Timeout counts as "not ready yet" and
+          // rides the same bounded retry.
+          Effect.andThen(() =>
+            getCurrent(distributionId).pipe(
+              Effect.timeout(30_000),
+              Effect.catchTag("TimeoutError", () =>
+                Effect.fail(
+                  new DistributionPendingDeletionReadiness({
+                    message: `Timed out reading distribution ${distributionId} while waiting for deletion readiness`,
+                  }),
+                ),
+              ),
+            ),
+          ),
           Effect.flatMap(
             Effect.fn(function* (current) {
               if (!current) {
@@ -738,7 +817,12 @@ export const DistributionProvider = () =>
             return undefined;
           }
 
-          return toAttrs(current.distribution, current.etag, current.tags);
+          return toAttrs(
+            current.distribution,
+            current.etag,
+            current.tags,
+            yield* resolveUrl(current.distribution),
+          );
         }),
         // CloudFront is a global service (no region). Enumerate every
         // distribution in the account via the paginated `listDistributions`
@@ -776,14 +860,19 @@ export const DistributionProvider = () =>
                       Schedule.recurs(30),
                     ]),
                   }),
-                  Effect.map((current) =>
+                  Effect.flatMap((current) =>
                     current
-                      ? toAttrs(
-                          current.distribution,
-                          current.etag,
-                          current.tags,
+                      ? Effect.map(
+                          resolveUrl(current.distribution),
+                          (url) =>
+                            toAttrs(
+                              current.distribution,
+                              current.etag,
+                              current.tags,
+                              url,
+                            ) as Distribution["Attributes"] | undefined,
                         )
-                      : undefined,
+                      : Effect.succeed(undefined),
                   ),
                 ),
               { concurrency: 10 },
@@ -796,10 +885,18 @@ export const DistributionProvider = () =>
         reconcile: Effect.fn(function* ({
           id,
           instanceId,
-          news,
+          news: _news,
           output,
           session,
+          bindings,
         }) {
+          // Fold bound aliases (see `DistributionBinding`) into the desired
+          // props up front so both the create and update paths (`toConfig`)
+          // attach them uniformly.
+          const news: typeof _news = {
+            ..._news,
+            aliases: resolveEffectiveAliases(_news.aliases, bindings),
+          };
           const desiredTags = {
             ...(yield* createInternalTags(id)),
             ...news.tags,
@@ -916,7 +1013,7 @@ export const DistributionProvider = () =>
                             Effect.fail(
                               new DistributionFunctionAssociationPending({
                                 message:
-                                  error.Message ??
+                                  error.message ??
                                   "CloudFront function association pending",
                               }),
                             ),
@@ -948,13 +1045,21 @@ export const DistributionProvider = () =>
               `CloudFront Distribution reconcile: deployed ${created.distributionId} domain=${deployed.DomainName}`,
             );
             yield* session.note(created.distributionId);
-            return toAttrs(deployed, created.etag, created.tags);
+            return toAttrs(
+              deployed,
+              created.etag,
+              created.tags,
+              yield* resolveUrl(deployed),
+            );
           }
 
           // Sync config — diff observed config against desired and patch
           // via `updateDistribution` with the freshly observed ETag. We
           // keep the observed `CallerReference` because CloudFront does
-          // not allow it to change.
+          // not allow it to change, and fill every member the props don't
+          // express from the observed config: UpdateDistribution replaces
+          // the whole config and rejects requests with missing members
+          // (see `mergeWithObservedConfig`).
           yield* Effect.logInfo(
             `CloudFront Distribution reconcile: updating config for ${observed.distribution.Id} with etag=${observed.etag ?? "missing"}`,
           );
@@ -962,9 +1067,9 @@ export const DistributionProvider = () =>
             .updateDistribution({
               Id: observed.distribution.Id,
               IfMatch: observed.etag,
-              DistributionConfig: toConfig(
-                observed.config.CallerReference,
-                news,
+              DistributionConfig: mergeWithObservedConfig(
+                toConfig(observed.config.CallerReference, news),
+                observed.config,
               ),
             })
             .pipe(
@@ -985,7 +1090,7 @@ export const DistributionProvider = () =>
                           Effect.fail(
                             new DistributionFunctionAssociationPending({
                               message:
-                                error.Message ??
+                                error.message ??
                                 "CloudFront function association pending",
                             }),
                           ),
@@ -1049,7 +1154,12 @@ export const DistributionProvider = () =>
             `CloudFront Distribution reconcile: deployed ${observed.distribution.Id} domain=${deployed.DomainName}`,
           );
           yield* session.note(observed.distribution.Id);
-          return toAttrs(deployed, updated.ETag, desiredTags);
+          return toAttrs(
+            deployed,
+            updated.ETag,
+            desiredTags,
+            yield* resolveUrl(deployed),
+          );
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* Effect.logInfo(
@@ -1146,8 +1256,16 @@ const toBehavior = (
   CachePolicyId: behavior.cachePolicyId,
   OriginRequestPolicyId: behavior.originRequestPolicyId,
   ResponseHeadersPolicyId: behavior.responseHeadersPolicyId,
-  ForwardedValues: behavior.forwardedValues,
-  MinTTL: toWireSeconds(behavior.minTtl),
+  // Without a cache policy, CloudFront is in legacy mode and rejects the
+  // request unless both ForwardedValues and MinTTL are present.
+  ForwardedValues:
+    behavior.forwardedValues ??
+    (behavior.cachePolicyId === undefined
+      ? { QueryString: false, Cookies: { Forward: "none" } }
+      : undefined),
+  MinTTL:
+    toWireSeconds(behavior.minTtl) ??
+    (behavior.cachePolicyId === undefined ? 0 : undefined),
   DefaultTTL: toWireSeconds(behavior.defaultTtl),
   MaxTTL: toWireSeconds(behavior.maxTtl),
   TrustedKeyGroups: behavior.trustedKeyGroups
@@ -1277,6 +1395,105 @@ const toOrigin = (origin: DistributionOrigin): cloudfront.Origin => {
   };
 };
 
+/**
+ * Recursively fills `undefined` members of `desired` from `observed`.
+ * Defined values in `desired` always win; arrays are taken from `desired`
+ * wholesale (item-level merging is the caller's concern).
+ */
+const fillUndefined = <T>(desired: T, observed: T): T => {
+  if (desired === undefined) return observed;
+  if (
+    desired === null ||
+    typeof desired !== "object" ||
+    Array.isArray(desired) ||
+    observed === null ||
+    typeof observed !== "object" ||
+    Array.isArray(observed)
+  ) {
+    return desired;
+  }
+  const out: Record<string, unknown> = {
+    ...(desired as Record<string, unknown>),
+  };
+  const desiredObj = desired as Record<string, unknown>;
+  for (const key of Object.keys(observed as Record<string, unknown>)) {
+    // CloudFront list shapes pair `Quantity` with `Items`. A desired node
+    // that declares a `Quantity` but no `Items` (e.g. a geo restriction of
+    // `{ RestrictionType: "none", Quantity: 0 }`) is fully specified —
+    // filling `Items` from the observed config would desynchronize the two
+    // and CloudFront rejects the update with `InconsistentQuantities`.
+    if (
+      key === "Items" &&
+      typeof desiredObj.Quantity === "number" &&
+      desiredObj.Items === undefined
+    ) {
+      continue;
+    }
+    out[key] = fillUndefined(
+      desiredObj[key],
+      (observed as Record<string, unknown>)[key],
+    );
+  }
+  return out as T;
+};
+
+/**
+ * Completes a desired `DistributionConfig` with the freshly observed live
+ * config before an `updateDistribution` call.
+ *
+ * CloudFront's `UpdateDistribution` replaces the ENTIRE distribution config:
+ * any member missing from the request is rejected with `IllegalUpdate`
+ * (observed in practice: "Default root object is missing for the resource",
+ * "The 'OriginCustomHeaders' field is missing"). `toConfig` emits only the
+ * members the props express, so updating a live distribution fails on every
+ * member the props don't model — some of which (e.g. per-origin
+ * `CustomHeaders`, per-behavior `TrustedSigners`) are nested inside
+ * collections and not expressible as props at all.
+ *
+ * The standard CloudFront update pattern is read-modify-write, which the
+ * delete path here already uses (`{ ...current.config, Enabled: false }`).
+ * This applies the same idea to updates: desired values always win — the
+ * declared props still fully control drift — and only `undefined` members
+ * are carried over from the observed config. `Origins` and `CacheBehaviors`
+ * items are additionally merged by identity (`Id` / `PathPattern`) so their
+ * nested unexpressed members carry over too.
+ *
+ * Exported for unit tests.
+ */
+export const mergeWithObservedConfig = (
+  desired: cloudfront.DistributionConfig,
+  observed: cloudfront.DistributionConfig,
+): cloudfront.DistributionConfig => {
+  const merged = fillUndefined(desired, observed);
+  if (merged.Origins?.Items && observed.Origins?.Items) {
+    const observedOrigins = observed.Origins.Items;
+    merged.Origins = {
+      ...merged.Origins,
+      Items: merged.Origins.Items.map((item) =>
+        fillUndefined(
+          item,
+          observedOrigins.find((origin) => origin.Id === item.Id) ?? item,
+        ),
+      ),
+    };
+  }
+  if (merged.CacheBehaviors?.Items && observed.CacheBehaviors?.Items) {
+    const observedBehaviors = observed.CacheBehaviors.Items;
+    merged.CacheBehaviors = {
+      ...merged.CacheBehaviors,
+      Items: merged.CacheBehaviors.Items.map((item) =>
+        fillUndefined(
+          item,
+          observedBehaviors.find(
+            (behavior) => behavior.PathPattern === item.PathPattern,
+          ) ?? item,
+        ),
+      ),
+    };
+  }
+  return merged;
+};
+
 const toConfig = (
   callerReference: string,
   props: DistributionProps,
@@ -1404,14 +1621,68 @@ const toConfig = (
   AnycastIpListId: props.anycastIpListId,
 });
 
+/**
+ * The distribution's own URL.
+ *
+ * On AWS this is `https://` + the CloudFront domain name. The local emulator
+ * has no such hostname — `*.cloudfront.net` resolves to nothing on a
+ * developer's machine — so it serves each distribution's edge on a plain-HTTP
+ * port of its own and reports which one. Asking it here (rather than having
+ * every consumer interpolate a URL from `domainName`) is what keeps `url`
+ * openable in both modes. Anything unexpected falls back to the AWS-shaped
+ * URL: a missing edge port must never fail a reconcile.
+ */
+const resolveUrl = Effect.fn("AWS.CloudFront.Distribution.url")(function* (
+  distribution: cloudfront.Distribution,
+) {
+  const awsUrl = `https://${distribution.DomainName}`;
+  const env = yield* AWSEnvironment.current;
+  const endpoint = env.endpoint;
+  if (endpoint === undefined || !(yield* AWSEnvironment.isLocalEmulator)) {
+    return awsUrl;
+  }
+  return yield* Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(
+      `${endpoint}/_floci/cloudfront-edge/${distribution.Id}`,
+    );
+    // A distribution legitimately has no edge port: the emulator binds one
+    // opportunistically and stays Host-addressable when it can't, and the
+    // endpoint 404s (with a JSON error body) for one it doesn't know yet.
+    // `client.get` does not fail on 404, so every shape lands here — `null`,
+    // an error object, or a port-less entry. Anything that isn't a numeric
+    // `Port` means "no local edge", which is the AWS URL.
+    const edge = (yield* response.json) as { Port?: number } | null;
+    if (
+      edge === null ||
+      typeof edge !== "object" ||
+      typeof edge.Port !== "number"
+    ) {
+      return awsUrl;
+    }
+    const host = yield* Effect.sync(() => new URL(endpoint).hostname);
+    return `http://${host}:${edge.Port}`;
+  }).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.provide(FetchHttpClient.layer),
+    // `orElseSucceed` alone only covers the error channel. A malformed body
+    // throws inside the generator, which Effect surfaces as a DEFECT — that
+    // escaped the fallback and killed a reconcile with a raw TypeError.
+    // Resolving a convenience URL must never be able to fail a deploy.
+    Effect.catchCause(() => Effect.succeed(awsUrl)),
+  );
+});
+
 const toAttrs = (
   distribution: cloudfront.Distribution,
   etag: string | undefined,
   tags: Record<string, string>,
+  url: string,
 ): Distribution["Attributes"] => ({
   distributionId: distribution.Id,
   distributionArn: distribution.ARN,
   domainName: distribution.DomainName,
+  url,
   hostedZoneId: CLOUDFRONT_HOSTED_ZONE_ID,
   status: distribution.Status,
   aliases: distribution.DistributionConfig.Aliases?.Items ?? [],

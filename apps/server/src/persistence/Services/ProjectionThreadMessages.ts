@@ -9,6 +9,7 @@
 import {
   ChatAttachment,
   MessageId,
+  OrchestrationMessageContext,
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
@@ -29,6 +30,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   role: OrchestrationMessageRole,
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  context: Schema.optional(OrchestrationMessageContext),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -50,6 +52,14 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
   messageId: MessageId,
 });
 export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
+
+export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  streamingOnly: Schema.Boolean,
+});
+export type HasProjectionThreadAssistantMessageInput =
+  typeof HasProjectionThreadAssistantMessageInput.Type;
 
 export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
@@ -82,6 +92,13 @@ export interface ProjectionThreadMessageRepositoryShape {
   ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
   /**
+   * Check for an assistant message in a turn without hydrating message text.
+   */
+  readonly hasAssistantMessageForTurn: (
+    input: HasProjectionThreadAssistantMessageInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
+
+  /**
    * List projected thread messages for a thread.
    *
    * Returned in ascending creation order.
@@ -89,6 +106,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** Read the latest user-message timestamp without loading message bodies. */
+  readonly getLatestUserMessageAt: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ProjectionThreadMessage["createdAt"] | null, ProjectionRepositoryError>;
 
   /**
    * Delete projected thread messages by thread.

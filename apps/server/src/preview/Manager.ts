@@ -153,6 +153,7 @@ const buildIdleSnapshot = (input: {
   updatedAt: input.updatedAt,
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const serverEpoch = NodeCrypto.randomUUID();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
@@ -433,15 +434,13 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const list: PreviewManager["Service"]["list"] = Effect.fn("PreviewManager.list")(
     function* (input) {
       return yield* SynchronizedRef.get(stateRef).pipe(
-        Effect.map(
-          (state): PreviewListResult => ({
-            sessions: sessionsForThread(state, input.threadId)
-              .map((s) => s.snapshot)
-              .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
-            serverEpoch,
-            revision: state.revision,
-          }),
-        ),
+        Effect.map((state): PreviewListResult => ({
+          sessions: sessionsForThread(state, input.threadId)
+            .map((s) => s.snapshot)
+            .toSorted((a, b) => a.updatedAt.localeCompare(b.updatedAt)),
+          serverEpoch,
+          revision: state.revision,
+        })),
       );
     },
   );

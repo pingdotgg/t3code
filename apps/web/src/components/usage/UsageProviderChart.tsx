@@ -54,7 +54,7 @@ function valueFor(
   return metric === "tokens" ? entry.totalTokens : entry.costUsd;
 }
 
-function buildPeriodColumns(
+export function buildPeriodColumns(
   periods: readonly string[],
   byPeriod: ReadonlyMap<string, DailyTotals | HourlyTotals>,
   metric: UsageChartMetric,
@@ -167,24 +167,6 @@ export function niceScale(peak: number, count: number): { max: number; ticks: re
   const ticks: number[] = [];
   for (let value = 0; value <= max + step * 1e-6; value += step) ticks.push(value);
   return { max, ticks };
-}
-
-/**
- * Turns the merged daily totals into one column per day.
- *
- * Values are absolute, not cumulative: each provider is drawn from the same
- * zero baseline so the chart never implies that one provider is always larger.
- *
- * The chart paths and the hover readout both consume this, so the number under
- * the cursor is by construction the number that was plotted rather than a
- * second derivation that can drift from it.
- */
-export function buildDayColumns(
-  days: readonly string[],
-  byDay: ReadonlyMap<string, DailyTotals>,
-  metric: UsageChartMetric,
-): readonly DayColumn[] {
-  return buildPeriodColumns(days, byDay, metric);
 }
 
 export function UsageProviderChart({
@@ -340,7 +322,7 @@ export function UsageProviderChart({
           {ticks.map((tick) => (
             <span
               key={tick}
-              className="absolute right-0 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
+              className="absolute right-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
               style={{ top: `${(toY(tick) / VIEW_HEIGHT) * 100}%` }}
             >
               {tick === 0 ? "0" : format(tick)}
@@ -452,7 +434,7 @@ export function UsageProviderChart({
         </div>
       </div>
 
-      <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
+      <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
         <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
         <span>
           {periods[Math.floor(periods.length / 2)] === undefined

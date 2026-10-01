@@ -21,3 +21,15 @@ export const fromEnvironment: Layer.Layer<never, never, AWSEnvironment> =
       );
     }),
   );
+
+/**
+ * Explicitly "no custom endpoint" — the SDK falls back to its default
+ * endpoint resolver.
+ *
+ * Use this (never `Layer.empty`) when an AWS call is made from *inside*
+ * the construction of {@link AWSEnvironment}: leaving `Endpoint`
+ * unprovided lets the call fall through to {@link fromEnvironment},
+ * whose service Effect re-enters the in-flight `AWSEnvironment` cache and
+ * deadlocks the fiber with no I/O and no timer pending.
+ */
+export const none = Layer.succeed(Endpoint.Endpoint, Effect.succeed(undefined));

@@ -90,9 +90,8 @@ export interface DecoderManifest extends Resource<
  * A manifest is created in `DRAFT` status; set `status: "ACTIVE"` to make
  * it usable by vehicles. AWS IoT FleetWise is allowlist-gated and offered
  * in `us-east-1`/`eu-central-1` only.
- * @resource
- * @section Creating a Decoder Manifest
- * @example OBD Decoder for a Speed Signal
+ * ### Creating a Decoder Manifest
+ * **Example:** OBD Decoder for a Speed Signal
  * ```typescript
  * const decoder = yield* DecoderManifest("SedanDecoder", {
  *   modelManifestArn: model.modelManifestArn,
@@ -122,6 +121,8 @@ export interface DecoderManifest extends Resource<
  *   status: "ACTIVE",
  * });
  * ```
+ *
+ * @resource
  */
 export const DecoderManifest = Resource<DecoderManifest>(
   "AWS.IoTFleetWise.DecoderManifest",

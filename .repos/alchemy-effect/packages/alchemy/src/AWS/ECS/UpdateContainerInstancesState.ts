@@ -18,9 +18,8 @@ export interface UpdateContainerInstancesStateRequest extends Omit<
  * instance before it terminates. The cluster ARN is injected automatically
  * and the host is granted `ecs:UpdateContainerInstancesState` on the
  * cluster's container instances.
- * @binding
- * @section Container Instances
- * @example Drain an Instance Before Termination
+ * ### Container Instances
+ * **Example:** Drain an Instance Before Termination
  * ```typescript
  * const updateContainerInstancesState =
  *   yield* AWS.ECS.UpdateContainerInstancesState(cluster);
@@ -30,6 +29,8 @@ export interface UpdateContainerInstancesStateRequest extends Omit<
  *   status: "DRAINING",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateContainerInstancesState extends Binding.Service<
   UpdateContainerInstancesState,

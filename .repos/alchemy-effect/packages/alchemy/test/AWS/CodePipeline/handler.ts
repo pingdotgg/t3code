@@ -13,7 +13,9 @@ import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
 
-export const FIXTURE_PIPELINE_NAME = "alchemy-test-codepipeline-bindings";
+export const FIXTURE_PIPELINE_NAME = process.env.ALCHEMY_TEST_STAGE
+  ? `alchemy-test-codepipeline-bindings-${process.env.ALCHEMY_TEST_STAGE}`
+  : "alchemy-test-codepipeline-bindings";
 export const SOURCE_OBJECT_KEY = "source.zip";
 export const SOURCE_STAGE = "Source";
 export const SOURCE_ACTION = "S3Source";
@@ -48,7 +50,7 @@ const errorTagged = <A, E extends { _tag: string; message?: string }, R>(
 export default CodePipelineTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Pipeline state reads fan out SDK calls — AWS's 3s default
     // intermittently times out under cold starts.
     timeout: Duration.seconds(30),

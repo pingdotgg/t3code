@@ -13,6 +13,12 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
 import { cli } from "../bin.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
+// These force a failure with chmod, which Windows ignores for directories and
+// cannot use to make a file unreadable, so the failure never happens there.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(
@@ -160,7 +166,7 @@ describe("t3 theme", () => {
   // rolled back rather than left mutating the environment's theme set. The
   // userdata directory is made read-only while themes stays writable, so the
   // failure lands after the publish -- the case the rollback exists for.
-  it.effect("rolls back a publish when the default cannot be written", () =>
+  it.effect.skipIf(windowsHost)("rolls back a publish when the default cannot be written", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
@@ -185,27 +191,29 @@ describe("t3 theme", () => {
 
   // A symlink is a normal way to hand this command a theme -- desktop hooks
   // symlink the current palette -- so the source is resolved, not refused.
-  it.effect("publishes a theme file through a symlinked source path", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      const realFile = NodePath.join(baseDir, "real-nightfall.json");
-      NodeFS.writeFileSync(realFile, NIGHTFALL_THEME_JSON);
-      const linkPath = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.symlinkSync(realFile, linkPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "publishes a theme file through a symlinked source path",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        const realFile = NodePath.join(baseDir, "real-nightfall.json");
+        NodeFS.writeFileSync(realFile, NIGHTFALL_THEME_JSON);
+        const linkPath = NodePath.join(baseDir, "nightfall.json");
+        NodeFS.symlinkSync(realFile, linkPath);
 
-      yield* runCli(["theme", "set", linkPath, "--base-dir", baseDir]);
+        yield* runCli(["theme", "set", linkPath, "--base-dir", baseDir]);
 
-      assert.equal(
-        NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "nightfall.json")),
-        true,
-      );
-      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
-    }),
+        assert.equal(
+          NodeFS.existsSync(NodePath.join(baseDir, "userdata", "themes", "nightfall.json")),
+          true,
+        );
+        assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+      }),
   );
 
   // The staging entry is created fresh with O_EXCL, so a symlink planted at
   // its predictable name is cleared, never followed and written through.
-  it.effect("never writes through a symlink at the staging path", () =>
+  it.effect.skipIf(!symlinksSupported)("never writes through a symlink at the staging path", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       const themesDir = NodePath.join(baseDir, "userdata", "themes");
@@ -226,31 +234,33 @@ describe("t3 theme", () => {
   // Rollback moves the previous directory entry aside and back, so even an
   // entry the watcher would never publish -- here a symlink -- comes back
   // exactly as it was when the set fails.
-  it.effect("restores a non-theme destination entry when the set fails", () =>
-    Effect.gen(function* () {
-      const baseDir = makeBaseDir();
-      writeSettings(baseDir, {});
-      const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
-      const themesDir = NodePath.join(userdataDir, "themes");
-      NodeFS.mkdirSync(themesDir, { recursive: true });
-      const outside = NodePath.join(baseDir, "outside.json");
-      NodeFS.writeFileSync(outside, NIGHTFALL_THEME_JSON);
-      const destination = NodePath.join(themesDir, "nightfall.json");
-      NodeFS.symlinkSync(outside, destination);
-      const themeFile = NodePath.join(baseDir, "nightfall.json");
-      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "restores a non-theme destination entry when the set fails",
+    () =>
+      Effect.gen(function* () {
+        const baseDir = makeBaseDir();
+        writeSettings(baseDir, {});
+        const userdataDir = NodePath.dirname(settingsPathFor(baseDir));
+        const themesDir = NodePath.join(userdataDir, "themes");
+        NodeFS.mkdirSync(themesDir, { recursive: true });
+        const outside = NodePath.join(baseDir, "outside.json");
+        NodeFS.writeFileSync(outside, NIGHTFALL_THEME_JSON);
+        const destination = NodePath.join(themesDir, "nightfall.json");
+        NodeFS.symlinkSync(outside, destination);
+        const themeFile = NodePath.join(baseDir, "nightfall.json");
+        NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
 
-      NodeFS.chmodSync(userdataDir, 0o555);
-      try {
-        yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
-        assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
-      } finally {
-        NodeFS.chmodSync(userdataDir, 0o755);
-      }
-    }),
+        NodeFS.chmodSync(userdataDir, 0o555);
+        try {
+          yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(Effect.flip);
+          assert.equal(NodeFS.lstatSync(destination).isSymbolicLink(), true);
+        } finally {
+          NodeFS.chmodSync(userdataDir, 0o755);
+        }
+      }),
   );
 
-  it.effect("restores the previous theme when a re-publish fails to set", () =>
+  it.effect.skipIf(windowsHost)("restores the previous theme when a re-publish fails to set", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, {});
@@ -347,7 +357,7 @@ describe("t3 theme", () => {
 
   // An unreadable settings file must never read as "no settings": writing a
   // fresh sparse file over it would discard every key the user had.
-  it.effect("refuses to write when the settings file cannot be read", () =>
+  it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       writeSettings(baseDir, { enableProviderUpdateChecks: false });
