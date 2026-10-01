@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { decideOrchestrationCommand } from "./decider.ts";
@@ -72,7 +73,9 @@ const testLayer = Layer.mergeAll(
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-normalizer-settle-" }),
   Layer.mock(ProjectionSnapshotQuery)({
     getThreadShellById: (threadId) =>
-      Effect.succeed(Option.fromUndefinedOr(threads.find((thread) => thread.id === threadId))),
+      threadId === "unreadable"
+        ? Effect.fail(new PersistenceSqlError({ operation: "getThreadShellById" }))
+        : Effect.succeed(Option.fromUndefinedOr(threads.find((thread) => thread.id === threadId))),
   }),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -88,6 +91,8 @@ it.layer(testLayer)("normalizeDispatchCommand settle", (it) => {
       expect(yield* settle("idle")).toBe("thread.settle");
       expect(yield* settle("running")).toBe("thread.settle-when-idle");
       expect(yield* settle("watching")).toBe("thread.settle-when-idle");
+      // An unreadable thread may still be working, so it waits as well.
+      expect(yield* settle("unreadable")).toBe("thread.settle-when-idle");
     }),
   );
 

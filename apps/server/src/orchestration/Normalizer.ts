@@ -138,11 +138,15 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     if (canonicalCommand.type === "thread.settle") {
       // Settling stops the session. A thread still working, including
       // background work, files away now and settles once idle instead.
+      // A failed lookup defers too: waiting never stops running work.
       const snapshots = yield* ProjectionSnapshotQuery;
-      const thread = yield* snapshots
+      const lookup = yield* snapshots
         .getThreadShellById(canonicalCommand.threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(thread) && isThreadWorkingForSettlement(thread.value, receivedAt)) {
+        .pipe(Effect.option);
+      if (
+        Option.isNone(lookup) ||
+        Option.exists(lookup.value, (thread) => isThreadWorkingForSettlement(thread, receivedAt))
+      ) {
         return {
           ...canonicalCommand,
           type: "thread.settle-when-idle",
