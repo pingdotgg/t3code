@@ -22,9 +22,9 @@ export function CustomizeInterfaceHost() {
   const handleExited = useCallback(() => setMounted(false), []);
   if (!mounted) return null;
   return (
-    // One stacking context keeps even nested handles below app dialogs (z-50)
-    // while staying above the composer and other app content (z-40).
-    <div className="pointer-events-none fixed inset-0 z-[49] isolate [-webkit-app-region:no-drag]">
+    // Rendered after the app shell at z-50; dialogs and palettes portal to
+    // the end of the body, while menus use a higher stacking level.
+    <div className="pointer-events-none fixed inset-0 z-50 isolate">
       <Suspense fallback={null}>
         <CustomizeInterfaceOverlay active={active} onExited={handleExited} />
       </Suspense>

@@ -1,4 +1,4 @@
-import type { ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
+import type { ClientSettings, ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
 import * as Struct from "effect/Struct";
 import { useMemo } from "react";
 
@@ -21,18 +21,41 @@ import {
 // Before client settings hydrate, the live snapshot is only the defaults:
 // recording against it would make Undo restore defaults over saved values.
 // Every action waits for hydration on one shared chain, so actions from the
-// popover and the edit layer still land in the order they were made.
+// popover and the edit layer still land in the order they were made. An
+// action queued in one session of the mode never runs in a later one.
 let pendingActions: Promise<void> = Promise.resolve();
 
-function afterHydration(run: () => void): void {
+function afterHydration(run: (settingsLoaded: boolean) => void): void {
+  const session = useCustomizeInterfaceStore.getState().session;
   pendingActions = pendingActions
     .then(ensureClientSettingsHydrated)
-    // Hydration logs its own failure; settings writes then defer as usual.
-    .catch(() => undefined)
-    .then(run)
+    // Hydration logs its own failure, and the next action retries it.
+    .then(
+      () => true,
+      () => false,
+    )
+    .then((settingsLoaded) => {
+      if (useCustomizeInterfaceStore.getState().session === session) run(settingsLoaded);
+    })
     .catch((error: unknown) => {
       console.error("[CUSTOMIZE_INTERFACE] action failed", error);
     });
+}
+
+// A write can sit deferred behind an earlier one that is still persisting, so
+// the snapshot may not show it yet. Reads overlay the mode's own unpublished
+// writes, so the next action builds on them rather than on a stale value.
+let unpublished: ClientSettingsPatch = {};
+
+function currentSettings(): ClientSettings {
+  return { ...getClientSettings(), ...unpublished };
+}
+
+function settingsNotLoaded(): void {
+  console.error("[CLIENT_SETTINGS] customize change dropped", {
+    operation: "customize",
+    reason: "client settings did not load",
+  });
 }
 
 /** Resolves once every queued Customize interface action has run. */
@@ -41,14 +64,22 @@ export function customizeActionsSettled(): Promise<void> {
 }
 
 export function createCustomizeActions(deps: {
-  readonly updateSettings: (patch: ClientSettingsPatch) => unknown;
+  readonly updateSettings: (patch: ClientSettingsPatch) => Promise<void>;
   readonly refreshTheme: () => void;
 }) {
   const store = () => useCustomizeInterfaceStore.getState();
 
+  const write = (patch: ClientSettingsPatch) => {
+    const pending = { ...unpublished, ...patch };
+    unpublished = pending;
+    void deps.updateSettings(patch).finally(() => {
+      if (unpublished === pending) unpublished = {};
+    });
+  };
+
   // Writes a step's values back, touching only the keys it holds.
   const restore = (step: CustomizeStep) => {
-    if (Struct.keys(step.settings).length > 0) deps.updateSettings(step.settings);
+    if (Struct.keys(step.settings).length > 0) write(step.settings);
     let themeChanged = false;
     for (const key of Struct.keys(step.theme)) {
       const value = step.theme[key] ?? null;
@@ -65,21 +96,26 @@ export function createCustomizeActions(deps: {
   };
 
   const applySettings = (patch: ClientSettingsPatch, key?: string) => {
-    const replaced = settingsReplacedBy(patch, getClientSettings());
+    const replaced = settingsReplacedBy(patch, currentSettings());
     if (Struct.keys(replaced).length === 0) return;
     store().record({ settings: replaced, theme: {} }, key);
-    deps.updateSettings(patch);
+    write(patch);
   };
 
   return {
     commit: (patch: ClientSettingsPatch, key?: string) =>
-      afterHydration(() => applySettings(patch, key)),
+      afterHydration((settingsLoaded) =>
+        settingsLoaded ? applySettings(patch, key) : settingsNotLoaded(),
+      ),
 
     // Layout edits read the latest settings, not a render's: a quick hide
-    // then drag must not rebuild the layout from a stale value.
+    // then drag must not rebuild the layout from a stale value. Dropped, like
+    // `commit`, if client settings fail to load: there is no saved value to
+    // record for Undo.
     commitLayout: (edit: (current: InterfaceLayout) => InterfaceLayout) =>
-      afterHydration(() => {
-        const current = getClientSettings().interfaceLayout;
+      afterHydration((settingsLoaded) => {
+        if (!settingsLoaded) return settingsNotLoaded();
+        const current = currentSettings().interfaceLayout;
         const next = edit(current);
         if (next !== current) applySettings({ interfaceLayout: next });
       }),
@@ -109,7 +145,7 @@ export function createCustomizeActions(deps: {
       afterHydration(() => {
         const { baseline } = store();
         const step: CustomizeStep = {
-          settings: settingsReplacedBy(baseline.settings, getClientSettings()),
+          settings: settingsReplacedBy(baseline.settings, currentSettings()),
           theme: themeReplacedBy(baseline.theme, readThemeStorageSnapshot()),
         };
         if (isEmptyStep(step)) return;

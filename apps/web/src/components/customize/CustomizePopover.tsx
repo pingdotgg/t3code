@@ -71,16 +71,14 @@ function Segmented<T extends string>({
 function Row({
   label,
   htmlFor,
-  style,
   children,
 }: {
   label: string;
   htmlFor?: string;
-  style?: CSSProperties;
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-9 items-center gap-3 px-4" style={style}>
+    <div className="flex min-h-9 items-center gap-3 px-4">
       <label htmlFor={htmlFor} className="min-w-0 flex-1 truncate text-sm">
         {label}
       </label>
@@ -378,7 +376,7 @@ function TextSizeSlider() {
     "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
   } as CSSProperties;
   return (
-    <Row label="Interface font size" htmlFor={id} style={{ paddingInline: 16, gap: 12 }}>
+    <Row label="Interface font size" htmlFor={id}>
       <div className="flex shrink-0 items-center" style={{ width: 176, gap: 8 }}>
         <span aria-hidden className="shrink-0 text-2xs text-muted-foreground" style={{ width: 16 }}>
           A

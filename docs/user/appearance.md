@@ -30,13 +30,12 @@ Choose **Balanced**, **Minimal**, **Focus**, or **Detailed** for different level
 All layouts preserve your ordering, chat width, and context window indicator preference.
 
 Choose **Thread rows**, **Header**, or **Composer** to arrange its controls. Drag to reorder,
-or use Tab and the arrow keys. Use the hide control or Delete to hide an item, and Restore to
-bring it back. For the composer, select **Expanded** or **Collapsed** to edit either arrangement.
+or use Tab and the arrow keys. Use the hide control or Delete to hide an item, and its **Show**
+switch to bring it back. For the composer, select **Expanded** or **Collapsed** to edit either arrangement.
 
 Changes save immediately on this device or browser. **Undo** (⌘Z or Ctrl+Z) steps back one
-change; **Revert all changes** undoes the changes made since opening the mode. Escape cancels
-a drag, returns from editing to Customize interface, or closes the mode. **Done** closes it
-and keeps your changes. Mobile does not have this mode.
+change; **Revert all changes** undoes the changes made since opening the mode. Use Escape to
+step back. **Done** closes the mode and keeps your changes. Mobile does not have this mode.
 
 ## Motion
 

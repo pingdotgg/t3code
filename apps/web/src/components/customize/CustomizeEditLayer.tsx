@@ -13,11 +13,17 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 
-import { getClientSettings, useClientSetting, useClientSettings } from "../../hooks/useSettings";
+import {
+  getClientSettings,
+  useClientSetting,
+  useClientSettings,
+  useLegacySidebarEnabled,
+} from "../../hooks/useSettings";
 
 import {
   INTERFACE_SURFACES,
@@ -39,7 +45,9 @@ import {
   type PlacedElement,
   type Rect,
   hasOpenCustomizePopup,
+  isMovable,
   readingOrder,
+  resolveCustomizeTabTarget,
   resolveDropTarget,
   resolveKeyboardMove,
   unionRect,
@@ -176,7 +184,7 @@ interface DragState {
 }
 
 const COMPOSER_PREVIEW_OPTIONS: ReadonlyArray<{ value: ComposerPreview; label: string }> = [
-  { value: "live", label: "Live" },
+  { value: "live", label: "Automatic" },
   { value: "expanded", label: "Expanded" },
   { value: "collapsed", label: "Collapsed" },
 ];
@@ -199,6 +207,9 @@ export function CustomizeEditLayer({
   const config = EDIT_SURFACES[surface];
   const measurement = useLiveMeasure(() => measureSurface(surface), surface);
   const layout = useClientSetting("interfaceLayout");
+  const legacySidebar = useLegacySidebarEnabled();
+  const movable = (element: MeasuredElement) =>
+    isMovable(element.surface, element.id, element.definition.sortable === true, legacySidebar);
   const historyLength = useCustomizeInterfaceStore((store) => store.history.length);
   const composerPreview = useCustomizeInterfaceStore((store) => store.composerPreview);
   const setComposerPreview = useCustomizeInterfaceStore((store) => store.setComposerPreview);
@@ -207,35 +218,36 @@ export function CustomizeEditLayer({
 
   const layerRef = useRef<HTMLDivElement>(null);
   const shelfRef = useRef<HTMLDivElement>(null);
-  const pendingFocusRef = useRef<string | null>(null);
   const lastFocusRef = useRef<HTMLElement | null>(null);
   const instructionId = useId();
   const [announcement, setAnnouncement] = useState({ text: "", sequence: 0 });
   const announce = (text: string) =>
     setAnnouncement((previous) => ({ text, sequence: previous.sequence + 1 }));
-  const handles = readingOrder(measurement.elements).filter(
-    (element) => !resolveSurfaceLayout(element.surface, layout).hidden.has(element.id),
+  const handles = useMemo(
+    () =>
+      readingOrder(measurement.elements).filter(
+        (element) => !resolveSurfaceLayout(element.surface, layout).hidden.has(element.id),
+      ),
+    [measurement.elements, layout],
   );
   const handleKeys = new Map(
     handles.map((element, index) => [`${element.surface}:${element.id}`, index]),
   );
-  const handleFor = (key: string) =>
-    [...(layerRef.current?.querySelectorAll<HTMLElement>("[data-customize-handle]") ?? [])].find(
-      (element) => element.dataset.customizeHandle === key,
-    );
+  const handleFor = useCallback(
+    (key: string) =>
+      [...(layerRef.current?.querySelectorAll<HTMLElement>("[data-customize-handle]") ?? [])].find(
+        (element) => element.dataset.customizeHandle === key,
+      ),
+    [],
+  );
 
-  // A restored item may take another measurement to appear. Its shelf switch
-  // keeps focus until the handle exists, rather than unmounting under focus.
+  // Keep focus on editing controls when a handle disappears or becomes disabled.
   useLayoutEffect(() => {
     const layer = layerRef.current;
     if (!layer || hasOpenCustomizePopup()) return;
-    const pending = pendingFocusRef.current;
-    const restored = pending ? handleFor(pending) : null;
-    if (restored) {
-      pendingFocusRef.current = null;
-      restored.focus({ preventScroll: true });
-    } else if (
+    if (
       !lastFocusRef.current ||
+      !lastFocusRef.current.isConnected ||
       document.activeElement === document.body ||
       lastFocusRef.current.matches(":disabled")
     ) {
@@ -247,7 +259,7 @@ export function CustomizeEditLayer({
             layer.querySelector<HTMLElement>("[data-customize-back]"));
       target?.focus({ preventScroll: true });
     }
-  });
+  }, [handles, handleFor]);
 
   useEffect(() => {
     const layer = layerRef.current;
@@ -281,30 +293,11 @@ export function CustomizeEditLayer({
       if (event.key !== "Tab" || hasOpenCustomizePopup()) return;
       const target = event.target;
       if (target instanceof HTMLElement && isAboveMode(target)) return;
-      const controls = [
-        ...layer.querySelectorAll<HTMLElement>(
-          "button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex]",
-        ),
-      ]
-        .filter(
-          (element) =>
-            element.tabIndex >= 0 &&
-            !element.matches(':disabled, [aria-disabled="true"]') &&
-            !element.closest("[hidden], [inert]") &&
-            element.getClientRects().length > 0,
-        )
-        .sort((a, b) => (a.tabIndex || Infinity) - (b.tabIndex || Infinity));
-      const first = controls[0];
-      const last = controls.at(-1);
-      if (!first || !last) return;
-      if (
-        !layer.contains(document.activeElement) ||
-        (event.shiftKey ? document.activeElement === first : document.activeElement === last)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        (event.shiftKey ? last : first).focus({ preventScroll: true });
-      }
+      event.preventDefault();
+      event.stopPropagation();
+      resolveCustomizeTabTarget(layer, document.activeElement, event.shiftKey)?.focus({
+        preventScroll: true,
+      });
     };
     document.addEventListener("focusin", onFocus, true);
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -320,13 +313,13 @@ export function CustomizeEditLayer({
     measurement.elements.filter(
       (element) =>
         element.surface === layoutSurface &&
-        element.definition.sortable &&
+        movable(element) &&
         !resolveSurfaceLayout(layoutSurface, getClientSettings().interfaceLayout).hidden.has(
           element.id,
         ),
     );
   const dropTarget: DropTarget | null =
-    drag?.moved && drag.element.definition.sortable
+    drag?.moved && movable(drag.element)
       ? resolveDropTarget(sortableIn(drag.element.surface), drag.element.id, drag.x)
       : null;
 
@@ -340,12 +333,12 @@ export function CustomizeEditLayer({
     layoutSurface: InterfaceSurfaceId,
     id: InterfaceElementId<InterfaceSurfaceId>,
     hidden: boolean,
+    fromHandle = false,
   ) => {
     const current = getClientSettings().interfaceLayout;
     const next = setSurfaceElementHidden(current, layoutSurface, id, hidden);
     if (next === current) return;
-    pendingFocusRef.current = hidden ? null : `${layoutSurface}:${id}`;
-    if (hidden) {
+    if (fromHandle && hidden) {
       const index = handles.findIndex(
         (element) => element.surface === layoutSurface && element.id === id,
       );
@@ -417,7 +410,7 @@ export function CustomizeEditLayer({
     };
   }, [releaseDragCapture]);
   const onPointerDown = (element: MeasuredElement) => (event: PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0 || !element.definition.sortable) return;
+    if (event.button !== 0 || !movable(element)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     dragCaptureRef.current = { button: event.currentTarget, pointerId: event.pointerId };
     dragRef.current = {
@@ -459,10 +452,10 @@ export function CustomizeEditLayer({
   const onKeyDown = (element: MeasuredElement) => (event: KeyboardEvent<HTMLButtonElement>) => {
     if ((event.key === "Delete" || event.key === "Backspace") && !element.definition.required) {
       event.preventDefault();
-      setHidden(element.surface, element.id, true);
+      setHidden(element.surface, element.id, true, true);
       return;
     }
-    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && element.definition.sortable) {
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && movable(element)) {
       event.preventDefault();
       // The saved order, not the last measurement, so a second press before
       // the page re-lays out still steps from the element's new position.
@@ -539,13 +532,14 @@ export function CustomizeEditLayer({
       data-customize-edit={surface}
       data-dragging={drag ? "" : undefined}
       className={cn(
-        "pointer-events-none fixed inset-0 transition-opacity duration-150 motion-reduce:transition-none [-webkit-app-region:no-drag]",
+        "pointer-events-none fixed inset-0 transition-opacity duration-150 motion-reduce:transition-none",
         entered ? "opacity-100" : "opacity-0",
       )}
     >
       <p id={instructionId} className="sr-only">
         Arrow keys move sortable items. Delete hides optional items. Escape cancels a drag or
-        returns to Customize. Tab moves between editing controls.
+        returns to Customize. Tab moves between editing controls. Enter or Space opens the item's
+        shelf controls.
       </p>
       <div aria-live="polite" aria-atomic="true" className="sr-only">
         <span key={announcement.sequence}>{announcement.text}</span>
@@ -554,7 +548,7 @@ export function CustomizeEditLayer({
         <div
           key={panel.key}
           aria-hidden
-          className="pointer-events-auto fixed z-0 bg-background/60 [-webkit-app-region:no-drag]"
+          className="pointer-events-auto fixed z-0 bg-background/60"
           style={panel.style}
         />
       ))}
@@ -573,7 +567,7 @@ export function CustomizeEditLayer({
 
       <div role="group" aria-label={`${config.title} elements`} className="contents">
         {/* Keep nodes in definition order so a remeasurement cannot move a
-            focused node. Tab indices follow the measured reading order.
+            focused node. Tab follows the measured reading order.
             Smaller handles stack above any controls containing them. */}
         {measurement.elements
           .filter((element) => handleKeys.has(`${element.surface}:${element.id}`))
@@ -589,6 +583,7 @@ export function CustomizeEditLayer({
             return (
               <div
                 key={key}
+                data-customize-order={handleKeys.get(key)}
                 className="group/handle pointer-events-none fixed [-webkit-app-region:no-drag]"
                 style={{
                   zIndex: stackOrder.get(key),
@@ -601,19 +596,32 @@ export function CustomizeEditLayer({
                 <button
                   type="button"
                   data-customize-handle={key}
-                  tabIndex={(handleKeys.get(key) ?? 0) + 1}
+                  tabIndex={0}
                   aria-label={definition.label}
-                  aria-roledescription={definition.sortable ? "movable item" : "interface item"}
+                  aria-roledescription={movable(element) ? "movable item" : "interface item"}
                   aria-describedby={`${instructionId} ${descriptionId}`}
                   onPointerDown={onPointerDown(element)}
                   onPointerMove={onPointerMove}
                   onPointerUp={onPointerUp}
                   onPointerCancel={cancelDrag}
                   onKeyDown={onKeyDown(element)}
+                  onClick={(event) => {
+                    // Keyboard and assistive activation open the matching shelf controls.
+                    if (event.detail !== 0) return;
+                    const row = [
+                      ...(shelfRef.current?.querySelectorAll<HTMLElement>("[data-customize-row]") ??
+                        []),
+                    ].find((row) => row.dataset.customizeRow === key);
+                    (
+                      row?.querySelector<HTMLElement>(
+                        "button:not(:disabled), input:not(:disabled)",
+                      ) ?? row
+                    )?.focus();
+                  }}
                   className={cn(
                     "pointer-events-auto touch-none absolute inset-0 rounded-lg border outline-none transition-[background-color,border-color] duration-100 motion-reduce:transition-none",
                     "focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-primary/30",
-                    definition.sortable ? "cursor-grab active:cursor-grabbing" : "cursor-default",
+                    movable(element) ? "cursor-grab active:cursor-grabbing" : "cursor-default",
                     dragging
                       ? "border-dashed border-foreground/35 bg-background/70"
                       : "border-primary/45 bg-primary/6 hover:border-primary hover:bg-primary/12",
@@ -635,7 +643,7 @@ export function CustomizeEditLayer({
                     type="button"
                     aria-label={`Hide ${definition.label}`}
                     tabIndex={-1}
-                    onClick={() => setHidden(element.surface, element.id, true)}
+                    onClick={() => setHidden(element.surface, element.id, true, true)}
                     className="pointer-events-none invisible absolute -top-2 -left-2 flex size-6 cursor-pointer items-center justify-center rounded-full bg-foreground text-background opacity-0 group-focus-within/handle:visible group-focus-within/handle:pointer-events-auto group-focus-within/handle:opacity-100 group-hover/handle:visible group-hover/handle:pointer-events-auto group-hover/handle:opacity-100 pointer-coarse:visible pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 ring-2 ring-background outline-none transition-transform hover:scale-110 motion-reduce:transition-none [&_svg]:size-3"
                   >
                     <MinusIcon strokeWidth={3} />
@@ -649,8 +657,10 @@ export function CustomizeEditLayer({
       {drag?.moved ? (
         <div
           aria-hidden
-          className="pointer-events-none fixed top-0 left-0 z-40 flex h-7 -translate-x-1/2 -translate-y-1/2 -rotate-2 items-center rounded-lg border border-primary/60 bg-popover px-2.5 text-xs font-medium shadow-lg/20"
-          style={{ transform: `translate(${drag.x}px, ${drag.y}px)` }}
+          className="pointer-events-none fixed top-0 left-0 z-40 flex h-7 items-center rounded-lg border border-primary/60 bg-popover px-2.5 text-xs font-medium shadow-lg/20"
+          style={{
+            transform: `translate(${drag.x}px, ${drag.y}px) translate(-50%, -50%) rotate(-2deg)`,
+          }}
         >
           {drag.element.definition.label}
         </div>
@@ -706,6 +716,7 @@ export function CustomizeEditLayer({
           surface={surface}
           layoutSurfaces={config.layoutSurfaces}
           measuredKeys={handleKeys}
+          legacySidebar={legacySidebar}
           onMove={moveBefore}
           onHiddenChange={setHidden}
         />
@@ -804,12 +815,14 @@ function FallbackList({
   surface,
   layoutSurfaces,
   measuredKeys,
+  legacySidebar,
   onMove,
   onHiddenChange,
 }: {
   surface: EditSurface;
   layoutSurfaces: ReadonlyArray<InterfaceSurfaceId>;
   measuredKeys: ReadonlyMap<string, number>;
+  legacySidebar: boolean;
   onMove: (
     surface: InterfaceSurfaceId,
     id: InterfaceElementId<InterfaceSurfaceId>,
@@ -831,7 +844,14 @@ function FallbackList({
       <ul className="mt-2 space-y-0.5">
         {layoutSurfaces.flatMap((layoutSurface) => {
           const resolved = resolveSurfaceLayout(layoutSurface, layout);
-          const sortable = resolved.order.filter((id) => definitionOf(layoutSurface, id)?.sortable);
+          const canMove = (id: string) =>
+            isMovable(
+              layoutSurface,
+              id,
+              definitionOf(layoutSurface, id)?.sortable === true,
+              legacySidebar,
+            );
+          const sortable = resolved.order.filter(canMove);
           return resolved.order.map((id) => {
             const definition = definitionOf(layoutSurface, id);
             if (!definition) return null;
@@ -839,7 +859,9 @@ function FallbackList({
             return (
               <li
                 key={`${layoutSurface}:${id}`}
-                className="flex min-h-8 items-center gap-1 text-sm"
+                data-customize-row={`${layoutSurface}:${id}`}
+                tabIndex={-1}
+                className="flex min-h-8 items-center gap-1 rounded-sm text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <span className="min-w-0 flex-1">
                   {definition.label}
@@ -849,7 +871,7 @@ function FallbackList({
                     </span>
                   ) : null}
                 </span>
-                {definition.sortable ? (
+                {canMove(id) ? (
                   <>
                     <Button
                       size="icon-xs"

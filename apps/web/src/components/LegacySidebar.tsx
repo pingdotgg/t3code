@@ -436,8 +436,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? (remoteEnvLabel ?? (isDesktopLocalThread ? "Local" : "Remote"))
     : null;
   const isHighlighted = isActive || isSelected;
-  // Honors the thread-row details hidden in Customize interface. This row keeps
-  // its own fixed order, and attention states are never hidden.
+  // Honors the thread-row layout from Customize interface. The pull request
+  // stays in the leading slot and the time stays last; the trailing details
+  // follow the user's order. Attention states are never hidden.
   const rowLayout = useInterfaceLayout("threadRow");
   const showsDetail = (id: (typeof rowLayout.order)[number]) => !rowLayout.hidden.has(id);
   const handleOpenDiscoveredPort = useCallback(
@@ -737,44 +738,48 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && pr && showsDetail("pullRequest") && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <a
-                    href={prStatus.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={prStatus.tooltip}
-                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={handlePrClick}
-                  >
-                    <ChangeRequestStatusIcon
-                      state={pr.state}
-                      isDraft={pr.isDraft}
-                      className="size-3"
-                    />
-                  </a>
-                }
-              />
-              <TooltipPopup side="top">
-                <PrStatusTooltipContent status={prStatus} />
-              </TooltipPopup>
-            </Tooltip>
-          )}
-          {!pr && currentLinkedPr && showsDetail("pullRequest") ? (
-            <a
-              href={currentLinkedPr.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={handlePrClick}
-              className="text-muted-foreground"
-              aria-label={`PR #${currentLinkedPr.number}, status pending`}
-            >
-              <PullRequestGlyph.pullRequest className="size-3" />
-            </a>
+          {showsDetail("pullRequest") ? (
+            <span data-customize-element="threadRow:pullRequest" className="contents">
+              {prStatus && pr && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <a
+                        href={prStatus.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={prStatus.tooltip}
+                        className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={handlePrClick}
+                      >
+                        <ChangeRequestStatusIcon
+                          state={pr.state}
+                          isDraft={pr.isDraft}
+                          className="size-3"
+                        />
+                      </a>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    <PrStatusTooltipContent status={prStatus} />
+                  </TooltipPopup>
+                </Tooltip>
+              )}
+              {!pr && currentLinkedPr ? (
+                <a
+                  href={currentLinkedPr.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={handlePrClick}
+                  className="text-muted-foreground"
+                  aria-label={`PR #${currentLinkedPr.number}, status pending`}
+                >
+                  <PullRequestGlyph.pullRequest className="size-3" />
+                </a>
+              ) : null}
+            </span>
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {renamingThreadKey === threadKey ? (
@@ -825,26 +830,68 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </TooltipPopup>
             </Tooltip>
           )}
-          {showsDetail("branch") ? <ThreadWorktreeIndicator thread={thread} /> : null}
-          {terminalStatus && showsDetail("terminal") && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
+          {rowLayout.order.map((id) => {
+            if (!showsDetail(id)) return null;
+            switch (id) {
+              case "branch":
+                return (
+                  <span key={id} data-customize-element="threadRow:branch" className="contents">
+                    <ThreadWorktreeIndicator thread={thread} />
+                  </span>
+                );
+              case "terminal":
+                return terminalStatus ? (
+                  <span key={id} data-customize-element="threadRow:terminal" className="contents">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span
+                            role="img"
+                            aria-label={terminalStatus.label}
+                            className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                          />
+                        }
+                      >
+                        <TerminalIcon
+                          className={`size-3 ${terminalStatus.pulse ? "motion-safe:animate-status-pulse" : ""}`}
+                          onAnimationStart={synchronizeTerminalPulse}
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
+                    </Tooltip>
+                  </span>
+                ) : null;
+              case "environment":
+                return isRemoteThread && !isDesktopLocalThread ? (
                   <span
-                    role="img"
-                    aria-label={terminalStatus.label}
-                    className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                  />
-                }
-              >
-                <TerminalIcon
-                  className={`size-3 ${terminalStatus.pulse ? "motion-safe:animate-status-pulse" : ""}`}
-                  onAnimationStart={synchronizeTerminalPulse}
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
-            </Tooltip>
-          )}
+                    key={id}
+                    data-customize-element="threadRow:environment"
+                    className="contents"
+                  >
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <span
+                            aria-label={threadEnvironmentLabel ?? "Remote"}
+                            className="inline-flex items-center justify-center"
+                          />
+                        }
+                      >
+                        <EnvironmentMachineIcon
+                          kind={remoteMachine}
+                          className="size-3 text-muted-foreground/40"
+                        />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
+                    </Tooltip>
+                  </span>
+                ) : null;
+              default:
+                // The pull request keeps its leading slot, and this row has no
+                // project line or provider icon.
+                return null;
+            }
+          })}
           <div
             className={`flex min-w-12 justify-end ${
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
@@ -903,24 +950,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : null}
             <span className={threadMetaClassName}>
               <span className="inline-flex items-center gap-1">
-                {isRemoteThread && !isDesktopLocalThread && showsDetail("environment") && (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          aria-label={threadEnvironmentLabel ?? "Remote"}
-                          className="inline-flex items-center justify-center"
-                        />
-                      }
-                    >
-                      <EnvironmentMachineIcon
-                        kind={remoteMachine}
-                        className="size-3 text-muted-foreground/40"
-                      />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
-                  </Tooltip>
-                )}
                 {jumpLabel ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -937,6 +966,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </Tooltip>
                 ) : showsDetail("status") ? (
                   <span
+                    data-customize-element="threadRow:status"
                     className={`text-3xs tabular-nums ${
                       isHighlighted ? "text-foreground" : "text-secondary-label"
                     }`}

@@ -3,12 +3,17 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useState }
 
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
-import { hasOpenCustomizePopup } from "./customizeEdit.logic";
+import { hasOpenCustomizePopup, preservesNativeCustomizeEscape } from "./customizeEdit.logic";
 import { CustomizeEditLayer } from "./CustomizeEditLayer";
 import { CustomizeHotspots } from "./CustomizeHotspots";
 import { type EditSurface, useCustomizeInterfaceStore } from "./customizeInterfaceStore";
 import { CustomizePopover } from "./CustomizePopover";
-import { readSelectorRect, SURFACE_SELECTORS, useLiveMeasure } from "./customizeTargets";
+import {
+  readSelectorRect,
+  remeasureCustomizeTargets,
+  SURFACE_SELECTORS,
+  useLiveMeasure,
+} from "./customizeTargets";
 import { useCustomizeActions } from "./useCustomizeActions";
 
 const ENTER_DURATION_MS = 200;
@@ -44,6 +49,7 @@ function useCustomizeKeys(active: boolean, onEscape: () => void, onUndo: () => v
       if (event.defaultPrevented || event.isComposing) return;
       if (hasOpenCustomizePopup()) return;
       if (event.key === "Escape") {
+        if (preservesNativeCustomizeEscape(event.target)) return;
         event.preventDefault();
         event.stopPropagation();
         // The edit layer cancels an active drag before stepping back.
@@ -81,11 +87,17 @@ export function CustomizeInterfaceOverlay({
 }) {
   const close = useCustomizeInterfaceStore((store) => store.close);
   const editing = useCustomizeInterfaceStore((store) => store.editing);
+  const composerPreview = useCustomizeInterfaceStore((store) => store.composerPreview);
   const setEditing = useCustomizeInterfaceStore((store) => store.setEditing);
   const navigate = useNavigate();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const anchors = useLiveMeasure(measureAnchors, active && !editing ? "anchors" : null);
   const { undo } = useCustomizeActions();
+
+  useEffect(() => {
+    remeasureCustomizeTargets();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Preview and editing changes reflow the composer without a settings write.
+  }, [active, editing, composerPreview]);
 
   // Enter on the frame after mount so the transition has a start state;
   // leave by fading out, then unmount.
@@ -164,7 +176,7 @@ export function CustomizeInterfaceOverlay({
         className={cn(
           "transition-[opacity,scale,translate] duration-200 ease-out motion-reduce:transition-none [-webkit-app-region:no-drag]",
           sheet
-            ? "inset-x-2 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] max-h-[min(40rem,75dvh)] origin-bottom"
+            ? "inset-x-2 bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] origin-bottom"
             : "origin-top-left",
           visible
             ? "scale-100 opacity-100"

@@ -1,4 +1,8 @@
-import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  type InterfaceLayout,
+} from "@t3tools/contracts/settings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const persisted = vi.hoisted(() => ({
@@ -44,10 +48,35 @@ function createLocalStorageStub(): Storage {
 }
 
 const refreshTheme = vi.fn();
+let writes: Array<Promise<void>> = [];
 const actions = createCustomizeActions({
-  updateSettings: (patch) => persistClientSettingsPatch(patch, async () => undefined),
+  updateSettings: (patch) => {
+    const write = persistClientSettingsPatch(patch, async () => undefined);
+    writes.push(write);
+    return write;
+  },
   refreshTheme,
 });
+/** Waits for queued actions and every settings write they made. */
+async function settled() {
+  await customizeActionsSettled();
+  await Promise.all(writes);
+}
+function deferHydration() {
+  __resetClientSettingsPersistenceForTests();
+  let resolve: (settings: Partial<ClientSettings>) => void = () => {};
+  const loaded = new Promise<Partial<ClientSettings>>((done) => {
+    resolve = done;
+  });
+  persisted.load = () => loaded;
+  return resolve;
+}
+const hide =
+  (id: string) =>
+  (layout: InterfaceLayout): InterfaceLayout => ({
+    ...layout,
+    threadRow: { order: [], hidden: [...(layout.threadRow?.hidden ?? []), id] },
+  });
 const store = () => useCustomizeInterfaceStore.getState();
 const theme = () => window.localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY);
 const setTheme = (value: string) =>
@@ -60,6 +89,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   refreshTheme.mockClear();
+  writes = [];
   store().close();
   store().open();
 });
@@ -174,18 +204,73 @@ describe("Customize interface history", () => {
   });
 
   it("undoes to the saved value when used before settings hydrate", async () => {
-    __resetClientSettingsPersistenceForTests();
-    let resolve: (settings: Partial<ClientSettings>) => void = () => {};
-    const loaded = new Promise<Partial<ClientSettings>>((done) => {
-      resolve = done;
-    });
-    persisted.load = () => loaded;
+    const resolve = deferHydration();
 
     actions.commit({ chatWidth: "wide" });
     actions.undo();
     resolve({ chatWidth: "full" });
     await customizeActionsSettled();
     expect(getClientSettings().chatWidth).toBe("full");
+    expect(store().history).toEqual([]);
+  });
+
+  it("builds each edit on the last while settings writes are deferred", async () => {
+    __resetClientSettingsPersistenceForTests();
+    persisted.load = () => Promise.resolve(null);
+    let release = () => {};
+    const blocked = new Promise<void>((done) => {
+      release = done;
+    });
+    // A startup write still persisting, and another queued behind it.
+    const startup = [
+      persistClientSettingsPatch({ fontFamilySans: "Inter" }, () => blocked),
+      persistClientSettingsPatch({ fontFamilyCode: "Mono" }, async () => undefined),
+    ];
+
+    actions.commitLayout(hide("terminal"));
+    actions.commitLayout(hide("branch"));
+    await customizeActionsSettled();
+    expect(getClientSettings().interfaceLayout).toEqual({});
+
+    release();
+    await Promise.all([...startup, ...writes]);
+    expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal", "branch"]);
+
+    actions.undo();
+    await settled();
+    expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal"]);
+  });
+
+  it("drops settings changes while settings fail to load, then recovers", async () => {
+    __resetClientSettingsPersistenceForTests();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    persisted.load = () => Promise.reject(new Error("unreadable"));
+
+    actions.commit({ chatWidth: "wide" });
+    await settled();
+    expect(getClientSettings().chatWidth).toBe("comfortable");
+    expect(store().history).toEqual([]);
+    consoleError.mockRestore();
+
+    persisted.load = () => Promise.resolve({ chatWidth: "full" });
+    actions.commit({ chatWidth: "wide" });
+    await settled();
+    expect(getClientSettings().chatWidth).toBe("wide");
+
+    actions.undo();
+    await settled();
+    expect(getClientSettings().chatWidth).toBe("full");
+  });
+
+  it("drops work queued in a session that has since closed", async () => {
+    const resolve = deferHydration();
+
+    actions.commit({ chatWidth: "wide" });
+    store().close();
+    store().open();
+    resolve({});
+    await settled();
+    expect(getClientSettings().chatWidth).toBe("comfortable");
     expect(store().history).toEqual([]);
   });
 });

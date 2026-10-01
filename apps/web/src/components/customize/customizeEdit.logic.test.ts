@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   type PlacedElement,
   hasOpenCustomizePopup,
+  isMovable,
+  preservesNativeCustomizeEscape,
   readingOrder,
+  resolveCustomizeTabTarget,
   resolveDropTarget,
   resolveKeyboardMove,
   unionRect,
@@ -133,6 +136,8 @@ describe("hasOpenCustomizePopup", () => {
   const popup = (role: string) => {
     const element = document.createElement("div");
     element.setAttribute("role", role);
+    if (role === "dialog" || role === "alertdialog") element.setAttribute("aria-modal", "true");
+    else element.setAttribute("data-open", "");
     document.body.append(element);
     const rect = new DOMRect(0, 0, 100, 100);
     vi.spyOn(element, "getClientRects").mockReturnValue(
@@ -169,5 +174,113 @@ describe("hasOpenCustomizePopup", () => {
     expect(hasOpenCustomizePopup()).toBe(false);
     customize.append(popup("listbox"));
     expect(hasOpenCustomizePopup()).toBe(true);
+  });
+
+  it("ignores inline search results and a non-modal theme editor panel", () => {
+    const listbox = popup("listbox");
+    listbox.removeAttribute("data-open");
+    const panel = popup("dialog");
+    panel.removeAttribute("aria-modal");
+    expect(hasOpenCustomizePopup()).toBe(false);
+  });
+
+  it("recognizes popup slots without relying on roles, but ignores tooltips", () => {
+    const element = popup("presentation");
+    element.removeAttribute("data-open");
+    element.setAttribute("data-slot", "select-popup");
+    expect(hasOpenCustomizePopup()).toBe(true);
+    element.setAttribute("data-slot", "tooltip-popup");
+    expect(hasOpenCustomizePopup()).toBe(false);
+  });
+});
+
+describe("resolveCustomizeTabTarget", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
+  });
+
+  const controls = () => {
+    const layer = document.createElement("div");
+    document.body.append(layer);
+    const add = (order?: number) => {
+      const button = document.createElement("button");
+      if (order !== undefined) button.dataset.customizeOrder = String(order);
+      layer.append(button);
+      const rect = new DOMRect(0, 0, 100, 100);
+      vi.spyOn(button, "getClientRects").mockReturnValue(
+        Object.assign([rect], { item: (index: number) => (index === 0 ? rect : null) }),
+      );
+      return button;
+    };
+    const rightHandle = add(1);
+    const leftHandle = add(0);
+    const shelf = add();
+    const toolbar = add();
+    return { layer, leftHandle, rightHandle, shelf, toolbar, add };
+  };
+
+  it("reaches shelf and toolbar from canvas handles in both directions, then wraps", () => {
+    const { layer, leftHandle, rightHandle, shelf, toolbar } = controls();
+    const order = [leftHandle, rightHandle, shelf, toolbar];
+    order.forEach((current, index) => {
+      expect(resolveCustomizeTabTarget(layer, current, false)).toBe(
+        order[(index + 1) % order.length],
+      );
+      expect(resolveCustomizeTabTarget(layer, current, true)).toBe(
+        order[(index + order.length - 1) % order.length],
+      );
+    });
+    expect(resolveCustomizeTabTarget(layer, document.body, false)).toBe(leftHandle);
+    expect(resolveCustomizeTabTarget(layer, document.body, true)).toBe(toolbar);
+  });
+
+  it("skips disabled, hidden, inert and unfocusable controls", () => {
+    const { layer, leftHandle, rightHandle, shelf, toolbar, add } = controls();
+    rightHandle.disabled = true;
+    shelf.hidden = true;
+    toolbar.setAttribute("inert", "");
+    add().tabIndex = -1;
+    add().style.visibility = "hidden";
+    add().setAttribute("aria-disabled", "true");
+    const unpainted = add();
+    vi.mocked(unpainted.getClientRects).mockReturnValue(Object.assign([], { item: () => null }));
+    expect(resolveCustomizeTabTarget(layer, leftHandle, false)).toBe(leftHandle);
+    leftHandle.disabled = true;
+    expect(resolveCustomizeTabTarget(layer, document.body, false)).toBeNull();
+  });
+});
+
+describe("preservesNativeCustomizeEscape", () => {
+  it("preserves Escape in app fields, including descendants of contenteditable", () => {
+    const input = document.createElement("input");
+    expect(preservesNativeCustomizeEscape(input)).toBe(true);
+    const editor = document.createElement("div");
+    editor.setAttribute("contenteditable", "");
+    const span = document.createElement("span");
+    editor.append(span);
+    expect(preservesNativeCustomizeEscape(span)).toBe(true);
+    expect(preservesNativeCustomizeEscape(null)).toBe(false);
+    expect(preservesNativeCustomizeEscape(document.createElement("button"))).toBe(false);
+  });
+
+  it.each(["data-customize-popover", "data-customize-edit"])(
+    "allows Escape to exit from %s controls",
+    (attribute) => {
+      const mode = document.createElement("section");
+      mode.setAttribute(attribute, "");
+      const input = document.createElement("input");
+      mode.append(input);
+      expect(preservesNativeCustomizeEscape(input)).toBe(false);
+    },
+  );
+});
+
+describe("isMovable", () => {
+  it("keeps the pull request badge fixed in the legacy sidebar only", () => {
+    expect(isMovable("threadRow", "pullRequest", true, true)).toBe(false);
+    expect(isMovable("threadRow", "pullRequest", true, false)).toBe(true);
+    expect(isMovable("threadRow", "terminal", true, true)).toBe(true);
+    expect(isMovable("threadRow", "project", false, false)).toBe(false);
   });
 });

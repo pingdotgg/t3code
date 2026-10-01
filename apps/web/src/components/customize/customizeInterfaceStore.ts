@@ -113,6 +113,8 @@ export const CUSTOMIZE_HISTORY_LIMIT = 100;
 
 type CustomizeInterfaceStore = {
   active: boolean;
+  /** Bumped on every open and close, so queued work can tell it is stale. */
+  session: number;
   /** Each key's value before the mode first wrote it; Revert returns here. */
   baseline: CustomizeStep;
   /** What each change replaced, newest last; Undo steps back through it. */
@@ -150,11 +152,12 @@ const CLOSED_STATE = {
 export const useCustomizeInterfaceStore = create<CustomizeInterfaceStore>((set, get) => ({
   ...CLOSED_STATE,
   history: [],
+  session: 0,
   open: () => {
     if (get().active) return;
-    set({ ...CLOSED_STATE, history: [], active: true });
+    set({ ...CLOSED_STATE, history: [], active: true, session: get().session + 1 });
   },
-  close: () => set({ ...CLOSED_STATE, history: [] }),
+  close: () => set({ ...CLOSED_STATE, history: [], session: get().session + 1 }),
   toggle: () => (get().active ? get().close() : get().open()),
   record: (step, key) => {
     if (isEmptyStep(step)) return;

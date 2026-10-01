@@ -100,11 +100,52 @@ export function readingOrder<T extends PlacedElement>(elements: ReadonlyArray<T>
   return ordered;
 }
 
-/** Popups own their keyboard and focus handling, including portaled Select menus. */
+/** The next editing control, with handles ordered as they appear on the canvas. */
+export function resolveCustomizeTabTarget(
+  layer: HTMLElement,
+  active: Element | null,
+  backwards: boolean,
+): HTMLElement | null {
+  const controls = [
+    ...layer.querySelectorAll<HTMLElement>("button, input, select, textarea, a[href], [tabindex]"),
+  ]
+    .filter(
+      (element) =>
+        element.tabIndex >= 0 &&
+        !element.matches(':disabled, [aria-disabled="true"]') &&
+        !element.closest("[hidden], [inert]") &&
+        getComputedStyle(element).visibility !== "hidden" &&
+        element.getClientRects().length > 0,
+    )
+    .sort((a, b) => {
+      const order = (element: HTMLElement) => {
+        const value =
+          element.closest<HTMLElement>("[data-customize-order]")?.dataset.customizeOrder;
+        return value === undefined ? Infinity : Number(value);
+      };
+      return order(a) - order(b);
+    });
+  const index = controls.findIndex((element) => element === active);
+  if (index === -1) return (backwards ? controls.at(-1) : controls[0]) ?? null;
+  return controls[(index + (backwards ? -1 : 1) + controls.length) % controls.length] ?? null;
+}
+
+/** Editing an app field keeps its native Escape behavior; mode controls use Escape to exit. */
+export function preservesNativeCustomizeEscape(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest(
+      "input:not([type=range]), textarea, select, [contenteditable]:not([contenteditable=false])",
+    ) &&
+    !target.closest("[data-customize-popover], [data-customize-edit]")
+  );
+}
+
+/** Overlay popups own keyboard and focus handling; inline lists and panels do not. */
 export function hasOpenCustomizePopup(): boolean {
   return [
     ...document.querySelectorAll<HTMLElement>(
-      '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+      '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], [data-open][role="menu"], [data-open][role="listbox"], [data-slot$="-popup"]:not([data-slot="tooltip-popup"])',
     ),
   ].some((element) => {
     if (element.matches("[data-customize-popover]")) return false;
@@ -116,4 +157,18 @@ export function hasOpenCustomizePopup(): boolean {
       element.getClientRects().length > 0
     );
   });
+}
+
+/**
+ * Whether an element can be reordered where it renders. The legacy sidebar
+ * keeps the pull request badge in its leading slot, so moving it there would
+ * change nothing visible.
+ */
+export function isMovable(
+  surface: string,
+  id: string,
+  sortable: boolean,
+  legacySidebar: boolean,
+): boolean {
+  return sortable && !(legacySidebar && surface === "threadRow" && id === "pullRequest");
 }
