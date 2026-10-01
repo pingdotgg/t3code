@@ -153,6 +153,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
                 url: "https://github.com/pingdotgg/t3code/pull/7",
                 baseRefName: "main",
                 headRefName: "feature/merged",
+                headRefOid: "a".repeat(40),
                 state: "merged",
                 mergedAt: "2026-01-01T00:00:00Z",
                 updatedAt: "2026-01-02T00:00:00.000Z",
@@ -180,9 +181,10 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "--limit",
       "10",
       "--json",
-      "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+      "number,title,url,baseRefName,headRefName,headRefOid,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
     assert.strictEqual(changeRequests[0]?.provider, "github");
+    assert.strictEqual(changeRequests[0]?.headSha, "a".repeat(40));
     assert.strictEqual(changeRequests[0]?.state, "merged");
     assert.strictEqual(changeRequests[0]?.mergedAt, "2026-01-01T00:00:00Z");
     assert.deepStrictEqual(

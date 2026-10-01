@@ -251,18 +251,31 @@ export const make = Effect.gen(function* () {
             links.find((pr) => pr.snapshot?.headBranch === thread.branch) ??
             links.find((pr) => pr.snapshot === null);
           const reference = linked?.url ?? (!deleted ? thread.branchPullRequest?.url : undefined);
-          const pullRequest =
+          // A failed lookup is missing evidence, so the ancestry check still applies.
+          const found =
             thread.branch !== null && (settings.worktreeOnMerge || reference !== undefined)
-              ? yield* gitManager.branchPullRequest(
-                  {
-                    cwd: worktreePath,
-                    branch: thread.branch,
-                    ...(reference ? { reference } : {}),
-                  },
-                  { refresh: true },
-                )
+              ? yield* gitManager
+                  .branchPullRequest(
+                    {
+                      cwd: worktreePath,
+                      branch: thread.branch,
+                      ...(reference ? { reference } : {}),
+                    },
+                    { refresh: true },
+                  )
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logDebug("storage cleanup could not read pull request", {
+                        threadId: thread.id,
+                        error,
+                      }).pipe(Effect.as(null)),
+                    ),
+                  )
               : null;
-          const merged = pullRequest?.state === "merged" && pullRequest.headRef === thread.branch;
+          // A link saved without its head branch can name another branch's PR,
+          // which says nothing about this checkout's merge state or target.
+          const pullRequest = found?.headRef === thread.branch ? found : null;
+          const merged = pullRequest?.state === "merged";
           // A squash merge changes commit ancestry. Fresh host evidence still proves
           // that this exact checkout was merged; later local commits do not qualify.
           if (settings.worktreeOnMerge && merged && pullRequest.headSha === head.commitSha) {

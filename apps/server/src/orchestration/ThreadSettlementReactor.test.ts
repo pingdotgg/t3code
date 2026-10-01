@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
+  GitManagerError,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -1577,6 +1578,8 @@ describe("storage cleanup", () => {
     "unmerged",
     "unchanged",
     "unchanged-two-worktrees",
+    "unchanged-lookup-failed",
+    "unchanged-other-pr",
     "diverged",
     "head-moved",
     "deleted",
@@ -1637,15 +1640,18 @@ describe("storage cleanup", () => {
           yield* fs.writeFileString(recentImage, "recent");
           const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
           yield* fs.utimes(recentImage, recent, recent);
+          const linkedUnchanged =
+            protection === "unchanged-lookup-failed" || protection === "unchanged-other-pr";
           const thread = makeThread("storage-thread", {
-            branchPullRequest: protection.startsWith("squash-")
-              ? {
-                  projectId: PROJECT_ID,
-                  repository: "owner/repo",
-                  number: 42,
-                  url: "https://example.test/owner/repo/pull/42",
-                }
-              : null,
+            branchPullRequest:
+              protection.startsWith("squash-") || linkedUnchanged
+                ? {
+                    projectId: PROJECT_ID,
+                    repository: "owner/repo",
+                    number: 42,
+                    url: "https://example.test/owner/repo/pull/42",
+                  }
+                : null,
             branch: "feature",
             worktreePath,
             latestUserMessageAt:
@@ -1679,6 +1685,7 @@ describe("storage cleanup", () => {
           const unchangedRule =
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees" ||
+            linkedUnchanged ||
             protection === "diverged" ||
             protection === "head-moved";
           let headReads = 0;
@@ -1831,10 +1838,19 @@ describe("storage cleanup", () => {
                   invalidateStatus: () => Effect.void,
                   branchPullRequest: (input, options) => {
                     assert.strictEqual(options?.refresh, true);
-                    if (protection.startsWith("squash-")) {
+                    if (protection.startsWith("squash-") || linkedUnchanged) {
                       assert.strictEqual(
                         input.reference,
                         "https://example.test/owner/repo/pull/42",
+                      );
+                    }
+                    if (protection === "unchanged-lookup-failed") {
+                      return Effect.fail(
+                        new GitManagerError({
+                          operation: "branchPullRequest",
+                          cwd: input.cwd,
+                          detail: "host unavailable",
+                        }),
                       );
                     }
                     return Effect.succeed({
@@ -1843,7 +1859,12 @@ describe("storage cleanup", () => {
                           ? "open"
                           : "merged",
                       ),
-                      headRef: protection === "squash-wrong-branch" ? "other" : "feature",
+                      headRef:
+                        protection === "squash-wrong-branch" || protection === "unchanged-other-pr"
+                          ? "other"
+                          : "feature",
+                      // Cleanup must not measure this checkout against another branch's target.
+                      ...(protection === "unchanged-other-pr" ? { baseRef: "release" } : {}),
                       url: "https://example.test/owner/repo/pull/42",
                       ...(protection.startsWith("squash-") && protection !== "squash-missing-head"
                         ? { headSha: (protection === "squash-extra" ? "c" : "a").repeat(40) }
@@ -2048,7 +2069,8 @@ describe("storage cleanup", () => {
             protection === "merged" ||
             protection === "squash-merged" ||
             protection === "unchanged" ||
-            protection === "unchanged-two-worktrees";
+            protection === "unchanged-two-worktrees" ||
+            linkedUnchanged;
           assert.strictEqual(yield* fs.exists(worktreePath), !removed);
           assert.deepStrictEqual(
             removals,
