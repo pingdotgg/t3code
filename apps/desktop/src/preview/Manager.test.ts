@@ -2062,12 +2062,18 @@ describe("Preview automation snapshot roles", () => {
         expect(collector).toBeDefined();
         // Native elements must report their implicit ARIA role so
         // role-based Playwright locators (role=button[name=...]) resolve.
+        // The mapping mirrors the injected Playwright engine
+        // (getImplicitAriaRole in playwright-core): spinbutton, searchbox,
+        // file-as-button, and listbox must not collapse to textbox/combobox.
         expect(collector).toContain("implicitRole");
         expect(collector).toContain("|| implicitRole(element)");
         expect(collector).toContain('"button"');
         expect(collector).toContain('"link"');
         expect(collector).toContain('"textbox"');
         expect(collector).toContain('"checkbox"');
+        expect(collector).toContain('"spinbutton"');
+        expect(collector).toContain('"searchbox"');
+        expect(collector).toContain('"listbox"');
       }),
     ),
   );

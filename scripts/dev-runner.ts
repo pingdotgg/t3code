@@ -100,11 +100,21 @@ export function buildDevRunnerArgs(
   mode: DevMode,
   runnerArgs: ReadonlyArray<string>,
 ): Array<string> {
+  if (mode === "stop") {
+    throw new Error(
+      "The stop mode never spawns the task runner; handle it before building runner args.",
+    );
+  }
   // Watch tasks cannot wait for dependencies to exit; runner flags must precede the task.
   return ["run", ...MODE_ARGS[mode], ...runnerArgs, "dev"];
 }
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
+
+/** Runner modes that own a live server process and therefore a pidfile. */
+const MANAGED_RUNNER_MODES: ReadonlyArray<string> = DEV_RUNNER_MODES.filter(
+  (mode) => mode !== "stop",
+);
 
 class DevRunnerError extends Data.TaggedError("DevRunnerError")<{
   readonly message: string;
@@ -483,7 +493,18 @@ interface DevRunnerCliInput {
   readonly runnerArgs: ReadonlyArray<string>;
 }
 
-export const DEV_RUNNER_PID_FILE_NAME = "dev-runner.pid";
+export const DEV_RUNNER_PID_FILE_PREFIX = "dev-runner-";
+export const DEV_RUNNER_PID_FILE_SUFFIX = ".pid";
+
+/** One pidfile per runner mode so concurrent runners stay independently stoppable. */
+export function devRunnerPidFileName(mode: string): string {
+  const slug =
+    mode
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || "unknown";
+  return `${DEV_RUNNER_PID_FILE_PREFIX}${slug}${DEV_RUNNER_PID_FILE_SUFFIX}`;
+}
 
 export interface DevRunnerPidRecord {
   readonly pid: number;
@@ -571,11 +592,11 @@ export function computeProcessTreeKillOrder(
   return order;
 }
 
-export function writeDevRunnerPidFile(baseDir: string, record: DevRunnerPidRecord) {
+export function writeDevRunnerPidFile(baseDir: string, mode: string, record: DevRunnerPidRecord) {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const file = path.join(baseDir, DEV_RUNNER_PID_FILE_NAME);
+    const file = path.join(baseDir, devRunnerPidFileName(mode));
     yield* fs.makeDirectory(baseDir, { recursive: true }).pipe(
       Effect.mapError(
         (cause) =>
@@ -596,11 +617,11 @@ export function writeDevRunnerPidFile(baseDir: string, record: DevRunnerPidRecor
   });
 }
 
-export function readDevRunnerPidFile(baseDir: string) {
+export function readDevRunnerPidFile(baseDir: string, mode: string) {
   return Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const file = path.join(baseDir, DEV_RUNNER_PID_FILE_NAME);
+    const file = path.join(baseDir, devRunnerPidFileName(mode));
     const text = yield* fs.readFileString(file).pipe(
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause),
@@ -637,7 +658,105 @@ export function removeDevRunnerPidFile(file: string) {
 export interface DevRunnerProcessOperator {
   readonly isLive: (pid: number) => Effect.Effect<boolean, DevRunnerError>;
   readonly commandOf: (pid: number) => Effect.Effect<string | null, DevRunnerError>;
+  readonly startedAtMsOf: (pid: number) => Effect.Effect<number | null, DevRunnerError>;
   readonly killTree: (pid: number) => Effect.Effect<ReadonlyArray<number>, DevRunnerError>;
+}
+
+export interface DevRunnerProcessIdentity {
+  readonly command: string | null;
+  readonly startedAtMs: number | null;
+}
+
+/** How far a process start time may lag the pidfile write and still corroborate it. */
+export const DEV_RUNNER_IDENTITY_TIME_SKEW_MS = 60_000;
+
+/**
+ * Whether an observed process is the recorded runner. The command line must
+ * belong to dev-runner, plus either a known home spelling (explicit
+ * --home-dir) or a start time matching the record. The start-time half is
+ * what identifies default worktree homes, env-provided homes, and relative
+ * --home-dir flags, whose absolute spelling never appears in argv.
+ */
+export function devRunnerProcessMatchesRecord(
+  identity: DevRunnerProcessIdentity,
+  record: DevRunnerPidRecord,
+  homes: ReadonlyArray<string>,
+): boolean {
+  if (identity.command === null || !identity.command.includes("dev-runner")) return false;
+  if (homes.some((home) => home.length > 0 && identity.command?.includes(home))) return true;
+  if (identity.startedAtMs === null) return false;
+  const recordedStartedAtMs = Date.parse(record.startedAt);
+  if (Number.isNaN(recordedStartedAtMs)) return false;
+  return Math.abs(identity.startedAtMs - recordedStartedAtMs) <= DEV_RUNNER_IDENTITY_TIME_SKEW_MS;
+}
+
+export type PidfileOwnerStatus =
+  | { readonly status: "absent" }
+  | { readonly status: "owned-live" }
+  | { readonly status: "stale" }
+  | { readonly status: "foreign-live" };
+
+/**
+ * Classifies a pidfile record against the observed process state. Pure so
+ * both the startup conflict check and the stop flow share one rule: a null
+ * identity means the pid is already dead (the caller checks liveness first).
+ */
+export function classifyPidfileOwner(
+  record: DevRunnerPidRecord | null,
+  identity: DevRunnerProcessIdentity | null,
+  homes: ReadonlyArray<string>,
+): PidfileOwnerStatus {
+  if (record === null) return { status: "absent" };
+  if (identity === null) return { status: "stale" };
+  return devRunnerProcessMatchesRecord(identity, record, homes)
+    ? { status: "owned-live" }
+    : { status: "foreign-live" };
+}
+
+/** Parses `ps -o etime=` output ([[dd-]hh:]mm:ss) into milliseconds. */
+export function parsePsElapsedToMs(value: string): number | null {
+  const match = value.trim().match(/^(?:(\d+)-)?(\d+):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const days = match[1] === undefined ? 0 : Number(match[1]);
+  const hasSeconds = match[4] !== undefined;
+  const hours = hasSeconds ? Number(match[2]) : 0;
+  const minutes = Number(hasSeconds ? match[3] : match[2]);
+  const seconds = hasSeconds ? Number(match[4]) : Number(match[3]);
+  if (
+    !Number.isInteger(days) ||
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    minutes > 59 ||
+    !Number.isInteger(seconds) ||
+    seconds > 59
+  ) {
+    return null;
+  }
+  return ((days * 24 + hours) * 3600 + minutes * 60 + seconds) * 1000;
+}
+
+/** Parses a CIM datetime (Win32_Process CreationDate) into epoch milliseconds. */
+export function parseCimCreationDateToMs(value: string): number | null {
+  // CIM offsets are whole minutes, e.g. "-420" for UTC-7.
+  const match = value
+    .trim()
+    .match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(?:\.\d+)?([+-])(\d{3})$/);
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second, sign, offsetMinutes] = match;
+  const parts = [year, month, day, hour, minute, second, offsetMinutes].map(Number);
+  if (parts.some((part) => !Number.isInteger(part))) return null;
+  const [y, mo, d, h, mi, s, offMin] = parts as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return null;
+  const offsetMs = (sign === "+" ? 1 : -1) * offMin * 60_000;
+  return Date.UTC(y, mo - 1, d, h, mi, s) - offsetMs;
 }
 
 export type DevRunnerStopResult =
@@ -650,6 +769,7 @@ export type DevRunnerStopResult =
 
 export function stopDevEnvironment(input: {
   readonly baseDir: string;
+  readonly mode: string;
   readonly readPidFile: () => Effect.Effect<
     { readonly path: string; readonly record: DevRunnerPidRecord } | null,
     DevRunnerError,
@@ -664,25 +784,135 @@ export function stopDevEnvironment(input: {
     const pidFile = yield* input.readPidFile();
     if (pidFile === null) {
       return yield* new DevRunnerError({
-        message: `No dev server is recorded for ${input.baseDir} (missing ${DEV_RUNNER_PID_FILE_NAME}). Nothing to stop.`,
+        message: `No ${input.mode} dev server is recorded for ${input.baseDir} (missing ${devRunnerPidFileName(input.mode)}). Nothing to stop.`,
       });
     }
-    const { pid } = pidFile.record;
-    if (!(yield* input.operator.isLive(pid))) {
+    const identity = yield* observeRunnerIdentity(input.operator, pidFile.record.pid);
+    const status = classifyPidfileOwner(pidFile.record, identity, [
+      pidFile.record.baseDir,
+      input.baseDir,
+    ]);
+    if (status.status === "stale") {
       yield* input.removePidFile(pidFile.path);
       return { stopped: false, reason: "not-running", killed: [] } as const;
     }
-    const command = yield* input.operator.commandOf(pid);
-    if (command === null || !devRunnerCommandMatchesHome(command, pidFile.record.baseDir)) {
+    if (status.status !== "owned-live") {
       return yield* new DevRunnerError({
-        message: `Refusing to stop pid ${String(pid)}: it does not look like the dev server for ${pidFile.record.baseDir}. Remove ${pidFile.path} manually if you are sure nothing owns it.`,
+        message: `Refusing to stop pid ${String(pidFile.record.pid)}: it does not look like the '${input.mode}' runner for ${pidFile.record.baseDir}. Remove ${pidFile.path} manually if you are sure nothing owns it.`,
       });
     }
-    const killed = yield* input.operator.killTree(pid);
+    const killed = yield* input.operator.killTree(pidFile.record.pid);
     yield* input.removePidFile(pidFile.path);
     return { stopped: true, killed: [...killed] } as const;
   });
 }
+
+/**
+ * Removes a mode pidfile only while it still belongs to the exiting process.
+ * A concurrent runner legitimately owns anything else, so unconditional
+ * exit cleanup could delete another runner's live record.
+ */
+export function removeOwnDevRunnerPidFile(input: {
+  readonly readPidFile: () => Effect.Effect<
+    { readonly path: string; readonly record: DevRunnerPidRecord } | null,
+    DevRunnerError,
+    FileSystem.FileSystem | Path.Path
+  >;
+  readonly removePidFile: (
+    path: string,
+  ) => Effect.Effect<void, DevRunnerError, FileSystem.FileSystem>;
+}) {
+  return Effect.gen(function* () {
+    const pidFile = yield* input.readPidFile();
+    if (pidFile === null || pidFile.record.pid !== process.pid) return false;
+    yield* input.removePidFile(pidFile.path);
+    return true;
+  });
+}
+
+export interface DevRunnerStopAllResult {
+  readonly stopped: ReadonlyArray<{
+    readonly mode: string;
+    readonly killed: ReadonlyArray<number>;
+  }>;
+  readonly cleared: ReadonlyArray<string>;
+}
+
+/**
+ * Stops every recorded runner for one home directory. Validates all records
+ * before touching anything: a single foreign record aborts the whole stop so
+ * a corrupt pidfile can never strand the remaining live servers.
+ */
+export function stopAllDevEnvironments(input: {
+  readonly baseDir: string;
+  readonly modes?: ReadonlyArray<string>;
+  readonly readPidFile: (
+    mode: string,
+  ) => Effect.Effect<
+    { readonly path: string; readonly record: DevRunnerPidRecord } | null,
+    DevRunnerError,
+    FileSystem.FileSystem | Path.Path
+  >;
+  readonly removePidFile: (
+    path: string,
+  ) => Effect.Effect<void, DevRunnerError, FileSystem.FileSystem>;
+  readonly operator: DevRunnerProcessOperator;
+}) {
+  return Effect.gen(function* () {
+    const modes = input.modes ?? MANAGED_RUNNER_MODES;
+    const plans: Array<{
+      mode: string;
+      pidFile: { readonly path: string; readonly record: DevRunnerPidRecord };
+      status: PidfileOwnerStatus;
+    }> = [];
+    for (const mode of modes) {
+      const pidFile = yield* input.readPidFile(mode);
+      if (pidFile === null) continue;
+      const identity = yield* observeRunnerIdentity(input.operator, pidFile.record.pid);
+      const status = classifyPidfileOwner(pidFile.record, identity, [
+        pidFile.record.baseDir,
+        input.baseDir,
+      ]);
+      if (status.status === "foreign-live") {
+        return yield* new DevRunnerError({
+          message: `Refusing to stop: ${devRunnerPidFileName(mode)} points at live pid ${String(pidFile.record.pid)}, which does not look like a runner for ${pidFile.record.baseDir}. Remove ${pidFile.path} manually if you are sure nothing owns it. Nothing was stopped.`,
+        });
+      }
+      plans.push({ mode, pidFile, status });
+    }
+    if (plans.length === 0) {
+      return yield* new DevRunnerError({
+        message: `No dev server is recorded for ${input.baseDir}. Nothing to stop.`,
+      });
+    }
+    const stopped: Array<{ mode: string; killed: ReadonlyArray<number> }> = [];
+    const cleared: Array<string> = [];
+    for (const plan of plans) {
+      if (plan.status.status === "stale") {
+        yield* input.removePidFile(plan.pidFile.path);
+        cleared.push(plan.mode);
+        continue;
+      }
+      const killed = yield* input.operator.killTree(plan.pidFile.record.pid);
+      yield* input.removePidFile(plan.pidFile.path);
+      stopped.push({ mode: plan.mode, killed: [...killed] });
+    }
+    return { stopped, cleared } as const;
+  });
+}
+
+const observeRunnerIdentity = (operator: DevRunnerProcessOperator, pid: number) =>
+  Effect.gen(function* () {
+    if (!(yield* operator.isLive(pid))) return null;
+    const [command, startedAtMs] = yield* Effect.all(
+      [
+        operator.commandOf(pid).pipe(Effect.catch(() => Effect.succeed(null))),
+        operator.startedAtMsOf(pid).pipe(Effect.catch(() => Effect.succeed(null))),
+      ],
+      { concurrency: 2 },
+    );
+    return { command, startedAtMs };
+  });
 
 const execFileAsync = promisify(execFileCallback);
 const DEV_STOP_GRACE_MS = 3000;
@@ -768,6 +998,29 @@ export const localProcessOperator = (): DevRunnerProcessOperator => {
       const command = stdout.trim();
       return command.length > 0 ? command : null;
     });
+  const startedAtMsOf = (pid: number) =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") {
+        const { stdout } = yield* Effect.tryPromise({
+          try: () =>
+            execFileAsync("powershell", [
+              "-NoProfile",
+              "-Command",
+              `(Get-CimInstance Win32_Process -Filter 'ProcessId=${String(pid)}').CreationDate`,
+            ]),
+          catch: (cause) =>
+            new DevRunnerError({ message: `Failed to inspect pid ${String(pid)}.`, cause }),
+        }).pipe(Effect.catch(() => Effect.succeed({ stdout: "" })));
+        return parseCimCreationDateToMs(stdout);
+      }
+      const { stdout } = yield* Effect.tryPromise({
+        try: () => execFileAsync("ps", ["-ww", "-o", "etime=", "-p", String(pid)]),
+        catch: (cause) =>
+          new DevRunnerError({ message: `Failed to inspect pid ${String(pid)}.`, cause }),
+      }).pipe(Effect.catch(() => Effect.succeed({ stdout: "" })));
+      const elapsedMs = parsePsElapsedToMs(stdout);
+      return elapsedMs === null ? null : Date.now() - elapsedMs;
+    });
   const killTree = (pid: number) =>
     Effect.gen(function* () {
       if (process.platform === "win32") {
@@ -809,7 +1062,7 @@ export const localProcessOperator = (): DevRunnerProcessOperator => {
       }
       return [...targets] as const;
     });
-  return { isLive, commandOf, killTree };
+  return { isLive, commandOf, startedAtMsOf, killTree };
 };
 
 interface DevRunnerCliInput {
@@ -838,20 +1091,20 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       }
       const path = yield* Path.Path;
       const baseDir = path.resolve(flagHome);
-      const result = yield* stopDevEnvironment({
+      const operator = localProcessOperator();
+      const result = yield* stopAllDevEnvironments({
         baseDir,
-        readPidFile: () => readDevRunnerPidFile(baseDir),
+        readPidFile: (mode) => readDevRunnerPidFile(baseDir, mode),
         removePidFile: removeDevRunnerPidFile,
-        operator: localProcessOperator(),
+        operator,
       });
-      if (result.stopped) {
+      for (const entry of result.stopped) {
         yield* Effect.logInfo(
-          `[dev-runner] stopped dev server for ${baseDir} (killed pids ${result.killed.join(", ")}).`,
+          `[dev-runner] stopped '${entry.mode}' runner for ${baseDir} (killed pids ${entry.killed.join(", ")}).`,
         );
-      } else {
-        yield* Effect.logInfo(
-          `[dev-runner] no live dev server for ${baseDir} (stale pidfile cleared).`,
-        );
+      }
+      for (const mode of result.cleared) {
+        yield* Effect.logInfo(`[dev-runner] cleared stale ${mode} pidfile for ${baseDir}.`);
       }
       return;
     }
@@ -942,30 +1195,34 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     }
 
     // Record this server on disk so `dev:stop` (and agents) can find and reap
-    // it later instead of accumulating orphaned isolated environments.
+    // it later instead of accumulating orphaned isolated environments. One
+    // pidfile per runner mode: `dev:server` + `dev:web` against the same home
+    // is a supported split, while a second runner for the same mode is
+    // rejected below before it can contend for the same SQLite database.
     const pidBaseDir =
       resolvedT3Home === undefined
         ? yield* DEFAULT_DEV_T3_HOME
         : (yield* Path.Path).resolve(resolvedT3Home);
     const stopHint = `pnpm dev:stop --home-dir ${pidBaseDir}`;
     const pidOperator = localProcessOperator();
-    const existingPid = yield* readDevRunnerPidFile(pidBaseDir).pipe(
-      Effect.catch(() => Effect.succeed(null)),
-    );
+    const readOwnPidFile = () => readDevRunnerPidFile(pidBaseDir, input.mode);
+    const existingPid = yield* readOwnPidFile().pipe(Effect.catch(() => Effect.succeed(null)));
     if (existingPid !== null) {
-      const alreadyLive = yield* pidOperator
-        .isLive(existingPid.record.pid)
-        .pipe(Effect.catch(() => Effect.succeed(false)));
-      if (alreadyLive) {
-        const command = yield* pidOperator
-          .commandOf(existingPid.record.pid)
-          .pipe(Effect.catch(() => Effect.succeed(null)));
-        if (command !== null && devRunnerCommandMatchesHome(command, existingPid.record.baseDir)) {
-          const running = existingPid.record;
-          yield* Effect.logWarning(
-            `[dev-runner] another dev server (pid ${String(running.pid)}, serverPort ${String(running.serverPort)}, webPort ${String(running.webPort)}, started ${running.startedAt}) already owns ${pidBaseDir}; starting a second one risks SQLite contention. Stop it first: ${stopHint}.`,
-          );
-        }
+      const identity = yield* observeRunnerIdentity(pidOperator, existingPid.record.pid);
+      const owner = classifyPidfileOwner(existingPid.record, identity, [
+        existingPid.record.baseDir,
+        pidBaseDir,
+      ]);
+      if (owner.status === "owned-live") {
+        const running = existingPid.record;
+        return yield* new DevRunnerError({
+          message: `A '${input.mode}' runner (pid ${String(running.pid)}, serverPort ${String(running.serverPort)}, webPort ${String(running.webPort)}, started ${running.startedAt}) is already running for ${pidBaseDir}. Stop it first: ${stopHint}.`,
+        });
+      }
+      if (owner.status === "foreign-live") {
+        yield* Effect.logWarning(
+          `[dev-runner] pidfile ${existingPid.path} points at live pid ${String(existingPid.record.pid)}, which is not this environment's runner; replacing the stale record. The other process is left alone.`,
+        );
       }
     }
     const pidRecord: DevRunnerPidRecord = {
@@ -975,9 +1232,11 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseDir: pidBaseDir,
       startedAt: new Date().toISOString(),
     };
-    yield* Effect.acquireRelease(
-      writeDevRunnerPidFile(pidBaseDir, pidRecord),
-      ({ path: pidFile }) => removeDevRunnerPidFile(pidFile).pipe(Effect.ignore),
+    yield* Effect.acquireRelease(writeDevRunnerPidFile(pidBaseDir, input.mode, pidRecord), () =>
+      removeOwnDevRunnerPidFile({
+        readPidFile: readOwnPidFile,
+        removePidFile: removeDevRunnerPidFile,
+      }).pipe(Effect.ignore),
     );
     yield* Effect.logInfo(
       `[dev-runner] pid ${String(process.pid)}; stop this server later with: ${stopHint}`,

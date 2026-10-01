@@ -3235,20 +3235,43 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           };
           // Implicit ARIA roles for native elements: snapshots only carry
           // the explicit role attribute, which native controls never set,
-          // so role-based Playwright locators could not address them.
+          // so role-based Playwright locators could not address them. This
+          // mirrors the injected Playwright engine's getImplicitAriaRole
+          // (playwright-core), including its quirks: file is a button,
+          // search honors attribute presence, email/tel/text/url resolve the
+          // list id against an actual datalist, and unlisted types fall back
+          // to textbox exactly like the engine does.
           const implicitRole = (element) => {
             const tag = element.tagName.toLowerCase();
             if (tag === "button") return "button";
-            if (tag === "a" && element.hasAttribute("href")) return "link";
+            if (tag === "a") return element.hasAttribute("href") ? "link" : null;
             if (tag === "textarea") return "textbox";
-            if (tag === "select") return "combobox";
+            if (tag === "select") {
+              return element.hasAttribute("multiple") || element.size > 1 ? "listbox" : "combobox";
+            }
             if (tag === "input") {
               const type = (element.getAttribute("type") || "text").toLowerCase();
+              if (type === "search") return element.hasAttribute("list") ? "combobox" : "searchbox";
+              if (
+                type === "email" ||
+                type === "tel" ||
+                type === "text" ||
+                type === "url" ||
+                type === ""
+              ) {
+                const listId = (element.getAttribute("list") || "").split(/\s+/)[0];
+                const list = listId ? document.getElementById(listId) : null;
+                return list && list.tagName.toLowerCase() === "datalist" ? "combobox" : "textbox";
+              }
+              if (type === "hidden") return null;
+              if (type === "file") return "button";
               if (type === "checkbox") return "checkbox";
               if (type === "radio") return "radio";
               if (type === "range") return "slider";
-              if (type === "button" || type === "submit" || type === "reset") return "button";
-              if (type === "hidden") return null;
+              if (type === "number") return "spinbutton";
+              if (type === "button" || type === "submit" || type === "reset" || type === "image") {
+                return "button";
+              }
               return "textbox";
             }
             return null;

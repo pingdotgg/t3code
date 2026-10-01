@@ -6,17 +6,23 @@ import { Effect, Path } from "effect";
 import {
   buildDevRunnerArgs,
   checkPortAvailabilityOnHosts,
+  classifyPidfileOwner,
   computeProcessTreeKillOrder,
   createDevRunnerEnv,
   devRunnerCommandMatchesHome,
+  devRunnerPidFileName,
   findFirstAvailableOffset,
   isBrowserAllowedPort,
   isProxiableBindHost,
+  parseCimCreationDateToMs,
   parseDevRunnerPidFile,
+  parsePsElapsedToMs,
   readDevRunnerPidFile,
+  removeOwnDevRunnerPidFile,
   resolveDevT3Home,
   resolveModePortOffsets,
   resolveOffset,
+  stopAllDevEnvironments,
   stopDevEnvironment,
   writeDevRunnerPidFile,
 } from "./dev-runner.ts";
@@ -610,6 +616,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("dev-runner pidfile", () => {
+    it("names pidfiles per runner mode", () => {
+      assert.strictEqual(devRunnerPidFileName("dev"), "dev-runner-dev.pid");
+      assert.strictEqual(devRunnerPidFileName("dev:server"), "dev-runner-dev-server.pid");
+    });
+
     it.effect("round-trips a pid record through the base directory", () =>
       Effect.gen(function* () {
         const fs = yield* Effect.promise(() => import("node:fs/promises"));
@@ -623,13 +634,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseDir,
           startedAt: "2026-10-01T00:00:00.000Z",
         };
-        const written = yield* writeDevRunnerPidFile(baseDir, record);
+        const written = yield* writeDevRunnerPidFile(baseDir, "dev:server", record);
         try {
-          assert.deepStrictEqual(yield* readDevRunnerPidFile(baseDir), {
+          assert.ok(written.path.endsWith("dev-runner-dev-server.pid"));
+          assert.deepStrictEqual(yield* readDevRunnerPidFile(baseDir, "dev:server"), {
             path: written.path,
             record,
           });
-          assert.strictEqual(yield* readDevRunnerPidFile(`${baseDir}-missing`), null);
+          assert.strictEqual(yield* readDevRunnerPidFile(`${baseDir}-missing`, "dev"), null);
         } finally {
           yield* Effect.promise(() => fs.rm(baseDir, { recursive: true, force: true }));
         }
@@ -650,6 +662,92 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           }),
         ),
         null,
+      );
+    });
+  });
+
+  describe("classifyPidfileOwner", () => {
+    const record = {
+      pid: 424242,
+      serverPort: 14994,
+      webPort: 6954,
+      baseDir: "/tmp/t3code-test-home",
+      startedAt: new Date(Date.now() - 5_000).toISOString(),
+    };
+    const homes = [record.baseDir];
+
+    it("reports absent without an existing record", () => {
+      assert.deepStrictEqual(classifyPidfileOwner(null, null, homes), { status: "absent" });
+    });
+
+    it("reports owned-live for the recorded command line", () => {
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          {
+            command: "node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-home",
+            startedAtMs: null,
+          },
+          homes,
+        ),
+        { status: "owned-live" },
+      );
+    });
+
+    it("corroborates ownership by start time when the command carries no home spelling", () => {
+      // Default worktree homes, env-provided homes, and relative --home-dir
+      // flags never appear in argv: the start time is the process-owned proof.
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          { command: "node scripts/dev-runner.ts dev", startedAtMs: Date.now() - 8_000 },
+          homes,
+        ),
+        { status: "owned-live" },
+      );
+    });
+
+    it("accepts any known spelling of the home directory", () => {
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          {
+            command: "node scripts/dev-runner.ts dev --home-dir /private/tmp/t3code-test-home",
+            startedAtMs: null,
+          },
+          ["/private/tmp/t3code-test-home", "/tmp/t3code-test-home"],
+        ),
+        { status: "owned-live" },
+      );
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          { command: "node scripts/dev-runner.ts dev", startedAtMs: null },
+          ["/private/tmp/t3code-test-home", "/tmp/t3code-test-home"],
+        ),
+        { status: "foreign-live" },
+      );
+    });
+
+    it("reports stale for a dead pid even with a matching command", () => {
+      assert.deepStrictEqual(classifyPidfileOwner(record, null, homes), { status: "stale" });
+    });
+
+    it("reports foreign-live for a recycled pid running something else", () => {
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          { command: "node apps/server/src/bin.ts", startedAtMs: Date.now() - 90_000 },
+          homes,
+        ),
+        { status: "foreign-live" },
+      );
+    });
+
+    it("reports foreign-live when nothing corroborates a live pid", () => {
+      assert.deepStrictEqual(
+        classifyPidfileOwner(record, { command: null, startedAtMs: null }, homes),
+        { status: "foreign-live" },
       );
     });
   });
@@ -696,23 +794,51 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       );
       assert.deepStrictEqual(computeProcessTreeKillOrder([], 424242), []);
     });
+
+    it("parses ps elapsed times with and without day/hour parts", () => {
+      assert.strictEqual(parsePsElapsedToMs("05:23"), (5 * 60 + 23) * 1000);
+      assert.strictEqual(parsePsElapsedToMs("1:02:03"), (3600 + 120 + 3) * 1000);
+      assert.strictEqual(parsePsElapsedToMs("2-01:02:03"), ((2 * 24 + 1) * 3600 + 123) * 1000);
+      assert.strictEqual(parsePsElapsedToMs("bogus"), null);
+      assert.strictEqual(parsePsElapsedToMs("99:99"), null);
+      assert.strictEqual(parsePsElapsedToMs(""), null);
+    });
+
+    it("parses CIM creation dates with explicit offsets", () => {
+      // 2026-10-01 23:46:53 at UTC-7 equals 2026-10-02 06:46:53Z.
+      assert.strictEqual(
+        parseCimCreationDateToMs("20261001234653.000000-420"),
+        Date.UTC(2026, 9, 2, 6, 46, 53),
+      );
+      assert.strictEqual(
+        parseCimCreationDateToMs("20261002064653.123456+000"),
+        Date.UTC(2026, 9, 2, 6, 46, 53),
+      );
+      assert.strictEqual(parseCimCreationDateToMs("not-a-date"), null);
+      assert.strictEqual(parseCimCreationDateToMs("20261301234653.000000-420"), null);
+    });
   });
 
   describe("stopDevEnvironment", () => {
     const livePid = 424243;
-    const staleRecord = (baseDir: string) => ({
-      path: `${baseDir}/dev-runner.pid`,
+    const stalePidFile = (baseDir: string) => ({
+      path: `${baseDir}/dev-runner-dev.pid`,
       record: {
         pid: livePid,
         serverPort: 1,
         webPort: 2,
         baseDir,
-        startedAt: "2026-10-01T00:00:00.000Z",
+        startedAt: new Date(Date.now() - 5_000).toISOString(),
       },
     });
-    const operatorFor = (options: { live: boolean; command: string | null }) => ({
+    const operatorFor = (options: {
+      live: boolean;
+      command: string | null;
+      startedAtMs?: number | null;
+    }) => ({
       isLive: () => Effect.succeed(options.live),
       commandOf: () => Effect.succeed(options.command),
+      startedAtMsOf: () => Effect.succeed(options.startedAtMs ?? null),
       killTree: () => Effect.succeed([livePid] as const),
     });
 
@@ -722,11 +848,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const exit = yield* Effect.exit(
           stopDevEnvironment({
             baseDir: "/tmp/t3code-test-missing",
+            mode: "dev",
             readPidFile: () => Effect.succeed(null),
             removePidFile: () => Effect.sync(() => kills.push(-1)).pipe(Effect.as(undefined)),
             operator: {
               isLive: () => Effect.succeed(true),
               commandOf: () => Effect.succeed(null),
+              startedAtMsOf: () => Effect.succeed(null),
               killTree: (pid: number) =>
                 Effect.sync(() => kills.push(pid)).pipe(Effect.as([] as const)),
             },
@@ -742,7 +870,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const removed: Array<string> = [];
         const result = yield* stopDevEnvironment({
           baseDir: "/tmp/t3code-test-stale",
-          readPidFile: () => Effect.succeed(staleRecord("/tmp/t3code-test-stale")),
+          mode: "dev",
+          readPidFile: () => Effect.succeed(stalePidFile("/tmp/t3code-test-stale")),
           removePidFile: (path: string) =>
             Effect.sync(() => {
               removed.push(path);
@@ -750,7 +879,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           operator: operatorFor({ live: false, command: null }),
         });
         assert.deepStrictEqual(result, { stopped: false, reason: "not-running", killed: [] });
-        assert.deepStrictEqual(removed, ["/tmp/t3code-test-stale/dev-runner.pid"]);
+        assert.deepStrictEqual(removed, ["/tmp/t3code-test-stale/dev-runner-dev.pid"]);
       }),
     );
 
@@ -760,12 +889,17 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const exit = yield* Effect.exit(
           stopDevEnvironment({
             baseDir: "/tmp/t3code-test-foreign",
-            readPidFile: () => Effect.succeed(staleRecord("/tmp/t3code-test-foreign")),
+            mode: "dev",
+            readPidFile: () => Effect.succeed(stalePidFile("/tmp/t3code-test-foreign")),
             removePidFile: (path: string) =>
               Effect.sync(() => {
                 removed.push(path);
               }),
-            operator: operatorFor({ live: true, command: "node apps/server/src/bin.ts" }),
+            operator: operatorFor({
+              live: true,
+              command: "node apps/server/src/bin.ts",
+              startedAtMs: Date.now(),
+            }),
           }),
         );
         assert.isTrue(exit._tag === "Failure");
@@ -779,7 +913,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const removed: Array<string> = [];
         const result = yield* stopDevEnvironment({
           baseDir: "/tmp/t3code-test-live",
-          readPidFile: () => Effect.succeed(staleRecord("/tmp/t3code-test-live")),
+          mode: "dev",
+          readPidFile: () => Effect.succeed(stalePidFile("/tmp/t3code-test-live")),
           removePidFile: (path: string) =>
             Effect.sync(() => {
               removed.push(path);
@@ -788,6 +923,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             isLive: () => Effect.succeed(true),
             commandOf: () =>
               Effect.succeed("node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-live"),
+            startedAtMsOf: () => Effect.succeed(null),
             killTree: (pid: number) =>
               Effect.sync(() => {
                 killed.push(pid);
@@ -799,8 +935,200 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           killed: [livePid, livePid + 1],
         });
         assert.deepStrictEqual(killed, [livePid]);
-        assert.deepStrictEqual(removed, ["/tmp/t3code-test-live/dev-runner.pid"]);
+        assert.deepStrictEqual(removed, ["/tmp/t3code-test-live/dev-runner-dev.pid"]);
       }),
     );
+
+    it.effect("stops by start time when the command carries no home spelling", () =>
+      Effect.gen(function* () {
+        const killed: Array<number> = [];
+        // Default worktree homes, env-provided homes, and relative --home-dir
+        // flags never appear in argv: the process start time is the proof.
+        const result = yield* stopDevEnvironment({
+          baseDir: "/tmp/t3code-test-live",
+          mode: "dev",
+          readPidFile: () => Effect.succeed(stalePidFile("/tmp/t3code-test-live")),
+          removePidFile: () => Effect.void,
+          operator: {
+            isLive: () => Effect.succeed(true),
+            commandOf: () => Effect.succeed("node scripts/dev-runner.ts dev"),
+            startedAtMsOf: () => Effect.succeed(Date.now() - 8_000),
+            killTree: (pid: number) =>
+              Effect.sync(() => {
+                killed.push(pid);
+              }).pipe(Effect.as([pid] as const)),
+          },
+        });
+        assert.deepStrictEqual(result, { stopped: true, killed: [livePid] });
+        assert.deepStrictEqual(killed, [livePid]);
+      }),
+    );
+  });
+
+  describe("removeOwnDevRunnerPidFile", () => {
+    it.effect("removes the record only while it still belongs to the exiting process", () =>
+      Effect.gen(function* () {
+        const removed: Array<string> = [];
+        const removePidFile = (path: string) =>
+          Effect.sync(() => {
+            removed.push(path);
+          });
+        const mine = {
+          path: "/tmp/t3code-test-own/dev-runner-dev.pid",
+          record: {
+            pid: process.pid,
+            serverPort: 1,
+            webPort: 2,
+            baseDir: "/tmp/t3code-test-own",
+            startedAt: new Date().toISOString(),
+          },
+        };
+        assert.strictEqual(
+          yield* removeOwnDevRunnerPidFile({
+            readPidFile: () => Effect.succeed(mine),
+            removePidFile,
+          }),
+          true,
+        );
+        assert.deepStrictEqual(removed, [mine.path]);
+
+        removed.length = 0;
+        assert.strictEqual(
+          yield* removeOwnDevRunnerPidFile({
+            readPidFile: () =>
+              Effect.succeed({
+                path: mine.path,
+                record: { ...mine.record, pid: mine.record.pid + 100000 },
+              }),
+            removePidFile,
+          }),
+          false,
+        );
+        assert.deepStrictEqual(removed, []);
+
+        assert.strictEqual(
+          yield* removeOwnDevRunnerPidFile({
+            readPidFile: () => Effect.succeed(null),
+            removePidFile,
+          }),
+          false,
+        );
+      }),
+    );
+  });
+
+  describe("stopAllDevEnvironments", () => {
+    const pidFileFor = (baseDir: string, mode: string, pid: number) => ({
+      path: `${baseDir}/dev-runner-${mode.replace(":", "-")}.pid`,
+      record: {
+        pid,
+        serverPort: 1,
+        webPort: 2,
+        baseDir,
+        startedAt: new Date(Date.now() - 5_000).toISOString(),
+      },
+    });
+
+    it.effect("stops every recorded runner and clears stale records", () =>
+      Effect.gen(function* () {
+        const killed: Array<number> = [];
+        const removed: Array<string> = [];
+        const files = new Map([
+          [
+            `/tmp/t3code-test-multi/dev-runner-dev.pid`,
+            pidFileFor("/tmp/t3code-test-multi", "dev", 111),
+          ],
+          [
+            `/tmp/t3code-test-multi/dev-runner-dev-server.pid`,
+            pidFileFor("/tmp/t3code-test-multi", "dev:server", 222),
+          ],
+        ]);
+        const result = yield* stopAllDevEnvironments({
+          baseDir: "/tmp/t3code-test-multi",
+          readPidFile: (mode: string) =>
+            Effect.succeed(
+              files.get(`/tmp/t3code-test-multi/dev-runner-${mode.replace(":", "-")}.pid`) ?? null,
+            ),
+          removePidFile: (path: string) =>
+            Effect.sync(() => {
+              removed.push(path);
+            }),
+          operator: {
+            isLive: (pid: number) => Effect.succeed(pid !== 222),
+            commandOf: () =>
+              Effect.succeed("node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-multi"),
+            startedAtMsOf: () => Effect.succeed(Date.now() - 6_000),
+            killTree: (pid: number) =>
+              Effect.sync(() => {
+                killed.push(pid);
+              }).pipe(Effect.as([pid] as const)),
+          },
+        });
+        assert.deepStrictEqual(result, {
+          stopped: [{ mode: "dev", killed: [111] }],
+          cleared: ["dev:server"],
+        });
+        assert.deepStrictEqual(killed, [111]);
+        assert.deepStrictEqual(removed, [
+          "/tmp/t3code-test-multi/dev-runner-dev.pid",
+          "/tmp/t3code-test-multi/dev-runner-dev-server.pid",
+        ]);
+      }),
+    );
+
+    it.effect("aborts before touching anything when any record is foreign", () =>
+      Effect.gen(function* () {
+        const killed: Array<number> = [];
+        const removed: Array<string> = [];
+        const files = new Map([
+          [
+            `/tmp/t3code-test-abort/dev-runner-dev.pid`,
+            pidFileFor("/tmp/t3code-test-abort", "dev", 111),
+          ],
+          [
+            `/tmp/t3code-test-abort/dev-runner-dev-server.pid`,
+            pidFileFor("/tmp/t3code-test-abort", "dev:server", 222),
+          ],
+        ]);
+        const exit = yield* Effect.exit(
+          stopAllDevEnvironments({
+            baseDir: "/tmp/t3code-test-abort",
+            modes: ["dev", "dev:server"],
+            readPidFile: (mode: string) =>
+              Effect.succeed(
+                files.get(`/tmp/t3code-test-abort/dev-runner-${mode.replace(":", "-")}.pid`) ??
+                  null,
+              ),
+            removePidFile: (path: string) =>
+              Effect.sync(() => {
+                removed.push(path);
+              }),
+            operator: {
+              isLive: () => Effect.succeed(true),
+              commandOf: (pid: number) =>
+                Effect.succeed(
+                  pid === 111
+                    ? "node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-abort"
+                    : "node apps/server/src/bin.ts",
+                ),
+              startedAtMsOf: () => Effect.succeed(Date.now() - 6_000),
+              killTree: (pid: number) =>
+                Effect.sync(() => {
+                  killed.push(pid);
+                }).pipe(Effect.as([pid] as const)),
+            },
+          }),
+        );
+        assert.isTrue(exit._tag === "Failure");
+        assert.deepStrictEqual(killed, []);
+        assert.deepStrictEqual(removed, []);
+      }),
+    );
+  });
+
+  describe("buildDevRunnerArgs", () => {
+    it("refuses to build runner args for the stop mode", () => {
+      assert.throws(() => buildDevRunnerArgs("stop", []), /stop/);
+    });
   });
 });
