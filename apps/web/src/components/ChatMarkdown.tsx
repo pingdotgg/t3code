@@ -477,9 +477,11 @@ function resolveChatInlineCodeMeta(
   const relative = findWorkspaceRelativeForBasename(basename, entries);
   if (!relative) return base;
   // Re-resolve with the workspace-relative path so the file panel opens the
-  // real nested file instead of `cwd/basename`.
+  // real nested file instead of `cwd/basename`. The lookup result is already
+  // workspace-relative, so it anchors at `cwd` — not at the previewed file's
+  // directory, which would join it onto the wrong base.
   const candidate = suffix ? `${relative}:${suffix}` : relative;
-  return resolveMarkdownFileLinkMeta(candidate, cwd, baseDir) ?? base;
+  return resolveMarkdownFileLinkMeta(candidate, cwd, cwd) ?? base;
 }
 
 function remarkTagInlineCode(resolve: (codeText: string) => MarkdownFileLinkMeta | null) {

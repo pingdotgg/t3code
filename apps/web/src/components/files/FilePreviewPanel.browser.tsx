@@ -353,7 +353,7 @@ describe("FilePreviewPanel", () => {
   it("renders file markdown like upstream: constrained container, file-dir links, persistent tasks", async () => {
     readFileMock.mockResolvedValueOnce({
       relativePath: "docs/notes.md",
-      contents: "# Notes\n\n- [ ] Ship it\n\nSee [guide](guide.md).\n",
+      contents: "# Notes\n\n- [ ] Ship it\n\nSee [guide](guide.md) and run `index.ts:10`.\n",
     });
     const screen = await render(
       <FilePreviewPanel
@@ -377,6 +377,21 @@ describe("FilePreviewPanel", () => {
         '.chat-markdown a[href="/repo/markdown-upstream/docs/guide.md"]',
       );
       expect(guideLink).not.toBeNull();
+      // Bare-basename inline code resolves the workspace-relative lookup hit
+      // against the workspace root, not the previewed file's directory. The
+      // workspace index loads asynchronously, so wait for the chip.
+      // (Bare names only reach the lookup with a `:line` suffix; without one
+      // the inline-code resolver returns null before consulting the index.)
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelector(
+              '.chat-markdown a[href="/repo/markdown-upstream/src/index.ts:10"]',
+            ),
+          ).not.toBeNull();
+        },
+        { timeout: 10000 },
+      );
 
       // Task checkboxes persist through the file save session.
       const checkbox = page.getByRole("checkbox", { name: "Toggle task" });
@@ -387,7 +402,7 @@ describe("FilePreviewPanel", () => {
           expect(writeFileMock).toHaveBeenCalledWith({
             cwd: "/repo/markdown-upstream",
             relativePath: "docs/notes.md",
-            contents: "# Notes\n\n- [x] Ship it\n\nSee [guide](guide.md).\n",
+            contents: "# Notes\n\n- [x] Ship it\n\nSee [guide](guide.md) and run `index.ts:10`.\n",
           });
         },
         { timeout: 10000 },

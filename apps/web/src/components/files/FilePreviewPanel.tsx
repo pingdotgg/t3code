@@ -663,7 +663,7 @@ export function FilePreviewPanel({
               // switch needs a new key or the previous file's disclosure and
               // task state carries into the next document.
               <RenderedMarkdownSurface
-                key={relativePath}
+                key={`${environmentId}:${cwd}:${relativePath}`}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
