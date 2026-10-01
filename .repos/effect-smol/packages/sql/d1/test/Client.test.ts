@@ -1,3 +1,4 @@
+import type { D1Result } from "@cloudflare/workers-types"
 import { D1Client } from "@effect/sql-d1"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Effect } from "effect"
@@ -6,6 +7,17 @@ import { Statement } from "effect/unstable/sql"
 import { D1Miniflare } from "./utils.ts"
 
 describe("Client", () => {
+  it.effect("raw preserves the native result envelope", () =>
+    Effect.gen(function*() {
+      const sql = yield* D1Client.D1Client
+      yield* sql`CREATE TABLE raw_test (id INTEGER PRIMARY KEY, name TEXT)`
+      const raw = (yield* sql`INSERT INTO raw_test (name) VALUES (${"effect"})`.raw) as D1Result
+      assert.strictEqual(raw.success, true)
+      assert.deepStrictEqual(raw.results, [])
+      assert.strictEqual(raw.meta.changes, 1)
+      assert.strictEqual(raw.meta.last_row_id, 1)
+    }).pipe(Effect.provide(D1Miniflare.layerClient)))
+
   it.effect("classifies native errors without stable sqlite codes as UnknownError", () =>
     Effect.gen(function*() {
       const failingDb = {

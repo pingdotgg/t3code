@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import { afterEach, expect, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { HostProcessPlatform } from "./hostProcess.ts";
-import { resolveSpawnCommand } from "./shell.ts";
+import { resolveSpawnCommand, SpawnExecutableCache } from "./shell.ts";
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -80,5 +80,23 @@ it.effect("does not cache missing commands or share scans across PATH and PATHEX
         env: { ...env, PATHEXT: ".CMD;.EXE" },
       })).shell,
     ).toBe(true);
+  }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+);
+
+it.effect("isolates Windows spawn scans between provided caches", () =>
+  Effect.gen(function* () {
+    const paths = new Set(["C:\\second\\isolated-probe.exe"]);
+    mockExecutables(paths);
+    const env = { PATH: "C:\\first;C:\\second", PATHEXT: ".EXE" };
+    const firstCache = SpawnExecutableCache.defaultValue();
+    const resolve = resolveSpawnCommand("isolated-probe", [], { env });
+    const first = yield* resolve.pipe(Effect.provideService(SpawnExecutableCache, firstCache));
+    expect(first.command).toBe("C:\\second\\isolated-probe.exe");
+
+    paths.add("C:\\first\\isolated-probe.exe");
+    const isolated = yield* resolve.pipe(Effect.provideService(SpawnExecutableCache, new Map()));
+    expect(isolated.command).toBe("C:\\first\\isolated-probe.exe");
+    const cached = yield* resolve.pipe(Effect.provideService(SpawnExecutableCache, firstCache));
+    expect(cached.command).toBe(first.command);
   }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
 );

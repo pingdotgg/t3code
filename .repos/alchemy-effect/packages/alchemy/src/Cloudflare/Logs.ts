@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as Socket from "effect/unstable/socket/Socket";
 import type { LogLine, LogsInput } from "../Provider.ts";
+import { profileCommandHint } from "../Util/interactive.ts";
 
 const DEFAULT_LOOKBACK_MS = 1 * 60 * 60 * 1000;
 
@@ -80,7 +81,7 @@ export const CloudflareLogs = Effect.gen(function* () {
 
   /**
    * The telemetry query needs the `workers_observability:read` OAuth scope.
-   * A token minted by an older `alchemy login` (before the scope joined the
+   * A token minted by an older login (before the scope joined the
    * defaults) keeps its original grants forever, so the query fails with a
    * bare `Unauthorized`/`Forbidden` even though a fresh login would work —
    * explain the fix instead of surfacing the raw tag.
@@ -90,15 +91,20 @@ export const CloudflareLogs = Effect.gen(function* () {
   ): Effect.Effect<A, workers.QueryObservabilityTelemetryError, R> =>
     effect.pipe(
       Effect.catchTag("Unauthorized", () =>
-        Effect.die(
-          new Error(
-            "Cloudflare rejected the observability telemetry query (Unauthorized). " +
-              'Your stored credentials are likely missing the "workers_observability:read" scope — ' +
-              "OAuth tokens keep the scopes they were minted with, so tokens from an older " +
-              "`alchemy login` won't have it. Run `alchemy login` again to mint a token with " +
-              "the current default scopes, or use an API token that grants Workers Observability read access.",
-          ),
-        ),
+        Effect.gen(function* () {
+          const command = yield* profileCommandHint(
+            "alchemy profile edit --reconfigure Cloudflare",
+          );
+          return yield* Effect.die(
+            new Error(
+              "Cloudflare rejected the observability telemetry query (Unauthorized). " +
+                'Your stored credentials are likely missing the "workers_observability:read" scope — ' +
+                "OAuth tokens keep the scopes they were minted with, so tokens minted by " +
+                `an older login won't have it. Run \`${command}\` to mint a token with ` +
+                "the current default scopes, or use an API token that grants Workers Observability read access.",
+            ),
+          );
+        }),
       ),
     );
 
@@ -164,58 +170,66 @@ export const CloudflareLogs = Effect.gen(function* () {
 
       const queue = yield* Queue.make<LogLine, Cause.Done>();
 
-      yield* socket
-        .runRaw((raw) => {
-          const text =
-            typeof raw === "string" ? raw : new TextDecoder().decode(raw);
-          const data: TailEventMessage = JSON.parse(text);
-          const eventTs = new Date(data.eventTimestamp ?? Date.now());
+      const decoder = new TextDecoder();
+      const offerTailMessage = (raw: Uint8Array) => {
+        const data: TailEventMessage = JSON.parse(decoder.decode(raw));
+        const eventTs = new Date(data.eventTimestamp ?? Date.now());
 
-          if (data.event && "request" in data.event) {
-            const reqEvent = data.event;
-            const pathname = (() => {
-              try {
-                return new URL(reqEvent.request.url).pathname;
-              } catch {
-                return reqEvent.request.url;
-              }
-            })();
-            const status = reqEvent.response?.status ?? 500;
-            Queue.offerUnsafe(queue, {
-              timestamp: eventTs,
-              message: `${reqEvent.request.method} ${pathname} > ${status} (cpu: ${Math.round(data.cpuTime)}ms, wall: ${Math.round(data.wallTime)}ms)`,
-            });
-          }
+        if (data.event && "request" in data.event) {
+          const reqEvent = data.event;
+          const pathname = (() => {
+            try {
+              return new URL(reqEvent.request.url).pathname;
+            } catch {
+              return reqEvent.request.url;
+            }
+          })();
+          const status = reqEvent.response?.status ?? 500;
+          Queue.offerUnsafe(queue, {
+            timestamp: eventTs,
+            message: `${reqEvent.request.method} ${pathname} > ${status} (cpu: ${Math.round(data.cpuTime)}ms, wall: ${Math.round(data.wallTime)}ms)`,
+          });
+        }
 
-          for (const log of data.logs) {
-            const msg = log.message.join(" ");
-            Queue.offerUnsafe(queue, {
-              timestamp: new Date(log.timestamp),
-              message: log.level === "log" ? msg : `${log.level}: ${msg}`,
-            });
-          }
+        for (const log of data.logs) {
+          const msg = log.message.join(" ");
+          Queue.offerUnsafe(queue, {
+            timestamp: new Date(log.timestamp),
+            message: log.level === "log" ? msg : `${log.level}: ${msg}`,
+          });
+        }
 
-          for (const exception of data.exceptions) {
-            Queue.offerUnsafe(queue, {
-              timestamp: new Date(exception.timestamp),
-              message: `${exception.name} ${exception.message}\n${exception.stack}`,
-            });
-          }
-        })
-        .pipe(
-          Effect.ensuring(
-            Effect.all([
-              deleteScriptTail({
-                scriptName: opts.scriptName,
-                id: tailId,
-                accountId: opts.accountId,
-              }).pipe(Effect.ignore),
-              Queue.end(queue),
-            ]),
-          ),
-          Effect.ignore,
-          Effect.forkChild(),
-        );
+        for (const exception of data.exceptions) {
+          Queue.offerUnsafe(queue, {
+            timestamp: new Date(exception.timestamp),
+            message: `${exception.name} ${exception.message}\n${exception.stack}`,
+          });
+        }
+      };
+
+      yield* Socket.toStream(socket).pipe(
+        Stream.runForEach((raw) => Effect.sync(() => offerTailMessage(raw))),
+        Effect.catchIf(
+          (error) =>
+            Socket.isSocketError(error) &&
+            error.reason._tag === "SocketCloseError" &&
+            (error.reason.code === 1000 || error.reason.code === 1006),
+          () => Effect.void,
+        ),
+        Effect.ensuring(
+          Effect.all([
+            deleteScriptTail({
+              scriptName: opts.scriptName,
+              id: tailId,
+              accountId: opts.accountId,
+            }).pipe(Effect.ignore),
+            Queue.end(queue),
+          ]),
+        ),
+        Effect.scoped,
+        Effect.ignore,
+        Effect.forkChild(),
+      );
 
       return Stream.fromQueue(queue);
     });

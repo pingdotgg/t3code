@@ -1,7 +1,8 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import {
   BigDecimal,
   Brand,
+  ByteSize,
   Cause,
   Chunk,
   Context,
@@ -105,7 +106,7 @@ describe("Schema", () => {
 
       assertTrue(error instanceof Error)
       assertTrue(Schema.isSchemaError(error))
-      assertFalse(Schema.isSchemaError({ "~effect/SchemaError/SchemaError": false }))
+      assertFalse(Schema.isSchemaError({ "~effect/Schema/SchemaError": false }))
       strictEqual(error._tag, "SchemaError")
       strictEqual(error.name, "SchemaError")
       strictEqual(error.issue, result.failure)
@@ -126,8 +127,8 @@ describe("Schema", () => {
     })
   })
 
-  describe("parseOptions annotation", () => {
-    it("Number", async () => {
+  describe("parse options", () => {
+    it("does not interpret custom parseOptions metadata", async () => {
       const schema = Schema.Number.check(Schema.isGreaterThan(0), Schema.isInt()).annotate({
         parseOptions: { errors: "all" }
       })
@@ -136,12 +137,11 @@ describe("Schema", () => {
       const decoding = asserts.decoding()
       await decoding.fail(
         -1.2,
-        `Expected a value greater than 0
-Expected an integer`
+        "Expected a value greater than 0"
       )
     })
 
-    it("Struct", async () => {
+    it("applies errors to nested schemas without annotation overrides", async () => {
       const schema = Schema.Struct({
         a: Schema.String,
         b: Schema.Struct({
@@ -155,18 +155,19 @@ Expected an integer`
       await decoding.fail(
         { a: "a", b: {} },
         `Missing key
-  at ["b"]["c"]`
+  at ["b"]["c"]
+Missing key
+  at ["b"]["d"]`
       )
     })
 
-    it("should not read parseOptions from encodingChecks", async () => {
+    it("applies errors with encoding checks", async () => {
       const schema = Schema.Struct({
         a: Schema.String,
         b: Schema.String
       }).pipe(
         Schema.flip,
         Schema.check(Schema.isMaxProperties(1)),
-        Schema.annotate({ parseOptions: { errors: "first" } }),
         Schema.flip
       )
       assertTrue(SchemaAST.isObjects(schema.ast))
@@ -183,9 +184,6 @@ Missing key
   at ["b"]`
       )
     })
-  })
-
-  describe("parse options", () => {
     it("decoders can receive options when they are created", () => {
       const schema = Schema.Struct({
         a: Schema.String
@@ -195,9 +193,10 @@ Missing key
       const failure = decode({ a: "a", b: "b" })
       assertTrue(Exit.isFailure(failure))
 
-      const success = decode({ a: "a", b: "b" }, { onExcessProperty: "preserve" })
+      const success = decode({ a: "a", b: "b" }, { onExcessProperty: "ignore" })
       assertTrue(Exit.isSuccess(success))
-      deepStrictEqual(success.value, { a: "a", b: "b" })
+      deepStrictEqual(success.value, { a: "a" })
+      assertTrue(Exit.isFailure(decode({ a: "a", b: "b" })))
     })
 
     it("encoders can receive options when they are created", () => {
@@ -209,9 +208,10 @@ Missing key
       const failure = encode({ a: "a", b: "b" })
       assertTrue(Exit.isFailure(failure))
 
-      const success = encode({ a: "a", b: "b" }, { onExcessProperty: "preserve" })
+      const success = encode({ a: "a", b: "b" }, { onExcessProperty: "ignore" })
       assertTrue(Exit.isSuccess(success))
-      deepStrictEqual(success.value, { a: "a", b: "b" })
+      deepStrictEqual(success.value, { a: "a" })
+      assertTrue(Exit.isFailure(encode({ a: "a", b: "b" })))
     })
   })
 
@@ -272,6 +272,16 @@ Missing key
       const encoding = asserts.encoding()
       await encoding.succeed(1)
       await encoding.fail("1", `Expected 1`)
+    })
+
+    it("accepts either signed zero and preserves the input sign", () => {
+      for (const literal of [0, -0]) {
+        const schema = Schema.Literal(literal)
+        for (const input of [0, -0]) {
+          assertTrue(Object.is(Schema.decodeUnknownSync(schema)(input), input))
+          assertTrue(Object.is(Schema.encodeUnknownSync(schema)(input), input))
+        }
+      }
     })
 
     it("transform", async () => {
@@ -585,37 +595,18 @@ Missing key
       )
     })
 
-    describe("propertyOrder", () => {
-      it("all required fields", () => {
-        const schema = Schema.Struct({
-          a: Schema.String,
-          b: Schema.String
-        })
-
-        const input = { c: "c", b: "b", a: "a", d: "d" }
-        const output = Schema.decodeUnknownSync(schema)(input, {
-          propertyOrder: "original",
-          onExcessProperty: "preserve"
-        })
-        deepStrictEqual(Object.keys(output), ["c", "b", "a", "d"])
-      })
-
-      it("optional field with default", () => {
-        const schema = Schema.Struct({
-          a: Schema.String.pipe(Schema.encode({
-            decode: SchemaGetter.withDefault(Effect.succeed("default-a")),
-            encode: SchemaGetter.passthrough()
-          })),
-          b: Schema.String
-        })
-
-        const input = { c: "c", b: "b", d: "d" }
-        const output = Schema.decodeUnknownSync(schema)(input, {
-          propertyOrder: "original",
-          onExcessProperty: "preserve"
-        })
-        deepStrictEqual(Object.keys(output), ["c", "b", "d", "a"])
-      })
+    it("should throw an error if a large struct has duplicate property signatures", () => {
+      throws(
+        () =>
+          new SchemaAST.Objects(
+            Array.from(
+              { length: 32 },
+              (_, index) => new SchemaAST.PropertySignature(`field${index === 31 ? 0 : index}`, Schema.String.ast)
+            ),
+            []
+          ),
+        new Error(`Duplicate identifiers: ["field0"]. ts(2300)`)
+      )
     })
 
     describe("onExcessProperty", () => {
@@ -647,16 +638,17 @@ Expected no excess property
         )
       })
 
-      it("preserve", async () => {
+      it("ignore strips undeclared string and symbol properties", async () => {
         const schema = Schema.Struct({
           a: Schema.String
         })
         const asserts = new TestSchema.Asserts(schema)
 
-        const decoding = asserts.decoding({ parseOptions: { onExcessProperty: "preserve" } })
+        const decoding = asserts.decoding({ parseOptions: { onExcessProperty: "ignore" } })
         const sym = Symbol("sym")
         await decoding.succeed(
-          { a: "a", b: "b", c: "c", [sym]: "sym" }
+          { a: "a", b: "b", c: "c", [sym]: "sym" },
+          { a: "a" }
         )
       })
     })
@@ -1077,6 +1069,65 @@ Expected no excess property
     })
   })
 
+  describe("mutable", () => {
+    it("supports encodings on array elements", async () => {
+      const schema = Schema.mutable(Schema.Array(Schema.FiniteFromString))
+      const asserts = new TestSchema.Asserts(schema)
+
+      await asserts.decoding().succeed(["1"], [1])
+      await asserts.encoding().succeed([1], ["1"])
+    })
+
+    it("supports withDecodingDefaultType after mutable", async () => {
+      const schema = Schema.Struct({
+        value: Schema.Array(Schema.String).pipe(
+          Schema.mutable,
+          Schema.withDecodingDefaultType(Effect.succeed(["default"]))
+        )
+      })
+      const asserts = new TestSchema.Asserts(schema)
+
+      await asserts.decoding().succeed({}, { value: ["default"] })
+      await asserts.decoding().succeed({ value: undefined }, { value: ["default"] })
+      await asserts.decoding().succeed({ value: ["a"] })
+      await asserts.encoding().succeed({ value: ["a"] })
+    })
+
+    it("does not support withDecodingDefaultType before mutable", () => {
+      throws(
+        () =>
+          Schema.Struct({
+            value: Schema.Array(Schema.String).pipe(
+              Schema.withDecodingDefaultType(Effect.succeed(["default"])),
+              Schema.mutable
+            )
+          }),
+        new Error("mutable does not support encodings")
+      )
+    })
+
+    it("preserves annotations, checks, encoding checks, and context", async () => {
+      const schema = Schema.Array(Schema.String).annotate({ identifier: "A" }).check(
+        Schema.isMinLength(1)
+      ).pipe(
+        Schema.flip,
+        Schema.check(Schema.isMaxLength(1)),
+        Schema.flip,
+        Schema.optionalKey
+      )
+      const mutable = Schema.mutable(schema)
+
+      strictEqual(mutable.ast.annotations, schema.ast.annotations)
+      strictEqual(mutable.ast.checks, schema.ast.checks)
+      strictEqual(mutable.ast.encodingChecks, schema.ast.encodingChecks)
+      strictEqual(mutable.ast.context, schema.ast.context)
+
+      const asserts = new TestSchema.Asserts(mutable)
+      await asserts.decoding().fail([], "Expected a value with a length of at least 1")
+      await asserts.encoding().fail(["a", "b"], "Expected a value with a length of at most 1")
+    })
+  })
+
   it("ArrayEnsure", async () => {
     const schema = Schema.ArrayEnsure(Schema.FiniteFromString)
     const asserts = new TestSchema.Asserts(schema)
@@ -1097,6 +1148,18 @@ Expected no excess property
     await encoding.succeed([], [])
     await encoding.succeed([1], "1")
     await encoding.succeed([1, 2], ["1", "2"])
+  })
+
+  it("ArrayEnsure roundtrips array-valued elements", () => {
+    const schema = Schema.ArrayEnsure(Schema.Tuple([Schema.Number, Schema.Number]))
+    const encoded = Schema.encodeSync(schema)([[1, 2]])
+    deepStrictEqual(encoded, [1, 2])
+    deepStrictEqual(Schema.decodeSync(schema)(encoded), [[1, 2]])
+  })
+
+  it("ArrayEnsure preserves outer-array encoding", () => {
+    const schema = Schema.ArrayEnsure(Schema.fromJsonString(Schema.Unknown))
+    deepStrictEqual(Schema.encodeSync(schema)([1, 2]), ["1", "2"])
   })
 
   describe("NonEmptyArray", () => {
@@ -1518,6 +1581,27 @@ Expected a string including "c"`
         const is = Schema.is(Schema.Number.check(Schema.isMultipleOf(Number("1e-323"))))
 
         assertFalse(is(Number("1.042e-321")))
+      })
+
+      it("isMultipleOf normalizes negative divisors", async () => {
+        const schema = Schema.Number.check(Schema.isMultipleOf(-2))
+        const asserts = new TestSchema.Asserts(schema)
+
+        const decoding = asserts.decoding()
+        await decoding.succeed(4)
+        await decoding.fail(
+          3,
+          `Expected a value that is a multiple of 2`
+        )
+      })
+
+      it("isMultipleOf rejects invalid divisors", () => {
+        for (const divisor of [0, -0, NaN, Infinity, -Infinity]) {
+          throws(
+            () => Schema.isMultipleOf(divisor),
+            new RangeError(`Expected a finite non-zero number, got ${String(divisor)}`)
+          )
+        }
       })
 
       describe("isBetween", () => {
@@ -3437,6 +3521,19 @@ Expected a value between -2147483648 and 2147483647`
       strictEqual((rebuilt as any).length, 2)
     })
 
+    it("assigns options", () => {
+      const schema = Schema.make<Schema.String>(Schema.String.ast, {
+        custom: "value"
+      })
+
+      assertTrue(Schema.isSchema(schema))
+      strictEqual((schema as any).custom, "value")
+
+      const rebuilt = schema.annotate({})
+
+      strictEqual((rebuilt as any).custom, "value")
+    })
+
     it("should throw an error when the cause contains both a schema issue and a defect", () => {
       const cause = Cause.combine(
         Cause.fail(new SchemaIssue.InvalidValue({ message: "schema issue" })),
@@ -3811,7 +3908,7 @@ Expected a value between -2147483648 and 2147483647`
         const calls: Array<string> = []
         const value = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail((value) => {
+            decode: SchemaGetter.transformEffect((value) => {
               calls.push(value)
               return value === "b" ? Effect.yieldNow.pipe(Effect.as(value)) : Effect.succeed(value)
             }),
@@ -3861,6 +3958,31 @@ Expected a value between -2147483648 and 2147483647`
         `Expected number
   at ["a"]`
       )
+    })
+
+    it("applies excess-property options to unmatched own keys", () => {
+      const schema = Schema.Record(Schema.String.check(Schema.isPattern(/^a/)), Schema.Number)
+      const input = { a: 1, b: 2 }
+
+      deepStrictEqual(Schema.decodeUnknownSync(schema)(input, { onExcessProperty: "ignore" }), { a: 1 })
+      deepStrictEqual(Schema.encodeUnknownSync(schema)(input, { onExcessProperty: "ignore" }), { a: 1 })
+      throws(
+        () => Schema.decodeUnknownSync(schema)(input, { onExcessProperty: "error" }),
+        `Expected no excess property\n  at ["b"]`
+      )
+      throws(
+        () => Schema.encodeUnknownSync(schema)(input, { onExcessProperty: "error" }),
+        `Expected no excess property\n  at ["b"]`
+      )
+    })
+
+    it("recognizes numeric declared keys with an index signature", () => {
+      const symbol = Symbol("symbol")
+      const schema = Schema.Record(Schema.Union([Schema.Literal(1), Schema.Symbol]), Schema.String)
+      const input = { 1: "one", [symbol]: "symbol" }
+
+      deepStrictEqual(Schema.decodeUnknownSync(schema)(input, { onExcessProperty: "error" }), input)
+      deepStrictEqual(Schema.encodeUnknownSync(schema)(input, { onExcessProperty: "error" }), input)
     })
 
     it("Record(Symbol, Number)", async () => {
@@ -4385,42 +4507,51 @@ Expected a value between -2147483648 and 2147483647`
       strictEqual(evaluations, 0)
     })
 
-    it.effect("preserves member order with concurrent decoding", () =>
+    it.effect("does not start later members after an asynchronous success", () =>
       Effect.gen(function*() {
+        const firstStarted = yield* Deferred.make<void>()
         const firstLatch = yield* Deferred.make<void>()
-        const secondCompleted = yield* Deferred.make<void>()
+        let secondCalls = 0
         const first = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() => Deferred.await(firstLatch).pipe(Effect.as("first"))),
+            decode: SchemaGetter.transformEffect(() =>
+              Deferred.succeed(firstStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(firstLatch)),
+                Effect.as("first")
+              )
+            ),
             encode: SchemaGetter.passthrough()
           })
         )
         const second = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.succeed(secondCompleted, undefined).pipe(Effect.as("second"))
-            ),
+            decode: SchemaGetter.transform(() => {
+              secondCalls++
+              return "second"
+            }),
             encode: SchemaGetter.passthrough()
           })
         )
-        const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second]))("value", {
-          concurrency: 2
-        }).pipe(Effect.forkChild)
+        const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second]))("value").pipe(Effect.forkChild)
 
-        yield* Deferred.await(secondCompleted)
+        yield* Deferred.await(firstStarted)
         yield* Effect.yieldNow
+        strictEqual(secondCalls, 0)
         yield* Deferred.succeed(firstLatch, undefined)
         strictEqual(yield* Fiber.join(fiber), "first")
+        strictEqual(secondCalls, 0)
       }))
 
-    it.effect("uses a buffered concurrent success after earlier candidates fail", () =>
+    it.effect("starts the next member only after an asynchronous failure", () =>
       Effect.gen(function*() {
+        const firstStarted = yield* Deferred.make<void>()
         const firstLatch = yield* Deferred.make<void>()
-        const secondCompleted = yield* Deferred.make<void>()
+        let secondCalls = 0
         const first = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.await(firstLatch).pipe(
+            decode: SchemaGetter.transformEffect(() =>
+              Deferred.succeed(firstStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(firstLatch)),
                 Effect.andThen(Effect.fail(new SchemaIssue.Forbidden({ message: "first failed" })))
               )
             ),
@@ -4429,49 +4560,58 @@ Expected a value between -2147483648 and 2147483647`
         )
         const second = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.succeed(secondCompleted, undefined).pipe(Effect.as("second"))
-            ),
+            decode: SchemaGetter.transform(() => {
+              secondCalls++
+              return "second"
+            }),
             encode: SchemaGetter.passthrough()
           })
         )
-        const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second]))("value", {
-          concurrency: 2
-        }).pipe(Effect.forkChild)
+        const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second]))("value").pipe(Effect.forkChild)
 
-        yield* Deferred.await(secondCompleted)
+        yield* Deferred.await(firstStarted)
         yield* Effect.yieldNow
+        strictEqual(secondCalls, 0)
         yield* Deferred.succeed(firstLatch, undefined)
         strictEqual(yield* Fiber.join(fiber), "second")
+        strictEqual(secondCalls, 1)
       }))
 
-    it.effect(`mode: "oneOf" detects concurrent successes in member order`, () =>
+    it.effect(`mode: "oneOf" detects asynchronous successes in member order`, () =>
       Effect.gen(function*() {
+        const firstStarted = yield* Deferred.make<void>()
         const firstLatch = yield* Deferred.make<void>()
-        const secondCompleted = yield* Deferred.make<void>()
+        let secondCalls = 0
         const first = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() => Deferred.await(firstLatch).pipe(Effect.as("first"))),
+            decode: SchemaGetter.transformEffect(() =>
+              Deferred.succeed(firstStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(firstLatch)),
+                Effect.as("first")
+              )
+            ),
             encode: SchemaGetter.passthrough()
           })
         )
         const second = Schema.String.pipe(
           Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.succeed(secondCompleted, undefined).pipe(Effect.as("second"))
-            ),
+            decode: SchemaGetter.transform(() => {
+              secondCalls++
+              return "second"
+            }),
             encode: SchemaGetter.passthrough()
           })
         )
         const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second], { mode: "oneOf" }))(
-          "value",
-          { concurrency: 2 }
+          "value"
         ).pipe(Effect.exit, Effect.forkChild)
 
-        yield* Deferred.await(secondCompleted)
+        yield* Deferred.await(firstStarted)
         yield* Effect.yieldNow
+        strictEqual(secondCalls, 0)
         yield* Deferred.succeed(firstLatch, undefined)
         const exit = yield* Fiber.join(fiber)
+        strictEqual(secondCalls, 1)
         strictEqual(exit._tag, "Failure")
         if (exit._tag === "Failure") {
           const reason = exit.cause.reasons[0]
@@ -4486,45 +4626,6 @@ Expected a value between -2147483648 and 2147483647`
             }
           }
         }
-      }))
-
-    it.effect("interrupts pending concurrent members after anyOf succeeds", () =>
-      Effect.gen(function*() {
-        const firstStarted = yield* Deferred.make<void>()
-        const firstLatch = yield* Deferred.make<void>()
-        const secondStarted = yield* Deferred.make<void>()
-        const secondInterrupted = yield* Deferred.make<void>()
-        const first = Schema.String.pipe(
-          Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.succeed(firstStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(firstLatch)),
-                Effect.as("first")
-              )
-            ),
-            encode: SchemaGetter.passthrough()
-          })
-        )
-        const second = Schema.String.pipe(
-          Schema.decode({
-            decode: SchemaGetter.transformOrFail(() =>
-              Deferred.succeed(secondStarted, undefined).pipe(
-                Effect.andThen(Effect.never),
-                Effect.onInterrupt(() => Deferred.succeed(secondInterrupted, undefined).pipe(Effect.asVoid))
-              )
-            ),
-            encode: SchemaGetter.passthrough()
-          })
-        )
-        const fiber = yield* Schema.decodeUnknownEffect(Schema.Union([first, second]))("value", {
-          concurrency: 2
-        }).pipe(Effect.forkChild)
-
-        yield* Deferred.await(firstStarted)
-        yield* Deferred.await(secondStarted)
-        yield* Deferred.succeed(firstLatch, undefined)
-        strictEqual(yield* Fiber.join(fiber), "first")
-        yield* Deferred.await(secondInterrupted)
       }))
 
     it(`mode: "oneOf" with Void`, async () => {
@@ -4826,6 +4927,26 @@ Expected a value between -2147483648 and 2147483647`
         { a: 1, "ab": "c" },
         `Expected number
   at ["ab"]`
+      )
+    })
+
+    it("applies excess-property options after fixed and index signatures", () => {
+      const schema = Schema.StructWithRest(
+        Schema.Struct({ fixed: Schema.Number }),
+        [Schema.Record(Schema.String.check(Schema.isPattern(/^a/)), Schema.Number)]
+      )
+      const input = { fixed: 0, a: 1, b: 2 }
+      const expected = { fixed: 0, a: 1 }
+
+      deepStrictEqual(Schema.decodeUnknownSync(schema)(input, { onExcessProperty: "ignore" }), expected)
+      deepStrictEqual(Schema.encodeUnknownSync(schema)(input, { onExcessProperty: "ignore" }), expected)
+      throws(
+        () => Schema.decodeUnknownSync(schema)(input, { onExcessProperty: "error" }),
+        `Expected no excess property\n  at ["b"]`
+      )
+      throws(
+        () => Schema.encodeUnknownSync(schema)(input, { onExcessProperty: "error" }),
+        `Expected no excess property\n  at ["b"]`
       )
     })
 
@@ -5495,6 +5616,43 @@ Expected a value between -2147483648 and 2147483647`
     await encoding.succeed(Duration.nanos(5000n), 0.005)
   })
 
+  it("ByteSize", async () => {
+    const asserts = new TestSchema.Asserts(Schema.ByteSize)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+
+    const json = new TestSchema.Asserts(Schema.toCodecJson(Schema.ByteSize))
+    await json.decoding().succeed("9007199254740993", ByteSize.bytes(9_007_199_254_740_993n))
+    await json.encoding().succeed(ByteSize.bytes(9_007_199_254_740_993n), "9007199254740993")
+  })
+
+  it("ByteSizeFromString", async () => {
+    const asserts = new TestSchema.Asserts(Schema.ByteSizeFromString)
+    await asserts.decoding().succeed("1.5 kB", ByteSize.bytes(1500))
+    await asserts.decoding().fail("1 KB", "Expected a valid ByteSize string")
+    await asserts.encoding().succeed(ByteSize.bytes(1500), "1500 bytes")
+  })
+
+  it("ByteSizeFromBigInt", async () => {
+    const asserts = new TestSchema.Asserts(Schema.ByteSizeFromBigInt)
+    if (verifyGeneration) asserts.arbitrary().verifyGeneration()
+    await asserts.decoding().succeed(9_007_199_254_740_993n, ByteSize.bytes(9_007_199_254_740_993n))
+    await asserts.decoding().fail(-1n, "Expected a non-negative bigint byte count")
+    await asserts.encoding().succeed(ByteSize.bytes(9_007_199_254_740_993n), 9_007_199_254_740_993n)
+  })
+
+  it("ByteSizeFromNumber", async () => {
+    const asserts = new TestSchema.Asserts(Schema.ByteSizeFromNumber)
+    await asserts.decoding().succeed(Number.MAX_SAFE_INTEGER, ByteSize.bytes(Number.MAX_SAFE_INTEGER))
+    await asserts.decoding().fail(-1, "Expected a non-negative safe-integer byte count")
+    await asserts.decoding().fail(0.5, "Expected a non-negative safe-integer byte count")
+    await asserts.decoding().fail(Number.MAX_SAFE_INTEGER + 1, "Expected a non-negative safe-integer byte count")
+    await asserts.encoding().succeed(ByteSize.bytes(1500), 1500)
+    await asserts.encoding().fail(
+      ByteSize.bytes(BigInt(Number.MAX_SAFE_INTEGER) + 1n),
+      "Expected a ByteSize representable as a safe integer"
+    )
+  })
+
   it("BigDecimal", async () => {
     const schema = Schema.BigDecimal
     const asserts = new TestSchema.Asserts(schema)
@@ -5892,11 +6050,11 @@ Expected a value between -2147483648 and 2147483647`
     )
   })
 
-  it("transformOrFail", async () => {
+  it("transformEffect", async () => {
     const schema = Schema.String.pipe(
       Schema.decodeTo(
         Schema.String,
-        SchemaTransformation.transformOrFail({
+        SchemaTransformation.transformEffect({
           decode: (s) =>
             s === "a"
               ? Effect.fail(new SchemaIssue.Forbidden({ message: `input should not be "a"` }))
@@ -6287,26 +6445,10 @@ Expected a value between -2147483648 and 2147483647`
       )
     })
 
-    it(`"a" + transformation`, async () => {
-      const schema = Schema.TemplateLiteral(["a", Schema.FiniteFromString])
-      const asserts = new TestSchema.Asserts(schema)
-
-      const decoding = asserts.decoding()
-      await decoding.succeed("a")
-      await decoding.succeed("a1")
-
-      await decoding.fail(
-        null,
-        "Expected string"
-      )
-      await decoding.fail(
-        "",
-        `Expected a string matching template literal parts`
-      )
-      await decoding.fail(
-        "ab",
-        `Expected a finite number
-  at [1]`
+    it(`rejects "a" + transformation`, () => {
+      throws(
+        () => Schema.TemplateLiteral(["a", Schema.FiniteFromString]),
+        "TemplateLiteral parts cannot have an encoding at parts[1]"
       )
     })
   })
@@ -6451,8 +6593,7 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("ced", ["c", "e", "d"])
       await decoding.fail(
         "cabd",
-        `Expected a string matching template literal parts
-  at [1]`
+        `Expected a string matching template literal parts`
       )
       await decoding.fail(
         "ed",
@@ -6476,13 +6617,11 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("ca1bd", ["c", ["a", 1, "b"], "d"])
       await decoding.fail(
         "ca1.1bd",
-        `Expected a string matching template literal parts
-  at [1]`
+        `Expected a string matching template literal parts`
       )
       await decoding.fail(
         "ca-bd",
-        `Expected a string matching template literal parts
-  at [1]`
+        `Expected a string matching template literal parts`
       )
     })
 
@@ -6512,13 +6651,56 @@ Expected a value between -2147483648 and 2147483647`
       await decoding.succeed("<h2>", ["<", ["h", 2], ">"])
       await decoding.fail(
         "<h3>",
-        `Expected a string matching template literal parts
-  at [1]`
+        `Expected a string matching template literal parts`
       )
     })
   })
 
   describe("Class", () => {
+    it.effect("make preserves existing instances like the other constructor adapters", () =>
+      Effect.gen(function*() {
+        let constructions = 0
+        class A extends Schema.Class<A>("A")({ a: Schema.String }) {
+          readonly construction = ++constructions
+        }
+        const instance = new A({ a: "a" })
+
+        assert.strictEqual(A.make(instance), instance)
+        assert.strictEqual(SchemaParser.make(A)(instance), instance)
+        assert.strictEqual(Option.getOrThrow(A.makeOption(instance)), instance)
+        assert.strictEqual(yield* A.makeEffect(instance), instance)
+        assert.strictEqual(constructions, 1)
+
+        assert.notStrictEqual(new A(instance), instance)
+        assert.strictEqual(constructions, 2)
+      }))
+
+    it("make applies defaults, source checks, and the constructor once", () => {
+      let defaults = 0
+      let checks = 0
+      let constructions = 0
+      const struct = Schema.Struct({
+        a: Schema.String.pipe(Schema.withConstructorDefault(Effect.sync(() => {
+          defaults++
+          return "default"
+        })))
+      }).check(Schema.makeFilter(() => {
+        checks++
+        return true
+      }))
+      class A extends Schema.Class<A>("A")(struct) {
+        readonly construction = ++constructions
+      }
+
+      const instance = A.make({})
+
+      assert.instanceOf(instance, A)
+      assert.strictEqual(instance.a, "default")
+      assert.strictEqual(defaults, 1)
+      assert.strictEqual(checks, 1)
+      assert.strictEqual(constructions, 1)
+    })
+
     it("make with void input", () => {
       class A extends Schema.Class<A>("A")({}) {}
       deepStrictEqual(A.make(), new A())
@@ -6879,17 +7061,17 @@ Expected a value between -2147483648 and 2147483647`
       assertFalse("extra" in instance)
     })
 
-    it("constructor preserves excess properties when requested", () => {
+    it("constructor strips excess properties with explicit ignore", () => {
       class A extends Schema.Class<A>("A")({
         a: Schema.String
       }) {}
 
       const instance = new A({ a: "a", extra: "extra" } as any, {
-        parseOptions: { onExcessProperty: "preserve" }
+        parseOptions: { onExcessProperty: "ignore" }
       })
 
       strictEqual(instance.a, "a")
-      strictEqual((instance as any).extra, "extra")
+      assertFalse("extra" in instance)
     })
 
     it("constructor rejects excess properties when requested", () => {
@@ -6995,7 +7177,7 @@ Expected a value between -2147483648 and 2147483647`
         assertFalse("extra" in instance)
       })
 
-      it("constructor preserves subclass fields and excess properties when requested", () => {
+      it("constructor keeps subclass fields and strips excess properties with explicit ignore", () => {
         class A extends Schema.Class<A>("A")({
           a: Schema.String
         }) {}
@@ -7004,12 +7186,12 @@ Expected a value between -2147483648 and 2147483647`
         }) {}
 
         const instance = new B({ a: "a", b: 2, extra: "extra" } as any, {
-          parseOptions: { onExcessProperty: "preserve" }
+          parseOptions: { onExcessProperty: "ignore" }
         })
 
         strictEqual(instance.a, "a")
         strictEqual(instance.b, 2)
-        strictEqual((instance as any).extra, "extra")
+        assertFalse("extra" in instance)
       })
 
       it("constructor does not treat subclass fields as excess properties", () => {
@@ -7216,19 +7398,19 @@ Expected a value between -2147483648 and 2147483647`
       assertFalse("extra" in err)
     })
 
-    it("constructor preserves excess properties when requested", () => {
+    it("constructor strips excess properties with explicit ignore", () => {
       class E extends Schema.Error<E>("E")({
         message: Schema.String,
         code: Schema.Number
       }) {}
 
       const err = new E({ message: "boom", code: 1, extra: "extra" } as any, {
-        parseOptions: { onExcessProperty: "preserve" }
+        parseOptions: { onExcessProperty: "ignore" }
       })
 
       strictEqual(err.message, "boom")
       strictEqual(err.code, 1)
-      strictEqual((err as any).extra, "extra")
+      assertFalse("extra" in err)
     })
 
     it("Struct argument", async () => {
@@ -7329,6 +7511,13 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("TaggedError", () => {
+    it("make preserves existing instances", () => {
+      class E extends Schema.TaggedError<E>()("E", { message: Schema.String }) {}
+      const instance = new E({ message: "failure" })
+
+      assert.strictEqual(E.make(instance), instance)
+    })
+
     it("make with void input", () => {
       class E extends Schema.TaggedError<E>()("E", {}) {}
       deepStrictEqual(E.make(), new E())
@@ -7476,6 +7665,15 @@ Expected a value between -2147483648 and 2147483647`
   })
 
   describe("Enum", () => {
+    it("rejects non-finite numeric values", () => {
+      for (const value of [NaN, Infinity, -Infinity]) {
+        throws(
+          () => Schema.Enum({ value }),
+          new Error(`A numeric enum value must be finite, got ${String(value)}`)
+        )
+      }
+    })
+
     it("enums should be exposed", () => {
       enum Fruits {
         Apple,
@@ -8702,6 +8900,18 @@ Expected a value between -2147483648 and 2147483647`
         Schema.NullOr(Schema.String),
         Schema.NullOr(Schema.Number)
       ])
+    })
+  })
+
+  describe("Union options", () => {
+    it("preserves Union options through public derivations", () => {
+      const options: SchemaAST.UnionOptions = { mode: "oneOf" }
+      const schema = Schema.Union([Schema.String, Schema.Number], options)
+
+      strictEqual(schema.mapMembers(Tuple.appendElement(Schema.Boolean)).ast.options, options)
+      const flipped = Schema.flip(schema).ast
+      assertTrue(SchemaAST.isUnion(flipped))
+      strictEqual(flipped.options, options)
     })
   })
 

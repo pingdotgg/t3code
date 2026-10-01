@@ -23,3 +23,9 @@ only when the generated stylesheet and theme list are unchanged. Skipping compil
 would lose new classes; invalidating every consumer for unchanged output makes an
 ordinary component edit refresh the whole app. The fingerprint is recorded only
 after initialization succeeds.
+
+The native modules under `apps/mobile/modules/` are `file:` dependencies, and pnpm
+copies those into its virtual store instead of linking them. Metro bundles the copy,
+so an edit to a module's TypeScript is invisible to a running dev client until
+`vp i` re-syncs it, while Gradle and CocoaPods compile the worktree directory
+directly. A JavaScript change that "has no effect" on device is usually this.

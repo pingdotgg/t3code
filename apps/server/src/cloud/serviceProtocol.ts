@@ -1,14 +1,19 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-/** Protocol 2 snapshots SQLite before trials so migrations can be rolled back safely. */
-export const SERVICE_LAUNCHER_PROTOCOL = 2 as const;
+// Protocol 3 requires the standalone executable layout. Bump when runtimePaths
+// or the installed runtime tree changes incompatibly; launchers survive self-updates.
+export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
-export const SERVICE_LAUNCHER_FILE = "service-launcher.mjs";
 export const SERVICE_STATE_FILE = "service-state.json";
 /** Written by the launcher just before an explicit stop kills its child, so
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** Written by `t3 update` when the unit was repointed at a new version but the
+    running service was deliberately left on the old one. The launcher removes
+    it when it starts (whoever restarted the service), so while it exists the
+    service is known to be behind its unit and status reports it that way. */
+export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 
 export interface PendingServiceUpdate {
   readonly id: string;

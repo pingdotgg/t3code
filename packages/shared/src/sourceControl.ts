@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "azure-devops" | "bitbucket" | "change-request";
+  readonly icon: "github" | "gitlab" | "forgejo" | "azure-devops" | "bitbucket" | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -45,6 +45,17 @@ const GITLAB_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   providerLongName: "GitLab merge request",
   checkoutCommandExample: "glab mr checkout 123",
   urlExample: "https://gitlab.com/group/project/-/merge_requests/42",
+};
+
+const FORGEJO_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "forgejo",
+  providerName: "Forgejo",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "Forgejo pull request",
+  checkoutCommandExample: "tea pr checkout 123",
+  urlExample: "https://codeberg.org/owner/repo/pulls/42",
 };
 
 const AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
@@ -87,6 +98,8 @@ export function resolveChangeRequestPresentation(
       return GITHUB_CHANGE_REQUEST_PRESENTATION;
     case "gitlab":
       return GITLAB_CHANGE_REQUEST_PRESENTATION;
+    case "forgejo":
+      return FORGEJO_CHANGE_REQUEST_PRESENTATION;
     case "azure-devops":
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
@@ -133,6 +146,10 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
+/**
+ * Extracts the normalized host used for provider detection. SCP-style and SSH remotes return the
+ * hostname only, while other URL schemes retain explicit ports for non-default web endpoints.
+ */
 function parseRemoteHost(remoteUrl: string): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
@@ -145,7 +162,8 @@ function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   try {
-    return new URL(trimmed).host.toLowerCase();
+    const url = new URL(trimmed);
+    return (url.protocol === "ssh:" ? url.hostname : url.host).toLowerCase();
   } catch {
     return null;
   }
@@ -199,6 +217,20 @@ export function detectSourceControlProviderFromRemoteUrl(
     return null;
   }
   const hostname = parseHostName(host);
+
+  if (
+    hostname === "codeberg.org" ||
+    hasDnsLabel(hostname, "forgejo") ||
+    hasDnsLabel(hostname, "gitea")
+  ) {
+    return {
+      kind: "forgejo",
+      name: "Forgejo",
+      baseUrl: /^https?:/iu.test(remoteUrl.trim())
+        ? new URL(remoteUrl.trim()).origin
+        : toBaseUrl(host),
+    };
+  }
 
   if (isGitHubHost(hostname)) {
     return {
