@@ -878,9 +878,10 @@ export const ProviderRegistryLive = Layer.effect(
       }
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const hasSnapshot = (candidate: ServerProvider) =>
-        !input.fresh && candidate.workspaceSnapshots?.some((s) => s.cwd === input.cwd);
-      if (!provider || !provider.enabled || hasSnapshot(provider)) {
+      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+      const scannedFrom = workspaceSnapshotOf(provider);
+      if (!provider || !provider.enabled || (!input.fresh && scannedFrom)) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -909,9 +910,12 @@ export const ProviderRegistryLive = Layer.effect(
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
                   if (currentInstance !== instance) return Ref.get(providersRef);
+                  // Write only if the cwd's snapshot did not change during the
+                  // scan. A session event or another scan that landed first is newer.
                   return updateProviders((currentProviders) =>
                     currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId && !hasSnapshot(candidate)
+                      candidate.instanceId === input.instanceId &&
+                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
                     ),
