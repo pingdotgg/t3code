@@ -9,6 +9,15 @@ export type FloatingWorkingStatus =
   | { readonly kind: "working"; readonly startedAt: string }
   | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
+  // The turn settled but subagents or watch loops are still live on the
+  // server (thread.backgroundLiveness). The composer's stop button is gone
+  // by then, so this variant carries the only stop control.
+  | {
+      readonly kind: "background";
+      readonly liveness: "working" | "monitoring";
+      readonly stopping: boolean;
+      readonly onStop: () => void;
+    }
   // A task whose thread the server has not created yet: the worktree may
   // still be checking out, so there is no turn to time.
   | { readonly kind: "preparing"; readonly label: string }

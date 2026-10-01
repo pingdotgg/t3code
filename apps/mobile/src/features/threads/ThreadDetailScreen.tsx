@@ -166,6 +166,9 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  /** True from the stop request until the server clears the thread's background liveness. */
+  readonly stoppingBackgroundWork: boolean;
+  readonly onStopBackgroundWork: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
@@ -407,6 +410,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
+    }
+    if (props.selectedThread.backgroundLiveness && contentPresentationKind === "ready") {
+      return {
+        kind: "background",
+        liveness: props.selectedThread.backgroundLiveness,
+        stopping: props.stoppingBackgroundWork,
+        onStop: props.onStopBackgroundWork,
+      };
     }
     return null;
   })();

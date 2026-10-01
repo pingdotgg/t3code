@@ -647,6 +647,33 @@ function ThreadRouteContent(
       },
     });
   }, [interruptThreadTurn, selectedThread]);
+  // Background work (subagent fleets, watch loops) can outlive the turn. The
+  // server stops it by session, so the interrupt needs no turn id.
+  const selectedThreadId = selectedThread?.id ?? null;
+  const backgroundLiveness = selectedThread?.backgroundLiveness ?? null;
+  const [stoppingThreadId, setStoppingThreadId] = useState<ThreadId | null>(null);
+  // "Stopping…" holds until the liveness clears; the interrupt command
+  // returning only means the request was accepted.
+  if (
+    stoppingThreadId !== null &&
+    (stoppingThreadId !== selectedThreadId || backgroundLiveness === null)
+  ) {
+    setStoppingThreadId(null);
+  }
+  const handleStopBackgroundWork = useCallback(() => {
+    if (!selectedThread) {
+      return;
+    }
+    setStoppingThreadId(selectedThread.id);
+    void interruptThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id },
+    }).then((result) => {
+      if (result._tag === "Failure") {
+        setStoppingThreadId(null);
+      }
+    });
+  }, [interruptThreadTurn, selectedThread]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -1023,6 +1050,8 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          stoppingBackgroundWork={stoppingThreadId !== null}
+          onStopBackgroundWork={handleStopBackgroundWork}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}

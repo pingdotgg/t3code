@@ -126,9 +126,10 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // Only the connection label is a button (tap to reconnect); the others
-  // pass touches through to the feed like before.
-  const statusInteractive = props.status?.kind === "connection";
+  // The connection label is a button (tap to reconnect) and the background
+  // label carries a Stop button; the others pass touches through to the feed.
+  const statusInteractive =
+    props.status?.kind === "connection" || props.status?.kind === "background";
   const capsuleInteractive = statusInteractive || props.devicePreview !== null;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
@@ -147,7 +148,9 @@ export function FloatingWorkingControl(props: {
             key={
               props.status.kind === "working" || props.status.kind === "compacting"
                 ? props.status.kind
-                : `${props.status.kind}:${props.status.label}`
+                : props.status.kind === "background"
+                  ? `background:${props.status.liveness}`
+                  : `${props.status.kind}:${props.status.label}`
             }
             status={props.status}
             onLayout={handleLabelLayout}
@@ -295,6 +298,9 @@ function FloatingStatusLabel(props: {
   if (props.status.kind === "compacting") {
     return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
   }
+  if (props.status.kind === "background") {
+    return <BackgroundWorkLabel key="background" status={props.status} onLayout={props.onLayout} />;
+  }
   if (props.status.kind === "connection") {
     return (
       <StatusLabelRow
@@ -381,6 +387,48 @@ function StatusLabelRow(props: {
           {props.children}
         </View>
       )}
+    </Animated.View>
+  );
+}
+
+// Stop is its own button inside the row rather than the whole pill, so a
+// stray tap on the label cannot end background work.
+function BackgroundWorkLabel(props: {
+  readonly status: Extract<FloatingWorkingStatus, { kind: "background" }>;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
+}) {
+  const label = props.status.liveness === "monitoring" ? "Monitoring" : "Working";
+  return (
+    <Animated.View
+      className="absolute max-w-full"
+      entering={LABEL_ENTERING}
+      exiting={LABEL_EXITING}
+      onLayout={props.onLayout}
+    >
+      <View className="h-11 flex-row items-center pl-4">
+        <View accessible accessibilityLabel={label} className="flex-row items-center gap-2">
+          {/* Monitoring is a calm watch state, matching the web banner (no pulse). */}
+          {props.status.liveness === "working" ? (
+            <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+          ) : null}
+          <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
+        <View className="ml-3 h-4 w-px bg-border" />
+        <Pressable
+          accessibilityLabel={props.status.stopping ? "Stopping" : "Stop background work"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: props.status.stopping }}
+          className="h-11 justify-center pl-3 pr-4 active:opacity-70"
+          disabled={props.status.stopping}
+          onPress={props.status.onStop}
+        >
+          <Text className="font-t3-medium text-xs text-danger-foreground">
+            {props.status.stopping ? "Stopping…" : "Stop"}
+          </Text>
+        </Pressable>
+      </View>
     </Animated.View>
   );
 }
