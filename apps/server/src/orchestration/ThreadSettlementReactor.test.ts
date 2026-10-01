@@ -1568,6 +1568,12 @@ describe("storage cleanup", () => {
     "terminal-worktree",
     "recent",
     "merged",
+    "squash-merged",
+    "squash-extra",
+    "squash-stale",
+    "squash-missing-head",
+    "squash-wrong-branch",
+    "squash-head-moved",
     "unmerged",
     "unchanged",
     "unchanged-two-worktrees",
@@ -1632,6 +1638,14 @@ describe("storage cleanup", () => {
           const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
           yield* fs.utimes(recentImage, recent, recent);
           const thread = makeThread("storage-thread", {
+            branchPullRequest: protection.startsWith("squash-")
+              ? {
+                  projectId: PROJECT_ID,
+                  repository: "owner/repo",
+                  number: 42,
+                  url: "https://example.test/owner/repo/pull/42",
+                }
+              : null,
             branch: "feature",
             worktreePath,
             latestUserMessageAt:
@@ -1658,7 +1672,10 @@ describe("storage cleanup", () => {
           const deleteRule = protection.startsWith("deleted");
           let tombstoned = deleteRule && protection !== "deleted-event";
           const removals: string[] = [];
-          const mergeRule = protection === "merged" || protection === "unmerged";
+          const mergeRule =
+            protection === "merged" ||
+            protection === "unmerged" ||
+            protection.startsWith("squash-");
           const unchangedRule =
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees" ||
@@ -1812,11 +1829,26 @@ describe("storage cleanup", () => {
                 }),
                 Layer.mock(GitManager)({
                   invalidateStatus: () => Effect.void,
-                  branchPullRequest: (_input, options) => {
+                  branchPullRequest: (input, options) => {
                     assert.strictEqual(options?.refresh, true);
-                    return Effect.succeed(
-                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
-                    );
+                    if (protection.startsWith("squash-")) {
+                      assert.strictEqual(
+                        input.reference,
+                        "https://example.test/owner/repo/pull/42",
+                      );
+                    }
+                    return Effect.succeed({
+                      ...makeBranchPullRequest(
+                        protection === "unmerged" || protection === "squash-stale"
+                          ? "open"
+                          : "merged",
+                      ),
+                      headRef: protection === "squash-wrong-branch" ? "other" : "feature",
+                      url: "https://example.test/owner/repo/pull/42",
+                      ...(protection.startsWith("squash-") && protection !== "squash-missing-head"
+                        ? { headSha: (protection === "squash-extra" ? "c" : "a").repeat(40) }
+                        : {}),
+                    });
                   },
                 }),
                 Layer.mock(OrchestrationEngineService)({
@@ -1870,7 +1902,8 @@ describe("storage cleanup", () => {
                       headReads++;
                       return {
                         commitSha:
-                          protection === "head-moved" && headReads > 1
+                          (protection === "head-moved" || protection === "squash-head-moved") &&
+                          headReads > 1
                             ? "c".repeat(40)
                             : "a".repeat(40),
                       };
@@ -1894,16 +1927,22 @@ describe("storage cleanup", () => {
                     Effect.succeed({
                       exitCode: ChildProcessSpawner.ExitCode(
                         input.operation === "StorageCleanup.integratedBranch" &&
-                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
+                          (protection === "diverged" ||
+                            protection.startsWith("squash-") ||
+                            input.args.at(-1) !== "b".repeat(40))
                           ? 1
                           : 0,
                       ),
                       stdout:
-                        protection === "ignored" || protection === "deleted-ignored"
-                          ? ".env\0"
-                          : protection === "ignored-directory"
-                            ? ".cache/\0"
-                            : "",
+                        input.operation === "StorageCleanup.remotes"
+                          ? "origin\n"
+                          : input.operation === "StorageCleanup.remoteUrl"
+                            ? "https://example.test/owner/repo.git\n"
+                            : protection === "ignored" || protection === "deleted-ignored"
+                              ? ".env\0"
+                              : protection === "ignored-directory"
+                                ? ".cache/\0"
+                                : "",
                       stderr: "",
                       stdoutTruncated: false,
                       stderrTruncated: false,
@@ -2007,6 +2046,7 @@ describe("storage cleanup", () => {
             protection === "files-disabled" ||
             protection === "files-extended" ||
             protection === "merged" ||
+            protection === "squash-merged" ||
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees";
           assert.strictEqual(yield* fs.exists(worktreePath), !removed);
@@ -2018,7 +2058,14 @@ describe("storage cleanup", () => {
                 ? [worktreePath]
                 : [],
           );
-          assert.strictEqual(fetches, mergeRule || unchangedRule ? 1 : 0);
+          assert.strictEqual(
+            fetches,
+            protection === "squash-merged" || protection === "squash-head-moved"
+              ? 0
+              : mergeRule || unchangedRule
+                ? 1
+                : 0,
+          );
           assert.strictEqual(thread.worktreePath, worktreePath);
           assert.strictEqual(thread.branch, "feature");
           assert.strictEqual(yield* fs.exists(oldImage), protection.startsWith("files-"));

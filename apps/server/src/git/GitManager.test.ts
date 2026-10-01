@@ -60,6 +60,7 @@ interface FakeGhScenario {
   createdPrUrl?: string;
   defaultBranch?: string;
   pullRequest?: {
+    headSha?: string;
     number: number;
     title: string;
     url: string;
@@ -1124,6 +1125,39 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(pullRequest).toBeNull();
       expect(ghCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("reads an identified merged PR head afresh without checking out its branch", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const reference = "https://github.com/pingdotgg/t3code/pull/216";
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 216,
+            title: "Squash merged",
+            url: reference,
+            baseRefName: "release",
+            headRefName: "feature",
+            headSha: "a".repeat(40),
+            state: "merged",
+          },
+        },
+      });
+      const pr = yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature", reference },
+        { refresh: true },
+      );
+      expect(pr).toMatchObject({
+        state: "merged",
+        headSha: "a".repeat(40),
+        baseRef: "release",
+        headRef: "feature",
+        repositoryKey: "github.com/pingdotgg/t3code",
+      });
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe("main");
     }),
   );
 

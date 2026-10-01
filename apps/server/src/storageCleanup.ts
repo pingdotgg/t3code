@@ -1,3 +1,4 @@
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type {
   OrchestrationThreadShell,
   ProjectId,
@@ -32,6 +33,7 @@ import * as ProviderService from "./provider/Services/ProviderService.ts";
 import { threadHasQueuedTurnStart } from "./orchestration/ThreadSettlementPolicy.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
+import * as StorageCleanupGit from "./storageCleanupGit.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
@@ -244,39 +246,59 @@ export const make = Effect.gen(function* () {
           storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-          const repositoryCwd = path.resolve(project.workspaceRoot);
-          const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-          if (branch === null) return;
-          const defaultRef = `refs/remotes/${remote}/${branch}`;
-          const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-          if (!refreshed.has(defaultRef)) {
-            yield* git.fetchRemoteTrackingBranch({
-              cwd: repositoryCwd,
-              remoteName: remote,
-              remoteBranch: branch,
-            });
-            refreshed.add(defaultRef);
-            refreshedDefaultRefs.set(repositoryCwd, refreshed);
-          }
-          const base = yield* git.resolveCommit({
-            cwd: worktreePath,
-            revision: defaultRef,
-          });
-          const ancestor = yield* git.execute({
-            operation: "StorageCleanup.integratedBranch",
-            cwd: worktreePath,
-            args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-            allowNonZeroExit: true,
-          });
-          if (ancestor.exitCode !== 0) return;
-          eligible = settings.worktreeUnchanged;
-          if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-            const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
+          const links = deleted ? [] : visibleThreadPullRequests(thread.pullRequests);
+          const linked =
+            links.find((pr) => pr.snapshot?.headBranch === thread.branch) ??
+            links.find((pr) => pr.snapshot === null);
+          const reference = linked?.url ?? (!deleted ? thread.branchPullRequest?.url : undefined);
+          const pullRequest =
+            thread.branch !== null && (settings.worktreeOnMerge || reference !== undefined)
+              ? yield* gitManager.branchPullRequest(
+                  {
+                    cwd: worktreePath,
+                    branch: thread.branch,
+                    ...(reference ? { reference } : {}),
+                  },
+                  { refresh: true },
+                )
+              : null;
+          const merged = pullRequest?.state === "merged" && pullRequest.headRef === thread.branch;
+          // A squash merge changes commit ancestry. Fresh host evidence still proves
+          // that this exact checkout was merged; later local commits do not qualify.
+          if (settings.worktreeOnMerge && merged && pullRequest.headSha === head.commitSha) {
+            eligible = true;
+          } else {
+            const repositoryCwd = path.resolve(project.workspaceRoot);
+            const target = pullRequest
+              ? { url: pullRequest.url, baseBranch: pullRequest.baseRef }
+              : linked?.snapshot
+                ? { url: linked.url, baseBranch: linked.snapshot.baseBranch }
+                : undefined;
+            const resolved = yield* StorageCleanupGit.resolveBaseRef(repositoryCwd, target).pipe(
+              Effect.provideService(GitVcsDriver.GitVcsDriver, git),
             );
-            eligible = pullRequest?.state === "merged";
+            if (resolved === null) return;
+            const { remote, branch } = resolved;
+            const defaultRef = `refs/remotes/${remote}/${branch}`;
+            const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
+            if (!refreshed.has(defaultRef)) {
+              yield* git.fetchRemoteTrackingBranch({
+                cwd: repositoryCwd,
+                remoteName: remote,
+                remoteBranch: branch,
+              });
+              refreshed.add(defaultRef);
+              refreshedDefaultRefs.set(repositoryCwd, refreshed);
+            }
+            const base = yield* git.resolveCommit({ cwd: worktreePath, revision: defaultRef });
+            const ancestor = yield* git.execute({
+              operation: "StorageCleanup.integratedBranch",
+              cwd: worktreePath,
+              args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+              allowNonZeroExit: true,
+            });
+            if (ancestor.exitCode !== 0) return;
+            eligible = settings.worktreeUnchanged || (settings.worktreeOnMerge && merged);
           }
         }
         if (!eligible) return;
