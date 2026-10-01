@@ -1042,6 +1042,28 @@ importers:
         specifier: 7.8.5
         version: 7.8.5
 
+  packages/first-party-extensions/agents:
+    dependencies:
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../extension-sdk
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.3.0
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/shared:
     dependencies:
       '@noble/curves':
