@@ -103,6 +103,7 @@ patchedDependencies:
   alchemy@2.0.0-beta.79: d1a03d902083946ee58121cc2787d88d1da561e9e30a5bcfcb8654692a489fb8
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
   effect@4.0.0-rc.115: 0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5
+  electron-updater@6.8.9: 239fc53483cbf65785d0b3e63c334005ecd2e4d705a296748bbc3df5131c5a21
   expo-audio@57.0.4: fa9a3e0442ed395d4071bb406e08c3a471c9a84700bdfa0b9ad7ff144c96041a
   expo-modules-core@57.0.14: 6be7092f8c6f03a57b75c797d98b5f19ed62d2dd205bfc4c8adf4cef45655d7e
   expo-notifications@57.0.15: f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40
@@ -185,8 +186,8 @@ importers:
         specifier: ^8.2.0
         version: 8.2.0
       electron-updater:
-        specifier: ^6.8.9
-        version: 6.8.9
+        specifier: 6.8.9
+        version: 6.8.9(patch_hash=239fc53483cbf65785d0b3e63c334005ecd2e4d705a296748bbc3df5131c5a21)
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
@@ -17330,7 +17331,7 @@ snapshots:
 
   electron-to-chromium@1.5.430: {}
 
-  electron-updater@6.8.9:
+  electron-updater@6.8.9(patch_hash=239fc53483cbf65785d0b3e63c334005ecd2e4d705a296748bbc3df5131c5a21):
     dependencies:
       builder-util-runtime: 9.7.0
       fs-extra: 10.1.0
