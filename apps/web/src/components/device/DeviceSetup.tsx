@@ -61,6 +61,11 @@ export function DeviceSetup(props: {
   const [step, setStep] = useState(0);
   const enabled = props.state.hostStatus !== "disabled";
   const busy = props.state.hostStatus === "installing" || props.state.hostStatus === "starting";
+  // A local host with no available platform never starts the hub, so hostStatus
+  // stays "idle" forever; show the same per-platform reasons step 1 would.
+  const localHostUnsupported = props.state.hosts.some(
+    (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
+  );
 
   const update = async (
     kind: NonNullable<typeof pending>,
@@ -112,6 +117,19 @@ export function DeviceSetup(props: {
               state={props.state}
               pending={pending === "hub" || (busy && pending !== "agent")}
             />
+            {enabled && localHostUnsupported ? (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  This machine cannot run a simulator or emulator yet. Fix one of the following to
+                  continue:
+                </p>
+                <PlatformStatus platform="iOS" status={platformSetupStatus(props.state, "ios")} />
+                <PlatformStatus
+                  platform="Android"
+                  status={platformSetupStatus(props.state, "android")}
+                />
+              </div>
+            ) : null}
           </section>
         ) : null}
 
