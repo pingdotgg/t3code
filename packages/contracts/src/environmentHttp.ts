@@ -50,6 +50,8 @@ import {
 } from "./pullRequest.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
+  RelayCloudWebhookDeliveryRequest,
+  RelayEnvironmentWebhookDeliveryResponse,
   RelayCloudMintCredentialRequest,
   RelayEnvironmentConfigRequest,
   RelayEnvironmentHealthResponse,
@@ -633,6 +635,13 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.post("health", "/api/t3-connect/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
+      error: EnvironmentHttpCloudErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("webhookDelivery", "/api/t3-connect/webhook-delivery", {
+      payload: RelayCloudWebhookDeliveryRequest,
+      success: RelayEnvironmentWebhookDeliveryResponse,
       error: EnvironmentHttpCloudErrors,
     }),
   )

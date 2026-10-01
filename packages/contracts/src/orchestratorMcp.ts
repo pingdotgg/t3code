@@ -19,7 +19,7 @@ import {
 import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskTimeUpsertSchedule,
 } from "./scheduledTask.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
@@ -53,14 +53,16 @@ const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
  * that compatibility shape at the tool boundary and decoding it immediately.
  */
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskTimeUpsertSchedule,
 ).annotate({
   description:
     "Compatibility-only JSON encoding of the schedule object. Prefer a structured object.",
 });
 
+// Agents schedule time-based work only. Webhook URLs start agents on this
+// machine from outside, so creating one stays a user action.
 const OrchestratorMcpSchedule = Schema.Union([
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskTimeUpsertSchedule,
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:

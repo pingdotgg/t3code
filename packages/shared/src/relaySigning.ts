@@ -15,3 +15,17 @@ export function stableStringify(value: unknown): string {
   }
   return JSON.stringify(value) ?? "null";
 }
+
+/**
+ * Base64url SHA-256 of `value`'s canonical JSON. Binds a signed relay proof to
+ * a payload sent alongside it rather than inside it.
+ */
+export async function sha256StableJson(value: unknown): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(stableStringify(value)),
+  );
+  let binary = "";
+  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}

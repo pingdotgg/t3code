@@ -55,20 +55,37 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
 });
 
 /**
+ * Runs whenever something is POSTed to `url`, a T3 Connect inbox owned by this
+ * environment. Each delivery starts its own run with the request attached.
+ */
+const ScheduledTaskWebhookSchedule = Schema.Struct({
+  type: Schema.Literal("webhook").annotate({
+    description: "Run when a webhook is received.",
+  }),
+  inboxId: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString.annotate({
+    description: "Public URL that triggers this task when something is POSTed to it.",
+  }),
+}).annotate({
+  description: "Run once for every request POSTed to the task's webhook URL.",
+});
+
+/**
  * Read model for persisted schedules. Keep accepting legacy sub-minute rows so
  * users can list, disable, edit, or delete them after the write minimum changes.
  */
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskWebhookSchedule,
 ]).annotate({
   description:
-    "Structured recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
+    "Structured recurring schedule. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
 });
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
-/** Mutation model: newly created or updated interval schedules run at most once per minute. */
-export const ScheduledTaskUpsertSchedule = Schema.Union([
+/** Writable time-based schedules: interval schedules run at most once per minute. */
+export const ScheduledTaskTimeUpsertSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval").annotate({
       description: "Select interval scheduling.",
@@ -83,7 +100,26 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   }),
   ScheduledTaskFixedTimeSchedule,
 ]).annotate({
-  description: "Writable recurring schedule. Pass an object with type 'interval' or 'fixed_time'.",
+  description: "Writable time-based schedule. Pass an object with type 'interval' or 'fixed_time'.",
+});
+export type ScheduledTaskTimeUpsertSchedule = typeof ScheduledTaskTimeUpsertSchedule.Type;
+
+/**
+ * Mutation model. Webhook schedules carry no URL: the server creates the inbox
+ * on first save and keeps it across edits.
+ */
+export const ScheduledTaskUpsertSchedule = Schema.Union([
+  ...ScheduledTaskTimeUpsertSchedule.members,
+  Schema.Struct({
+    type: Schema.Literal("webhook").annotate({
+      description: "Run when a webhook is received. The server creates and keeps the URL.",
+    }),
+  }).annotate({
+    description: "Run once for every request POSTed to the task's webhook URL.",
+  }),
+]).annotate({
+  description:
+    "Writable recurring schedule. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
 });
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 

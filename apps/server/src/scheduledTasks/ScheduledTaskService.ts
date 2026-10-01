@@ -1,3 +1,4 @@
+import type { RelayWebhookDelivery } from "@t3tools/contracts/relay";
 import {
   CommandId,
   MessageId,
@@ -32,6 +33,8 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import * as WebhookInboxClient from "./WebhookInboxClient.ts";
+import { webhookRunPrompt } from "./WebhookRunPrompt.ts";
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
@@ -87,6 +90,14 @@ export class ScheduledTaskService extends Context.Service<
     readonly runNow: (
       input: ScheduledTaskRunNowInput,
     ) => Effect.Effect<ScheduledTaskRunNowResult, ScheduledTaskError>;
+    /**
+     * Starts the run for a webhook delivery T3 Connect pushed to this machine.
+     * Fails only when the task is busy, so the relay keeps the delivery and retries.
+     * A failed launch is recorded on the task like any other run.
+     */
+    readonly acceptWebhookDelivery: (
+      delivery: RelayWebhookDelivery,
+    ) => Effect.Effect<"started" | "dropped", ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
 
@@ -210,12 +221,23 @@ export const layer = Layer.effect(
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const scheduler = yield* Scheduler.Scheduler;
+    const webhookInboxes = yield* WebhookInboxClient.WebhookInboxClient;
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
     // latest signal — an unbounded backlog would just grow memory.
     const changesPubSub = yield* PubSub.sliding<void>(1);
     const notifyChanged = PubSub.publish(changesPubSub, undefined).pipe(Effect.asVoid);
+    // Inbox removal is cleanup: the task change already happened, and the poll
+    // drops deliveries for inboxes no task owns.
+    const removeInboxQuietly = (inboxId: string) =>
+      webhookInboxes
+        .remove(inboxId)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not delete webhook inbox", { inboxId, cause }),
+          ),
+        );
 
     const selectAllRows = () => sql<ScheduledTaskRow>`
       SELECT
@@ -455,10 +477,13 @@ export const layer = Layer.effect(
         ),
       );
 
+    // A webhook trigger carries its delivery; like a manual run it must fail
+    // loudly when it cannot dispatch, so the delivery stays queued for retry.
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
-      trigger: "scheduled" | "manual",
+      trigger: "scheduled" | "manual" | { readonly delivery: RelayWebhookDelivery },
     ) {
+      const delivery = typeof trigger === "object" ? trigger.delivery : null;
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
         const next = new Set(active);
@@ -466,7 +491,7 @@ export const layer = Layer.effect(
         return [true, next] as const;
       });
       if (!reserved) {
-        if (trigger === "manual") {
+        if (trigger !== "scheduled") {
           return yield* taskError("Schedule task is already running.", { taskId: task.id });
         }
         return task;
@@ -483,7 +508,7 @@ export const layer = Layer.effect(
         if (active === null) {
           // A manual run on a just-deleted task must fail loudly, not report
           // a successful run that never dispatched.
-          if (trigger === "manual") {
+          if (trigger !== "scheduled") {
             return yield* taskError("Schedule task not found.", { taskId: task.id });
           }
           return task;
@@ -504,12 +529,19 @@ export const layer = Layer.effect(
         yield* markRunning(active.id, startedAtIso);
         yield* notifyChanged;
 
-        const fireKey = `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
+        // A delivery keys its run on the delivery id, so a delivery processed
+        // twice (crash before ack) replays the same command instead of
+        // starting a second thread.
+        const fireKey =
+          delivery === null
+            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
+            : `${active.id}:delivery:${delivery.deliveryId}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         // Dispatch from the fresh row so prompt/model/binding edits made
         // after the poll read are honoured.
-        const prompt = active.prompt;
+        const prompt =
+          delivery === null ? active.prompt : webhookRunPrompt(active.prompt, delivery);
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
@@ -699,6 +731,23 @@ export const layer = Layer.effect(
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
+    const acceptWebhookDelivery: ScheduledTaskService["Service"]["acceptWebhookDelivery"] = (
+      delivery,
+    ) =>
+      Effect.gen(function* () {
+        const task = (yield* listRows().pipe(
+          Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
+        )).find(
+          (candidate) =>
+            candidate.schedule.type === "webhook" &&
+            candidate.schedule.inboxId === delivery.inboxId,
+        );
+        // A paused or deleted task ignores what arrives for it.
+        if (task === undefined || !task.enabled) return "dropped" as const;
+        yield* runTask(task, { delivery });
+        return "started" as const;
+      });
+
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
         Effect.map((tasks) => ({ tasks })),
@@ -738,19 +787,39 @@ export const layer = Layer.effect(
         // keep their run history, and so real load failures propagate instead
         // of silently resetting an existing row.
         const existingTask = yield* findTask(id);
+        const existingInboxId =
+          existingTask?.schedule.type === "webhook" ? existingTask.schedule.inboxId : null;
+        // A webhook task keeps its URL across edits; the first save creates it.
+        const schedule: ScheduledTask["schedule"] =
+          input.schedule.type !== "webhook"
+            ? input.schedule
+            : existingTask?.schedule.type === "webhook"
+              ? existingTask.schedule
+              : yield* webhookInboxes.create.pipe(
+                  Effect.map((inbox) => ({
+                    type: "webhook" as const,
+                    inboxId: inbox.inboxId,
+                    url: inbox.url,
+                  })),
+                  Effect.mapError((cause) => taskError(cause.message, { cause })),
+                );
+        const createdInboxId =
+          schedule.type === "webhook" && schedule.inboxId !== existingInboxId
+            ? schedule.inboxId
+            : null;
         // Keep the existing next_run_at when the schedule itself is untouched:
         // editing a title or prompt must not postpone (or resurrect) a due
         // run — only schedule/enabled changes restart the clock.
         const scheduleUnchanged =
           existingTask !== null &&
           existingTask.enabled === input.enabled &&
-          isSameSchedule(existingTask.schedule, input.schedule);
+          isSameSchedule(existingTask.schedule, schedule);
         const task: ScheduledTask = {
           id,
           title: input.title,
           prompt: input.prompt,
           enabled: input.enabled,
-          schedule: input.schedule,
+          schedule,
           projectId: input.projectId,
           threadId: input.threadId ?? null,
           workspaceStrategy: input.workspaceStrategy,
@@ -763,14 +832,24 @@ export const layer = Layer.effect(
           updatedAt: iso(now),
           nextRunAt: scheduleUnchanged
             ? existingTask.nextRunAt
-            : nextRunAt({ enabled: input.enabled, schedule: input.schedule }, now),
+            : nextRunAt({ enabled: input.enabled, schedule }, now),
           lastRunAt: existingTask?.lastRunAt ?? null,
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
         };
-        yield* saveTask(task, input.requireExisting === true);
+        yield* saveTask(task, input.requireExisting === true).pipe(
+          Effect.onError(() =>
+            createdInboxId === null ? Effect.void : removeInboxQuietly(createdInboxId),
+          ),
+        );
         yield* notifyChanged;
+        if (
+          existingInboxId !== null &&
+          (schedule.type !== "webhook" || schedule.inboxId !== existingInboxId)
+        ) {
+          yield* removeInboxQuietly(existingInboxId);
+        }
         return { task };
       });
 
@@ -804,7 +883,16 @@ export const layer = Layer.effect(
       });
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(Effect.andThen(notifyChanged), Effect.as({ id: input.id }));
+      Effect.gen(function* () {
+        // A corrupt row must stay deletable, so a failed read only skips inbox cleanup.
+        const existing = yield* findTask(input.id).pipe(Effect.orElseSucceed(() => null));
+        yield* deleteRow(input.id);
+        yield* notifyChanged;
+        if (existing?.schedule.type === "webhook") {
+          yield* removeInboxQuietly(existing.schedule.inboxId);
+        }
+        return { id: input.id };
+      });
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {
@@ -824,6 +912,7 @@ export const layer = Layer.effect(
       setEnabled,
       delete: deleteTask,
       runNow,
+      acceptWebhookDelivery,
     });
   }),
 );

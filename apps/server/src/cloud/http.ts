@@ -18,7 +18,10 @@ import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialProofPayload,
   RelayCloudMintCredentialRequest,
+  RelayCloudWebhookDeliveryProofPayload,
+  RelayCloudWebhookDeliveryRequest,
   RelayEnvironmentHealthResponseProofPayload,
+  type RelayEnvironmentWebhookDeliveryResponseProofPayload,
   type RelayEnvironmentHealthResponse as RelayEnvironmentHealthResponseShape,
   RelayEnvironmentConfigRequest,
   RelayEnvironmentLinkChallengeResponse,
@@ -44,9 +47,12 @@ import {
   RELAY_MANAGED_TUNNEL_RECOVERY_TYP,
   RELAY_MINT_REQUEST_TYP,
   RELAY_MINT_RESPONSE_TYP,
+  RELAY_WEBHOOK_DELIVERY_REQUEST_TYP,
+  RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP,
   signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
+import { sha256StableJson } from "@t3tools/shared/relaySigning";
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -70,6 +76,7 @@ import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
+import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
   SERVICE_STATE_FILE,
@@ -105,12 +112,16 @@ const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
 const CLOUD_HEALTH_NONCE_PREFIX = "cloud-health-nonce-";
 const CLOUD_HEALTH_JTI_PREFIX = "cloud-health-jti-";
+const CLOUD_WEBHOOK_NONCE_PREFIX = "cloud-webhook-nonce-";
+const CLOUD_WEBHOOK_JTI_PREFIX = "cloud-webhook-jti-";
 /** Secret store name prefixes of cloud replay markers. The server prunes expired ones. */
 export const CLOUD_REPLAY_MARKER_PREFIXES = [
   CLOUD_MINT_NONCE_PREFIX,
   CLOUD_MINT_JTI_PREFIX,
   CLOUD_HEALTH_NONCE_PREFIX,
   CLOUD_HEALTH_JTI_PREFIX,
+  CLOUD_WEBHOOK_NONCE_PREFIX,
+  CLOUD_WEBHOOK_JTI_PREFIX,
 ] as const;
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
@@ -403,6 +414,9 @@ function hasBoundedCloudProofLifetime(input: {
 }
 
 const decodeCloudHealthProof = Schema.decodeUnknownEffect(RelayCloudEnvironmentHealthProofPayload);
+const decodeCloudWebhookDeliveryProof = Schema.decodeUnknownEffect(
+  RelayCloudWebhookDeliveryProofPayload,
+);
 const decodeCloudMintProof = Schema.decodeUnknownEffect(RelayCloudMintCredentialProofPayload);
 
 interface CloudHttpDependencies {
@@ -1362,38 +1376,53 @@ const cloudPreferencesHandler = Effect.fn("environment.cloud.preferences")(
   ),
 );
 
+/** What a relay-signed request to this environment is verified against. */
+const readCloudRequestContext = Effect.fn("environment.cloud.readRequestContext")(function* (
+  dependencies: CloudHttpDependencies,
+) {
+  const cloudMintPublicKey = yield* dependencies.secrets
+    .get(CLOUD_MINT_PUBLIC_KEY)
+    .pipe(
+      Effect.flatMap((bytes) =>
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
+          : Effect.fail(new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({})),
+      ),
+    );
+  const relayIssuer = yield* dependencies.secrets
+    .get(RELAY_ISSUER_SECRET)
+    .pipe(
+      Effect.flatMap((bytes) =>
+        Option.isSome(bytes)
+          ? Effect.succeed(bytesToString(bytes.value))
+          : dependencies.secrets
+              .get(RELAY_URL_SECRET)
+              .pipe(
+                Effect.flatMap((fallbackBytes) =>
+                  Option.isSome(fallbackBytes)
+                    ? Effect.succeed(bytesToString(fallbackBytes.value))
+                    : Effect.fail(new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({})),
+                ),
+              ),
+      ),
+    );
+  const environmentId = yield* dependencies.environment.getEnvironmentId;
+  const linkedCloudUserId = yield* readInstalledCloudUserId(dependencies.secrets);
+  const now = yield* DateTime.now;
+  return {
+    cloudMintPublicKey,
+    relayIssuer,
+    environmentId,
+    linkedCloudUserId,
+    now,
+    nowSeconds: Math.floor(now.epochMilliseconds / 1_000),
+  };
+});
+
 const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   function* (dependencies: CloudHttpDependencies, request: RelayCloudEnvironmentHealthRequest) {
-    const cloudMintPublicKey = yield* dependencies.secrets
-      .get(CLOUD_MINT_PUBLIC_KEY)
-      .pipe(
-        Effect.flatMap((bytes) =>
-          Option.isSome(bytes)
-            ? Effect.succeed(bytesToString(bytes.value))
-            : Effect.fail(new EnvironmentAuth.ServerAuthCloudMintPublicKeyMissingError({})),
-        ),
-      );
-    const relayIssuer = yield* dependencies.secrets
-      .get(RELAY_ISSUER_SECRET)
-      .pipe(
-        Effect.flatMap((bytes) =>
-          Option.isSome(bytes)
-            ? Effect.succeed(bytesToString(bytes.value))
-            : dependencies.secrets
-                .get(RELAY_URL_SECRET)
-                .pipe(
-                  Effect.flatMap((fallbackBytes) =>
-                    Option.isSome(fallbackBytes)
-                      ? Effect.succeed(bytesToString(fallbackBytes.value))
-                      : Effect.fail(new EnvironmentAuth.ServerAuthCloudRelayIssuerMissingError({})),
-                  ),
-                ),
-        ),
-      );
-    const environmentId = yield* dependencies.environment.getEnvironmentId;
-    const linkedCloudUserId = yield* readInstalledCloudUserId(dependencies.secrets);
-    const now = yield* DateTime.now;
-    const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    const { cloudMintPublicKey, relayIssuer, environmentId, linkedCloudUserId, now, nowSeconds } =
+      yield* readCloudRequestContext(dependencies);
     const proofOption = yield* verifyRelayJwt({
       publicKey: cloudMintPublicKey,
       token: request.proof,
@@ -1477,6 +1506,98 @@ const cloudEnvironmentHealthHandler = Effect.fn("environment.cloud.health")(
   Effect.catchTag(
     "PlatformError",
     failEnvironmentCloudInternalError("Could not answer cloud health request."),
+  ),
+);
+
+/**
+ * Receives a webhook delivery the relay pushed over the managed tunnel. Verified
+ * like the health check, with the proof bound to the delivery by its digest.
+ * A busy task answers 409 so the relay keeps the delivery and retries.
+ */
+export const cloudWebhookDeliveryHandler = Effect.fn("environment.cloud.webhookDelivery")(
+  function* (
+    dependencies: CloudHttpDependencies,
+    scheduledTasks: ScheduledTasks.ScheduledTaskService["Service"],
+    request: RelayCloudWebhookDeliveryRequest,
+  ) {
+    const { cloudMintPublicKey, relayIssuer, environmentId, linkedCloudUserId, now, nowSeconds } =
+      yield* readCloudRequestContext(dependencies);
+    const proofOption = yield* verifyRelayJwt({
+      publicKey: cloudMintPublicKey,
+      token: request.proof,
+      typ: RELAY_WEBHOOK_DELIVERY_REQUEST_TYP,
+      issuer: normalizeRelayIssuer(relayIssuer),
+      audience: `t3-env:${environmentId}`,
+      nowEpochSeconds: nowSeconds,
+    }).pipe(Effect.flatMap(decodeCloudWebhookDeliveryProof), Effect.option);
+    const deliveryDigest = yield* Effect.promise(() => sha256StableJson(request.delivery));
+    if (
+      Option.isNone(proofOption) ||
+      proofOption.value.environmentId !== environmentId ||
+      proofOption.value.sub !== linkedCloudUserId ||
+      proofOption.value.deliveryId !== request.delivery.deliveryId ||
+      proofOption.value.deliveryDigest !== deliveryDigest ||
+      !hasBoundedCloudProofLifetime({ ...proofOption.value, nowSeconds }) ||
+      !hasExactScope({ scopes: proofOption.value.scope, expected: "environment:webhook" })
+    ) {
+      return yield* new EnvironmentHttpUnauthorizedError({
+        message: "Invalid cloud webhook delivery.",
+      });
+    }
+    const proof = proofOption.value;
+    const consumedReplayGuards = yield* consumeCloudReplayGuards({
+      secrets: dependencies.secrets,
+      names: [
+        `${CLOUD_WEBHOOK_JTI_PREFIX}${proof.jti}`,
+        `${CLOUD_WEBHOOK_NONCE_PREFIX}${proof.nonce}`,
+      ],
+      value: stringToBytes(DateTime.formatIso(now)),
+    });
+    if (!consumedReplayGuards) {
+      return yield* new EnvironmentHttpConflictError({
+        message: "Cloud webhook delivery was already consumed.",
+      });
+    }
+
+    yield* scheduledTasks
+      .acceptWebhookDelivery(request.delivery)
+      .pipe(
+        Effect.mapError((error) => new EnvironmentHttpConflictError({ message: error.message })),
+      );
+
+    const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(dependencies.secrets);
+    const responsePayload = {
+      iss: `t3-env:${environmentId}`,
+      aud: normalizeRelayIssuer(relayIssuer),
+      sub: environmentId,
+      jti: yield* Crypto.Crypto.pipe(Effect.flatMap((crypto) => crypto.randomUUIDv4)),
+      iat: nowSeconds,
+      exp: Math.floor(DateTime.add(now, { minutes: 5 }).epochMilliseconds / 1_000),
+      environmentId,
+      requestNonce: proof.nonce,
+      deliveryId: request.delivery.deliveryId,
+    } satisfies RelayEnvironmentWebhookDeliveryResponseProofPayload;
+    const responseProof = yield* signRelayJwt({
+      privateKey: keyPair.privateKey,
+      typ: RELAY_WEBHOOK_DELIVERY_RESPONSE_TYP,
+      payload: responsePayload,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new EnvironmentAuth.ServerAuthCloudHealthJwtSigningError({ cause }),
+      ),
+    );
+    return { deliveryId: request.delivery.deliveryId, proof: responseProof };
+  },
+  Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+    failEnvironmentCloudInternalError(error.message)(error),
+  ),
+  Effect.catchIf(
+    ServerSecretStore.isSecretStoreError,
+    failEnvironmentCloudInternalError("Could not accept cloud webhook delivery."),
+  ),
+  Effect.catchTag(
+    "PlatformError",
+    failEnvironmentCloudInternalError("Could not accept cloud webhook delivery."),
   ),
 );
 
@@ -1606,6 +1727,7 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
   "connect",
   Effect.fnUntraced(function* (handlers) {
     const dependencies = yield* cloudHttpDependencies;
+    const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
     return handlers
       .handle("linkProof", ({ payload }) => cloudLinkProofHandler(dependencies, payload))
       .handle("relayConfig", ({ payload }) => cloudRelayConfigHandler(dependencies, payload))
@@ -1613,6 +1735,9 @@ export const connectHttpApiLayer = HttpApiBuilder.group(
       .handle("unlink", () => cloudUnlinkHandler(dependencies))
       .handle("preferences", ({ payload }) => cloudPreferencesHandler(dependencies, payload))
       .handle("health", ({ payload }) => cloudEnvironmentHealthHandler(dependencies, payload))
+      .handle("webhookDelivery", ({ payload }) =>
+        traceRelayRequest(cloudWebhookDeliveryHandler(dependencies, scheduledTasks, payload)),
+      )
       .handle("mintCredential", ({ payload }) => cloudMintCredentialHandler(dependencies, payload))
       .handle("t3MintCredential", ({ payload }) =>
         traceRelayRequest(cloudMintCredentialHandler(dependencies, payload)),

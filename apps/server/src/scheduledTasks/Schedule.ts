@@ -13,6 +13,8 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
+  // Webhook tasks run when a delivery arrives, never on the clock.
+  if (schedule.type === "webhook") return null;
   if (schedule.type === "interval") {
     // Persisted rows created before the one-minute floor remain readable, but
     // they must not retain their old high-frequency execution rate.
@@ -52,6 +54,9 @@ function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
 
 /** Semantic equality for schedules: true iff both fire at the same times. */
 export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedule): boolean {
+  if (a.type === "webhook") {
+    return b.type === "webhook" && a.inboxId === b.inboxId;
+  }
   if (a.type === "interval") {
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
@@ -93,6 +98,7 @@ export function isMissedFixedTimeRun(
 }
 
 function describeSchedule(schedule: ScheduledTaskSchedule): string {
+  if (schedule.type === "webhook") return "When a webhook is received";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / MINUTE_MS;
     if (Number.isInteger(minutes)) {

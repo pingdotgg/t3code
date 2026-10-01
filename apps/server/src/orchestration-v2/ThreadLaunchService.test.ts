@@ -47,6 +47,7 @@ import * as ScratchWorkspace from "../project/ScratchWorkspace.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
+import * as WebhookInboxClient from "../scheduledTasks/WebhookInboxClient.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -277,7 +278,14 @@ for (const target of ["new", "existing"] as const) {
       () => {
         const harness = makeHarness();
         const scheduledTasks = ScheduledTasks.layer.pipe(
-          Layer.provide(Layer.mergeAll(harness.layer, NodeCrypto.layer, Scheduler.layer)),
+          Layer.provide(
+            Layer.mergeAll(
+              harness.layer,
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(WebhookInboxClient.WebhookInboxClient)({}),
+            ),
+          ),
         );
         return Effect.gen(function* () {
           const tasks = yield* ScheduledTasks.ScheduledTaskService;

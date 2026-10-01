@@ -945,6 +945,69 @@ export const RelayHealthResponse = Schema.Struct({
 });
 export type RelayHealthResponse = typeof RelayHealthResponse.Type;
 
+// Webhook inboxes: public URLs that store whatever is POSTed to them and push
+// each request to the owning environment over its managed tunnel, like the
+// health check. The relay treats the request as opaque; the environment
+// decides what it means.
+export const RELAY_WEBHOOK_INBOX_PATH_PREFIX = "/v1/inbox/";
+export const RELAY_WEBHOOK_MAX_BODY_BYTES = 256 * 1024;
+export const RELAY_WEBHOOK_MAX_PENDING_PER_INBOX = 100;
+export const RELAY_WEBHOOK_DELIVERY_RETENTION_DAYS = 7;
+
+export const RelayWebhookInboxId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export type RelayWebhookInboxId = typeof RelayWebhookInboxId.Type;
+
+export const RelayWebhookInbox = Schema.Struct({
+  inboxId: RelayWebhookInboxId,
+  url: TrimmedNonEmptyString,
+  createdAt: TrimmedNonEmptyString,
+});
+export type RelayWebhookInbox = typeof RelayWebhookInbox.Type;
+
+export const RelayWebhookDelivery = Schema.Struct({
+  deliveryId: TrimmedNonEmptyString,
+  inboxId: RelayWebhookInboxId,
+  receivedAt: TrimmedNonEmptyString,
+  headers: Schema.Record(Schema.String, Schema.String),
+  body: Schema.String,
+});
+export type RelayWebhookDelivery = typeof RelayWebhookDelivery.Type;
+
+/** `deliveryDigest` is `sha256StableJson(delivery)`, binding the proof to the delivery it travels with. */
+export const RelayCloudWebhookDeliveryProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  nonce: TrimmedNonEmptyString,
+  scope: Schema.Array(Schema.Literal("environment:webhook")),
+  deliveryId: TrimmedNonEmptyString,
+  deliveryDigest: TrimmedNonEmptyString,
+});
+export type RelayCloudWebhookDeliveryProofPayload =
+  typeof RelayCloudWebhookDeliveryProofPayload.Type;
+
+export const RelayCloudWebhookDeliveryRequest = Schema.Struct({
+  proof: TrimmedNonEmptyString,
+  delivery: RelayWebhookDelivery,
+});
+export type RelayCloudWebhookDeliveryRequest = typeof RelayCloudWebhookDeliveryRequest.Type;
+
+export const RelayEnvironmentWebhookDeliveryResponseProofPayload = Schema.Struct({
+  ...RelaySignedJwtRegisteredClaims,
+  environmentId: EnvironmentId,
+  requestNonce: TrimmedNonEmptyString,
+  deliveryId: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentWebhookDeliveryResponseProofPayload =
+  typeof RelayEnvironmentWebhookDeliveryResponseProofPayload.Type;
+
+/** The environment accepted the delivery; the relay may delete it. */
+export const RelayEnvironmentWebhookDeliveryResponse = Schema.Struct({
+  deliveryId: TrimmedNonEmptyString,
+  proof: TrimmedNonEmptyString,
+});
+export type RelayEnvironmentWebhookDeliveryResponse =
+  typeof RelayEnvironmentWebhookDeliveryResponse.Type;
+
 const RelayHealthGroup = HttpApiGroup.make("health")
   .add(
     HttpApiEndpoint.get("health", "/health", {
@@ -1171,8 +1234,32 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAgentActivityPublishErrors,
       },
     ).annotate(OpenApi.Summary, "Publish agent activity"),
+    HttpApiEndpoint.post("createWebhookInbox", "/v1/environments/:environmentId/webhook-inboxes", {
+      params: Schema.Struct({
+        environmentId: EnvironmentId,
+      }),
+      success: RelayWebhookInbox,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Create a webhook inbox"),
+    HttpApiEndpoint.delete(
+      "deleteWebhookInbox",
+      "/v1/environments/:environmentId/webhook-inboxes/:inboxId",
+      {
+        params: Schema.Struct({
+          environmentId: EnvironmentId,
+          inboxId: RelayWebhookInboxId,
+        }),
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    )
+      .annotate(OpenApi.Summary, "Delete a webhook inbox")
+      .annotate(OpenApi.Description, "Deletes the inbox and any deliveries still waiting in it."),
   )
-  .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
+  .annotate(
+    OpenApi.Description,
+    "Environment-authenticated activity publication and webhook inbox management.",
+  )
   .middleware(RelayEnvironmentAuth);
 
 export const RelayApi = HttpApi.make("RelayApi")

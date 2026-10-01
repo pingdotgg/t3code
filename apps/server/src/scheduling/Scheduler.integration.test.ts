@@ -24,6 +24,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as UsageLimitRecoveryWorker from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
+import * as WebhookInboxClient from "../scheduledTasks/WebhookInboxClient.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Scheduler from "./Scheduler.ts";
 
@@ -112,6 +113,7 @@ it.effect.each(["on time", "after restart"])(
         Layer.mock(ServerSettings.ServerSettingsService)({
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
         }),
+        Layer.mock(WebhookInboxClient.WebhookInboxClient)({}),
       );
       const workers = Layer.mergeAll(
         ScheduledTasks.layer,

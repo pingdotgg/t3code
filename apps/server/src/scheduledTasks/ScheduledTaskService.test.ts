@@ -19,6 +19,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as WebhookInboxClient from "./WebhookInboxClient.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -211,6 +212,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(WebhookInboxClient.WebhookInboxClient)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -316,6 +318,7 @@ it.effect(
                     ),
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(WebhookInboxClient.WebhookInboxClient)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
