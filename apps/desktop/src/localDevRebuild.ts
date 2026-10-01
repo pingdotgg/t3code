@@ -192,7 +192,10 @@ export async function checkLocalDevRebuildStaleness(input: {
     [head, branch, workingTree, lsRemote] = await Promise.all([
       runGit(["rev-parse", "HEAD"], cwd),
       runGit(["branch", "--show-current"], cwd),
-      runGit(["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], cwd),
+      runGit(
+        ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules=untracked"],
+        cwd,
+      ),
       runGit(["ls-remote", "--symref", "origin", "HEAD"], cwd),
     ]);
   } catch (error) {
@@ -476,10 +479,10 @@ async function isAncestor(
  * Fast-forward the checkout to the remote default branch before rebuilding,
  * so the new build actually contains the advertised remote changes. The
  * branch is resolved fresh via ls-remote (never trusted from a stale poll),
- * and the pull only runs when the checkout is on that branch with a clean
- * working tree: anything else (feature branch, detached HEAD, local
- * changes, no default branch) aborts with an actionable message instead of
- * mutating local work or updating the wrong ref. Never merges: fast-forward
+ * and the pull only runs when the checkout is on that branch without tracked
+ * changes. Untracked paths are left alone; Git rejects pulls that would
+ * overwrite them. Feature branches, detached HEADs, tracked changes, and
+ * missing default branches abort with an actionable message. Never merges: fast-forward
  * failures surface git's own message and the rebuild is aborted before
  * anything is built or restarted.
  */
@@ -514,14 +517,12 @@ export async function pullLatestCheckoutChanges(
     );
   }
 
-  // Clean-tree gate before the mutation boundary: a fast-forward can still
-  // move a worktree with unrelated edits, and a configured pull.autostash
-  // would silently stash/apply around it. Full-visibility flags match
-  // ProjectAutoPull so user status preferences cannot hide changes.
+  // Protect tracked edits without letting unrelated untracked paths block
+  // updates. Git's fast-forward step checks for untracked-path collisions.
   let workingTree: GitRunResult;
   try {
     workingTree = await runGit(
-      ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+      ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules=untracked"],
       sourceRoot,
     );
   } catch (error) {
