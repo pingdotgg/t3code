@@ -20,6 +20,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as WorkspaceSearchIndexService from "./WorkspaceSearchIndexService.ts";
 
@@ -35,8 +36,8 @@ const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const CONTENT_SEARCH_MAX_CANDIDATES = 25_000;
 
-function toPosixPath(input: string): string {
-  return input.replaceAll("\\", "/");
+function toPosixPath(input: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? input.replaceAll("\\", "/") : input;
 }
 
 function trimDirectorySeparator(input: string): string {
@@ -48,8 +49,8 @@ function parentPathOf(input: string): string | undefined {
   return separatorIndex === -1 ? undefined : input.slice(0, separatorIndex);
 }
 
-function toProjectEntry(item: MixedItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
+function toProjectEntry(item: MixedItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath, platform));
   if (!normalizedPath) {
     return null;
   }
@@ -60,23 +61,24 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
   };
 }
 
-function toFileEntry(item: FileItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toFileEntry(item: FileItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, platform));
   return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
 }
 
-function toDirectoryEntry(item: DirItem): ProjectEntry | null {
-  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
+function toDirectoryEntry(item: DirItem, platform: NodeJS.Platform): ProjectEntry | null {
+  const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, platform));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
 }
 
 function mapFileSearchResult(
   result: SearchResult,
   limit: number,
+  platform: NodeJS.Platform,
   imageOnly = false,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toFileEntry(item);
+    const entry = toFileEntry(item, platform);
     return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? [entry] : [];
   });
   return {
@@ -88,9 +90,10 @@ function mapFileSearchResult(
 function mapDirectorySearchResult(
   result: DirSearchResult,
   limit: number,
+  platform: NodeJS.Platform,
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
-    const entry = toDirectoryEntry(item);
+    const entry = toDirectoryEntry(item, platform);
     return entry ? [entry] : [];
   });
   const rootDirectoryCount = result.items.some((item) => item.relativePath.length === 0) ? 1 : 0;
@@ -103,10 +106,11 @@ function mapDirectorySearchResult(
 function mapMixedSearchResult(
   result: MixedSearchResult,
   limit: number,
+  platform: NodeJS.Platform,
 ): { readonly entries: ProjectEntry[]; readonly truncated: boolean } {
   const entries: ProjectEntry[] = [];
   for (const item of result.items) {
-    const entry = toProjectEntry(item);
+    const entry = toProjectEntry(item, platform);
     if (entry) {
       entries.push(entry);
     }
@@ -267,6 +271,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexService.WorkspaceSearchIndexVariant = "paths",
 ) {
+  const platform = yield* HostProcessPlatform;
   const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
@@ -356,6 +361,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const mapped = mapMixedSearchResult(
       result,
       WorkspaceSearchIndexService.WORKSPACE_INDEX_MAX_ENTRIES,
+      platform,
     );
     const sortedEntries = withDirectoryAncestors(mapped.entries).toSorted((left, right) =>
       left.path.localeCompare(right.path),
@@ -377,18 +383,18 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
       );
-      return mapFileSearchResult(result, limit, imageOnly);
+      return mapFileSearchResult(result, limit, platform, imageOnly);
     }
     if (kind === "directory") {
       const result = yield* runSearch(query, pageSize, "directorySearch", () =>
         finder.directorySearch(query, { pageSize }),
       );
-      return mapDirectorySearchResult(result, limit);
+      return mapDirectorySearchResult(result, limit, platform);
     }
     const result = yield* runSearch(query, pageSize, "mixedSearch", () =>
       finder.mixedSearch(query, { pageSize }),
     );
-    return mapMixedSearchResult(result, limit);
+    return mapMixedSearchResult(result, limit, platform);
   });
 
   const searchContents: WorkspaceSearchIndexService.WorkspaceSearchIndex["Service"]["searchContents"] =
@@ -429,7 +435,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           );
           if (matchRanges.length === 0) continue;
           pageMatches.push({
-            path: toPosixPath(match.relativePath),
+            path: toPosixPath(match.relativePath, platform),
             lineNumber: match.lineNumber,
             lineContent: match.lineContent,
             matchRanges,

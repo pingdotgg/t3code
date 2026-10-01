@@ -193,6 +193,30 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       60_000,
     );
 
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "preserves literal backslashes in POSIX search results",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir();
+          const relativePath = "src/foo\\bar.ts";
+          yield* writeTextFile(cwd, relativePath, "synthetic content\n");
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          expect(
+            (yield* workspaceEntries.search({ cwd, query: "foo", limit: 10 })).entries,
+          ).toContainEqual({ path: relativePath, kind: "file" });
+          expect(
+            (yield* workspaceEntries.searchContents({
+              cwd,
+              query: "synthetic",
+              limit: 10,
+              caseSensitive: true,
+              wholeWord: false,
+              useRegex: false,
+            })).matches,
+          ).toContainEqual(expect.objectContaining({ path: relativePath }));
+        }),
+    );
+
     it.effect("returns the complete cached workspace index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();
