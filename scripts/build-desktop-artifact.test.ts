@@ -299,7 +299,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
            import { buildDesktopBundles } from ${yield* encodeModuleUrl(import.meta.resolve("./build-desktop-artifact.ts"))};
            const result = await Effect.runPromise(buildDesktopBundles(process.argv[2], "0.0.44", false).pipe(
              Effect.as("success"), Effect.catch(error => Effect.succeed(error._tag)),
-             Effect.provide(NodeServices.layer)));
+             Effect.scoped, Effect.provide(NodeServices.layer)));
            process.stdout.write(result);`,
           );
           const first = yield* Effect.forkChild(
