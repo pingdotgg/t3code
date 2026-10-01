@@ -7,6 +7,7 @@ export function getAgentLiveActivities(): Array<LiveActivity<AgentActivityProps>
 
 export function startAgentLiveActivity(
   _props: AgentActivityProps,
+  _staleDate?: Date,
 ): LiveActivity<AgentActivityProps> | null {
   return null;
 }
