@@ -116,6 +116,11 @@ export interface ProviderChangeRequestSummary {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
+  /**
+   * The host-native stack the pull request sits in, from the same read. Null when the host says
+   * it is in none; absent when the read did not ask.
+   */
+  readonly stack?: PullRequestStackMembership | null | undefined;
 }
 
 /** One layer of a host-native stack, bottom to top order is the array's. */
