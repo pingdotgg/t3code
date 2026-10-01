@@ -15,6 +15,7 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   private samples = 0;
   private levelSamples = 0;
   private levelEnergy = 0;
+  private level = 0;
 
   constructor() {
     super();
@@ -61,7 +62,12 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
       this.levelEnergy += sample * sample;
       this.levelSamples++;
       if (this.levelSamples >= sampleRate / 20) {
-        this.port.postMessage(Math.min(1, Math.sqrt(this.levelEnergy / this.levelSamples) * 4), []);
+        const target = Math.min(1, Math.sqrt(this.levelEnergy / this.levelSamples) * 4);
+        // Soften brief peaks without delaying meter updates or transcription.
+        const timeConstant = target > this.level ? 0.075 : 0.2;
+        const decay = Math.exp(-this.levelSamples / sampleRate / timeConstant);
+        this.level = target + (this.level - target) * decay;
+        this.port.postMessage(this.level, []);
         this.levelEnergy = 0;
         this.levelSamples = 0;
       }
