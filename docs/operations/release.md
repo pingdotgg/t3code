@@ -26,7 +26,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
-- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle (the Windows jobs also wait for the same-arch Linux job, whose CLI archive they embed as the WSL runtime):
+- Builds six desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) on hardware of its own architecture, gated only on the bundle. The Windows jobs embed the same-arch Linux CLI archive as the WSL runtime and wait for that artifact partway through, not for the whole Linux job:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` and `arm64` AppImage and `.deb`, from one electron-builder run. The `.deb` updates in the app through electron-updater, which installs it with `dpkg`.
@@ -47,7 +47,7 @@ This document covers the unified release workflow for stable and nightly desktop
   - nightly releases publish npm dist-tag `nightly`
   - preview releases publish npm dist-tag `preview`, which nothing resolves unless asked for by name
   - one-time setup: the `@t3code` npm scope (org) must exist, and `t3` and each `@t3code/t3-<platform>-<arch>` package needs a trusted publisher registered for this workflow file (see below).
-- Deploys the hosted web app to Vercel only after a release is published:
+- Builds the hosted web app on Vercel while the desktop jobs run, and makes it live only after a release is published:
   - stable releases are aliased to the `latest` hosted app channel
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
@@ -211,9 +211,11 @@ stage, test Cloudflare account, disposable host, and disposable T3 home. Keep pr
 
 ## Marketing site deployment
 
-After a nightly release is published, the release workflow deploys the same commit
-to the marketing site's Vercel production project. Stable releases do not deploy
-the marketing site because they can promote an older nightly commit.
+On nightly releases, the release workflow builds the same commit as a staged
+production deployment of the marketing site's Vercel project while the desktop
+jobs run, and promotes it with `vercel promote` after the release is published.
+Stable releases do not deploy the marketing site because they can promote an
+older nightly commit.
 
 The job looks up the `t3code-marketing` project using the existing `VERCEL_TOKEN`
 and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
@@ -224,8 +226,10 @@ Git deployments remain disabled in `apps/marketing/vercel.ts`.
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
 web project disables automatic Git deployments in `apps/web/vercel.ts` via
-`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
-web app with Vercel CLI after the GitHub Release succeeds.
+`git.deploymentEnabled: false`. `.github/workflows/release.yml` builds the web
+app with Vercel CLI as a staged production deployment (`--skip-domain`) while
+the desktop jobs run, and aliases the channel domains to it after the GitHub
+Release succeeds.
 
 Required GitHub Actions secrets:
 
@@ -302,6 +306,10 @@ The workflow enforces this ordering:
 1. `publish_cli` publishes the exact release version to npm, on every channel.
 2. `release` depends on `publish_cli` before exposing desktop artifacts in GitHub Releases.
 3. `deploy_web` depends on `release` before moving the hosted channel to the new client.
+   `build_web` builds that client earlier with `vercel deploy --prod --skip-domain`, which
+   leaves the custom domains alone but moves the project's own `*.vercel.app` production
+   hostname. That hostname is behind Vercel SSO, so users only get the client through the
+   custom domains.
 
 Preserve these dependencies when changing the release graph. Publishing a client first would leave
 the **Update server** action targeting a package version that does not exist yet.
