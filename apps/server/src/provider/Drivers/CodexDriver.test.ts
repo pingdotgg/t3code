@@ -91,6 +91,21 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect("reports a disabled managed account as disabled", () =>
+    Effect.gen(function* () {
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("disabled-managed-account"),
+        displayName: "Disabled account",
+        enabled: false,
+        environment: [],
+        config: { ...CodexDriver.defaultConfig(), setupMode: "managed" },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect((yield* instance.snapshot.getSnapshot).enabled).toBe(false);
+      expect((yield* instance.snapshot.refresh).enabled).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
