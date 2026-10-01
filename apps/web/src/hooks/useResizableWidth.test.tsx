@@ -284,4 +284,22 @@ describe("panel width row tracking", () => {
     await act(() => renderer.update(<Panel rowWidth={1000} />));
     expect(result.width).toBe(450);
   });
+
+  it("keeps a row shift that lands mid-drag", async () => {
+    await act(() => renderer.update(<Panel rowWidth={1000} />));
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerMove(pointer(50));
+    });
+    await act(() => frame?.(0));
+    expect(result.width).toBe(450);
+    // App sidebar collapses while the handle is held.
+    await act(() => renderer.update(<Panel rowWidth={1100} />));
+    expect(result.width).toBe(550);
+    await act(() => result.handlers.onPointerMove(pointer(25)));
+    await act(() => frame?.(0));
+    expect(result.width).toBe(575);
+    await act(() => result.handlers.onPointerUp(pointer(25)));
+    expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "575");
+  });
 });

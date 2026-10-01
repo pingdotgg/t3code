@@ -97,17 +97,22 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   }
 
   const clampedWidth = clamp(widthState.width);
-  const latestOptions = useRef({ clamp, storageKey });
+  const latestOptions = useRef({ clamp, storageKey, rowWidth });
   useLayoutEffect(() => {
-    latestOptions.current = { clamp, storageKey };
-  }, [clamp, storageKey]);
+    latestOptions.current = { clamp, storageKey, rowWidth };
+  }, [clamp, rowWidth, storageKey]);
 
   const handlers = useResizeDrag<HTMLElement>(
     () => ({
       width: clampedWidth,
       edge,
       resize(value) {
-        const nextWidth = latestOptions.current.clamp(value);
+        // Keep a row shift that lands mid-drag (sidebar toggled or still
+        // animating) instead of snapping back to the pointer-down width.
+        const latest = latestOptions.current;
+        const rowShift =
+          rowWidth !== undefined && latest.rowWidth !== undefined ? latest.rowWidth - rowWidth : 0;
+        const nextWidth = latest.clamp(value + rowShift);
         setWidthState((current) => ({ ...current, storageKey, width: nextWidth }));
         return nextWidth;
       },
