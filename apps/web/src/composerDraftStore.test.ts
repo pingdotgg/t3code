@@ -71,7 +71,7 @@ import {
   composerDraftHasUserContent,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
-  restoreFailedBackgroundDraftThread,
+  restoreFailedDraftThread,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
@@ -1361,7 +1361,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       const nextDraft = store.getDraftSession(nextDraftId);
       if (finalized) finalizePromotedDraftThreadByRef(threadRef);
 
-      restoreFailedBackgroundDraftThread(draftId, sentDraft, retryThreadId);
+      restoreFailedDraftThread(draftId, sentDraft, retryThreadId);
       store.setPrompt(draftId, "Retry the first task");
 
       expect(store.getDraftThreadByProjectRef(projectRef)?.draftId).toBe(nextDraftId);

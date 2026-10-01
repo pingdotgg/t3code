@@ -52,7 +52,8 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   );
   const threadRefs = useThreadRefs();
   // The server thread this view is about: the route's own ref, or the draft's
-  // reserved ref once the server knows it.
+  // reserved ref once the server knows it. A draft is marked promoting as soon
+  // as it sends, before the server has created its thread.
   const inferredThreadRef = draftSession
     ? (threadRefs.find(
         (ref) =>
@@ -61,7 +62,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
       ) ?? null)
     : null;
   const serverThreadRef: ScopedThreadRef | null =
-    target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
+    target.kind === "server" ? target.threadRef : inferredThreadRef;
   const serverThread = useThread(serverThreadRef);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
