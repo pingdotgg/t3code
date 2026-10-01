@@ -151,10 +151,6 @@ export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
     model: "claude-haiku-4-5",
     options: [{ id: "thinking", value: false }],
   },
-  [OPENCODE_DRIVER_KIND]: {
-    model: "opencode/big-pickle",
-    options: [{ id: "variant", value: "low" }],
-  },
   [CURSOR_DRIVER_KIND]: {
     model: "composer-2",
     options: [{ id: "reasoning", value: "low" }],
@@ -162,6 +158,10 @@ export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
   [GROK_DRIVER_KIND]: {
     model: "grok-build",
     options: [{ id: "reasoningEffort", value: "low" }],
+  },
+  [OPENCODE_DRIVER_KIND]: {
+    model: "opencode/big-pickle",
+    options: [{ id: "variant", value: "low" }],
   },
   [ProviderDriverKind.make("antigravity")]: {
     model: "antigravity-default",
