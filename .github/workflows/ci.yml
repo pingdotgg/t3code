@@ -15,10 +15,10 @@ concurrency:
 
 jobs:
   # Lint, typecheck, and the desktop build each get a runner so they run side by
-  # side instead of one after another. The `CI` job at the end of this file
+  # side instead of one after another. The `Check` job at the end of this file
   # passes only when every other job does.
-  check:
-    name: Check
+  lint:
+    name: Lint
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -450,17 +450,17 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # The one check branch protection needs to require. It fails when any other
-  # job fails or is cancelled, so adding, splitting, or resharding jobs never
-  # changes the required checks. `always()` rather than `!cancelled()`: a
-  # skipped job reports success to branch protection, so a cancelled run must
-  # still produce a failing CI check.
-  ci:
-    name: CI
+  # Branch protection requires this job by its name, `Check`. It fails when any
+  # other job fails, is cancelled, or is skipped without a reason, so splitting
+  # or resharding jobs needs no ruleset change. Add every new job to `needs`.
+  # `always()` rather than `!cancelled()`: a skipped job reports success to
+  # branch protection, so a cancelled run must still produce a failing check.
+  check:
+    name: Check
     if: ${{ always() }}
     needs:
       [
-        check,
+        lint,
         typecheck,
         build,
         test,
@@ -479,4 +479,7 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
+          # Only the macOS lint skips on purpose, when no native mobile code changed.
+          echo "$RESULTS" | jq -e 'all(to_entries[];
+            .value.result == "success"
+            or (.key == "mobile_native_static_analysis" and .value.result == "skipped"))' > /dev/null
