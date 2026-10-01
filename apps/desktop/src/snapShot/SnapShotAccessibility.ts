@@ -57,25 +57,27 @@ function accessibilityReadSnapshot(
         descendantLocationsReliable: progress.richLocationsReliable,
       })
     : undefined;
-  const accessibleText =
-    progress.accessibleText ??
-    (richTree
-      ? accessibleWindowText(richTree.root, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)
-      : undefined);
+  const richText = richTree
+    ? accessibleWindowText(richTree.root, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)
+    : undefined;
+  const accessibleText = progress.accessibleText ?? richText;
+  const richTruncated = progress.richTruncated || richTree?.truncated === true;
   const accessibility: SnapShotAccessibility | undefined =
-    progress.richComplete && richTree
+    progress.richComplete &&
+    richTree &&
+    (!richTruncated || !progress.accessibleText || progress.accessibleText === richText)
       ? {
           format: "element-tree",
           coordinateSpace: "captured-image",
           imageSize,
-          truncated: progress.richTruncated || richTree.truncated,
+          truncated: richTruncated,
           root: richTree.root,
         }
-      : progress.flatComplete && accessibleText
+      : progress.flatComplete && progress.accessibleText
         ? {
             format: "flat-text",
-            text: accessibleText,
-            truncated: accessibleText.length >= SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
+            text: progress.accessibleText,
+            truncated: progress.accessibleText.length >= SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
           }
         : richTree
           ? {
@@ -95,6 +97,23 @@ function accessibilityReadSnapshot(
   ) as CapturedWindowAccessibilityContext;
 }
 
+type AccessibilityElement = Awaited<ReturnType<InstanceType<AccessibilityApp>["children"]>>[number];
+
+async function windowsForPid(
+  App: AccessibilityApp,
+  processId: number,
+): Promise<readonly AccessibilityElement[]> {
+  return await App.byPid(processId, { timeout: 0 })
+    .then((app) => app.children())
+    .catch(() => []);
+}
+
+/** Flatpak apps reach AT-SPI through xdg-dbus-proxy, so the compositor PID misses. */
+async function windowsFromAppList(App: AccessibilityApp): Promise<readonly AccessibilityElement[]> {
+  const apps = await App.list().catch(() => []);
+  return (await Promise.all(apps.map((app) => app.children().catch(() => [])))).flat();
+}
+
 async function readCapturedWindowAccessibility(
   App: AccessibilityApp,
   request: SnapShotAccessibilityRequest,
@@ -103,17 +122,24 @@ async function readCapturedWindowAccessibility(
 ): Promise<CapturedWindowAccessibilityContext | undefined> {
   const { active, platform, sourceTitle, imageSize } = request;
   const foreground = platform === "win32" ? await App.foreground({ timeout: 0 }) : undefined;
-  const windows =
+  const pidWindows =
     foreground !== undefined
       ? foreground.pid === active.owner.processId
         ? [foreground.asElement()]
         : []
-      : await (await App.byPid(active.owner.processId, { timeout: 0 })).children();
+      : await windowsForPid(App, active.owner.processId);
   const matchMode = isWaylandSession(platform, process.env) ? "wayland" : "screen-bounds";
+  const captured = {
+    title: active.title,
+    sourceTitle,
+    bounds: active.bounds,
+    clientBounds: active.clientBounds,
+  };
   const window = findAccessibleWindow(
-    windows,
-    { title: active.title, sourceTitle, bounds: active.bounds, clientBounds: active.clientBounds },
+    pidWindows.length > 0 || foreground !== undefined ? pidWindows : await windowsFromAppList(App),
+    captured,
     matchMode,
+    { allowUntitledUniqueBounds: foreground === undefined && pidWindows.length > 0 },
   );
   if (!window) {
     onStarted();

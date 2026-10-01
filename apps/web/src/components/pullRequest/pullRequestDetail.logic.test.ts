@@ -1,25 +1,36 @@
+import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
+  ProjectId,
   PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
   type PullRequestDetail,
   type PullRequestDetailView,
+  type PullRequestRef,
   type PullRequestReviewThread,
+  type RepositoryIdentity,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { formatInlineContextReference } from "~/lib/composerContextReferences";
+import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
+  stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
-  isThreadOwnPullRequest,
+  loadingPullRequestCheckoutCommand,
+  pullRequestPanelContext,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
@@ -27,13 +38,12 @@ import {
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
-  pullRequestComposerTarget,
   pullRequestFindingKey,
-  pullRequestHandoffLabels,
   pullRequestReviewOutcome,
   readableFailure,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
+  resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
@@ -49,6 +59,7 @@ describe("pull request checkout commands", () => {
   it.each([
     ["github", "feature", null, "gh pr checkout 42"],
     ["gitlab", "feature", null, "glab mr checkout 42"],
+    ["forgejo", "feature", null, null],
     ["azure-devops", "feature", null, "az repos pr checkout --id 42"],
     [
       "bitbucket",
@@ -59,6 +70,75 @@ describe("pull request checkout commands", () => {
     ["unknown", "feature", null, null],
   ] as const)("builds the %s command", (provider, branch, repository, expected) => {
     expect(pullRequestCheckoutCommand(provider, 42, branch, repository)).toBe(expected);
+  });
+  it("fetches Forgejo pull refs from the actual repository, including a mounted host and port", () => {
+    expect(
+      pullRequestCheckoutCommand(
+        "forgejo",
+        42,
+        "feature",
+        null,
+        "https://forgejo.local:3000/git/maria/repo",
+      ),
+    ).toBe(
+      "git fetch 'https://forgejo.local:3000/git/maria/repo' refs/pull/42/head && git checkout -B pulls/42 FETCH_HEAD",
+    );
+  });
+  it("quotes shell metacharacters in Forgejo repository URLs", () => {
+    expect(
+      pullRequestCheckoutCommand(
+        "forgejo",
+        42,
+        "feature",
+        null,
+        "https://forgejo.local/maria/repo'$(echo nope)",
+      ),
+    ).toBe(
+      "git fetch 'https://forgejo.local/maria/repo'\\''$(echo nope)' refs/pull/42/head && git checkout -B pulls/42 FETCH_HEAD",
+    );
+  });
+
+  const reference = (host?: string): PullRequestRef => ({
+    projectId: ProjectId.make("project-1"),
+    ...(host === undefined ? {} : { host }),
+    repository: "acme/web",
+    number: 42,
+  });
+  const identity = (provider: string, canonicalKey: string): RepositoryIdentity => ({
+    canonicalKey,
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "git@github.com:acme/web.git",
+    },
+    provider,
+  });
+
+  it("uses a public host when no repository identity is available", () => {
+    expect(loadingPullRequestCheckoutCommand(reference("github.com"), undefined)).toBe(
+      "gh pr checkout 42",
+    );
+    expect(loadingPullRequestCheckoutCommand(reference("gitlab.com"), null)).toBe(
+      "glab mr checkout 42",
+    );
+  });
+
+  it("uses a matching enterprise identity and rejects an explicit host mismatch", () => {
+    const enterprise = identity("github", "github.example.test/acme/web");
+    expect(loadingPullRequestCheckoutCommand(reference("github.example.test"), enterprise)).toBe(
+      "gh pr checkout 42",
+    );
+    expect(loadingPullRequestCheckoutCommand(reference("github.com"), enterprise)).toBeNull();
+  });
+
+  it("does not infer a number-only command without a trusted provider", () => {
+    expect(loadingPullRequestCheckoutCommand(reference(), undefined)).toBeNull();
+    expect(
+      loadingPullRequestCheckoutCommand(
+        reference("github.com"),
+        identity("gitlab", "gitlab.com/acme/web"),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -212,33 +292,6 @@ describe("pull request primary control", () => {
       "resolve",
     );
     expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
-  });
-});
-
-describe("pull request handoff labels", () => {
-  it("names the open thread when actions write to its composer", () => {
-    expect(pullRequestHandoffLabels(true)).toEqual({
-      fixFinding: "Fix in this thread",
-      fixCheck: "Fix in this thread",
-      fixFindings: "Fix findings in this thread",
-    });
-  });
-
-  it("keeps the standalone pull request page labels", () => {
-    expect(pullRequestHandoffLabels(false)).toEqual({
-      fixFinding: "Fix in a thread",
-      fixCheck: "Fix",
-      fixFindings: "Fix findings in a thread",
-    });
-  });
-});
-
-describe("pull request composer target", () => {
-  it("rejects a page composer so agent comments cannot open another thread", () => {
-    const target = { environmentId: "env-1", threadId: "thread-1" };
-
-    expect(pullRequestComposerTarget("page", target)).toBeNull();
-    expect(pullRequestComposerTarget("thread", target)).toBe(target);
   });
 });
 
@@ -1046,7 +1099,39 @@ describe("asking about a change rather than working on it", () => {
     url: "https://github.com/pingdotgg/t3code/pull/42",
     headBranch: "feat/page",
     baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
   };
+
+  it.each(["", "Please consider "])("preserves PR plan feedback with prose %j", (prose) => {
+    const comment = buildPullRequestReferenceContext(base);
+    const draftText = prose + formatInlineContextReference(reviewCommentContextReference(comment));
+    const submission = resolvePlanFollowUpSubmission({ draftText, planMarkdown: "# Plan" });
+    const context = buildMessageContext({
+      terminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [comment],
+    });
+    expect(submission).toEqual({ text: draftText, interactionMode: "plan" });
+    expect(context?.records[0]).toMatchObject({ pullRequest: base });
+    const legacyText = serializeLegacyContextMessage({
+      text: submission.text,
+      records: context!.records,
+    });
+    expect(legacyText).toContain(base.url);
+    expect(legacyText).toContain(prose);
+    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
+    expect(legacyText).not.toContain("t3-context://");
+  });
+
+  it("builds a neutral composer reference without prescribing an action", () => {
+    const context = buildPullRequestReferenceContext(base);
+
+    expect(context.pullRequest).toEqual(expect.objectContaining({ number: 42, state: "open" }));
+    expect(context.text).toContain("https://github.com/pingdotgg/t3code/pull/42");
+    expect(context.text).not.toContain("Do not change any code");
+    expect(context.text).not.toContain("Walk through this pull request");
+  });
 
   it("leaves the composer empty, and everything the agent needs in the chip", () => {
     const handoff = buildAskAboutPullRequestHandoff(base);
@@ -1056,6 +1141,15 @@ describe("asking about a change rather than working on it", () => {
         // What the chip reads as: which pull request, and what it is called.
         filePath: "PR #42",
         rangeLabel: "Add the pull requests page",
+        pullRequest: {
+          number: 42,
+          title: "Add the pull requests page",
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          headBranch: "feat/page",
+          baseBranch: "main",
+          state: "open",
+          isDraft: false,
+        },
       }),
     ]);
     const chip = handoff.reviewComments[0]!;
@@ -1120,9 +1214,45 @@ describe("a second ask into the same composer", () => {
     expect(next.map((comment) => comment.id)).toEqual(["pull-request-context:42"]);
   });
 
+  it("keeps a reader's own pull request reference when a later handoff lands", () => {
+    const own = buildPullRequestReferenceContext({
+      number: 42,
+      title: "Add the pull requests page",
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      headBranch: "feature",
+      baseBranch: "main",
+      state: "open" as const,
+      isDraft: false,
+    });
+    const prompt = `Look at this. ${formatInlineContextReference(reviewCommentContextReference(own))} `;
+
+    expect(stripPullRequestHandoffReferences(prompt, [own])).toBe(prompt);
+    expect(
+      handoffReviewComments([own], [chip("pull-request-context:42")]).map((comment) => comment.id),
+    ).toEqual([own.id, "pull-request-context:42"]);
+  });
+
   it("empties what the last ask left, so the two are never sent as one question", () => {
     const handed = "Explain this pull request.";
     expect(handoffPrompt({ prompt: handed, lastHandoffPrompt: handed }, "")).toBe("");
+  });
+
+  it("removes the previous handoff chip before replacing its prompt", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = `Explain this pull request. ${formatInlineContextReference(
+      reviewCommentContextReference(previous),
+    )} `;
+    expect(stripPullRequestHandoffReferences(prompt, [previous])).toBe(
+      "Explain this pull request.",
+    );
+  });
+
+  it("keeps a handoff reference when the next action deliberately repeats it", () => {
+    const previous = chip("pull-request-context:42");
+    const prompt = formatInlineContextReference(reviewCommentContextReference(previous));
+    expect(stripPullRequestHandoffReferences(prompt, [previous], new Set([previous.id]))).toBe(
+      prompt,
+    );
   });
 
   it("replaces the last ask's prompt with this one's", () => {
@@ -1261,40 +1391,124 @@ describe("how the branch stands against its base", () => {
   });
 });
 
-describe("whether the panel is showing the thread's own pull request", () => {
-  const surface = { projectId: "proj-a", repository: "acme/app", number: 7 };
+describe("pull request panel context beside a thread", () => {
+  // Shapes copied from real threads: a thread that opened a stack holds the top layer as a
+  // manual link and every lower layer as a "stack" link, with the legacy field pointing at
+  // whichever one the server chose. Snapshots are null until the sync reactor's first pass.
+  const link = (
+    number: number,
+    overrides: Partial<ThreadPullRequestLink> = {},
+  ): ThreadPullRequestLink => ({
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    source: "manual",
+    linkedAt: "2026-09-09T00:00:00Z",
+    snapshot: null,
+    stack: null,
+    ...overrides,
+  });
+  const surface = (
+    number: number,
+    overrides: Partial<Parameters<typeof pullRequestPanelContext>[1]> = {},
+  ) => ({
+    projectId: "proj-a",
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    ...overrides,
+  });
+  const stackThread = {
+    projectId: "proj-a",
+    pullRequests: [
+      link(10856),
+      link(10832, { source: "stack" }),
+      link(10677, { source: "stack" }),
+      link(10854, { source: "stack" }),
+      link(10855, { source: "stack" }),
+    ],
+    linkedPullRequest: {
+      projectId: "proj-a",
+      repository: "pingdotgg/t3code",
+      number: 10856,
+      url: "https://github.com/pingdotgg/t3code/pull/10856",
+    },
+  };
 
-  it("matches on project, repository and number together", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 7 }, surface),
-    ).toBe(true);
+  it("treats every layer of the thread's stack as its own, not only the one the legacy field names", () => {
+    for (const number of [10856, 10832, 10677, 10854, 10855]) {
+      expect(pullRequestPanelContext(stackThread, surface(number)), `#${number}`).toBe("thread");
+    }
   });
 
-  it("rejects a second checkout of the same repository under another project", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-b", repository: "acme/app", number: 7 }, surface),
-    ).toBe(false);
+  it("does not let the legacy field decide when the thread holds a link list", () => {
+    // Every prior regression flipped here: a server-side change to which link the legacy field
+    // resolves to must not turn the thread's own second link into a checkout-able stranger.
+    const thread = {
+      projectId: "proj-a",
+      pullRequests: [link(11101, { source: "created" }), link(11105, { source: "stack" })],
+      linkedPullRequest: {
+        projectId: "proj-a",
+        repository: "pingdotgg/t3code",
+        number: 11105,
+        url: "https://github.com/pingdotgg/t3code/pull/11105",
+      },
+    };
+    expect(pullRequestPanelContext(thread, surface(11101))).toBe("thread");
+    expect(pullRequestPanelContext(thread, surface(11105))).toBe("thread");
+    expect(pullRequestPanelContext({ ...thread, linkedPullRequest: null }, surface(11101))).toBe(
+      "thread",
+    );
   });
 
-  it("rejects another repository or another number", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/web", number: 7 }, surface),
-    ).toBe(false);
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 8 }, surface),
-    ).toBe(false);
+  it("is the page for a pull request the thread is not linked to", () => {
+    expect(pullRequestPanelContext(stackThread, surface(12320))).toBe("page");
+    expect(pullRequestPanelContext(stackThread, surface(10856, { repository: "acme/web" }))).toBe(
+      "page",
+    );
   });
 
-  it("rejects a thread with no project or no pull request of its own", () => {
+  it("is the page under another project's checkout of the same repository", () => {
+    expect(pullRequestPanelContext(stackThread, surface(10856, { projectId: "proj-b" }))).toBe(
+      "page",
+    );
+  });
+
+  it("recognizes an unsynced manual link, and matches host and repository case-insensitively", () => {
+    const thread = { projectId: "proj-a", pullRequests: [link(7, { host: "GitHub.com" })] };
+    expect(pullRequestPanelContext(thread, surface(7, { repository: "PingDotGG/T3Code" }))).toBe(
+      "thread",
+    );
+    expect(pullRequestPanelContext(thread, surface(7, { host: undefined }))).toBe("thread");
+    expect(pullRequestPanelContext(thread, surface(7, { host: "gitlab.com" }))).toBe("page");
+  });
+
+  it("ignores a dismissed stack member the reader chose not to see", () => {
+    const thread = {
+      projectId: "proj-a",
+      pullRequests: [link(1), link(2, { source: "stack-dismissed" })],
+    };
+    expect(pullRequestPanelContext(thread, surface(2))).toBe("page");
+  });
+
+  it("falls back to the legacy fields only for a thread with no link list", () => {
+    const legacy = {
+      projectId: "proj-a",
+      repository: "pingdotgg/t3code",
+      number: 3,
+      url: "https://github.com/pingdotgg/t3code/pull/3",
+    };
     expect(
-      isThreadOwnPullRequest({ projectId: null, repository: "acme/app", number: 7 }, surface),
-    ).toBe(false);
+      pullRequestPanelContext({ projectId: "proj-a", linkedPullRequest: legacy }, surface(3)),
+    ).toBe("thread");
     expect(
-      isThreadOwnPullRequest(
-        { projectId: "proj-a", repository: "acme/app", number: null },
-        surface,
-      ),
-    ).toBe(false);
+      pullRequestPanelContext({ projectId: "proj-a", branchPullRequest: legacy }, surface(3)),
+    ).toBe("thread");
+    expect(pullRequestPanelContext({ projectId: "proj-a", pullRequests: [] }, surface(3))).toBe(
+      "page",
+    );
+    expect(pullRequestPanelContext({ projectId: null }, surface(3))).toBe("page");
   });
 });
 
@@ -1330,7 +1544,7 @@ describe("which actions need the host read again after they run", () => {
 });
 
 describe("cached pull request detail", () => {
-  const reference = { projectId: "project-1", repository: "acme/web", number: 7 };
+  const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 7 };
   const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
     ({
       provider: "github",
@@ -1401,6 +1615,106 @@ describe("cached pull request detail", () => {
     expect(snapshot?.deletions).toBe(3);
   });
 
+  it("reuses a host-qualified snapshot when reopening a thread link without a host", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(
+      storage,
+      "env-1",
+      { ...reference, host: "github.com" },
+      detail(),
+    );
+    const resolved = resolvePullRequestReferenceHost(reference, {
+      canonicalKey: "github.com/acme/web",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/acme/web.git",
+      },
+      provider: "github",
+    });
+    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(
+      "Cache the title",
+    );
+    const explicit = { ...reference, host: "github.example.com" };
+    expect(
+      resolvePullRequestReferenceHost(explicit, {
+        canonicalKey: "github.com/acme/web",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "https://github.com/acme/web.git",
+        },
+      }),
+    ).toBe(explicit);
+  });
+
+  it("leaves server-resolved Azure SSH references unchanged", () => {
+    expect(
+      resolvePullRequestReferenceHost(reference, {
+        canonicalKey: "ssh.dev.azure.com/v3/org/project/web",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@ssh.dev.azure.com:v3/org/project/web",
+        },
+        provider: "azure-devops",
+      }),
+    ).toBe(reference);
+    expect(resolvePullRequestReferenceHost(reference, undefined)).toBe(reference);
+  });
+
+  it("hydrates legacy hostless snapshots only for the matching host", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, host: "github.com" })?.title,
+    ).toBe("Cache the title");
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", {
+        ...reference,
+        host: "github.example.com",
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps Forgejo ports isolated when recovering legacy snapshots", () => {
+    const storage = makeStorage();
+    const cached = detail({
+      provider: "forgejo",
+      url: "https://forge.example:8443/acme/web/pulls/7",
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", reference, cached);
+    const resolved = { ...reference, host: "forge.example:8443" };
+    expect(readPullRequestDetailSnapshot(storage, "env-1", resolved)?.title).toBe(cached.title);
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", {
+        ...reference,
+        host: "forge.example:9443",
+      }),
+    ).toBeNull();
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", {
+        ...reference,
+        host: "forge.example",
+      }),
+    ).toBeNull();
+  });
+
+  it.each(["github", "gitlab"] as const)(
+    "retains portless %s snapshot identities for custom web ports",
+    (provider) => {
+      const storage = makeStorage();
+      const host = `${provider}.example.com`;
+      const hosted = { ...reference, host };
+      const cached = detail({
+        provider,
+        url: `https://${host}:8443/acme/web/${provider === "github" ? "pull" : "-/merge_requests"}/7`,
+      });
+      writePullRequestDetailSnapshot(storage, "env-1", hosted, cached);
+      expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
+    },
+  );
+
   it("keeps a cached tab painted while the live read replaces the counts", () => {
     const cached = detail();
     const live = detail({ additions: 40, deletions: 9, title: "Cache the title" });
@@ -1424,11 +1738,11 @@ describe("cached pull request detail", () => {
   it("isolates stored and displayed details between hosts with the same repository and number", () => {
     const storage = makeStorage();
     const publicRef = { ...reference, host: "github.com" };
-    const enterpriseRef = { ...reference, host: "github.example.com" };
+    const enterpriseRef = { ...reference, host: "ghe.example.com" };
     const publicDetail = detail();
     const enterpriseDetail = detail({
       title: "Enterprise change",
-      url: "https://github.example.com/acme/web/pull/7",
+      url: "https://ghe.example.com/acme/web/pull/7",
     });
     writePullRequestDetailSnapshot(storage, "env-1", publicRef, publicDetail);
     expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
@@ -1462,6 +1776,9 @@ describe("cached pull request detail", () => {
     storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
+    const hosted = { ...reference, host: "github.com" };
+    writePullRequestDetailSnapshot(storage, "env-1", hosted, detail({ url: "invalid url" }));
+    expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
   });
 });
 

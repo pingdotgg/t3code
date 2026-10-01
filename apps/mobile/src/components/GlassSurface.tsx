@@ -1,16 +1,10 @@
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { ReactNode, Ref, RefObject } from "react";
-import {
-  Platform,
-  useColorScheme,
-  View,
-  type ColorValue,
-  type ViewProps,
-  type ViewStyle,
-} from "react-native";
+import type { ReactNode, Ref } from "react";
+import { Platform, View, type ColorValue, type ViewProps, type ViewStyle } from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { GlassBackdrop } from "./GlassBackdrop";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
@@ -28,7 +22,6 @@ interface GlassSurfaceProps extends ViewProps {
   readonly chrome?: "default" | "none";
   /** Base color for the frosted tint, or solid fill when blur is unavailable. */
   readonly fallbackColor?: ColorValue;
-  readonly blurTarget?: RefObject<View | null>;
   /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }
@@ -41,31 +34,23 @@ export function GlassSurface({
   tintColor,
   tintColorClassName,
   fallbackColor,
-  blurTarget,
   fallbackClassName,
   className,
   style,
   ...props
 }: GlassSurfaceProps) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
+  const hasShadow = chrome !== "none" && Platform.OS !== "android";
   const surfaceStyle: ViewStyle = {
     borderRadius: 32,
     overflow: "hidden",
-    shadowColor: chrome === "none" ? "transparent" : "#000000",
-    shadowOpacity: chrome === "none" ? 0 : isDarkMode ? 0.22 : 0.08,
-    shadowRadius: chrome === "none" ? 0 : 28,
-    shadowOffset:
-      chrome === "none"
-        ? {
-            width: 0,
-            height: 0,
-          }
-        : {
-            width: 0,
-            height: 14,
-          },
-    elevation: chrome === "none" ? 0 : 12,
+    shadowColor: hasShadow ? "#000000" : "transparent",
+    shadowOpacity: hasShadow ? (isDarkMode ? 0.22 : 0.08) : 0,
+    shadowRadius: hasShadow ? 28 : 0,
+    shadowOffset: { width: 0, height: hasShadow ? 14 : 0 },
+    elevation: hasShadow ? 12 : 0,
   };
 
   if (supportsGlass) {
@@ -103,7 +88,7 @@ export function GlassSurface({
       )}
       style={[surfaceStyle, style]}
     >
-      <GlassBackdrop blurTarget={blurTarget} fallbackColor={fallbackColor} />
+      <GlassBackdrop fallbackColor={fallbackColor} />
       {children}
     </View>
   );

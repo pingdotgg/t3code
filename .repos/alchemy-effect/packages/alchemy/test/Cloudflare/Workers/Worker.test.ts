@@ -515,7 +515,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           const state = yield* yield* State;
           yield* state.delete({
             stack: stack.name,
-            stage: "test",
+            stage: stack.stage,
             fqn: "AdoptableWorker",
           });
         }).pipe(Effect.provide(stack.state));
@@ -541,7 +541,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           const state = yield* yield* State;
           return yield* state.get({
             stack: stack.name,
-            stage: "test",
+            stage: stack.stage,
             fqn: "AdoptableWorker",
           });
         }).pipe(Effect.provide(stack.state));
@@ -587,7 +587,7 @@ describe.concurrent("Cloudflare.Worker", () => {
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "Original",
         });
       }).pipe(Effect.provide(stack.state));
@@ -1501,7 +1501,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           const state = yield* yield* State;
           const key = {
             stack: stack.name,
-            stage: "test",
+            stage: stack.stage,
             fqn: "LegacyStateWorker",
           };
           const current = yield* state.get(key);
@@ -1597,7 +1597,11 @@ describe.concurrent("Cloudflare.Worker", () => {
         // surface (any value the new code can't reproduce).
         yield* Effect.gen(function* () {
           const state = yield* yield* State;
-          const key = { stack: stack.name, stage: "test", fqn: "BareUpstream" };
+          const key = {
+            stack: stack.name,
+            stage: stack.stage,
+            fqn: "BareUpstream",
+          };
           const current = yield* state.get(key);
           expect(current).toBeDefined();
           const attr = {

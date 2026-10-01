@@ -5,6 +5,7 @@ node_modules
 *.log
 *.tsbuildinfo
 apps/*/dist
+apps/*/dist-exe
 infra/*/dist
 .astro
 packages/*/dist
@@ -40,3 +41,6 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# pnpm content-addressable store; never belongs in the repo.
+.pnpm-store/
