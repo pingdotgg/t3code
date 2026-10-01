@@ -2643,6 +2643,154 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "stale completion",
+      bound: true,
+      checkpoint: true,
+      streaming: false,
+      text: "",
+      preservesAnchor: true,
+    },
+    {
+      name: "first empty completion",
+      bound: false,
+      checkpoint: true,
+      streaming: false,
+      text: "",
+      preservesAnchor: false,
+    },
+    {
+      name: "first completion without a turn row",
+      bound: false,
+      checkpoint: false,
+      streaming: false,
+      text: "",
+      preservesAnchor: false,
+    },
+    {
+      name: "new delta",
+      bound: true,
+      checkpoint: true,
+      streaming: true,
+      text: "Next answer",
+      preservesAnchor: false,
+    },
+    {
+      name: "new complete answer without deltas",
+      bound: true,
+      checkpoint: true,
+      streaming: false,
+      text: "Final answer",
+      preservesAnchor: false,
+    },
+  ])("keeps the assistant anchor correct for $name", (scenario) =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make(`thread-anchor-${scenario.name}`);
+      const turnId = TurnId.make(`turn-anchor-${scenario.name}`);
+      const earlierMessageId = MessageId.make(`earlier-${scenario.name}`);
+      const completedMessageId = MessageId.make(`completed-${scenario.name}`);
+      let sequence = 0;
+      const eventBase = () => ({
+        eventId: EventId.make(`event-${threadId}-${++sequence}`),
+        aggregateKind: "thread" as const,
+        aggregateId: threadId,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      });
+      const appendMessage = (messageId: MessageId, text: string, streaming: boolean) =>
+        eventStore.append({
+          ...eventBase(),
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId,
+            turnId,
+            role: "assistant",
+            text,
+            streaming,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      yield* eventStore.append({
+        ...eventBase(),
+        type: "thread.created",
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-anchor"),
+          title: "Assistant anchor",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      if (scenario.bound) {
+        if (scenario.preservesAnchor) {
+          yield* appendMessage(earlierMessageId, "Partial answer", true);
+        }
+        yield* appendMessage(completedMessageId, "Completed answer", false);
+      }
+      if (scenario.checkpoint) {
+        yield* eventStore.append({
+          ...eventBase(),
+          type: "thread.turn-diff-completed",
+          payload: {
+            threadId,
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/${threadId}/1`),
+            status: "ready",
+            files: [],
+            assistantMessageId: scenario.bound ? completedMessageId : null,
+            completedAt: now,
+          },
+        });
+      }
+      yield* projectionPipeline.bootstrap;
+      const completedBefore =
+        yield* sql`SELECT * FROM projection_thread_messages WHERE message_id = ${completedMessageId}`;
+      const event = yield* appendMessage(earlierMessageId, scenario.text, scenario.streaming);
+      yield* projectionPipeline.projectEvent(event);
+      const turns = yield* sql<{
+        readonly assistantMessageId: string | null;
+        readonly checkpointStatus: string | null;
+      }>`
+        SELECT assistant_message_id AS "assistantMessageId", checkpoint_status AS "checkpointStatus"
+        FROM projection_turns WHERE thread_id = ${threadId} AND turn_id = ${turnId}
+      `;
+      assert.deepEqual(turns, [
+        {
+          assistantMessageId: scenario.preservesAnchor ? completedMessageId : earlierMessageId,
+          checkpointStatus: scenario.checkpoint ? "ready" : null,
+        },
+      ]);
+      const rows = yield* sql<{ readonly text: string; readonly isStreaming: number }>`
+        SELECT text, is_streaming AS "isStreaming" FROM projection_thread_messages WHERE message_id = ${earlierMessageId}
+      `;
+      assert.deepEqual(rows, [
+        {
+          text: scenario.preservesAnchor ? "Partial answer" : scenario.text,
+          isStreaming: scenario.streaming ? 1 : 0,
+        },
+      ]);
+      assert.deepEqual(
+        yield* sql`SELECT * FROM projection_thread_messages WHERE message_id = ${completedMessageId}`,
+        completedBefore,
+      );
+    }),
+  );
+
   it.effect("keeps accumulated assistant text when completion payload text is empty", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

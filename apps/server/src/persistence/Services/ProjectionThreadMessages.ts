@@ -43,6 +43,11 @@ export const AppendStreamingProjectionThreadMessage = Schema.Struct(
 export type AppendStreamingProjectionThreadMessage =
   typeof AppendStreamingProjectionThreadMessage.Type;
 
+export const StreamingProjectionThreadMessage = Schema.Struct(
+  Struct.pick(ProjectionThreadMessage.fields, ["messageId", "turnId", "role"]),
+);
+export type StreamingProjectionThreadMessage = typeof StreamingProjectionThreadMessage.Type;
+
 export const ListProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -106,6 +111,11 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /** List a thread's messages still marked as streaming, without loading message bodies. */
+  readonly listStreamingByThreadId: (
+    input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ReadonlyArray<StreamingProjectionThreadMessage>, ProjectionRepositoryError>;
 
   /** Read the latest user-message timestamp without loading message bodies. */
   readonly getLatestUserMessageAt: (

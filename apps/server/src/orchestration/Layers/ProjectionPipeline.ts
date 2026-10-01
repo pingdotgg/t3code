@@ -1603,9 +1603,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             turnId: event.payload.turnId,
           });
           if (Option.isSome(existingTurn)) {
+            // Closing an older stream must not move the turn's diff anchor.
+            const completionOnly = !event.payload.streaming && event.payload.text.length === 0;
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
-              assistantMessageId: event.payload.messageId,
+              assistantMessageId: completionOnly
+                ? (existingTurn.value.assistantMessageId ?? event.payload.messageId)
+                : event.payload.messageId,
               state: settlesTurn
                 ? existingTurn.value.state === "interrupted"
                   ? "interrupted"

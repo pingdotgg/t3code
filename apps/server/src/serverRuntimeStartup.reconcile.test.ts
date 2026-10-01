@@ -1,9 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CheckpointRef,
+  CommandId,
+  MessageId,
   type OrchestrationCommand,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   type ProviderSendTurnInput,
   ThreadId,
   TurnId,
@@ -14,10 +18,27 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 
+import { ServerConfig } from "./config.ts";
 import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
+import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine.ts";
+import { OrchestrationProjectionPipelineLive } from "./orchestration/Layers/ProjectionPipeline.ts";
+import { OrchestrationProjectionSnapshotQueryLive } from "./orchestration/Layers/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBackgroundLiveness from "./orchestration/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "./orchestration/ThreadPlanProgress.ts";
+import { PersistenceSqlError } from "./persistence/Errors.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/OrchestrationCommandReceipts.ts";
+import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore.ts";
+import { ProjectionThreadMessageRepositoryLive } from "./persistence/Layers/ProjectionThreadMessages.ts";
+import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import {
+  ProjectionThreadMessageRepository,
+  type ProjectionThreadMessage,
+} from "./persistence/Services/ProjectionThreadMessages.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
   ProviderSessionDirectoryPersistenceError,
   ProviderSessionNotFoundError,
@@ -78,6 +99,13 @@ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>)
     getCommandReadModel: () => Effect.succeed({ threads } as never),
   }) as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
 
+const emptyMessages = () =>
+  ({
+    listStreamingByThreadId: () => Effect.succeed([]),
+  }) as Partial<
+    ProjectionThreadMessageRepository["Service"]
+  > as ProjectionThreadMessageRepository["Service"];
+
 const runReconciliation = (input: {
   readonly threads: ReadonlyArray<ReturnType<typeof makeThread>>;
   readonly continueAfterRestart?: boolean;
@@ -91,6 +119,7 @@ const runReconciliation = (input: {
       ProjectionSnapshotQuery.ProjectionSnapshotQuery,
       queryWithThreads(input.threads),
     ),
+    Effect.provideService(ProjectionThreadMessageRepository, emptyMessages()),
     Effect.provideService(
       ProviderService.ProviderService,
       input.providerService ?? makeProviderService(input.liveThreadIds),
@@ -438,6 +467,292 @@ it.effect("does not continue archived or deleted marked sessions", () => {
   );
 });
 
+const ReconciliationPersistenceLive = Layer.mergeAll(
+  OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provide(OrchestrationProjectionPipelineLive),
+  ),
+  OrchestrationProjectionSnapshotQueryLive,
+  ProjectionThreadMessageRepositoryLive,
+).pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
+  Layer.provide(OrchestrationEventStoreLive),
+  Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+  Layer.provide(
+    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+      resolve: () => Effect.succeed(null),
+    }),
+  ),
+  Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-reconcile-streaming-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect.each([
+  "error",
+  "opt-in restart",
+  "prepared update",
+  "transient completion failure",
+] as const)("preserves projected messages during %s recovery", (recovery) =>
+  Effect.gen(function* () {
+    const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const messages = yield* ProjectionThreadMessageRepository;
+    const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const recoveredAt = "2026-08-20T12:01:00.000Z";
+    yield* TestClock.setTime(Date.parse(recoveredAt));
+    const projectId = ProjectId.make("project-streaming-recovery");
+    const turnId = TurnId.make("turn-orphaned-streaming");
+    const continues = recovery === "opt-in restart" || recovery === "prepared update";
+    const orphaned = makeThread(
+      "thread-orphaned-streaming",
+      recovery === "prepared update" ? "ready" : "running",
+      recovery === "prepared update" ? null : turnId,
+    );
+    const live = makeThread("thread-live-streaming", "running", TurnId.make("turn-live-streaming"));
+    yield* engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make("recovery-project"),
+      projectId,
+      title: "Streaming recovery",
+      workspaceRoot: process.cwd(),
+      createdAt: updatedAt,
+    });
+    for (const thread of [orphaned, live]) {
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-${thread.id}`),
+        threadId: thread.id,
+        projectId,
+        title: thread.id,
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: updatedAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`session-${thread.id}`),
+        threadId: thread.id,
+        session: thread.session,
+        createdAt: updatedAt,
+      });
+    }
+    const fixtures = [
+      {
+        id: "01-reasoning",
+        threadId: orphaned.id,
+        turnId,
+        role: "reasoning",
+        text: "Partial reasoning.\n\n",
+        streaming: true,
+      },
+      {
+        id: "02-assistant",
+        threadId: orphaned.id,
+        turnId,
+        role: "assistant",
+        text: "Partial answer.\n\n```ts\nconsole.log(1);\n",
+        streaming: true,
+      },
+      {
+        id: "03-without-turn",
+        threadId: orphaned.id,
+        turnId: null,
+        role: "assistant",
+        text: "Partial output without a turn",
+        streaming: true,
+      },
+      {
+        id: "04-completed",
+        threadId: orphaned.id,
+        turnId,
+        role: "assistant",
+        text: "Previously completed output",
+        streaming: false,
+      },
+      {
+        id: "05-live",
+        threadId: live.id,
+        turnId: live.session.activeTurnId,
+        role: "assistant",
+        text: "Still streaming in a live session",
+        streaming: true,
+      },
+    ] as const;
+    for (const message of fixtures) {
+      for (const [index, delta] of [message.text.slice(0, 4), message.text.slice(4)].entries()) {
+        yield* engine.dispatch({
+          type:
+            message.role === "reasoning"
+              ? "thread.message.reasoning.delta"
+              : "thread.message.assistant.delta",
+          commandId: CommandId.make(`${message.id}-delta-${index}`),
+          threadId: message.threadId,
+          messageId: MessageId.make(message.id),
+          ...(message.turnId === null ? {} : { turnId: message.turnId }),
+          delta,
+          createdAt: updatedAt,
+        });
+      }
+      if (!message.streaming) {
+        yield* engine.dispatch({
+          type: "thread.message.assistant.complete",
+          commandId: CommandId.make(`${message.id}-complete`),
+          threadId: message.threadId,
+          messageId: MessageId.make(message.id),
+          turnId: message.turnId,
+          createdAt: updatedAt,
+        });
+      }
+    }
+    yield* engine.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: CommandId.make("recovery-checkpoint"),
+      threadId: orphaned.id,
+      turnId,
+      assistantMessageId: MessageId.make("04-completed"),
+      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-orphaned-streaming/turn/1"),
+      checkpointTurnCount: 1,
+      status: "ready",
+      files: [{ path: "answer.ts", kind: "modified", additions: 1, deletions: 0 }],
+      completedAt: updatedAt,
+      createdAt: updatedAt,
+    });
+    const readAnchors = Effect.gen(function* () {
+      const { threads } = yield* query.getCommandReadModel();
+      const detail = Option.getOrThrow(yield* query.getThreadDetailById(orphaned.id));
+      return {
+        latestTurn: threads.find((thread) => thread.id === orphaned.id)?.latestTurn
+          ?.assistantMessageId,
+        checkpoints: detail.checkpoints.map(({ turnId, checkpointRef, assistantMessageId }) => ({
+          turnId,
+          checkpointRef,
+          assistantMessageId,
+        })),
+      };
+    });
+    const anchorsBefore = yield* readAnchors;
+    assert.equal(anchorsBefore.latestTurn, "04-completed");
+    assert.equal(anchorsBefore.checkpoints.length, 1);
+    assert.equal(anchorsBefore.checkpoints[0]?.assistantMessageId, "04-completed");
+    const before = yield* messages.listByThreadId({ threadId: orphaned.id });
+    const liveBefore = yield* messages.listByThreadId({ threadId: live.id });
+    const beforeSequence = yield* engine.latestSequence;
+    const expected = before.map((message) => ({
+      ...message,
+      isStreaming: false,
+      updatedAt: message.isStreaming ? recoveredAt : message.updatedAt,
+    }));
+    const continuationSent = yield* Deferred.make<ReadonlyArray<ProjectionThreadMessage>>();
+    const liveThreadIds = new Set([live.id]);
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId: orphaned.id,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId,
+      status: "running",
+      resumeCursor: { threadId: orphaned.id },
+      runtimePayload:
+        recovery === "prepared update"
+          ? {
+              activeTurnId: null,
+              continueAfterServerUpdate: turnId,
+              continueAfterServerUpdatePrepared: true,
+            }
+          : { activeTurnId: turnId },
+    };
+    let completionAttempts = 0;
+    const reconcile = ServerRuntimeStartup.reconcileProviderSessions.pipe(
+      Effect.provideService(ProviderService.ProviderService, {
+        ...makeProviderService(),
+        listSessions: () =>
+          Effect.sync(() => [...liveThreadIds].map((threadId) => ({ threadId }) as never)),
+        getCapabilities: () =>
+          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
+        sendTurn: (input) =>
+          Effect.gen(function* () {
+            const rows = yield* messages.listByThreadId({ threadId: input.threadId });
+            liveThreadIds.add(input.threadId);
+            yield* Deferred.succeed(continuationSent, rows);
+            return { threadId: input.threadId, turnId: TurnId.make("turn-continued") };
+          }),
+      }),
+      Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
+        getBinding: (threadId) =>
+          Effect.sync(() => (threadId === orphaned.id ? Option.some(binding) : Option.none())),
+        upsert: (next) =>
+          Effect.sync(() => {
+            binding = next;
+          }),
+        listBindings: () => Effect.sync(() => [{ ...binding, lastSeenAt: updatedAt }]),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+      }),
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
+        ...engine,
+        dispatch: (command) =>
+          Effect.suspend(() => {
+            if (
+              recovery === "transient completion failure" &&
+              command.type === "thread.message.assistant.complete" &&
+              command.messageId === "02-assistant" &&
+              completionAttempts++ === 0
+            ) {
+              return Effect.fail(
+                new PersistenceSqlError({ operation: "simulated completion failure" }),
+              );
+            }
+            return engine.dispatch(command);
+          }),
+      }),
+      Effect.provide(
+        ServerSettings.layerTest({
+          continueThreadsAfterServerUpdate: recovery === "opt-in restart",
+        }),
+      ),
+    );
+    yield* reconcile;
+    if (continues) {
+      // Capture inside sendTurn, assert outside its background fiber so a
+      // reconciliation error handler cannot swallow a failed assertion.
+      assert.deepStrictEqual(yield* Deferred.await(continuationSent), expected);
+    }
+    assert.deepStrictEqual(yield* messages.listByThreadId({ threadId: orphaned.id }), expected);
+    assert.deepStrictEqual(yield* messages.listByThreadId({ threadId: live.id }), liveBefore);
+    assert.deepStrictEqual(yield* readAnchors, anchorsBefore);
+    const { threads } = yield* query.getCommandReadModel();
+    assert.equal(
+      threads.find((thread) => thread.id === orphaned.id)?.session?.status,
+      continues ? "starting" : "error",
+    );
+    const recoveredEvents = yield* Stream.runCollect(engine.readEvents(beforeSequence));
+    assert.deepStrictEqual(
+      recoveredEvents
+        .flatMap((event) =>
+          event.type === "thread.message-sent" && !event.payload.streaming
+            ? [event.payload.messageId]
+            : [],
+        )
+        .toSorted(),
+      before
+        .filter((message) => message.isStreaming)
+        .map((message) => message.messageId)
+        .toSorted(),
+    );
+    if (recovery === "transient completion failure") {
+      assert.equal(completionAttempts, 2);
+    }
+    const afterSequence = yield* engine.latestSequence;
+    yield* reconcile;
+    const repeatedEvents = yield* Stream.runCollect(engine.readEvents(afterSequence));
+    assert.isFalse(repeatedEvents.some((event) => event.type === "thread.message-sent"));
+    assert.deepStrictEqual(yield* messages.listByThreadId({ threadId: orphaned.id }), expected);
+    assert.deepStrictEqual(yield* readAnchors, anchorsBefore);
+  }).pipe(Effect.provide(ReconciliationPersistenceLive)),
+);
 it.effect("retries continuation preparation before settling a persistent failure", () => {
   const thread = makeThread(
     "thread-continuation-preparation-failure",
@@ -696,6 +1011,7 @@ it.effect("does not fail startup when the live provider session inventory cannot
           return { threads: [] } as never;
         }),
     } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]),
+    Effect.provideService(ProjectionThreadMessageRepository, emptyMessages()),
     Effect.provideService(ProviderService.ProviderService, {
       ...makeProviderService(),
       listSessions: () => Effect.die("provider inventory unavailable"),

@@ -39,6 +39,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationReactor from "./orchestration/Services/OrchestrationReactor.ts";
+import { ProjectionThreadMessageRepository } from "./persistence/Services/ProjectionThreadMessages.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -484,6 +485,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const providerService = yield* ProviderService.ProviderService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const messages = yield* ProjectionThreadMessageRepository;
   const settings = yield* ServerSettings.ServerSettingsService;
   const restartSettings = yield* settings.getSettings.pipe(
     Effect.asSome,
@@ -542,11 +544,46 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       !liveThreadIds.has(thread.id),
   );
 
+  // Runtime ingestion completes the messages it streams, but its state died
+  // with the old process. Without this, the orphaned session's partial output
+  // stays marked as streaming forever, whether or not the thread continues.
+  const completeOrphanedStreamingMessages = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      for (const message of yield* messages.listStreamingByThreadId({ threadId })) {
+        if (message.role !== "assistant" && message.role !== "reasoning") {
+          continue;
+        }
+        const completedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrationEngine.dispatch({
+          type:
+            message.role === "reasoning"
+              ? "thread.message.reasoning.complete"
+              : "thread.message.assistant.complete",
+          commandId: CommandId.make(yield* crypto.randomUUIDv4),
+          threadId,
+          messageId: message.messageId,
+          ...(message.turnId !== null ? { turnId: message.turnId } : {}),
+          createdAt: completedAt,
+        });
+      }
+    }).pipe(
+      Effect.retry({ times: 1 }),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterrupts(cause),
+        (cause) =>
+          Effect.logWarning("failed to complete orphaned streaming messages", {
+            threadId,
+            cause,
+          }),
+      ),
+    );
+
   for (const thread of orphanedThreads) {
     const session = thread.session;
     if (session === null) {
       continue;
     }
+    yield* completeOrphanedStreamingMessages(thread.id);
     const binding = yield* directory.getBinding(thread.id).pipe(
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterrupts(cause),

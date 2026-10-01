@@ -67,6 +67,60 @@ layer("ProjectionThreadMessageRepository", (it) => {
     }),
   );
 
+  it.effect("lists only the messages of one thread that are still streaming", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.make("thread-streaming-messages");
+      const turnId = TurnId.make("turn-streaming-messages");
+      const streaming = [
+        {
+          messageId: "streaming-reasoning",
+          role: "reasoning",
+          createdAt: "2026-02-28T19:05:01.000Z",
+        },
+        {
+          messageId: "streaming-assistant",
+          role: "assistant",
+          createdAt: "2026-02-28T19:05:02.000Z",
+        },
+      ] as const;
+      for (const message of streaming) {
+        yield* repository.appendStreaming({
+          ...message,
+          messageId: MessageId.make(message.messageId),
+          threadId,
+          turnId,
+          text: "Partial output",
+          updatedAt: message.createdAt,
+        });
+      }
+      yield* repository.upsert({
+        messageId: MessageId.make("completed-assistant"),
+        threadId,
+        turnId,
+        role: "assistant",
+        text: "Final output",
+        isStreaming: false,
+        createdAt: "2026-02-28T19:05:00.000Z",
+        updatedAt: "2026-02-28T19:05:00.000Z",
+      });
+      yield* repository.appendStreaming({
+        messageId: MessageId.make("streaming-other-thread"),
+        threadId: ThreadId.make("thread-streaming-messages-other"),
+        turnId: null,
+        role: "assistant",
+        text: "Other thread",
+        createdAt: "2026-02-28T19:05:03.000Z",
+        updatedAt: "2026-02-28T19:05:03.000Z",
+      });
+
+      assert.deepStrictEqual(yield* repository.listStreamingByThreadId({ threadId }), [
+        { messageId: MessageId.make("streaming-reasoning"), turnId, role: "reasoning" },
+        { messageId: MessageId.make("streaming-assistant"), turnId, role: "assistant" },
+      ]);
+    }),
+  );
+
   it.effect("persists structured context and keeps it across updates without context", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadMessageRepository;

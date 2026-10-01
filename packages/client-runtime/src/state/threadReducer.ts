@@ -431,6 +431,8 @@ export function applyThreadDetailEvent(
         thread.session?.status === "running" &&
         thread.session.activeTurnId === event.payload.turnId;
       const settlesTurn = !event.payload.streaming && !turnStillRunning;
+      // Closing an older stream must not move the turn's diff anchor.
+      const completionOnly = !event.payload.streaming && event.payload.text.length === 0;
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.role === "assistant" &&
@@ -458,7 +460,9 @@ export function applyThreadDetailEvent(
                 : thread.latestTurn?.turnId === event.payload.turnId
                   ? (thread.latestTurn.completedAt ?? null)
                   : null,
-              assistantMessageId: event.payload.messageId,
+              assistantMessageId: completionOnly
+                ? (thread.latestTurn?.assistantMessageId ?? event.payload.messageId)
+                : event.payload.messageId,
             }
           : thread.latestTurn,
       );
@@ -471,6 +475,7 @@ export function applyThreadDetailEvent(
               thread.checkpoints,
               event.payload.turnId,
               event.payload.messageId,
+              completionOnly,
             )
           : thread.checkpoints;
 
@@ -817,15 +822,17 @@ function rebindCheckpointAssistantMessage(
   checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>,
   turnId: TurnId,
   messageId: MessageId,
+  onlyIfUnbound: boolean,
 ): ReadonlyArray<OrchestrationCheckpointSummary> {
-  const needsRebind = checkpoints.some(
-    (entry) => entry.turnId === turnId && entry.assistantMessageId !== messageId,
-  );
-  if (!needsRebind) {
+  const needsRebind = (entry: OrchestrationCheckpointSummary) =>
+    entry.turnId === turnId &&
+    entry.assistantMessageId !== messageId &&
+    (!onlyIfUnbound || entry.assistantMessageId === null);
+  if (!checkpoints.some(needsRebind)) {
     return checkpoints;
   }
   return Arr.map(checkpoints, (entry) =>
-    entry.turnId === turnId ? { ...entry, assistantMessageId: messageId } : entry,
+    needsRebind(entry) ? { ...entry, assistantMessageId: messageId } : entry,
   );
 }
 

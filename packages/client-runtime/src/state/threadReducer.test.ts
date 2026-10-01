@@ -836,6 +836,102 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it.each([
+      { name: "stale completion", bound: true, streaming: false, text: "", preservesAnchor: true },
+      {
+        name: "first empty completion",
+        bound: false,
+        streaming: false,
+        text: "",
+        preservesAnchor: false,
+      },
+      {
+        name: "new delta",
+        bound: true,
+        streaming: true,
+        text: "Next answer",
+        preservesAnchor: false,
+      },
+      {
+        name: "new complete answer without deltas",
+        bound: true,
+        streaming: false,
+        text: "Final answer",
+        preservesAnchor: false,
+      },
+    ])("keeps the assistant anchor correct for $name", (scenario) => {
+      const turnId = TurnId.make("turn-anchor");
+      const earlierMessageId = MessageId.make("earlier-assistant");
+      const completedMessageId = MessageId.make("completed-assistant");
+      const now = "2026-04-01T07:00:00.000Z";
+      const message = (id: MessageId, text: string, streaming: boolean) => ({
+        id,
+        role: "assistant" as const,
+        text,
+        turnId,
+        streaming,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const thread: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId,
+          state: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          assistantMessageId: scenario.bound ? completedMessageId : null,
+        },
+        messages: [
+          ...(scenario.preservesAnchor ? [message(earlierMessageId, "Partial answer", true)] : []),
+          ...(scenario.bound ? [message(completedMessageId, "Completed answer", false)] : []),
+        ],
+        checkpoints: [
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-anchor"),
+            status: "ready",
+            files: [],
+            assistantMessageId: scenario.bound ? completedMessageId : null,
+            completedAt: now,
+          },
+        ],
+      };
+      const result = applyThreadDetailEvent(thread, {
+        ...baseEventFields,
+        sequence: 9,
+        occurredAt: now,
+        aggregateKind: "thread",
+        aggregateId: thread.id,
+        type: "thread.message-sent",
+        payload: {
+          threadId: thread.id,
+          messageId: earlierMessageId,
+          turnId,
+          role: "assistant",
+          text: scenario.text,
+          streaming: scenario.streaming,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      const expectedAnchor = scenario.preservesAnchor ? completedMessageId : earlierMessageId;
+      expect(result.thread.latestTurn?.assistantMessageId).toBe(expectedAnchor);
+      expect(result.thread.checkpoints[0]?.assistantMessageId).toBe(expectedAnchor);
+      expect(result.thread.messages.find((entry) => entry.id === earlierMessageId)).toMatchObject({
+        text: scenario.preservesAnchor ? "Partial answer" : scenario.text,
+        streaming: scenario.streaming,
+      });
+      expect(result.thread.messages.find((entry) => entry.id === completedMessageId)).toBe(
+        thread.messages.find((entry) => entry.id === completedMessageId),
+      );
+      if (scenario.preservesAnchor) expect(result.thread.checkpoints).toBe(thread.checkpoints);
+    });
+
     it("keeps latestTurn and checkpoints references across a streaming delta", () => {
       const streamingThread: OrchestrationThread = {
         ...baseThread,
