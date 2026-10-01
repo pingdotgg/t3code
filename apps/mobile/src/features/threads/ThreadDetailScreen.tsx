@@ -59,6 +59,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
+  type ViewInstance,
 } from "react-native";
 import {
   KeyboardController,
@@ -376,7 +377,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [editingRunId]);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
-  const composerOverlayRef = useRef<View>(null);
+  const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);

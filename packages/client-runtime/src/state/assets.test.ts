@@ -6,6 +6,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   EnvironmentAuthorizationError,
   EnvironmentId,
+  type ProjectCloneSnapshot,
+  ProjectId,
   ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -418,6 +420,96 @@ describe("project favicon URL cache", () => {
     } finally {
       unmount();
       registry.dispose();
+    }
+  });
+
+  const cloning: ProjectCloneSnapshot = {
+    projectId: ProjectId.make("project-cloning"),
+    remoteUrl: "git@github.com:octocat/app.git",
+    destinationPath: "/workspace",
+    repository: null,
+    phase: "running",
+    stage: "receiving",
+    percent: 10,
+    detail: null,
+    error: null,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    endedAt: null,
+    sequence: 1,
+  };
+
+  function mountClonedProjectFavicon(initialClones: ReadonlyArray<ProjectCloneSnapshot>) {
+    const registry = AtomRegistry.make();
+    // Stands in for the server, which reports the icon missing until the clone lands.
+    const server = { lookups: 0, landed: false };
+    const result = Atom.make(() => {
+      server.lookups += 1;
+      return AsyncResult.success({
+        expiresAt: 4_000_000_000_000,
+        relativeUrl: server.landed
+          ? "/api/assets/token-b/v1-icon.svg"
+          : "/api/assets/token-a/project-favicon-missing",
+      });
+    });
+    const clones = Atom.make(initialClones);
+    const connection = Atom.make(Option.some({ httpBaseUrl: "https://remote.test" }));
+    const favicon = createProjectFaviconUrlAtomFamily({
+      createUrl: () => result,
+      preparedConnection: () => connection,
+      projectClones: () => clones,
+    })({ environmentId: EnvironmentId.make("remote"), cwd: "/workspace" });
+    const unmount = registry.mount(favicon);
+    return {
+      registry,
+      server,
+      clones,
+      favicon,
+      dispose: () => {
+        unmount();
+        registry.dispose();
+      },
+    };
+  }
+
+  it("asks for a cloned project's icon again once its clone lands", () => {
+    const { registry, server, clones, favicon, dispose } = mountClonedProjectFavicon([cloning]);
+    try {
+      expect(registry.get(favicon)).toBe(
+        "https://remote.test/api/assets/token-a/project-favicon-missing",
+      );
+      // Progress, and another folder's clone landing, do not ask again.
+      registry.set(clones, [
+        { ...cloning, percent: 80, sequence: 2 },
+        {
+          ...cloning,
+          projectId: ProjectId.make("project-other"),
+          destinationPath: "/other",
+          phase: "done",
+          sequence: 3,
+        },
+      ]);
+      expect(server.lookups).toBe(1);
+
+      server.landed = true;
+      registry.set(clones, [{ ...cloning, phase: "done", sequence: 4 }]);
+      expect(registry.get(favicon)).toBe("https://remote.test/api/assets/token-b/v1-icon.svg");
+      expect(server.lookups).toBe(2);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("asks again when the first clone list it sees already says done", () => {
+    const { registry, server, clones, favicon, dispose } = mountClonedProjectFavicon([]);
+    try {
+      expect(registry.get(favicon)).toBe(
+        "https://remote.test/api/assets/token-a/project-favicon-missing",
+      );
+      server.landed = true;
+      registry.set(clones, [{ ...cloning, phase: "done", sequence: 2 }]);
+      expect(registry.get(favicon)).toBe("https://remote.test/api/assets/token-b/v1-icon.svg");
+    } finally {
+      dispose();
     }
   });
 });

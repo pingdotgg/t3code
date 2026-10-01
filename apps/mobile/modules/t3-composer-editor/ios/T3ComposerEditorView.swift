@@ -468,6 +468,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
   private var tokensNeedRebuild = false
+  private var chipsNeedMeasuredWidth = false
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -603,6 +604,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   public override func layoutSubviews() {
     super.layoutSubviews()
     textView.frame = bounds
+    if chipsNeedMeasuredWidth, bounds.width > 0 {
+      chipsNeedMeasuredWidth = false
+      applyControlledDocument(force: true)
+    }
     let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
     let placeholderY = textView.textContainerInset.top
     let placeholderWidth = max(
@@ -1010,7 +1015,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     // `maximumWidth` does, so the chip always fits the line it sits on.
     let availableWidth = textView.textContainer.size.width > 0
       ? textView.textContainer.size.width - textView.textContainer.lineFragmentPadding * 2
-      : UIScreen.main.bounds.width
+      : (textView.window?.bounds.width ?? bounds.width)
+    if availableWidth <= 0 {
+      chipsNeedMeasuredWidth = true
+    }
     let maximumLabelWidth = max(chipFontSize * 3, availableWidth - padding * 2 - iconWidth - iconGap)
     paragraph.lineBreakMode = .byTruncatingMiddle
     attributedLabel.addAttribute(
