@@ -582,11 +582,8 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const handleOpenChange = useCallback(
     (open: boolean) => {
       props.onOpenChange(open);
-      if (!open) {
-        resetState();
-      }
     },
-    [props, resetState],
+    [props],
   );
 
   const openSourceControlSettings = useCallback(() => {

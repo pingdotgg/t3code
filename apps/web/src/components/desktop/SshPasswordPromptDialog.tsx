@@ -138,6 +138,9 @@ function ActiveSshPasswordPrompt({
   };
 
   const cancelPrompt = () => {
+    if (isRespondingRef.current) {
+      return;
+    }
     if (isExpired) {
       dismissExpiredPrompt();
       return;
