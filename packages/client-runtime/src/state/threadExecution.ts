@@ -1,4 +1,5 @@
 import {
+  heldQueueRunPresentedAsLatest,
   latestRootProviderFailure,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -72,10 +73,21 @@ function presentedUsageLimitRun(
   );
 }
 
+/** The run that stands for the thread's outcome when no run is executing. */
+function presentedLatestRun(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["runs"][number] | null {
+  return (
+    presentedUsageLimitRun(projection) ??
+    heldQueueRunPresentedAsLatest(projection.runs) ??
+    latestMatchingRun(projection, () => true)
+  );
+}
+
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
-  const run = presentedUsageLimitRun(projection) ?? latestMatchingRun(projection, () => true);
+  const run = presentedLatestRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
@@ -89,8 +101,7 @@ export function deriveThreadActivityRun(
 ): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
-    presentedUsageLimitRun(projection) ??
-    latestMatchingRun(projection, () => true);
+    presentedLatestRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
@@ -203,7 +214,7 @@ export function deriveThreadRuntime(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
   );
   const usageLimitedRun = presentedUsageLimitRun(projection);
-  const latestRunProjection = usageLimitedRun ?? latestMatchingRun(projection, () => true);
+  const latestRunProjection = presentedLatestRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
   if (latestRun === null && projection.thread.activeProviderThreadId === null) return null;
   const activeRunId =

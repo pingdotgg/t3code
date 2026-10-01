@@ -124,7 +124,10 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { usageLimitRunPresentedAsLatest } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  heldQueueRunPresentedAsLatest,
+  usageLimitRunPresentedAsLatest,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
@@ -3477,7 +3480,9 @@ export default function ChatView(props: ChatViewProps) {
         serverProjection.runs,
         serverProjection.turnItems,
         sessionError,
-      ) ?? newestRun;
+      ) ??
+      heldQueueRunPresentedAsLatest(serverProjection.runs) ??
+      newestRun;
     return [
       ...derivePendingBackgroundWork({
         latestRun,

@@ -173,6 +173,23 @@ describe("thread execution presentation", () => {
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
   });
 
+  it("presents a held queue as the stopped run instead of queued work", () => {
+    const interrupted = { ...run("run-interrupted", 1, "interrupted"), completedAt: now };
+    const held = { ...run("run-held", 2, "queued"), queueHeld: true };
+    const projection = { ...v2Projection, runs: [interrupted, held], updatedAt: now };
+
+    expect(deriveLatestThreadRun(projection)?.runId).toBe(interrupted.id);
+    expect(deriveThreadActivityRun(projection)?.runId).toBe(interrupted.id);
+    expect(deriveThreadRuntime(projection)).toMatchObject({
+      status: "interrupted",
+      activeRunId: null,
+    });
+
+    // Resuming clears the hold, and the run reads as queued until it starts.
+    const resumed = { ...projection, runs: [interrupted, { ...held, queueHeld: false }] };
+    expect(deriveThreadRuntime(resumed)).toMatchObject({ status: "queued" });
+  });
+
   it("does not expose a queued-only run as interruptible", () => {
     const queuedRun = run("run-queued", 1, "queued");
     const projection = { ...v2Projection, runs: [queuedRun], updatedAt: now };

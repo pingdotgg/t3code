@@ -1929,6 +1929,36 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           assert.equal(sqlShell.latestRunId, "run:clock:newer");
         }
       }
+
+      // A held queue waits for the user, so both shells present the run before
+      // it rather than reporting queued work.
+      yield* projectionStore.apply({
+        id: EventId.make("event:clock:newer:held"),
+        type: "run.updated",
+        threadId,
+        occurredAt: later,
+        payload: {
+          ...run,
+          id: RunId.make("run:clock:newer"),
+          ordinal: 2,
+          status: "queued",
+          queueHeld: true,
+          requestedAt: later,
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+      const heldProjection = yield* projectionStore.getThreadProjection(threadId);
+      const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      for (const heldShell of [
+        heldSqlShell,
+        ProjectionStore.threadShellFromProjection(heldProjection),
+      ]) {
+        assert.equal(heldShell.latestRunId, runId);
+        assert.equal(heldShell.status, "completed");
+      }
     }),
   );
 
