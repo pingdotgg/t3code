@@ -26,7 +26,6 @@ const {
   navigateMock: vi.fn(async () => undefined),
   readLocalApiMock: vi.fn(),
 }));
-
 readLocalApiMock.mockImplementation(() => ({
   server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
   shell: { openInEditor: vi.fn(async () => undefined) },
@@ -817,6 +816,52 @@ describe("ChatMarkdown", () => {
       });
       expect(openFileMock).not.toHaveBeenCalled();
       expect(openFileInPreviewMock).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps streamed Markdown visible through the settled render", async () => {
+    const captureDirectory = (
+      import.meta.env as ImportMetaEnv & { readonly VITE_T3_CAPTURE_MARKDOWN?: string }
+    ).VITE_T3_CAPTURE_MARKDOWN;
+    const streamingText = `# Streaming response
+
+The parser should keep up with incoming content while preserving readable structure.
+
+- Keep completed paragraphs visible.
+- Update the active response once per display frame.
+- Preserve inline \`code\` and **emphasis**.`;
+    const screen = await render(
+      <div data-testid="markdown-capture" className="w-[540px] bg-background p-8 text-foreground">
+        <ChatMarkdown text={streamingText} cwd="/repo/project" isStreaming />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByRole("heading", { name: "Streaming response" })).toBeVisible();
+      if (captureDirectory) {
+        await page.screenshot({
+          element: page.getByTestId("markdown-capture"),
+          path: `${captureDirectory}/streaming-before.png`,
+          save: true,
+        });
+      }
+
+      const settledText = `${streamingText}\n\nThe complete response is ready.`;
+      await screen.rerender(
+        <div data-testid="markdown-capture" className="w-[540px] bg-background p-8 text-foreground">
+          <ChatMarkdown text={settledText} cwd="/repo/project" />
+        </div>,
+      );
+      await expect.element(page.getByText("The complete response is ready.")).toBeVisible();
+      if (captureDirectory) {
+        await page.screenshot({
+          element: page.getByTestId("markdown-capture"),
+          path: `${captureDirectory}/streaming-after.png`,
+          save: true,
+        });
+      }
     } finally {
       await screen.unmount();
     }
