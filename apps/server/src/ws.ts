@@ -118,7 +118,7 @@ import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
-import { Open, resolveAvailableEditors } from "./open.ts";
+import { Open } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import {
   projectActivityEvent,
@@ -527,7 +527,7 @@ const makeWsRpcLayer = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: resolveAvailableEditors(),
+          availableEditors: yield* open.availableEditors,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
