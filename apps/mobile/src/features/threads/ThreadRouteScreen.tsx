@@ -664,13 +664,15 @@ function ThreadRouteContent(
     if (!selectedThread) {
       return;
     }
-    setStoppingThreadId(selectedThread.id);
+    const threadId = selectedThread.id;
+    setStoppingThreadId(threadId);
     void interruptThreadTurn({
       environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
+      input: { threadId },
     }).then((result) => {
+      // A late failure must not clear a stop requested on another thread since.
       if (result._tag === "Failure") {
-        setStoppingThreadId(null);
+        setStoppingThreadId((current) => (current === threadId ? null : current));
       }
     });
   }, [interruptThreadTurn, selectedThread]);
