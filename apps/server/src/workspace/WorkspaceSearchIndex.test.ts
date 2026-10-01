@@ -13,7 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Index from "./WorkspaceSearchIndex.ts";
 import { WorkspaceSearchWorkerPath } from "./WorkspaceSearchProcess.ts";
-import { WorkspaceSearchHost } from "./WorkspaceSearchHost.ts";
+import * as WorkspaceSearchHost from "./WorkspaceSearchHost.ts";
 
 const mockWorker = new URL("../../scripts/workspace-search-mock.ts", import.meta.url);
 const withWorker = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// Native IPC tests use Node sockets to signal blocked and retired workers.
 import * as NodeNet from "node:net";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";

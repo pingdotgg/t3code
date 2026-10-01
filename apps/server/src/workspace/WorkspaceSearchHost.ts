@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import type * as Scope from "effect/Scope";
 import {
   startSearchProcess,
   WorkspaceSearchProcessFailed,
@@ -20,7 +21,21 @@ const isRecoverable = Schema.is(
   Schema.Union([WorkspaceSearchIndexSearchFailed, WorkspaceSearchIndexRefreshFailed]),
 );
 
-const make = Effect.gen(function* () {
+export class WorkspaceSearchHost extends Context.Service<
+  WorkspaceSearchHost,
+  {
+    readonly open: (
+      cwd: string,
+      variant: WorkspaceSearchIndexVariant,
+    ) => Effect.Effect<
+      { readonly request: (operation: SearchOperation) => ReturnType<SearchProcess["request"]> },
+      Effect.Error<ReturnType<SearchProcess["request"]>>,
+      Scope.Scope
+    >;
+  }
+>()("t3/workspace/WorkspaceSearchHost") {}
+
+export const make = Effect.gen(function* () {
   const semaphore = yield* Semaphore.make(1);
   let current: { process: SearchProcess; indexes: Set<number> } | undefined;
   let activeIndex: number | undefined;
@@ -112,9 +127,4 @@ const make = Effect.gen(function* () {
   return { open };
 });
 
-export class WorkspaceSearchHost extends Context.Service<
-  WorkspaceSearchHost,
-  Effect.Success<typeof make>
->()("t3/workspace/WorkspaceSearchHost") {
-  static readonly layer = Layer.effect(WorkspaceSearchHost, make);
-}
+export const layer = Layer.effect(WorkspaceSearchHost, make);

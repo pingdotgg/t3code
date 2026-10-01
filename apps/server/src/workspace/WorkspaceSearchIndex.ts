@@ -16,7 +16,7 @@ import {
   WorkspaceSearchIndexSearchFailed,
   type WorkspaceSearchIndexVariant,
 } from "./WorkspaceSearchIndexService.ts";
-import { WorkspaceSearchHost } from "./WorkspaceSearchHost.ts";
+import * as WorkspaceSearchHost from "./WorkspaceSearchHost.ts";
 
 export * from "./WorkspaceSearchIndexService.ts";
 const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
@@ -32,7 +32,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
 ) {
-  const host = yield* WorkspaceSearchHost;
+  const host = yield* WorkspaceSearchHost.WorkspaceSearchHost;
   const remote = yield* host.open(cwd, variant).pipe(
     Effect.mapError((cause) =>
       isCreateFailed(cause) || isScanTimedOut(cause)

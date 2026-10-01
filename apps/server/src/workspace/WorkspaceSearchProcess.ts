@@ -35,14 +35,21 @@ export const startSearchProcess = Effect.fn("WorkspaceSearchProcess.start")(func
   const environment = yield* HostProcessEnvironment;
   const executable = yield* HostProcessExecutablePath;
   const isExecutable = yield* HostProcessIsExecutable;
-  const args = isExecutable ? ["__workspace-search"] : [NodeURL.fileURLToPath(workerPath)];
-  const child = yield* Effect.try(() =>
-    NodeChildProcess.spawn(executable, args, {
-      env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
-      stdio: ["ignore", "ignore", "pipe", "ipc"],
-      windowsHide: true,
-    }),
-  );
+  const args = isExecutable
+    ? ["__workspace-search"]
+    : [
+        ...(workerPath.pathname.endsWith(".ts") ? ["--experimental-strip-types"] : []),
+        NodeURL.fileURLToPath(workerPath),
+      ];
+  const child = yield* Effect.try({
+    try: () =>
+      NodeChildProcess.spawn(executable, args, {
+        env: { ...environment, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+        windowsHide: true,
+      }),
+    catch: (cause) => new WorkspaceSearchProcessFailed({ cause }),
+  });
   let failure: Error | undefined;
   let exited = false;
   let stderr = "";
@@ -78,13 +85,14 @@ export const startSearchProcess = Effect.fn("WorkspaceSearchProcess.start")(func
     // SIGKILL normally reaps immediately. A process stuck in kernel I/O must
     // not keep server shutdown waiting indefinitely either.
     Effect.timeout("2 seconds"),
-    Effect.catchTag("TimeoutError", () =>
-      Effect.sync(() => {
-        child.unref();
-        child.channel?.unref();
-        child.stderr?.destroy();
-      }),
-    ),
+    Effect.catchTags({
+      TimeoutError: () =>
+        Effect.sync(() => {
+          child.unref();
+          child.channel?.unref();
+          child.stderr?.destroy();
+        }),
+    }),
   );
 
   const request = Effect.fn("WorkspaceSearchProcess.request")(function* (input: SearchRequest) {
