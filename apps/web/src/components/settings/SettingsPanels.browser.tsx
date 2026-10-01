@@ -23,6 +23,7 @@ import { __resetLocalApiForTests } from "../../localApi";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { ConnectionsSettings } from "./ConnectionsSettings";
+import { ProvidersSettingsPanel } from "./ProvidersSettings";
 import { GeneralSettingsPanel } from "./SettingsPanels";
 import { __resetClientSettingsPersistenceForTests } from "../../hooks/useSettings";
 
@@ -927,7 +928,7 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await renderSettings(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <ProvidersSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 

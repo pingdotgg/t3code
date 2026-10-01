@@ -11,7 +11,9 @@ import {
   ArchiveIcon,
   ArrowLeftIcon,
   Link2Icon,
+  PaletteIcon,
   SearchIcon,
+  ServerIcon,
   Settings2Icon,
   WorkflowIcon,
   XIcon,
@@ -42,6 +44,8 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
+  { label: "Providers", to: "/settings/providers", icon: ServerIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Agent Workflows", to: "/settings/workflows", icon: WorkflowIcon },
   {

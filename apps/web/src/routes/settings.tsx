@@ -38,7 +38,10 @@ function SettingsContentLayout() {
   const canGoBack = useCanGoBack();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showRestoreDefaults =
-    location.pathname === "/settings/general" || location.pathname === "/settings/workflows";
+    location.pathname === "/settings/general" ||
+    location.pathname === "/settings/appearance" ||
+    location.pathname === "/settings/providers" ||
+    location.pathname === "/settings/workflows";
   const handleRestored = () => setRestoreSignal((value) => value + 1);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {

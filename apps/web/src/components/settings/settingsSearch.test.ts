@@ -31,6 +31,25 @@ describe("settings search", () => {
     expect(searchSettings("devices").some((item) => item.title === "Device support")).toBe(true);
   });
 
+  it("routes appearance and provider settings to their dedicated pages", () => {
+    expect(searchSettings("theme")[0]).toMatchObject({
+      title: "Theme",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("sidebar icon size")[0]).toMatchObject({
+      title: "Sidebar icon size",
+      to: "/settings/appearance",
+    });
+    expect(searchSettings("delegated thread model")[0]).toMatchObject({
+      title: "Delegated thread model",
+      to: "/settings/providers",
+    });
+    expect(searchSettings("providers")[0]).toMatchObject({
+      title: "Providers",
+      to: "/settings/providers",
+    });
+  });
+
   it("finds visible settings added outside the main row list", () => {
     expect(searchSettings("update track")[0]).toMatchObject({
       title: "Update track",

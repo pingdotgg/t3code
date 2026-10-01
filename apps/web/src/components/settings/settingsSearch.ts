@@ -2,6 +2,8 @@ import { isElectron } from "../../env";
 
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/appearance"
+  | "/settings/providers"
   | "/settings/connections"
   | "/settings/workflows"
   | "/settings/pull-request-collaboration"
@@ -29,6 +31,35 @@ const settingsByPage: ReadonlyArray<{
 }> = [
   {
     to: "/settings/general",
+    rows: [
+      "Automatically monitor associated PRs",
+      "Automatic maintenance chats",
+      "Default list state",
+      "Agent browser access",
+      "Agent browser preview",
+      "Browser recording frame rate",
+      "Browser profiles",
+      "Device environments",
+      "Device support",
+      "Agent device access",
+      "Device hosts",
+      "Assistant output",
+      "Completion notifications",
+      "Auto-open task panel",
+      "New threads",
+      "Add project starts in",
+      "Chat export directory",
+      "Transfer active chats",
+      "Chat export details",
+      "Archive review chats on merge",
+      "Archive confirmation",
+      "Delete confirmation",
+      "Keybindings",
+      "Diagnostics",
+    ],
+  },
+  {
+    to: "/settings/appearance",
     rows: [
       "Theme",
       "Time format",
@@ -74,42 +105,19 @@ const settingsByPage: ReadonlyArray<{
       "Normal message preview",
       "Cross-thread message preview",
       "Monitoring message preview",
-      "Automatically monitor associated PRs",
-      "Automatic maintenance chats",
-      "Default list state",
       "Diff code font size",
       "Body font size",
       "Wrap long diff lines",
-      "Agent browser access",
-      "Agent browser preview",
-      "Browser recording frame rate",
       "Browser default viewport",
       "Browser default zoom",
       "Browser default appearance",
       "Open links in",
-      "Browser profiles",
-      "Device environments",
-      "Device support",
-      "Agent device access",
-      "Device hosts",
       "Diff line wrapping",
-      "Assistant output",
-      "Completion notifications",
-      "Auto-open task panel",
-      "New threads",
-      "Add project starts in",
-      "Chat export directory",
-      "Transfer active chats",
-      "Chat export details",
-      "Archive review chats on merge",
-      "Archive confirmation",
-      "Delete confirmation",
-      "Text generation model",
-      "Delegated thread model",
-      "Keybindings",
-      "Diagnostics",
-      "Providers",
     ],
+  },
+  {
+    to: "/settings/providers",
+    rows: ["Text generation model", "Delegated thread model", "Providers"],
   },
   {
     to: "/settings/connections",
