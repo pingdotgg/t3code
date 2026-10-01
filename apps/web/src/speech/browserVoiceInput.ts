@@ -86,7 +86,7 @@ export function createBrowserVoiceInputPlatform(input: {
         worklet = node;
         node.port.onmessage = ({
           data,
-        }: MessageEvent<Float32Array<ArrayBuffer> | "stopped" | "limit">) => {
+        }: MessageEvent<Float32Array<ArrayBuffer> | number | "stopped" | "limit">) => {
           if (captureSignal.aborted) return;
           if (data === "stopped") {
             stopped?.resolve();
@@ -96,9 +96,10 @@ export function createBrowserVoiceInputPlatform(input: {
             input.onDurationLimit();
             return;
           }
-          let energy = 0;
-          for (const value of data) energy += value * value;
-          input.onLevel(Math.min(1, Math.sqrt(energy / data.length) * 4));
+          if (typeof data === "number") {
+            input.onLevel(data);
+            return;
+          }
           if (live) live.feed(data);
           else chunks.push(data);
         };

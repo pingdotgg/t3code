@@ -13,6 +13,8 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
   private recording = false;
   private flushed = false;
   private samples = 0;
+  private levelSamples = 0;
+  private levelEnergy = 0;
 
   constructor() {
     super();
@@ -54,6 +56,16 @@ class PcmCaptureProcessor extends AudioWorkletProcessor {
     const mono = new Float32Array(channels[0].length);
     for (const channel of channels)
       for (let i = 0; i < mono.length; i++) mono[i]! += channel[i]! / channels.length;
+    // Metering must not wait for the half-second transcription chunks.
+    for (const sample of mono) {
+      this.levelEnergy += sample * sample;
+      this.levelSamples++;
+      if (this.levelSamples >= sampleRate / 20) {
+        this.port.postMessage(Math.min(1, Math.sqrt(this.levelEnergy / this.levelSamples) * 4), []);
+        this.levelEnergy = 0;
+        this.levelSamples = 0;
+      }
+    }
     this.append(this.resampler.push(mono));
     return true;
   }

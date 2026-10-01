@@ -29,7 +29,7 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 
 let worklet: {
   port: {
-    onmessage: ((event: { data: Float32Array | "stopped" }) => void) | null;
+    onmessage: ((event: { data: Float32Array | number | "stopped" }) => void) | null;
     postMessage: () => void;
     close: () => void;
   };
@@ -39,6 +39,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("preserves audio when recording stops before the streaming model is ready", async () => {
   const feed = vi.fn();
+  const onLevel = vi.fn();
   worklet = {
     port: { onmessage: null, postMessage: vi.fn(), close: vi.fn() },
   };
@@ -69,7 +70,7 @@ it("preserves audio when recording stops before the streaming model is ready", a
   const platform = createBrowserVoiceInputPlatform({
     prepared: {} as PreparedConnection,
     getMicrophoneId: () => "",
-    onLevel() {},
+    onLevel,
     onDurationLimit() {},
     onText() {},
     onError: vi.fn(),
@@ -79,6 +80,8 @@ it("preserves audio when recording stops before the streaming model is ready", a
   });
   await platform.recorder.prepareToRecordAsync();
   platform.recorder.record({ forDuration: 300 });
+  worklet.port.onmessage?.({ data: 0.4 });
+  expect(onLevel).toHaveBeenLastCalledWith(0.4);
   const earlyAudio = new Float32Array([0.25, 0.5]);
   worklet.port.onmessage?.({ data: earlyAudio });
 

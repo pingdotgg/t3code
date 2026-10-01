@@ -6,10 +6,10 @@ afterEach(() => {
 });
 
 it("mixes channels and publishes the final partial PCM block before acknowledging stop", async () => {
-  const messages: (string | Float32Array)[] = [];
+  const messages: (string | number | Float32Array)[] = [];
   const port = {
     onmessage: (_event: { data: string }) => {},
-    postMessage: (value: string | Float32Array) => messages.push(value),
+    postMessage: (value: string | number | Float32Array) => messages.push(value),
   };
   let create: (() => { process(inputs: Float32Array[][]): boolean }) | undefined;
   vi.stubGlobal("sampleRate", 48_000);
@@ -32,14 +32,17 @@ it("mixes channels and publishes the final partial PCM block before acknowledgin
   processor.process([[left, right]]);
   expect(messages).toHaveLength(0);
   port.onmessage({ data: "start" });
-  for (let i = 0; i < 30; i++) processor.process([[left, right]]);
+  for (let i = 0; i < 18; i++) processor.process([[left, right]]);
   expect(messages).toHaveLength(0);
+  for (let i = 0; i < 12; i++) processor.process([[left, right]]);
+  // A level arrives after 50 ms, before any 500 ms PCM chunk is ready.
+  expect(messages).toEqual([1]);
   port.onmessage({ data: "stop" });
-  expect(messages).toHaveLength(2);
-  expect(messages[1]).toBe("stopped");
-  const audio = messages[0] as Float32Array;
+  expect(messages).toHaveLength(3);
+  expect(messages[2]).toBe("stopped");
+  const audio = messages[1] as Float32Array;
   expect(audio.length).toBe(Math.floor((30 * 128 + 62) / 3));
   expect(audio[100]).toBeCloseTo(0.5);
   processor.process([[left, right]]);
-  expect(messages).toHaveLength(2);
+  expect(messages).toHaveLength(3);
 });
