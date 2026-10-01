@@ -172,6 +172,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { TITLEBAR_CONTROL_INSET_CLASS, TITLEBAR_ROW_CLASS } from "~/lib/titlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { isRateLimitQueryError } from "../lib/rateLimitQuery";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -4676,6 +4677,7 @@ function ChatViewBody(
     settings.chatExportDirectory,
   ]);
 
+  const onRunWorkflowRef = useRef<(request: AgentWorkflowRunRequest) => void>(null);
   const onRunWorkflow = useCallback(
     (request: AgentWorkflowRunRequest) => {
       const api = readEnvironmentApi(environmentId);
@@ -4831,6 +4833,32 @@ function ChatViewBody(
           }
         })
         .catch((error: unknown) => {
+          const isPullRequestRateLimit =
+            workflowId === REVIEW_CHANGES_WORKFLOW_ID &&
+            request.input?.scope === "pull-request" &&
+            isRateLimitQueryError(error);
+          if (isPullRequestRateLimit) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "GitHub quota exhausted — PR review paused",
+                description:
+                  "The pull-request patch needs the GitHub API. Review the local checkout against its base instead; it uses only git and keeps an against-base snapshot, not PR provenance.",
+                actionProps: {
+                  children: "Review against base instead",
+                  onClick: () =>
+                    onRunWorkflowRef.current?.({
+                      workflowId,
+                      input: { scope: "against-base" },
+                      ...(request.destinationMode !== undefined
+                        ? { destinationMode: request.destinationMode }
+                        : {}),
+                    }),
+                },
+              }),
+            );
+            return;
+          }
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -4858,6 +4886,9 @@ function ChatViewBody(
       startingWorkflowId,
     ],
   );
+  useLayoutEffect(() => {
+    onRunWorkflowRef.current = onRunWorkflow;
+  }, [onRunWorkflow]);
 
   const onFixReviewFindings = useCallback(() => {
     const result = activeThread?.reviewResult;
