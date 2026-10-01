@@ -125,13 +125,13 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
       includeImage: Schema.optional(
         Schema.Boolean.annotate({
           description:
-            "Include the PNG image in the tool response. Defaults to true. Set false for text-only output.",
+            "Include the PNG image in the tool response. Defaults to false. Set true to include the image.",
         }),
       ),
       save: Schema.optional(
         Schema.Boolean.annotate({
           description:
-            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. With includeImage=false, return only the url and screenshotPath. Defaults to false.",
+            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. Without includeImage=true, return only the url and screenshotPath. Defaults to false.",
         }),
       ),
     }),
