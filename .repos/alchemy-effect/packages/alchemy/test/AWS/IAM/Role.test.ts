@@ -284,7 +284,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "AdoptableRole",
         });
       }).pipe(Effect.provide(stack.state));
@@ -335,7 +335,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "Original",
         });
       }).pipe(Effect.provide(stack.state));

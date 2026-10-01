@@ -49,8 +49,8 @@ export interface Plan extends Resource<
  * `SSMContacts.Contact` or standalone with this resource — not both.
  * Deleting this resource resets the contact's plan to empty.
  *
- * @section Managing Engagement Plans
- * @example Engage an email channel for 5 minutes
+ * ### Managing Engagement Plans
+ * **Example:** Engage an email channel for 5 minutes
  * ```typescript
  * const plan = yield* SSMContacts.Plan("OncallPlan", {
  *   contactId: oncall.contactArn,

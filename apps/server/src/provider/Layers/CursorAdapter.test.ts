@@ -26,9 +26,12 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
@@ -38,26 +41,25 @@ class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-const mockAgentCommand = "node";
-const mockAgentArgs = [mockAgentPath] as const;
-
+// Stopping a session kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 async function makeMockAgentWrapper(
   extraEnv?: Record<string, string>,
   options?: { initialDelaySeconds?: number },
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-mock-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-${options?.initialDelaySeconds ? `sleep ${JSON.stringify(String(options.initialDelaySeconds))}` : ""}
-exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
-`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: extraEnv ?? {},
+    source: execScriptSource({
+      scriptPath: mockAgentPath,
+      ...(options?.initialDelaySeconds === undefined
+        ? {}
+        : { delayMs: Math.round(options.initialDelaySeconds * 1000) }),
+    }),
+  });
 }
 
 async function makeProbeWrapper(
@@ -66,20 +68,12 @@ async function makeProbeWrapper(
   extraEnv?: Record<string, string>,
 ) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-probe-"));
-  const wrapperPath = NodePath.join(dir, "fake-agent.sh");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-printf '%s\t' "$@" >> ${JSON.stringify(argvLogPath)}
-printf '\n' >> ${JSON.stringify(argvLogPath)}
-export T3_ACP_REQUEST_LOG_PATH=${JSON.stringify(requestLogPath)}
-${envExports}
-exec ${JSON.stringify(mockAgentCommand)} ${mockAgentArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"
-`;
-  await NodeFSP.writeFile(wrapperPath, script, "utf8");
-  await NodeFSP.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath, ...extraEnv },
+    source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+  });
 }
 
 async function readArgvLog(filePath: string) {
@@ -168,6 +162,64 @@ const cursorAdapterTestLayer = it.layer(
 );
 
 cursorAdapterTestLayer("CursorAdapterLive", (it) => {
+  it.effect("rejects rollback without discarding the provider conversation", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-unsupported-rollback");
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "Remember this turn", attachments: [] });
+      const originalTurns = [...(yield* adapter.readThread(threadId)).turns];
+      assert.isFalse(adapter.capabilities.supportsConversationRollback);
+      const error = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.deepStrictEqual((yield* adapter.readThread(threadId)).turns, originalTurns);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("rejects a Cursor transport error returned as a successful assistant answer", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-transport-error-answer");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({
+          T3_ACP_PROMPT_RESPONSE_TEXT: "Error: RetriableError: WritableIterable is closed",
+        }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const error = yield* adapter
+        .sendTurn({ threadId, input: "continue", attachments: [] })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      if (error._tag === "ProviderAdapterRequestError") {
+        assert.equal(error.detail, "Cursor reported a transport failure.");
+        assert.equal(error.cause, "Error: RetriableError: WritableIterable is closed");
+      }
+      yield* adapter.stopSession(threadId);
+      const runtimeEvents = yield* Fiber.join(runtimeEventsFiber);
+      assert.isFalse(runtimeEvents.some((event) => event.type === "turn.completed"));
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -250,6 +302,71 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends skills in Cursor's native form and preserves exact slash command input", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-skill-dispatch");
+      const workspace = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-skill-dispatch-")),
+      );
+      const requestLogPath = NodePath.join(workspace, "requests.ndjson");
+      const argvLogPath = NodePath.join(workspace, "argv.txt");
+      const skillDirectory = NodePath.join(workspace, ".cursor", "skills", "review");
+      yield* Effect.promise(() => NodeFSP.mkdir(skillDirectory, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(skillDirectory, "SKILL.md"), "# Review\n", "utf8"),
+      );
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "please $review this",
+        attachments: [],
+      });
+      const snapshot = yield* adapter.readThread(threadId);
+      assert.deepStrictEqual(
+        snapshot.turns.map((turn) => turn.items),
+        [
+          [
+            {
+              prompt: [{ type: "text", text: "please /review this" }],
+              result: { stopReason: "end_turn" },
+            },
+          ],
+        ],
+      );
+      yield* adapter.sendTurn({ threadId, input: "/copy-request-id" });
+      yield* adapter.stopSession(threadId);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const promptRequests = requests.filter((entry) => entry.method === "session/prompt");
+      assert.deepStrictEqual(
+        promptRequests.map(
+          (request) => (request.params as Record<string, unknown> | undefined)?.prompt,
+        ),
+        [
+          [
+            { type: "text", text: "please /review this" },
+            { type: "text", text: buildRuntimeInstructions({ harness: "Cursor" }) },
+          ],
+          [{ type: "text", text: "/copy-request-id" }],
+        ],
+      );
+    }),
+  );
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
@@ -326,7 +443,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("closes the ACP child process when a session stops", () =>
+  it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
@@ -358,7 +475,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "serializes concurrent startSession calls for the same thread and closes the replaced ACP session",
     () =>
       Effect.gen(function* () {
@@ -423,6 +540,49 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         .pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("surfaces cursor-agent cli.json schema stderr instead of a closed-session error", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const workspace = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-cli-json-")),
+      );
+      const wrapperPath = writeFakeCli({
+        directory: workspace,
+        name: "fake-cursor-agent",
+        source: [
+          "process.stderr.write(`Invalid project config at ${process.cwd()}/.cursor/cli.json: schema validation failed. [`",
+          "  + JSON.stringify({",
+          '      code: "unrecognized_keys",',
+          '      keys: ["approvalMode", "sandbox"],',
+          "      path: [],",
+          "      message: \"Unrecognized key(s) in object: 'approvalMode', 'sandbox'\",",
+          '    }) + "]\\n");',
+          "process.exit(1);",
+        ].join("\n"),
+      });
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const error = yield* adapter
+        .startSession({
+          threadId: ThreadId.make("cursor-cli-json-schema"),
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: workspace,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterProcessError");
+      assert.include(error.message, "cli.json");
+      assert.include(error.message, "Unrecognized key");
+      assert.notInclude(error.message, "adapter thread is closed");
+      if (error._tag === "ProviderAdapterProcessError") {
+        assert.include(error.detail, "approvalMode");
+        assert.include(error.detail, "sandbox");
+      }
     }),
   );
 
@@ -819,6 +979,9 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             entry.result.outcome.optionId === "allow-always",
         );
         assert.isDefined(permissionResponse);
+
+        const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
+        assert.deepStrictEqual(argvRuns, [["--force", "acp"]]);
 
         yield* adapter.stopSession(threadId);
       }),
@@ -1260,7 +1423,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
 
       const argvRuns = yield* Effect.promise(() => readArgvLog(argvLogPath));
       assert.lengthOf(argvRuns, 1, "session should not restart — only one spawn");
-      assert.deepStrictEqual(argvRuns[0], ["acp"]);
+      assert.deepStrictEqual(argvRuns[0], ["--force", "acp"]);
 
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const setConfigRequests = requests.filter(
@@ -1428,5 +1591,73 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         yield* adapter.stopSession(threadId);
       }).pipe(Effect.provide(customAdapterLayer));
     },
+  );
+
+  // Production calls startSession from a request fiber that finishes as soon as
+  // the session exists. `Effect.forkChild` made the notification consumer a
+  // child of that fiber, and Effect interrupts a fiber's children when it
+  // completes, so the consumer died on return and every later session/update
+  // was dropped: the thread sat on "Working" forever while the provider
+  // streamed its whole turn. The other tests here call startSession directly
+  // from the test fiber, which never completes, so the consumer survived and
+  // the bug stayed invisible. Running it in a fiber that finishes is what
+  // reproduces production.
+  it.effect("keeps consuming notifications after the startSession fiber completes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-consumer-outlives-start-session");
+
+      const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const sawContentDelta = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "content.delta" && String(event.threadId) === String(threadId)
+              ? Deferred.succeed(sawContentDelta, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const startSessionFiber = yield* adapter
+        .startSession({
+          threadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(startSessionFiber).pipe(Effect.timeout("10 seconds"));
+
+      // Forked, and the assertion waits on the projected event rather than on
+      // sendTurn: with the consumer dead the turn never settles, so awaiting it
+      // directly would hang until the suite timeout instead of failing here.
+      const sendTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "hello mock", attachments: [] })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(sawContentDelta).pipe(Effect.timeout("10 seconds"));
+      yield* Fiber.join(sendTurnFiber).pipe(Effect.timeout("10 seconds"));
+
+      const delta = runtimeEvents.find(
+        (event) => event.type === "content.delta" && String(event.threadId) === String(threadId),
+      );
+      assert.isDefined(
+        delta,
+        "no content.delta was projected after the startSession fiber completed",
+      );
+
+      yield* Fiber.interrupt(runtimeEventsFiber);
+      yield* adapter.stopSession(threadId);
+      // Live clock so the timeouts above are real: under the default test clock
+      // they wait on virtual time that never advances, and a regression would
+      // hang until the suite timeout instead of failing here.
+    }).pipe(TestClock.withLive),
   );
 });

@@ -1,7 +1,11 @@
 import * as React from "react";
 import * as Schema from "effect/Schema";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextClipboardHtml,
+} from "@t3tools/shared/composerContextClipboard";
 
-export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<ClipboardApiUnavailableError>()(
+export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
   {
     target: Schema.String,
@@ -12,7 +16,7 @@ export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<Clipbo
   }
 }
 
-export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteError>()(
+export class ClipboardWriteError extends Schema.TaggedError<ClipboardWriteError>()(
   "ClipboardWriteError",
   {
     target: Schema.String,
@@ -24,24 +28,169 @@ export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteE
   }
 }
 
-export async function writeTextToClipboard(value: string, target = "text") {
-  if (
-    typeof window === "undefined" ||
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.writeText
-  ) {
+export class ClipboardReadUnavailableError extends Schema.TaggedError<ClipboardReadUnavailableError>()(
+  "ClipboardReadUnavailableError",
+  {
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Clipboard API is unavailable while reading ${this.target}.`;
+  }
+}
+
+export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()(
+  "ClipboardReadError",
+  {
+    target: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to read ${this.target} from the clipboard.`;
+  }
+}
+
+/** Copy fallback for remote web pages served over plain HTTP. */
+function writeTextWithExecCommand(
+  value: string,
+  extraFlavors?: Readonly<Record<string, string>>,
+): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  textarea.style.fontSize = "16px";
+
+  const previouslyFocused = document.activeElement;
+  const copy = (event: ClipboardEvent) => {
+    if (!extraFlavors || !event.clipboardData) return;
+    event.clipboardData.setData("text/plain", value);
+    for (const [type, data] of Object.entries(extraFlavors))
+      event.clipboardData.setData(type, data);
+    event.preventDefault();
+  };
+  document.body.appendChild(textarea);
+  textarea.addEventListener("copy", copy);
+  try {
+    textarea.focus({ preventScroll: true });
+    textarea.select();
+    textarea.setSelectionRange(0, value.length);
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.removeEventListener("copy", copy);
+    textarea.remove();
+    const restoreFocus = (previouslyFocused as { focus?: unknown } | null)?.focus;
+    if (typeof restoreFocus === "function") {
+      restoreFocus.call(previouslyFocused);
+    }
+  }
+}
+
+export async function writeTextToClipboard(
+  value: string,
+  target = "text",
+  extraFlavors?: Readonly<Record<string, string>>,
+) {
+  if (typeof window === "undefined") {
     throw new ClipboardApiUnavailableError({
       target,
     });
   }
 
   if (!value) return false;
+  if (extraFlavors) {
+    extraFlavors = Object.fromEntries(
+      Object.entries(extraFlavors).filter(([type]) => type !== "text/plain"),
+    );
+  }
+  const contextFragment = extraFlavors?.[COMPOSER_CONTEXT_CLIPBOARD_MIME];
+  if (contextFragment)
+    extraFlavors = {
+      ...extraFlavors,
+      // A caller that already built rich HTML keeps it; the escaped `<pre>` is only a fallback.
+      "text/html": encodeComposerContextClipboardHtml(
+        value,
+        contextFragment,
+        extraFlavors?.["text/html"],
+      ),
+    };
+
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    if (writeTextWithExecCommand(value, extraFlavors)) return true;
+    throw new ClipboardApiUnavailableError({
+      target,
+    });
+  }
 
   try {
+    // Custom flavors need ClipboardItem; when it is missing or refuses the type, plain text
+    // still lands so the copy never silently fails.
+    if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([value], { type: "text/plain" }),
+            ...Object.fromEntries(
+              Object.entries(extraFlavors).map(([type, data]) => [
+                type,
+                new Blob([data], { type }),
+              ]),
+            ),
+          }),
+        ]);
+        return true;
+      } catch {
+        // Safari/native bridges may accept HTML but reject Chromium's custom web flavor.
+        const html = extraFlavors["text/html"];
+        if (html) {
+          try {
+            await navigator.clipboard.write([
+              new ClipboardItem({
+                "text/plain": new Blob([value], { type: "text/plain" }),
+                "text/html": new Blob([html], { type: "text/html" }),
+              }),
+            ]);
+            return true;
+          } catch {
+            // Plain text still makes unavailable references visible to the receiver.
+          }
+        }
+      }
+    }
     await navigator.clipboard.writeText(value);
     return true;
   } catch (cause) {
     throw new ClipboardWriteError({
+      target,
+      cause,
+    });
+  }
+}
+
+export async function readTextFromClipboard(target = "text"): Promise<string> {
+  if (
+    typeof window === "undefined" ||
+    typeof navigator === "undefined" ||
+    !navigator.clipboard?.readText
+  ) {
+    throw new ClipboardReadUnavailableError({
+      target,
+    });
+  }
+
+  try {
+    return await navigator.clipboard.readText();
+  } catch (cause) {
+    throw new ClipboardReadError({
       target,
       cause,
     });
@@ -53,11 +202,13 @@ export function useCopyToClipboard<TContext = void>({
   target = "text",
   onCopy,
   onError,
+  extraFlavors,
 }: {
   timeout?: number;
   target?: string;
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
+  extraFlavors?: Readonly<Record<string, string>>;
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -68,11 +219,13 @@ export function useCopyToClipboard<TContext = void>({
 
   onCopyRef.current = onCopy;
   onErrorRef.current = onError;
+  const extraFlavorsRef = React.useRef(extraFlavors);
   targetRef.current = target;
   timeoutRef.current = timeout;
+  extraFlavorsRef.current = extraFlavors;
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current).then(
+    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {

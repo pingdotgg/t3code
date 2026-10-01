@@ -14,7 +14,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import type { NetworkInterfaces } from "./DesktopNetworkInterfaces.ts";
 
-export { isTailscaleIpv4Address, parseTailscaleMagicDnsName } from "@t3tools/tailscale";
+export { parseTailscaleMagicDnsName } from "@t3tools/tailscale";
 
 const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   id: "tailscale",

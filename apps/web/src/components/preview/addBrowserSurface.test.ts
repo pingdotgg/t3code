@@ -1,4 +1,11 @@
-import type { PreviewOpenInput, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  DEFAULT_CLIENT_SETTINGS,
+  FILL_PREVIEW_VIEWPORT,
+  type PreviewOpenInput,
+  type PreviewSessionSnapshot,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,6 +15,7 @@ import {
   resetPreviewStateForTests,
 } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
 import { addBrowserSurface } from "./addBrowserSurface";
 
@@ -26,11 +34,30 @@ const snapshot = (tabId: string): PreviewSessionSnapshot => ({
 });
 
 beforeEach(() => {
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   resetPreviewStateForTests();
   useRightPanelStore.setState({ byThreadKey: {} });
 });
 
 describe("addBrowserSurface", () => {
+  it("opens under the requested profile", async () => {
+    const openPreview = vi.fn(async (_input: PreviewOpenInput) =>
+      AsyncResult.success(snapshot("tab-1")),
+    );
+
+    await addBrowserSurface({
+      threadRef,
+      openPreview: ({ input }) => openPreview(input),
+      profileId: "profile-work",
+    });
+
+    expect(openPreview).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: "profile-work",
+    });
+  });
+
   it("creates another preview session when a browser tab is already active", async () => {
     const first = snapshot("tab-1");
     const second = snapshot("tab-2");
@@ -40,7 +67,11 @@ describe("addBrowserSurface", () => {
 
     await addBrowserSurface({ threadRef, openPreview: ({ input }) => openPreview(input) });
 
-    expect(openPreview).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(openPreview).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      viewport: FILL_PREVIEW_VIEWPORT,
+      profileId: DEFAULT_BROWSER_PROFILE_ID,
+    });
     expect(Object.keys(readThreadPreviewState(threadRef).sessions)).toEqual(["tab-1", "tab-2"]);
     expect(
       selectThreadRightPanelState(

@@ -2,18 +2,31 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPullRequestSummariesGraphQlQuery,
+  decodePullRequestSummariesJson,
   buildReviewSubmissionJson,
+  buildPullRequestStackMembershipsGraphQlQuery,
+  decodePullRequestStackMembershipsJson,
   buildReviewerRequestJson,
+  buildSetFilesViewedGraphQlMutation,
+  decodeBaseComparisonJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
+  decodePullRequestFilesViewedJson,
   decodePullRequestListJson,
-  decodeRepositoryAccessJson,
+  decodePullRequestNodeIdJson,
+  decodePullRequestSearchJson,
+  decodePullRequestStacksJson,
+  decodeLabelCandidatesJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
+  decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
+  REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -67,11 +80,166 @@ describe("pull request list decoding", () => {
     expect(entry?.reviewRequestLogins).toEqual(["octocat"]);
   });
 
+  it("normalizes the review decision and reports nothing for one GitHub does not summarize", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          { reviewDecision: "APPROVED" },
+          { reviewDecision: "CHANGES_REQUESTED" },
+          { reviewDecision: "REVIEW_REQUIRED" },
+          { reviewDecision: null },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual([
+      "approved",
+      "changes-requested",
+      "review-required",
+      null,
+    ]);
+  });
+
+  it("takes the verdict from the latest reviews when GitHub summarizes none, as for a bot's approval", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "macroscopeapp" }, state: "APPROVED" }],
+          },
+          {
+            reviewDecision: "REVIEW_REQUIRED",
+            latestReviews: [
+              { author: { login: "octocat" }, state: "APPROVED" },
+              { author: { login: "hubot" }, state: "CHANGES_REQUESTED" },
+            ],
+          },
+          {
+            reviewDecision: "APPROVED",
+            latestReviews: [{ author: { login: "hubot" }, state: "CHANGES_REQUESTED" }],
+          },
+          {
+            reviewDecision: null,
+            latestReviews: [{ author: { login: "octocat" }, state: "COMMENTED" }],
+          },
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.reviewDecision)).toEqual([
+      "approved",
+      "changes-requested",
+      "approved",
+      null,
+    ]);
+  });
+
+  it("rolls the head commit's checks up to the one word a row has space for", () => {
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        listJson([
+          // A failure outranks a run still going, and a completed run has to be read through its
+          // conclusion rather than its status.
+          {
+            statusCheckRollup: [
+              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+              { name: "build", status: "IN_PROGRESS" },
+              { name: "test", status: "COMPLETED", conclusion: "FAILURE" },
+            ],
+          },
+          {
+            statusCheckRollup: [
+              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+              { name: "build", status: "QUEUED" },
+            ],
+          },
+          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SUCCESS" }] },
+          // A commit status reports one `state` and no `status` at all.
+          { statusCheckRollup: [{ context: "ci/legacy", state: "ERROR" }] },
+          // Neither a pass, a failure nor a wait is no verdict rather than a green tick.
+          { statusCheckRollup: [{ name: "lint", status: "COMPLETED", conclusion: "SKIPPED" }] },
+          // Cancelled reads as failing here and in the detail header, so the two never flap.
+          {
+            statusCheckRollup: [
+              { name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+              { name: "test", status: "COMPLETED", conclusion: "CANCELLED" },
+            ],
+          },
+          { statusCheckRollup: [] },
+          {},
+        ]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.checksState)).toEqual([
+      "failing",
+      "pending",
+      "passing",
+      "failing",
+      null,
+      "failing",
+      null,
+      null,
+    ]);
+  });
+
   it("skips malformed entries but still counts them, so paging does not stop early", () => {
     const raw = `[${listJson([{}]).slice(1, -1)},{"number":"not-a-number"}]`;
     const batch = expectSuccess(decodePullRequestListJson(raw));
     expect(batch.items).toHaveLength(1);
     expect(batch.rawCount).toBe(2);
+  });
+});
+
+describe("pull request search decoding", () => {
+  function searchJson(rollupStates: ReadonlyArray<string | null>): string {
+    return JSON.stringify({
+      data: {
+        search: {
+          pageInfo: { hasNextPage: false },
+          nodes: rollupStates.map((state, index) => ({
+            number: index + 1,
+            title: "Add the pull requests page",
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+            headRefName: "feat/page",
+            baseRefName: "main",
+            createdAt: "2026-07-01T00:00:00Z",
+            updatedAt: "2026-07-02T00:00:00Z",
+            repository: { nameWithOwner: "pingdotgg/t3code" },
+            commits: {
+              nodes: [{ commit: { statusCheckRollup: state === null ? null : { state } } }],
+            },
+          })),
+        },
+      },
+    });
+  }
+
+  it("keeps stack membership beside search results without extra per-PR reads", () => {
+    const raw = JSON.parse(searchJson(["SUCCESS", null]));
+    raw.data.search.nodes[0].stack = { number: 3, size: 2, baseRefName: "main" };
+    raw.data.search.nodes[0].stackEntry = { position: 1 };
+    const batch = expectSuccess(decodePullRequestSearchJson(JSON.stringify(raw)));
+    expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, position: 1, base: "main" });
+    expect(batch.items[1]?.stack).toBeUndefined();
+    expect(pullRequestSearchGraphQlQuery(20, true)).toContain("stackEntry");
+    expect(pullRequestSearchGraphQlQuery(20)).not.toContain("stackEntry");
+  });
+
+  it("maps the rollup enum the search answers with onto the same three words", () => {
+    // The search asks GitHub for the verdict rather than the checks behind it, so this path sees
+    // one enum where the listing sees an array.
+    const batch = expectSuccess(
+      decodePullRequestSearchJson(
+        searchJson(["SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED", null]),
+      ),
+    );
+    expect(batch.items.map((entry) => entry.checksState)).toEqual([
+      "passing",
+      "failing",
+      "failing",
+      "pending",
+      "pending",
+      null,
+    ]);
   });
 });
 
@@ -115,6 +283,96 @@ describe("pull request detail decoding", () => {
       ["test", "failure"],
       ["ci/legacy", "success"],
     ]);
+  });
+
+  it("keeps a workflow waiting for approval out of the passing state", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            {
+              __typename: "CheckRun",
+              name: "contributor tests",
+              status: "COMPLETED",
+              conclusion: "ACTION_REQUIRED",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(detail.checks.map((check) => check.status)).toEqual(["success", "action-required"]);
+    expect(detail.checksState).toBe("pending");
+  });
+
+  it("decodes workflow runs that can be approved", () => {
+    expect(
+      expectSuccess(
+        decodeWorkflowRunApprovalsJson(
+          JSON.stringify([
+            { databaseId: 10, workflowName: "contributor tests", url: "https://example.com/10" },
+            { databaseId: 11, workflowName: null, url: null },
+          ]),
+        ),
+      ),
+    ).toEqual([
+      { id: 10, name: "contributor tests", url: "https://example.com/10" },
+      { id: 11, name: "Workflow run 11", url: null },
+    ]);
+  });
+
+  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const armed = (entry: Record<string, unknown>) =>
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })));
+
+    expect(
+      armed({ autoMergeRequest: { enabledBy: { login: "octocat" }, mergeMethod: "SQUASH" } }),
+    ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+    expect(armed({ autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+    // `gh` not answering for the field at all is not GitHub saying the merge is unarmed.
+    expect(armed({}).autoMergeEnabled).toBeUndefined();
+  });
+
+  it("shows a re-running check once, as the run that is happening now", () => {
+    // What `statusCheckRollup` reports while a workflow is being re-run: the same check twice,
+    // the finished run and the one that replaced it, with no id to tell them apart.
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            {
+              __typename: "CheckRun",
+              name: "Prepare PR size config",
+              workflowName: "PR Size",
+              status: "COMPLETED",
+              conclusion: "SUCCESS",
+              startedAt: "2026-08-11T16:06:20Z",
+              completedAt: "2026-08-11T16:06:25Z",
+            },
+            {
+              __typename: "CheckRun",
+              name: "Prepare PR size config",
+              workflowName: "PR Size",
+              status: "IN_PROGRESS",
+              conclusion: "",
+              startedAt: "2026-08-11T17:01:04Z",
+              completedAt: "0001-01-01T00:00:00Z",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
+      ["Prepare PR size config", "pending"],
+    ]);
+    expect(detail.checksState).toBe("pending");
   });
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
@@ -223,14 +481,26 @@ describe("review thread decoding", () => {
           requested: [{ login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" }],
           // An app that has reviewed is no longer an outstanding request, which is why asking
           // only for requests reported nobody on a pull request a bot had reviewed.
-          reviewed: [{ login: "macroscopeapp", avatarUrl: "https://avatars/in/900172.png" }],
+          reviewed: [
+            {
+              __typename: "Bot",
+              login: "macroscopeapp",
+              avatarUrl: "https://avatars/in/900172.png",
+            },
+          ],
         }),
       ),
     );
 
+    expect(result.botLogins).toEqual(new Set(["macroscopeapp"]));
     expect(result.reviewers).toEqual([
       { login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" },
-      { login: "macroscopeapp", name: null, avatarUrl: "https://avatars/in/900172.png" },
+      {
+        login: "macroscopeapp",
+        name: null,
+        avatarUrl: "https://avatars/in/900172.png",
+        isBot: true,
+      },
     ]);
   });
 
@@ -259,6 +529,36 @@ describe("review thread decoding", () => {
       ["abc123", { additions: 18, deletions: 7 }],
       ["def456", { additions: 3, deletions: 0 }],
     ]);
+  });
+
+  it("omits misleading line counts from merge commits", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { totalCount: 0, nodes: [] },
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        oid: "merge123",
+                        additions: 36_858,
+                        deletions: 12_928,
+                        parents: { totalCount: 2 },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...result.commitStats]).toEqual([]);
   });
 
   it("decodes the newest commits off the same connection, oldest to newest", () => {
@@ -446,7 +746,9 @@ describe("review thread decoding", () => {
       decodeReviewThreadCommentsJson(
         JSON.stringify({
           data: {
+            repository: { pullRequest: { id: "PR_1" } },
             node: {
+              pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjk" },
                 nodes: [{ id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" }],
@@ -461,34 +763,128 @@ describe("review thread decoding", () => {
   });
 });
 
+describe("reaction decoding", () => {
+  const commentWithGroups = (reactionGroups: ReadonlyArray<Record<string, unknown>>) =>
+    JSON.stringify({
+      data: {
+        repository: { pullRequest: { id: "PR_1" } },
+        node: {
+          pullRequest: { id: "PR_1" },
+          comments: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [{ id: "t1", body: "nice", createdAt: "2026-07-01T00:00:00Z", reactionGroups }],
+          },
+        },
+      },
+    });
+
+  it("keeps a named group, widens a group whose reactors were cut short, drops an unknown content and an empty group", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadCommentsJson(
+        commentWithGroups([
+          {
+            content: "THUMBS_UP",
+            viewerHasReacted: true,
+            reactors: { totalCount: 2, nodes: [{ login: "julius" }, { login: "bilal" }] },
+          },
+          // Not one of the eight the contract carries.
+          {
+            content: "PARTY_PARROT",
+            reactors: { totalCount: 1, nodes: [{ login: "hubot" }] },
+          },
+          // Nobody behind it, which GitHub still answers a group for.
+          { content: "HEART", reactors: { totalCount: 0, nodes: [] } },
+          // More reactors than the bounded read named, and no `viewerHasReacted` at all.
+          {
+            content: "ROCKET",
+            reactors: { totalCount: 140, nodes: [{ login: "a" }, { login: "b" }, { login: "c" }] },
+          },
+        ]),
+      ),
+    );
+
+    expect(decoded.comments[0]?.reactions).toEqual([
+      { content: "thumbs-up", count: 2, actors: ["julius", "bilal"], viewerHasReacted: true },
+      { content: "rocket", count: 140, actors: ["a", "b", "c"], viewerHasReacted: false },
+    ]);
+  });
+
+  it("leaves the viewer's own login out of actors, matched case-insensitively, while count still counts them", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadCommentsJson(
+        JSON.stringify({
+          data: {
+            viewer: { login: "Bilal" },
+            repository: { pullRequest: { id: "PR_1" } },
+            node: {
+              pullRequest: { id: "PR_1" },
+              comments: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    id: "t1",
+                    body: "nice",
+                    createdAt: "2026-07-01T00:00:00Z",
+                    reactionGroups: [
+                      {
+                        content: "HEART",
+                        viewerHasReacted: true,
+                        reactors: {
+                          totalCount: 2,
+                          nodes: [{ login: "bilal" }, { login: "julius" }],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(decoded.comments[0]?.reactions).toEqual([
+      { content: "heart", count: 2, actors: ["julius"], viewerHasReacted: true },
+    ]);
+  });
+});
+
 describe("repository access decoding", () => {
   const repositoryJson = (viewerPermission?: string | null) =>
     JSON.stringify({
-      mergeCommitAllowed: true,
-      squashMergeAllowed: false,
-      rebaseMergeAllowed: true,
-      ...(viewerPermission === undefined ? {} : { viewerPermission }),
+      data: {
+        repository: {
+          pullRequest: null,
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...(viewerPermission === undefined ? {} : { viewerPermission }),
+        },
+      },
     });
 
-  it("reads the three settings gh reports", () => {
+  it("reads merge settings with viewer permissions", () => {
     expect(
-      expectSuccess(decodeRepositoryAccessJson(repositoryJson("ADMIN"))).mergeCapabilities,
+      expectSuccess(decodeViewerPermissionsJson(repositoryJson("ADMIN"))).mergeCapabilities,
     ).toEqual({ merge: true, squash: false, rebase: true });
   });
 
   it("fails rather than defaulting open when a setting is missing", () => {
-    const decoded = decodeRepositoryAccessJson(JSON.stringify({ mergeCommitAllowed: true }));
+    const decoded = decodeViewerPermissionsJson(
+      JSON.stringify({ data: { repository: { pullRequest: null, mergeCommitAllowed: true } } }),
+    );
     expect(Result.isSuccess(decoded)).toBe(false);
   });
 
   it("counts the roles that can push as write, and the ones that cannot as read", () => {
     for (const permission of ["ADMIN", "MAINTAIN", "WRITE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         true,
       );
     }
     for (const permission of ["TRIAGE", "READ", "NONE"]) {
-      expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(permission))).canWrite).toBe(
+      expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(permission))).canWrite).toBe(
         false,
       );
     }
@@ -497,14 +893,23 @@ describe("repository access decoding", () => {
   it("withholds write where gh names no permission, which is not a standing it gave", () => {
     // The one place an unknown answer is not granted: a Merge button a reader cannot use wastes
     // the press, where a missing one still leaves the pull request open on its host.
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson())).canWrite).toBe(false);
-    expect(expectSuccess(decodeRepositoryAccessJson(repositoryJson(null))).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson())).canWrite).toBe(false);
+    expect(expectSuccess(decodeViewerPermissionsJson(repositoryJson(null))).canWrite).toBe(false);
   });
 });
 
 describe("viewer permission decoding", () => {
   const viewerJson = (repository: Record<string, unknown>) =>
-    JSON.stringify({ data: { repository } });
+    JSON.stringify({
+      data: {
+        repository: {
+          mergeCommitAllowed: true,
+          squashMergeAllowed: false,
+          rebaseMergeAllowed: true,
+          ...repository,
+        },
+      },
+    });
 
   it("reads the repository's role and the pull request's own viewer fields together", () => {
     expect(
@@ -516,7 +921,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: true,
+      didAuthor: true,
+    });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -529,7 +940,13 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false });
+    ).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
+      canWrite: false,
+      canTriage: false,
+      canUpdate: false,
+      didAuthor: false,
+    });
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -537,10 +954,80 @@ describe("viewer permission decoding", () => {
     // answer grants it and lets the host refuse; authorship is a fact about who wrote the change,
     // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
+      mergeCapabilities: { merge: true, squash: false, rebase: true },
       canWrite: false,
+      canTriage: false,
       canUpdate: true,
       didAuthor: false,
     });
+  });
+
+  it("reads triage as enough to label, and not enough to write", () => {
+    const access = expectSuccess(
+      decodeViewerPermissionsJson(
+        viewerJson({
+          viewerPermission: "TRIAGE",
+          pullRequest: { viewerCanUpdate: false, viewerDidAuthor: false },
+        }),
+      ),
+    );
+    expect(access.canTriage).toBe(true);
+    expect(access.canWrite).toBe(false);
+  });
+});
+
+describe("label candidate decoding", () => {
+  const labelsJson = (input: {
+    readonly defined: ReadonlyArray<Record<string, unknown>>;
+    readonly applied?: ReadonlyArray<string>;
+    readonly hasNextPage?: boolean;
+  }) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          labels: {
+            pageInfo: { hasNextPage: input.hasNextPage ?? false },
+            nodes: input.defined,
+          },
+          pullRequest: { labels: { nodes: (input.applied ?? []).map((name) => ({ name })) } },
+        },
+      },
+    });
+
+  it("marks the labels the pull request already wears", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(
+        labelsJson({
+          defined: [
+            { name: "bug", color: "d73a4a", description: "Something is broken" },
+            { name: "size:XL", color: "e4572e", description: null },
+          ],
+          applied: ["size:XL"],
+        }),
+      ),
+    );
+    expect(list.candidates).toEqual([
+      { name: "bug", color: "d73a4a", description: "Something is broken", isApplied: false },
+      { name: "size:XL", color: "e4572e", description: null, isApplied: true },
+    ]);
+    expect(list.truncated).toBe(false);
+  });
+
+  it("keeps a worn label the repository no longer defines, so it can be taken off", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(labelsJson({ defined: [{ name: "bug" }], applied: ["legacy"] })),
+    );
+    expect(list.candidates.map((label) => [label.name, label.isApplied])).toEqual([
+      ["legacy", true],
+      ["bug", false],
+    ]);
+  });
+
+  it("says so when the repository defines more labels than the read asked for", () => {
+    expect(
+      expectSuccess(decodeLabelCandidatesJson(labelsJson({ defined: [], hasNextPage: true })))
+        .truncated,
+    ).toBe(true);
   });
 });
 
@@ -618,6 +1105,7 @@ describe("review thread decoding", () => {
             body: "first",
             createdAt: "2026-07-01T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
+            reactions: [],
           },
           {
             id: "c2",
@@ -625,6 +1113,7 @@ describe("review thread decoding", () => {
             body: "second",
             createdAt: "2026-07-01T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
+            reactions: [],
           },
         ],
       },
@@ -675,6 +1164,111 @@ describe("review thread decoding", () => {
     const threads = decoded.threads.map((entry) => entry.thread);
     expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
     expect(threads).toHaveLength(1);
+  });
+
+  it("puts an issue comment's and a review's reactions in reactionsById, and the pull request's own in reactions", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([], {
+          reactionGroups: [
+            {
+              content: "HEART",
+              viewerHasReacted: true,
+              reactors: { totalCount: 1, nodes: [{ login: "bilal" }] },
+            },
+          ],
+          comments: {
+            nodes: [
+              {
+                id: "c1",
+                reactionGroups: [
+                  {
+                    content: "THUMBS_UP",
+                    reactors: { totalCount: 1, nodes: [{ login: "julius" }] },
+                  },
+                ],
+              },
+            ],
+          },
+          reviews: {
+            nodes: [
+              {
+                id: "r1",
+                reactionGroups: [
+                  { content: "EYES", reactors: { totalCount: 1, nodes: [{ login: "hubot" }] } },
+                ],
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    expect(result.reactions).toEqual([
+      { content: "heart", count: 1, actors: ["bilal"], viewerHasReacted: true },
+    ]);
+    expect([...result.reactionsById]).toEqual([
+      ["c1", [{ content: "thumbs-up", count: 1, actors: ["julius"], viewerHasReacted: false }]],
+      ["r1", [{ content: "eyes", count: 1, actors: ["hubot"], viewerHasReacted: false }]],
+    ]);
+  });
+
+  it("leaves the viewer's own login out of the pull request's own reactions, matched case-insensitively, while count still counts them", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        JSON.stringify({
+          data: {
+            viewer: { login: "Bilal" },
+            repository: {
+              pullRequest: {
+                reviewThreads: { totalCount: 0, nodes: [] },
+                reactionGroups: [
+                  {
+                    content: "HEART",
+                    viewerHasReacted: true,
+                    reactors: { totalCount: 2, nodes: [{ login: "bilal" }, { login: "julius" }] },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(result.reactions).toEqual([
+      { content: "heart", count: 2, actors: ["julius"], viewerHasReacted: true },
+    ]);
+  });
+});
+
+describe("decodePullRequestNodeIdJson", () => {
+  it("reads the pull request's own node id, which a reaction on its description is addressed by", () => {
+    expect(
+      expectSuccess(
+        decodePullRequestNodeIdJson(
+          JSON.stringify({ data: { repository: { pullRequest: { id: "PR_kwDOA" } } } }),
+        ),
+      ),
+    ).toBe("PR_kwDOA");
+  });
+});
+
+describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
+  it("caps the initial query after the 104-point rate-limit regression", () => {
+    const match = REVIEW_THREADS_GRAPHQL_QUERY.match(
+      /reviewThreads\(first: (\d+)[\s\S]*?comments\(first: (\d+)\)/u,
+    );
+
+    expect(match).not.toBeNull();
+    if (match === null) throw new Error("expected review-thread connections");
+    expect(Number(match[1]) * Number(match[2])).toBeLessThanOrEqual(1_000);
+  });
+
+  it("asks for reactionGroups on the pull request itself, its comments, its reviews and each thread's comments", () => {
+    expect(REVIEW_THREADS_GRAPHQL_QUERY.match(/reactionGroups/g)).toHaveLength(4);
+    // The reviews connection is new: only reactions were ever wanted off it.
+    expect(REVIEW_THREADS_GRAPHQL_QUERY).toContain("reviews(first:");
   });
 });
 
@@ -809,8 +1403,16 @@ describe("review submission payload", () => {
         verdict: "request-changes",
         body: "Two things.",
         comments: [
-          { path: "src/a.ts", line: 12, side: "right", body: "rename this" },
-          { path: "src/b.ts", line: 3, side: "left", body: "why remove?" },
+          {
+            path: "src/a.ts",
+            position: { kind: "added", newLine: 12 },
+            body: "rename this",
+          },
+          {
+            path: "src/b.ts",
+            position: { kind: "deleted", oldLine: 3 },
+            body: "why remove?",
+          },
         ],
       }),
     ) as Record<string, unknown>;
@@ -832,6 +1434,57 @@ describe("review submission payload", () => {
 });
 
 describe("decodePullRequestFilesJson", () => {
+  it("quotes literal backslashes without interpreting them as escapes", () => {
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          {
+            filename: String.raw`src\notes.ts`,
+            status: "modified",
+            patch: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
+        String.raw`--- "a/src\\notes.ts"`,
+        String.raw`+++ "b/src\\notes.ts"`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves spaces and literal backslashes in both rename paths", () => {
+    const result = expectSuccess(
+      decodePullRequestFilesJson(
+        JSON.stringify([
+          {
+            previous_filename: String.raw` old\name.ts `,
+            filename: String.raw` new\name.ts `,
+            status: "renamed",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        String.raw`rename from " old\\name.ts "`,
+        String.raw`rename to " new\\name.ts "`,
+        String.raw`--- "a/ old\\name.ts "`,
+        String.raw`+++ "b/ new\\name.ts "`,
+        "",
+      ].join("\n"),
+    );
+  });
+
   it("assembles a unified patch the files API does not return", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(
@@ -955,5 +1608,331 @@ describe("decodePullRequestFilesJson", () => {
 
     expect(result.patch).toContain("rename from src/old.ts");
     expect(result.truncated).toBe(false);
+  });
+});
+
+describe("how far a branch trails its base", () => {
+  const comparison = (pullRequest: unknown) =>
+    JSON.stringify({ data: { repository: { pullRequest } } });
+
+  it("reads the commit count and whether this viewer may move the branch", () => {
+    const decoded = expectSuccess(
+      decodeBaseComparisonJson(
+        comparison({ viewerCanUpdateBranch: true, baseRef: { compare: { behindBy: 12 } } }),
+      ),
+    );
+    expect(decoded).toEqual({ behindBy: 12, viewerCanUpdate: true });
+  });
+
+  it("reads a current branch as nothing to do", () => {
+    expect(
+      expectSuccess(
+        decodeBaseComparisonJson(
+          comparison({ viewerCanUpdateBranch: false, baseRef: { compare: { behindBy: 0 } } }),
+        ),
+      ),
+    ).toEqual({ behindBy: 0, viewerCanUpdate: false });
+  });
+
+  it("answers unknown where the head could not be compared", () => {
+    // A pull request from a fork whose repository is gone, which GitHub answers with a null
+    // comparison beside a perfectly good pull request.
+    expect(
+      expectSuccess(
+        decodeBaseComparisonJson(comparison({ viewerCanUpdateBranch: true, baseRef: null })),
+      ).behindBy,
+    ).toBeNull();
+    expect(expectSuccess(decodeBaseComparisonJson(comparison(null)))).toEqual({
+      behindBy: null,
+      viewerCanUpdate: false,
+    });
+  });
+
+  it("refuses a body that is not the answer to this question", () => {
+    expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("decodePullRequestFilesViewedJson", () => {
+  const page = (
+    nodes: ReadonlyArray<unknown>,
+    pageInfo: { hasNextPage: boolean; endCursor: string | null },
+  ) =>
+    JSON.stringify({
+      data: { repository: { pullRequest: { files: { pageInfo, nodes } } } },
+    });
+
+  it("reads each file's state and where the next page carries on", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page(
+        [
+          { path: "src/a.ts", viewerViewedState: "VIEWED" },
+          { path: "src/b.ts", viewerViewedState: "UNVIEWED" },
+          { path: "src/c.ts", viewerViewedState: "DISMISSED" },
+        ],
+        { hasNextPage: true, endCursor: "cursor-2" },
+      ),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "unviewed" },
+        { path: "src/c.ts", state: "dismissed" },
+      ],
+      nextCursor: "cursor-2",
+    });
+  });
+
+  it("treats a state it has never heard of as unread rather than failing the page", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      page([{ path: "src/a.ts", viewerViewedState: "SOMETHING_NEW" }], {
+        hasNextPage: false,
+        endCursor: null,
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({
+      files: [{ path: "src/a.ts", state: "unviewed" }],
+      nextCursor: null,
+    });
+  });
+
+  it("answers empty for a pull request the host has nothing to say about", () => {
+    const decoded = decodePullRequestFilesViewedJson(
+      JSON.stringify({ data: { repository: { pullRequest: null } } }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect(decoded.success).toEqual({ files: [], nextCursor: null });
+  });
+});
+
+describe("buildSetFilesViewedGraphQlMutation", () => {
+  it("asks for nothing when nothing was pressed", () => {
+    expect(buildSetFilesViewedGraphQlMutation([])).toBeNull();
+  });
+
+  it("clears and restores in one document, each file under its own alias", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: "src/a.ts", viewed: true },
+      { path: "src/b.ts", viewed: false },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).toContain(
+      "mutation($pullRequestId: ID!, $path0: String!, $path1: String!)",
+    );
+    expect(mutation.query).toContain(
+      "f0: markFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path0 })",
+    );
+    expect(mutation.query).toContain(
+      "f1: unmarkFileAsViewed(input: { pullRequestId: $pullRequestId, path: $path1 })",
+    );
+    expect(mutation.variables).toEqual({ path0: "src/a.ts", path1: "src/b.ts" });
+  });
+
+  it("keeps a path out of the document, so one cannot be read as part of it", () => {
+    const mutation = buildSetFilesViewedGraphQlMutation([
+      { path: '") { __typename } evil: markFileAsViewed(input: { path: "x', viewed: true },
+    ]);
+    expect(mutation).not.toBeNull();
+    if (mutation === null) return;
+    expect(mutation.query).not.toContain("evil");
+    expect(mutation.variables.path0).toBe(
+      '") { __typename } evil: markFileAsViewed(input: { path: "x',
+    );
+  });
+});
+
+describe("host-native stack decoding", () => {
+  /** A stack as the preview lists it, bottom to top, with the fields it answers today. */
+  function stack(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 42,
+      number: 3,
+      node_id: "STK_kwDO",
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: { ref: "main", sha: "abc" },
+      open: true,
+      created_at: "2026-09-01T00:00:00Z",
+      pull_requests: [
+        {
+          number: 10,
+          head: { ref: "feat/one" },
+          state: "closed",
+          merged_at: "2026-09-02T00:00:00Z",
+        },
+        { number: 11, head: { ref: "feat/two" }, state: "open", merged_at: null },
+        { number: 12, head: { ref: "feat/three" }, state: "closed", merged_at: null },
+      ],
+      ...overrides,
+    };
+  }
+
+  /** The one stack a listing answered with, which these reads all expect to find. */
+  function expectStack(overrides: Record<string, unknown> = {}) {
+    const decoded = expectSuccess(decodePullRequestStacksJson(JSON.stringify([stack(overrides)])));
+    if (decoded === null) throw new Error("expected a stack");
+    return decoded;
+  }
+
+  it("reads the first stack, bottom to top, with merged_at outranking state", () => {
+    expect(expectStack()).toEqual({
+      id: "42",
+      number: 3,
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: "main",
+      layers: [
+        { number: 10, headBranch: "feat/one", state: "merged" },
+        { number: 11, headBranch: "feat/two", state: "open" },
+        { number: 12, headBranch: "feat/three", state: "closed" },
+      ],
+    });
+  });
+
+  it("retains the detailed layer titles, draft state and expected revision", () => {
+    expect(
+      expectStack({
+        pull_requests: [
+          {
+            number: 11,
+            title: "Second layer",
+            draft: true,
+            head: { ref: "feat/two", sha: "abc123" },
+            state: "open",
+            merged_at: null,
+          },
+        ],
+      }).layers,
+    ).toEqual([
+      {
+        number: 11,
+        title: "Second layer",
+        isDraft: true,
+        headSha: "abc123",
+        headBranch: "feat/two",
+        state: "open",
+      },
+    ]);
+  });
+
+  it("accepts a base named as a bare branch, which is what the preview started out sending", () => {
+    expect(expectStack({ base: "develop" }).base).toBe("develop");
+  });
+
+  it("prefers the page a person opens over the API URL, where the host reports one", () => {
+    expect(expectStack({ html_url: "https://github.com/acme/web/stacks/3" }).url).toBe(
+      "https://github.com/acme/web/stacks/3",
+    );
+  });
+
+  it("falls back to the node id, then the number, for a stack without an id", () => {
+    expect(expectStack({ id: undefined }).id).toBe("STK_kwDO");
+    expect(expectStack({ id: null, node_id: null }).id).toBe("3");
+  });
+
+  it("reads an empty listing as not stacked", () => {
+    expect(expectSuccess(decodePullRequestStacksJson("[]"))).toBeNull();
+  });
+
+  it("refuses a stack without a number or without its pull requests", () => {
+    expect(
+      Result.isSuccess(decodePullRequestStacksJson(JSON.stringify([stack({ number: undefined })]))),
+    ).toBe(false);
+    expect(
+      Result.isSuccess(
+        decodePullRequestStacksJson(JSON.stringify([stack({ pull_requests: undefined })])),
+      ),
+    ).toBe(false);
+    expect(Result.isSuccess(decodePullRequestStacksJson("{"))).toBe(false);
+  });
+});
+
+describe("pull request stack membership batches", () => {
+  it("maps aliases while skipping missing pull requests and incomplete memberships", () => {
+    const memberships = expectSuccess(
+      decodePullRequestStackMembershipsJson(
+        JSON.stringify({
+          data: {
+            s0: {
+              pullRequest: {
+                stack: { number: 3, size: 2, baseRefName: "main" },
+                stackEntry: { position: 1 },
+              },
+            },
+            s1: null,
+            s2: { pullRequest: null },
+            s3: { pullRequest: { stack: null, stackEntry: null } },
+            s4: { pullRequest: { stack: { number: 3, size: 2, baseRefName: "main" } } },
+          },
+        }),
+      ),
+    );
+    expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
+  });
+
+  it("refuses malformed responses and unsafe query selectors", () => {
+    expect(Result.isFailure(decodePullRequestStackMembershipsJson('{"errors":[]}'))).toBe(true);
+    expect(buildPullRequestStackMembershipsGraphQlQuery('acme/web") { x } #', [1])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [0])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [1.5])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
+      "pullRequest(number: 8)",
+    );
+  });
+});
+
+describe("batched pull request summaries", () => {
+  it("refuses a repository GraphQL cannot address, rather than writing it into the document", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: 'acme/web") { x } #', number: 1 }]),
+    ).toBeNull();
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 0 }]),
+    ).toBeNull();
+    expect(buildPullRequestSummariesGraphQlQuery([])).toBeNull();
+  });
+
+  it("files each answer by its alias and skips what GitHub or the decoder could not give", () => {
+    const decoded = decodePullRequestSummariesJson(
+      JSON.stringify({
+        data: {
+          s0: {
+            pullRequest: {
+              number: 7,
+              title: "Merged",
+              url: "https://github.com/acme/web/pull/7",
+              author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
+              headRefName: "feat/seven",
+              baseRefName: "main",
+              state: "MERGED",
+              mergedAt: "2026-08-24T00:00:00Z",
+              closedAt: "2026-08-24T00:00:00Z",
+              updatedAt: "2026-08-24T00:00:00Z",
+              commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+            },
+          },
+          s1: { pullRequest: null },
+          s2: { pullRequest: { number: 9 } },
+          rateLimit: { cost: 1 },
+        },
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) return;
+    expect([...decoded.success.keys()]).toEqual([0]);
+    expect(decoded.success.get(0)).toMatchObject({
+      number: 7,
+      state: "merged",
+      mergedAt: "2026-08-24T00:00:00Z",
+      author: { login: "renovate", isBot: true },
+      checksState: "failing",
+      mergeability: "unknown",
+      additions: 0,
+    });
   });
 });

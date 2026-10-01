@@ -24,7 +24,7 @@ function pullRequest(overrides: Record<string, unknown> = {}): Record<string, un
     created_on: "2026-06-16T05:04:32.258456+00:00",
     updated_on: "2026-06-16T05:04:33.750542+00:00",
     author: { display_name: "Bilal Hassan", nickname: "bilal", type: "user" },
-    source: { branch: { name: "feat/page" } },
+    source: { branch: { name: "feat/page" }, repository: { full_name: "fork/web" } },
     destination: { branch: { name: "master" } },
     links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/897" } },
     ...overrides,
@@ -52,6 +52,7 @@ describe("decodePullRequestPageJson", () => {
       url: "https://bitbucket.org/acme/web/pull-requests/897",
       author: { login: "bilal", name: "Bilal Hassan" },
       headBranch: "feat/page",
+      headRepositoryNameWithOwner: "fork/web",
       baseBranch: "master",
       state: "open",
       isDraft: false,
@@ -314,6 +315,22 @@ describe("decodeStatusesJson", () => {
     const decoded = expectSuccess(decodeStatusesJson(page([{ name: "Pipeline", state }])));
 
     expect(decoded.items[0]?.status).toBe(expected);
+  });
+
+  it("keeps two statuses that share a display name but have different keys", () => {
+    const decoded = expectSuccess(
+      decodeStatusesJson(
+        page([
+          { key: "build", name: "Pipeline", state: "SUCCESSFUL" },
+          { key: "deploy", name: "Pipeline", state: "FAILED" },
+        ]),
+      ),
+    );
+
+    expect(decoded.items.map((check) => [check.name, check.status])).toEqual([
+      ["build / Pipeline", "success"],
+      ["deploy / Pipeline", "failure"],
+    ]);
   });
 });
 

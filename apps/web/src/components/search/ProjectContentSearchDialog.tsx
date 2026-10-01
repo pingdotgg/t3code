@@ -1,5 +1,6 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ProjectContentMatch } from "@t3tools/contracts";
-import { LoaderCircle } from "lucide-react";
+
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
@@ -11,6 +12,8 @@ import { useProjectContentSearch } from "~/state/queries";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { ScrollArea } from "../ui/scroll-area";
+import { Toggle } from "../ui/toggle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
 
 interface ProjectContentSearchDialogProps {
@@ -58,19 +61,22 @@ function SearchOptionButton(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={props.label}
-      aria-pressed={props.active}
-      title={props.label}
-      className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-[5px] font-mono text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-        props.active && "bg-accent text-foreground shadow-sm",
-      )}
-      onClick={props.onClick}
-    >
-      {props.children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            aria-label={props.label}
+            pressed={props.active}
+            size="segmented"
+            variant="segmented"
+            onClick={props.onClick}
+          />
+        }
+      >
+        <span className="font-mono">{props.children}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -82,11 +88,13 @@ function EmptyContentSearchDialog() {
       footerActionLabel="Open file"
       inputProps={{ disabled: true, placeholder: "Search project contents…" }}
       mode="none"
-      panelClassName="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground"
+      panelSize="fill"
       testId="project-content-search"
       value=""
     >
-      Open a project to search its files.
+      <p className="m-auto px-6 text-center text-muted-foreground text-sm">
+        Open a project to search its files.
+      </p>
     </CommandPaletteContent>
   );
 }
@@ -211,7 +219,7 @@ function OpenContentSearchDialog(props: {
       }}
       mode="none"
       onValueChange={setQuery}
-      panelClassName="flex min-h-0 flex-1 flex-col"
+      panelSize="fill"
       testId="project-content-search"
       value={query}
     >
@@ -219,7 +227,7 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <LoaderCircle className="size-3.5 animate-spin" /> Searching…
+              <Spinner size="sm" /> Searching…
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
@@ -257,7 +265,7 @@ function OpenContentSearchDialog(props: {
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-[10px] text-muted-foreground">
+                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
                       {group.matches.length}
                     </span>
                   </div>

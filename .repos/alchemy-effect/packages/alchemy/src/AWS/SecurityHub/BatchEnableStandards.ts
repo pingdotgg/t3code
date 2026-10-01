@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.BatchEnableStandardsHttp)`.
- * @binding
- * @section Standards & Controls
- * @example Enable a Standard
+ * ### Standards & Controls
+ * **Example:** Enable a Standard
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchEnableStandards = yield* AWS.SecurityHub.BatchEnableStandards();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   StandardsSubscriptionRequests: [{ StandardsArn: standardsArn }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchEnableStandards extends Binding.Service<
   BatchEnableStandards,

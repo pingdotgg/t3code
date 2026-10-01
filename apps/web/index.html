@@ -9,6 +9,7 @@
     <meta name="theme-color" content="#0a0a0a" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
@@ -35,16 +36,16 @@
         // app colors before React mounts.
         const DEFAULT_THEME_PALETTES = {
           light: {
-            background: "#fdf7fd",
-            foreground: "#501854",
-            accent: "#db2777",
-            chrome: "#fdf7fd",
+            background: "oklch(0.982446 0.010114 325.653)",
+            foreground: "oklch(0.325698 0.116116 325.037)",
+            accent: "oklch(0.591646 0.217985 0.584)",
+            chrome: "oklch(0.982446 0.010114 325.653)",
           },
           dark: {
-            background: "#1f1a24",
-            foreground: "#f9f8fb",
-            accent: "#a3004c",
-            chrome: "#1f1a24",
+            background: "oklch(0.22813 0.020366 307.469)",
+            foreground: "oklch(0.980735 0.004092 301.426)",
+            accent: "oklch(0.460685 0.185347 4.099)",
+            chrome: "oklch(0.22813 0.020366 307.469)",
           },
         };
         // Keep this small boot-time copy in sync with the built-in palettes so
@@ -52,72 +53,72 @@
         const BUILT_IN_THEME_PALETTES = {
           "t3-chat": {
             light: {
-              background: "#fdf7fd",
-              foreground: "#501854",
-              accent: "#db2777",
-              chrome: "#fdf7fd",
+              background: "oklch(0.982446 0.010114 325.653)",
+              foreground: "oklch(0.325698 0.116116 325.037)",
+              accent: "oklch(0.591646 0.217985 0.584)",
+              chrome: "oklch(0.982446 0.010114 325.653)",
             },
             dark: {
-              background: "#1f1a24",
-              foreground: "#f9f8fb",
-              accent: "#a3004c",
-              chrome: "#1f1a24",
+              background: "oklch(0.22813 0.020366 307.469)",
+              foreground: "oklch(0.980735 0.004092 301.426)",
+              accent: "oklch(0.460685 0.185347 4.099)",
+              chrome: "oklch(0.22813 0.020366 307.469)",
             },
           },
           grove: {
             light: {
-              background: "#f3f7f4",
-              foreground: "#241523",
-              accent: "#1b7d50",
-              chrome: "#f3f7f4",
+              background: "oklch(0.972369 0.005497 157.15)",
+              foreground: "oklch(0.222003 0.03479 328.979)",
+              accent: "oklch(0.523295 0.112292 158.089)",
+              chrome: "oklch(0.972369 0.005497 157.15)",
             },
             dark: {
-              background: "#1b2821",
-              foreground: "#fffaff",
-              accent: "#69d69a",
-              chrome: "#1b2821",
+              background: "oklch(0.260865 0.02152 162.75)",
+              foreground: "oklch(0.990339 0.008411 325.64)",
+              accent: "oklch(0.796228 0.133058 157.319)",
+              chrome: "oklch(0.260865 0.02152 162.75)",
             },
           },
           ocean: {
             light: {
-              background: "#f5f7f8",
-              foreground: "#241523",
-              accent: "#2672af",
-              chrome: "#f5f7f8",
+              background: "oklch(0.974199 0.002856 241.597)",
+              foreground: "oklch(0.222003 0.03479 328.979)",
+              accent: "oklch(0.536684 0.120219 247.01)",
+              chrome: "oklch(0.974199 0.002856 241.597)",
             },
             dark: {
-              background: "#17212b",
-              foreground: "#fffaff",
-              accent: "#70b9ee",
-              chrome: "#17212b",
+              background: "oklch(0.242641 0.024125 250.573)",
+              foreground: "oklch(0.990339 0.008411 325.64)",
+              accent: "oklch(0.758933 0.105833 241.548)",
+              chrome: "oklch(0.242641 0.024125 250.573)",
             },
           },
           ember: {
             light: {
-              background: "#f9f7f5",
-              foreground: "#241523",
-              accent: "#ae552a",
-              chrome: "#f9f7f5",
+              background: "oklch(0.976527 0.002685 60.725)",
+              foreground: "oklch(0.222003 0.03479 328.979)",
+              accent: "oklch(0.552831 0.129438 44.656)",
+              chrome: "oklch(0.976527 0.002685 60.725)",
             },
             dark: {
-              background: "#291e1a",
-              foreground: "#fffaff",
-              accent: "#f09a64",
-              chrome: "#291e1a",
+              background: "oklch(0.245899 0.019144 42.044)",
+              foreground: "oklch(0.990339 0.008411 325.64)",
+              accent: "oklch(0.762174 0.124117 52.082)",
+              chrome: "oklch(0.245899 0.019144 42.044)",
             },
           },
           iris: {
             light: {
-              background: "#f8f7f9",
-              foreground: "#241523",
-              accent: "#7253b9",
-              chrome: "#f8f7f9",
+              background: "oklch(0.976531 0.003855 303.226)",
+              foreground: "oklch(0.222003 0.03479 328.979)",
+              accent: "oklch(0.525348 0.15373 294.176)",
+              chrome: "oklch(0.976531 0.003855 303.226)",
             },
             dark: {
-              background: "#1d1929",
-              foreground: "#fffaff",
-              accent: "#9d7df2",
-              chrome: "#1d1929",
+              background: "oklch(0.225975 0.031062 293.741)",
+              foreground: "oklch(0.990339 0.008411 325.64)",
+              accent: "oklch(0.671712 0.169136 293.929)",
+              chrome: "oklch(0.225975 0.031062 293.741)",
             },
           },
         };
@@ -152,9 +153,26 @@
           }
         };
 
-        const isHexColor = (value) =>
-          typeof value === "string" &&
-          /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value);
+        // The runtime decodes the same literal CSS formats into OKLCH. Keep
+        // contextual colors out: they cannot be resolved from stored data.
+        const SYSTEM_COLOR_KEYWORD =
+          /^(?:accentcolor(?:text)?|active(?:border|caption|text)|appworkspace|background|button(?:border|face|highlight|shadow|text)|canvas(?:text)?|captiontext|field(?:text)?|graytext|highlight(?:text)?|inactive(?:border|caption(?:text)?)|info(?:background|text)|linktext|mark(?:text)?|menu(?:text)?|scrollbar|selecteditem(?:text)?|threed(?:darkshadow|face|highlight|lightshadow|shadow)|visitedtext|window(?:frame|text)?)$/i;
+        const isThemeColor = (value) => {
+          if (typeof value !== "string" || typeof CSS === "undefined") return false;
+          const color = value.trim();
+          if (
+            /^(?:currentcolor|inherit|initial|revert|revert-layer|unset)$/i.test(color) ||
+            SYSTEM_COLOR_KEYWORD.test(color) ||
+            /\bfrom\b|(?:var|env|attr|calc|min|max|clamp)\(/i.test(color)
+          ) {
+            return false;
+          }
+          const isLiteralColor =
+            /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color) ||
+            /^[a-z]+$/i.test(color) ||
+            /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i.test(color);
+          return isLiteralColor && CSS.supports("color", color);
+        };
         const isRecord = (value) =>
           typeof value === "object" && value !== null && !Array.isArray(value);
         const isThemeId = (value) =>
@@ -322,13 +340,13 @@
           const fallbackSplash = isDark ? SPLASH_COLORS.dark : SPLASH_COLORS.light;
           const customSplash = customColors
             ? {
-                background: isHexColor(customColors.canvas)
+                background: isThemeColor(customColors.canvas)
                   ? customColors.canvas
                   : (customDefaults?.background ?? fallbackSplash.background),
-                foreground: isHexColor(customColors.text)
+                foreground: isThemeColor(customColors.text)
                   ? customColors.text
                   : (customDefaults?.foreground ?? fallbackSplash.foreground),
-                accent: isHexColor(customColors.accent)
+                accent: isThemeColor(customColors.accent)
                   ? customColors.accent
                   : (customDefaults?.accent ?? fallbackSplash.accent),
               }
@@ -350,7 +368,7 @@
           }
           document.documentElement.classList.toggle("dark", isDark);
           const chromeColor = customColors
-            ? isHexColor(customColors.chrome)
+            ? isThemeColor(customColors.chrome)
               ? customColors.chrome
               : (customDefaults?.chrome ?? fallbackSplash.background)
             : builtInSplash
@@ -434,6 +452,30 @@
         height: 64px;
         object-fit: contain;
       }
+
+      #boot-error {
+        display: grid;
+        justify-items: center;
+        gap: 16px;
+        max-width: 600px;
+        padding: 24px;
+        text-align: center;
+      }
+
+      #boot-error p {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      #boot-error button {
+        padding: 8px 16px;
+        border: 1px solid currentColor;
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
     </style>
     <title>T3 Code (Alpha)</title>
   </head>
@@ -445,6 +487,6 @@
         </div>
       </div>
     </div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/bootstrap.ts"></script>
   </body>
 </html>

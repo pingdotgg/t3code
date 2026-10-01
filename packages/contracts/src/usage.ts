@@ -1,29 +1,43 @@
 /**
  * Usage reporting contract.
  *
- * Each environment scans the provider CLIs' own on-disk session transcripts
- * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`) rather than
- * relying on T3 Code's own orchestration projections, so usage stays complete
- * even for turns that were never driven through T3 Code. This mirrors the
- * approach `ccusage` takes.
+ * Each environment scans native session files and databases, including work
+ * driven outside T3 Code. Source status describes gaps in local coverage.
  *
- * Environments return pre-aggregated `(day, provider, model)` buckets. Raw
- * transcript records never cross the wire.
+ * Environments return pre-aggregated `(day, hourStart?, provider, model, sourcePath?)`
+ * buckets. Raw transcript records never cross the wire.
  *
  * @module usage
  */
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
+ * Adding providers or other array-element variants is additive: unknown
+ * entries are skipped on decode and do not require a version bump.
  */
-export const USAGE_CONTRACT_VERSION = 3 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
+/**
+ * Oldest {@link UsageSummary} version a current client will still merge.
+ *
+ * v5/v6 add providers and optional source attribution; v4 Claude/Codex
+ * buckets remain valid in mixed-version environments.
+ */
+export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
+
+export const UsageProviderKind = Schema.Literals([
+  "claude",
+  "codex",
+  "grok",
+  "cursor",
+  "opencode",
+  "antigravity",
+]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
@@ -39,11 +53,14 @@ export const UsageDay = TrimmedNonEmptyString.check(Schema.isPattern(USAGE_DAY_P
 );
 export type UsageDay = typeof UsageDay.Type;
 
+export const UsageResolution = Schema.Literals(["day", "hour"]);
+export type UsageResolution = typeof UsageResolution.Type;
+
 /**
  * Why a bucket's cost is what it is.
  *
  * - `providerReported` - the transcript carried an explicit cost figure.
- * - `modelPriced` - we matched the model against the LiteLLM rate table.
+ * - `modelPriced` - we used a custom price override or the LiteLLM rate table.
  * - `unpriced` - tokens are known, rates are not. Counted in totals, excluded
  *   from cost.
  */
@@ -68,7 +85,8 @@ export const UsageTokenTotals = Schema.Struct({
 export type UsageTokenTotals = typeof UsageTokenTotals.Type;
 
 /**
- * One `(day, provider, model)` cell.
+ * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
+ * instant of a rolling bucket and is present only for hourly requests.
  *
  * `costUsd` is the raw API-equivalent cost of these tokens. It is not money
  * spent: subscription plans bill separately. `unpricedRecords` counts records
@@ -77,8 +95,11 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
  */
 export const UsageBucket = Schema.Struct({
   day: UsageDay,
+  hourStart: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,
   model: TrimmedNonEmptyString,
+  /** Source directory, so overlapping multi-home environments merge once per source. */
+  sourcePath: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
   costUsd: Schema.Number,
   /**
@@ -137,6 +158,8 @@ export const UsageSource = Schema.Struct({
    */
   distinctSessions: NonNegativeInt,
   message: Schema.NullOr(TrimmedNonEmptyString),
+  /** An action the client can offer to make this source available. */
+  action: Schema.optionalKey(Schema.Literal("enableCursorKeychain")),
 });
 export type UsageSource = typeof UsageSource.Type;
 
@@ -165,6 +188,12 @@ export const UsageSummaryInput = Schema.Struct({
    * any window that crosses a DST boundary.
    */
   timeZone: TrimmedNonEmptyString,
+  /** Defaults to daily for older clients. */
+  resolution: Schema.optional(UsageResolution),
+  /** Inclusive UTC instant for an hourly rolling window. */
+  sinceTime: Schema.optional(TrimmedNonEmptyString),
+  /** Exclusive UTC instant for an hourly rolling window. */
+  untilTime: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -174,15 +203,15 @@ export const UsageSummary = Schema.Struct({
   timeZone: TrimmedNonEmptyString,
   sinceDay: UsageDay,
   untilDay: UsageDay,
-  buckets: Schema.Array(UsageBucket),
-  sources: Schema.Array(UsageSource),
+  buckets: ForwardCompatibleArray(UsageBucket),
+  sources: ForwardCompatibleArray(UsageSource),
   pricing: UsagePricing,
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
 });
 export type UsageSummary = typeof UsageSummary.Type;
 
-export class UsageReadError extends Schema.TaggedErrorClass<UsageReadError>()("UsageReadError", {
+export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
   reason: Schema.Literals(["scanFailed", "invalidWindow"]),
   /** Stable, bounded description. The underlying failure travels in `cause`. */
   detail: TrimmedNonEmptyString,

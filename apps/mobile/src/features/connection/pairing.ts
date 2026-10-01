@@ -26,7 +26,7 @@ function normalizePairingUrlInput(value: string): string {
   return `${isIpLiteral(authority) ? "http" : "https"}://${value}`;
 }
 
-export class PairingQrPayloadEmptyError extends Schema.TaggedErrorClass<PairingQrPayloadEmptyError>()(
+export class PairingQrPayloadEmptyError extends Schema.TaggedError<PairingQrPayloadEmptyError>()(
   "PairingQrPayloadEmptyError",
   {},
 ) {

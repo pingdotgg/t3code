@@ -1,0 +1,18 @@
+---
+// Streaming-friendly SSR page: the early marker is flushed before the async
+// <Slow /> component resolves, exercising Astro's streaming render path
+// through workerd's Response streams end-to-end.
+import Slow from "../components/Slow.astro";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stream</title>
+  </head>
+  <body>
+    <h1>Stream</h1>
+    <p id="early">early chunk</p>
+    <Slow />
+  </body>
+</html>

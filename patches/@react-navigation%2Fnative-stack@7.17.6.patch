@@ -1,8 +1,30 @@
+diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
+index c342e90bffde9ad5044b6167bdde2e19be219270..5d3e4407aa1bb68b873cf164adf5a9f0b487bb0b 100644
+--- a/lib/module/views/NativeStackView.native.js
++++ b/lib/module/views/NativeStackView.native.js
+@@ -370,6 +370,17 @@ export function NativeStackView({
+   return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
+     children: /*#__PURE__*/_jsx(ScreenStack, {
+       style: styles.container,
++      onFinishTransitioning: () => {
++        // Surface UIKit's transition-completion callback to every route of
++        // this navigator. Unlike transitionEnd, this also fires when a modal
++        // finishes dismissing — where the presenting screen below receives no
++        // appearance callbacks — and for a gesture-driven dismissal it fires
++        // before the state pop, while the modal route is still the focused
++        // one, so the event must not be targeted at a single route.
++        navigation.emit({
++          type: 'finishTransitioning'
++        });
++      },
+       children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
+         const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
+         const isFocused = state.index === index;
 diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
-index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b01175ec19220 100644
+index 9c21aa48cb580704aa17e59d9cdadcc612a1e4ff..a1b3a38368c5ef2257570f382e87df5d6f55b11e 100644
 --- a/lib/module/views/useHeaderConfigProps.js
 +++ b/lib/module/views/useHeaderConfigProps.js
-@@ -19,6 +19,12 @@
+@@ -19,6 +19,12 @@ const processBarButtonItems = (items, colors, fonts) => {
        }
        return item;
      }
@@ -15,7 +37,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
      if (item.type === 'button' || item.type === 'menu') {
        if (item.type === 'menu' && item.menu == null) {
          throw new Error(`Menu item must have a 'menu' property defined: ${JSON.stringify(item)}`);
-@@ -79,7 +85,7 @@
+@@ -79,7 +85,7 @@ const processBarButtonItems = (items, colors, fonts) => {
        }
        return processedItem;
      }
@@ -24,7 +46,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
    }).filter(item => item != null);
  };
  const transformIcon = icon => {
-@@ -158,8 +164,12 @@
+@@ -158,8 +164,12 @@ export function useHeaderConfigProps({
    headerBack,
    route,
    title,
@@ -38,7 +60,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
  }) {
    const {
      direction
-@@ -255,6 +265,10 @@
+@@ -255,6 +265,10 @@ export function useHeaderConfigProps({
      tintColor,
      canGoBack
    });
@@ -49,7 +71,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
    let rightItems = headerRightItems?.({
      tintColor,
      canGoBack
-@@ -264,6 +278,10 @@
+@@ -264,6 +278,10 @@ export function useHeaderConfigProps({
      // So we need to reverse them here to match the order
      rightItems = [...rightItems].reverse();
    }
@@ -60,7 +82,14 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
    const children = /*#__PURE__*/_jsxs(_Fragment, {
      children: [Platform.OS === 'ios' ? /*#__PURE__*/_jsxs(_Fragment, {
        children: [leftItems ? leftItems.map((item, index) => {
-@@ -278,7 +296,15 @@
+@@ -272,13 +290,23 @@ export function useHeaderConfigProps({
+           // eslint-disable-next-line @eslint-react/no-array-index-key
+           , {
+             hidesSharedBackground: item.hidesSharedBackground,
++            identifier: item.identifier,
+             children: item.element
+           }, index);
+         }
          return null;
        }) : headerLeftElement != null ? /*#__PURE__*/_jsx(ScreenStackHeaderLeftView, {
          children: headerLeftElement
@@ -69,6 +98,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
 +        if (item.type === 'custom') {
 +          return /*#__PURE__*/_jsx(ScreenStackHeaderCenterView, {
 +            hidesSharedBackground: item.hidesSharedBackground,
++            identifier: item.identifier,
 +            children: item.element
 +          }, index);
 +        }
@@ -77,7 +107,15 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
          children: headerTitleElement
        }) : null]
      }) : /*#__PURE__*/_jsxs(_Fragment, {
-@@ -356,6 +382,7 @@
+@@ -321,6 +349,7 @@ export function useHeaderConfigProps({
+         // eslint-disable-next-line @eslint-react/no-array-index-key
+         , {
+           hidesSharedBackground: item.hidesSharedBackground,
++          identifier: item.identifier,
+           children: item.element
+         }, index);
+       }
+@@ -356,6 +385,7 @@ export function useHeaderConfigProps({
      largeTitleFontWeight,
      largeTitleHideShadow: headerLargeTitleShadowVisible === false,
      title: titleText,
@@ -85,7 +123,7 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
      titleColor,
      titleFontFamily,
      titleFontSize,
-@@ -364,9 +391,12 @@
+@@ -364,6 +394,9 @@ export function useHeaderConfigProps({
      disableTopInsetApplication: !headerTopInsetEnabled,
      translucent: translucent === true,
      children,
@@ -95,8 +133,59 @@ index 0b75c70b4e0d233ee3b5faaf9cfbc40d4f8ed494..eb174e3fde91a7783f132b3fb16b0117
      headerLeftBarButtonItems: processBarButtonItems(leftItems, colors, fonts),
      headerRightBarButtonItems: processBarButtonItems(rightItems, colors, fonts),
      experimental_userInterfaceStyle: dark ? 'dark' : 'light'
-   };
- }
--//# sourceMappingURL=useHeaderConfigProps.js.map
-\ No newline at end of file
-+//# sourceMappingURL=useHeaderConfigProps.js.map
+diff --git a/lib/typescript/src/types.d.ts b/lib/typescript/src/types.d.ts
+index 2f1351a89f0f2e67e854dc81e392198326b71834..ccf8556911fa1fa17588f06b56edb2151a712bf0 100644
+--- a/lib/typescript/src/types.d.ts
++++ b/lib/typescript/src/types.d.ts
+@@ -1091,6 +1091,13 @@ export type NativeStackHeaderItemSpacing = {
+  */
+ export type NativeStackHeaderItemCustom = {
+     type: 'custom';
++    /**
++     * An identifier used to match items across transitions.
++     * Only available from iOS 26.0 and later.
++     *
++     * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/identifier
++     */
++    identifier?: string;
+     /**
+      * A React Element to display as the item.
+      */
+diff --git a/src/types.tsx b/src/types.tsx
+index 7488b1cf20afe36b5c585fbfcd369471fdb6ab8d..f4bd78e48c687024ba84e998fac79e9eb16f1a80 100644
+--- a/src/types.tsx
++++ b/src/types.tsx
+@@ -1156,6 +1156,13 @@ export type NativeStackHeaderItemSpacing = {
+  */
+ export type NativeStackHeaderItemCustom = {
+   type: 'custom';
++  /**
++   * An identifier used to match items across transitions.
++   * Only available from iOS 26.0 and later.
++   *
++   * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/identifier
++   */
++  identifier?: string;
+   /**
+    * A React Element to display as the item.
+    */
+diff --git a/src/views/useHeaderConfigProps.tsx b/src/views/useHeaderConfigProps.tsx
+index 3f3fff405048b3c2250afbe99dd7f35cecb9a6d5..bb062b898cfa77f8c02f951dc9d81b51672d7d0e 100644
+--- a/src/views/useHeaderConfigProps.tsx
++++ b/src/views/useHeaderConfigProps.tsx
+@@ -397,6 +397,7 @@ export function useHeaderConfigProps({
+                     // eslint-disable-next-line @eslint-react/no-array-index-key
+                     key={index}
+                     hidesSharedBackground={item.hidesSharedBackground}
++                    identifier={item.identifier}
+                   >
+                     {item.element}
+                   </ScreenStackHeaderLeftView>
+@@ -471,6 +472,7 @@ export function useHeaderConfigProps({
+                 // eslint-disable-next-line @eslint-react/no-array-index-key
+                 key={index}
+                 hidesSharedBackground={item.hidesSharedBackground}
++                identifier={item.identifier}
+               >
+                 {item.element}
+               </ScreenStackHeaderRightView>

@@ -1,28 +1,166 @@
+import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  collectAssistantCitations,
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerStateAtPromptEnd,
+  composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
-  shouldSubmitComposerOnEnter,
 } from "./composer-logic";
-import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
+import { formatTerminalContextReference } from "./lib/terminalContext";
 
-describe("shouldSubmitComposerOnEnter", () => {
+const terminalReference = formatTerminalContextReference({
+  id: "ctx-1",
+  terminalLabel: "Terminal 1",
+  lineStart: 3,
+  lineEnd: 4,
+});
+
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId: ThreadId.make("thread-1"),
+  messageId: MessageId.make("message-1"),
+  text: "Keep Unicode 👋 and punctuation (here).",
+  start: 3,
+  end: 40,
+  prefix: "前: ",
+  suffix: " 後",
+};
+const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("formatAssistantCitationForComposer", () => {
+  it.each([undefined, "", " \n\t "])(
+    "keeps citation-only insertion for a blank comment %j",
+    (comment) => {
+      expect(formatAssistantCitationForComposer(citation, comment)).toBe(
+        `${serializeAssistantCitation(citation)} `,
+      );
+    },
+  );
+
+  it("binds a multiline comment to its citation without adding standalone prompt text", () => {
+    const comment = 'What does "keep" mean? 👋\n  Please show an example.';
+    const text = formatAssistantCitationForComposer(citation, `  ${comment}\n`);
+    const boundCitation = { ...citation, comment };
+    expect(text).toBe(`${serializeAssistantCitation(boundCitation)} `);
+    expect(collectAssistantCitations(text).map((entry) => entry.citation)).toEqual([boundCitation]);
+    expect(expandAssistantCitationsForProvider(text)).toMatch(/^\[assistant-quote-1\] \n\n/);
+  });
+});
+
+describe("composerSubmissionIntentForEnter", () => {
+  it.each([
+    ["enter", "one line", false, "foreground"],
+    ["enter", "two\nlines", false, "foreground"],
+    ["mod-enter-multiline", "one line", false, "foreground"],
+    ["mod-enter-multiline", "two\nlines", false, null],
+    ["mod-enter-multiline", "two\nlines", true, "foreground"],
+    ["mod-enter", "one line", false, null],
+    ["mod-enter", "one line", true, "foreground"],
+  ] as const)("uses %s for %j with modifier=%s", (sendShortcut, prompt, modifierKey, expected) => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey,
+        isDraftThread: false,
+        sendShortcut,
+        prompt,
+      }),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["enter", false, "alternate"],
+    ["enter", true, null],
+    ["mod-enter-multiline", false, "foreground"],
+    ["mod-enter-multiline", true, "alternate"],
+    ["mod-enter", false, "foreground"],
+    ["mod-enter", true, "alternate"],
+  ] as const)(
+    "resolves running follow-ups with %s and shift=%s",
+    (sendShortcut, shiftKey, expected) => {
+      expect(
+        composerSubmissionIntentForEnter({
+          isMobileViewport: false,
+          shiftKey,
+          modifierKey: true,
+          isDraftThread: false,
+          isRunning: true,
+          sendShortcut,
+          prompt: "two\nlines",
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it("submits plain Enter on desktop", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: false })).toBe(true);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBe("foreground");
   });
 
   it("inserts a newline for plain Enter on mobile", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: true, shiftKey: false })).toBe(false);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: true,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
   });
 
   it("inserts a newline for Shift+Enter", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: true,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("submits a new thread in the background with Mod+Enter", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: true,
+      }),
+    ).toBe("background");
+  });
+
+  it("keeps Mod+Enter in the foreground for an active thread", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: false,
+      }),
+    ).toBe("foreground");
   });
 });
 
@@ -94,16 +232,68 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("detects $skill trigger at cursor", () => {
-    const text = "Use $gh-fi";
-    const trigger = detectComposerTrigger(text, text.length);
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "detects %sskill trigger at cursor",
+    (prefix) => {
+      const text = `Use ${prefix}gh-fi`;
+      const trigger = detectComposerTrigger(text, text.length);
 
-    expect(trigger).toEqual({
-      kind: "skill",
-      query: "gh-fi",
-      rangeStart: "Use ".length,
+      expect(trigger).toEqual({
+        kind: "skill",
+        query: "gh-fi",
+        rangeStart: "Use ".length,
+        rangeEnd: text.length,
+      });
+    },
+  );
+
+  it("detects a pull request number at a token boundary", () => {
+    const text = "Compare this with #8737";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "pull-request",
+      query: "8737",
+      rangeStart: "Compare this with ".length,
       rangeEnd: text.length,
     });
+  });
+
+  it("opens pull request completion from a bare hash", () => {
+    const text = "Compare with #";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "pull-request",
+      query: "",
+      rangeStart: "Compare with ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects a one-word pull request search", () => {
+    const text = "Compare with #composer";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "pull-request",
+      query: "composer",
+      rangeStart: "Compare with ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("supports hyphenated pull request search terms", () => {
+    const text = "Find #inline-context";
+
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "pull-request",
+      query: "inline-context",
+      rangeStart: "Find ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("does not keep pull request completion active for headings or embedded hashes", () => {
+    expect(detectComposerTrigger("# Heading", "# Heading".length)).toBeNull();
+    expect(detectComposerTrigger("issue#123", "issue#123".length)).toBeNull();
   });
 
   it("detects @path trigger in the middle of existing text", () => {
@@ -144,6 +334,89 @@ describe("detectComposerTrigger", () => {
     expect(trigger).not.toBeNull();
     expect(trigger?.kind).toBe("path");
     expect(trigger?.query).toBe("");
+  });
+});
+
+describe("filterComposerPullRequestMatches", () => {
+  const entries = [
+    {
+      number: 7,
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    },
+    {
+      number: 8987,
+      projectId: "project-1",
+      repository: "T3Tools/T3Code",
+      updatedAt: "2026-09-03T12:00:00.000Z",
+    },
+    {
+      number: 27,
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      updatedAt: "2026-09-02T12:00:00.000Z",
+    },
+    {
+      number: 27,
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      updatedAt: "2026-09-01T13:00:00.000Z",
+    },
+    {
+      number: 70,
+      projectId: "project-2",
+      repository: "t3tools/other",
+      updatedAt: "2026-09-04T12:00:00.000Z",
+    },
+  ];
+
+  it("matches and de-duplicates number fragments within one repository, exact match first", () => {
+    expect(
+      filterComposerPullRequestMatches({
+        entries,
+        projectId: "project-1",
+        repository: "t3tools/t3code",
+        query: "7",
+        limit: 10,
+      }).map((entry) => entry.number),
+    ).toEqual([7, 8987, 27]);
+  });
+
+  it("keeps an older exact match when newer substring matches would fill the limit", () => {
+    const exact = {
+      number: 7,
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    };
+    const newerSubstringMatches = Array.from({ length: 12 }, (_unused, index) => ({
+      number: 700 + index,
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      updatedAt: `2026-09-${String(index + 1).padStart(2, "0")}T12:00:00.000Z`,
+    }));
+    const matches = filterComposerPullRequestMatches({
+      entries: [...newerSubstringMatches, exact],
+      projectId: "project-1",
+      repository: "t3tools/t3code",
+      query: "7",
+      limit: 10,
+    });
+    expect(matches[0]?.number).toBe(7);
+    expect(matches).toHaveLength(10);
+  });
+
+  it("uses an empty query for a capped recent list", () => {
+    expect(
+      filterComposerPullRequestMatches({
+        entries,
+        projectId: "project-1",
+        repository: "t3tools/t3code",
+        query: "",
+        limit: 2,
+      }).map((entry) => entry.number),
+    ).toEqual([8987, 27]);
   });
 });
 
@@ -200,14 +473,42 @@ describe("expandCollapsedComposerCursor", () => {
     expect(detectComposerTrigger(text, expandedCursor)).toBeNull();
   });
 
-  it("maps collapsed skill cursor to expanded text cursor", () => {
-    const text = "run $review-follow-up then";
+  it.each(["$", "€", "𑿝"])("maps collapsed %s skill cursor to expanded text cursor", (prefix) => {
+    const text = `run ${prefix}review-follow-up then`;
     const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = "run $review-follow-up ".length;
+    const expandedCursorAfterSkill = `run ${prefix}review-follow-up `.length;
 
     expect(expandCollapsedComposerCursor(text, collapsedCursorAfterSkill)).toBe(
       expandedCursorAfterSkill,
     );
+  });
+});
+
+describe("composerStateAtPromptEnd", () => {
+  it("puts the caret at the end of a restored parked draft", () => {
+    const prompt = carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half");
+
+    expect(composerStateAtPromptEnd(prompt)).toEqual({
+      cursor: prompt.length,
+      trigger: null,
+    });
+  });
+
+  it("collapses mention chips so the next keystroke lands after the draft", () => {
+    const prompt = carryDisplacedCustomAnswerIntoPrompt("", "see @AGENTS.md please");
+
+    expect(composerStateAtPromptEnd(prompt).cursor).toBe("see ".length + 1 + " please".length);
+    expect(composerStateAtPromptEnd(prompt).cursor).not.toBe(0);
+    expect(composerStateAtPromptEnd(prompt).cursor).not.toBe(prompt.length);
+  });
+
+  it("keeps a trailing mention trigger when the restored draft ends with @", () => {
+    const prompt = "look at @";
+
+    expect(composerStateAtPromptEnd(prompt)).toEqual({
+      cursor: prompt.length,
+      trigger: { kind: "path", query: "", rangeStart: "look at ".length, rangeEnd: prompt.length },
+    });
   });
 });
 
@@ -264,15 +565,22 @@ describe("collapseExpandedComposerCursor", () => {
     expect(expandCollapsedComposerCursor(text, collapsedCursor)).toBe(expandedCursor);
   });
 
-  it("maps expanded skill cursor back to collapsed cursor", () => {
-    const text = "run $review-follow-up then";
+  it.each(["$", "€", "𑿝"])("maps expanded %s skill cursor back to collapsed cursor", (prefix) => {
+    const text = `run ${prefix}review-follow-up then`;
     const collapsedCursorAfterSkill = "run ".length + 2;
-    const expandedCursorAfterSkill = "run $review-follow-up ".length;
+    const expandedCursorAfterSkill = `run ${prefix}review-follow-up `.length;
 
     expect(collapseExpandedComposerCursor(text, expandedCursorAfterSkill)).toBe(
       collapsedCursorAfterSkill,
     );
   });
+});
+
+it("preserves the caret before trailing text after mixed-width skill chips", () => {
+  const text = "𑿝ui a $review tail";
+  const expanded = "𑿝ui a $review ".length;
+  expect(collapseExpandedComposerCursor(text, expanded)).toBe(6);
+  expect(expandCollapsedComposerCursor(text, 6)).toBe(expanded);
 });
 
 describe("clampCollapsedComposerCursor", () => {
@@ -285,6 +593,62 @@ describe("clampCollapsedComposerCursor", () => {
     expect(clampCollapsedComposerCursor(text, Number.POSITIVE_INFINITY)).toBe(
       "open ".length + 1 + " then ".length,
     );
+  });
+});
+
+describe("assistant citation cursor offsets", () => {
+  it("roundtrips every collapsed offset across citations, mentions, skills, and Unicode", () => {
+    const prefix = "👋(";
+    const between = "),雪";
+    const after = " @AGENTS.md $review ";
+    const text = `${prefix}${citationSource}${between}${citationSource}${after}${terminalReference}!`;
+    const collapsedLength = `${prefix}□${between}□ □ □ □!`.length;
+    const boundaries = [
+      [prefix.length, prefix.length],
+      [prefix.length + 1, prefix.length + citationSource.length],
+      [prefix.length + 1 + between.length, prefix.length + citationSource.length + between.length],
+      [
+        prefix.length + 2 + between.length,
+        prefix.length + citationSource.length * 2 + between.length,
+      ],
+      [collapsedLength, text.length],
+    ] as const;
+
+    for (const [collapsed, expanded] of boundaries) {
+      expect(expandCollapsedComposerCursor(text, collapsed)).toBe(expanded);
+      expect(collapseExpandedComposerCursor(text, expanded)).toBe(collapsed);
+    }
+    for (let cursor = 0; cursor <= collapsedLength; cursor += 1) {
+      expect(
+        collapseExpandedComposerCursor(text, expandCollapsedComposerCursor(text, cursor)),
+      ).toBe(cursor);
+    }
+    expect(clampCollapsedComposerCursor(text, Number.POSITIVE_INFINITY)).toBe(collapsedLength);
+  });
+
+  it("snaps serialized offsets inside a citation to the end of its chip", () => {
+    const prefix = "前👋";
+    const text = `${prefix}${citationSource}.`;
+
+    for (const offset of [1, citationSource.length - 1, citationSource.length]) {
+      expect(collapseExpandedComposerCursor(text, prefix.length + offset)).toBe(prefix.length + 1);
+    }
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 1, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 2, "left")).toBe(false);
+  });
+
+  it("deletes one collapsed citation without changing its neighbor or surrounding punctuation", () => {
+    const text = `(${citationSource}),${citationSource}!`;
+    const result = replaceTextRange(
+      text,
+      expandCollapsedComposerCursor(text, 1),
+      expandCollapsedComposerCursor(text, 2),
+      "",
+    );
+
+    expect(result).toEqual({ text: `(),${citationSource}!`, cursor: 1 });
+    expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
   });
 });
 
@@ -340,8 +704,8 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, mentionStart - 1, "right")).toBe(false);
   });
 
-  it("treats terminal pills as inline tokens for adjacency checks", () => {
-    const text = `open ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} next`;
+  it("treats context reference pills as inline tokens for adjacency checks", () => {
+    const text = `open ${terminalReference} next`;
     const tokenStart = "open ".length;
     const tokenEnd = tokenStart + 1;
 

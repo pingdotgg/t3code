@@ -2,6 +2,62 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 
 describe("ThreadBackgroundLiveness", () => {
+  it("does not let status-free progress or metadata restart an idle task", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "task",
+      taskType: undefined,
+      status: undefined,
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
+
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "completed-task",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "completed-task",
+      taskType: undefined,
+      status: "completed",
+      kind: "completed",
+    });
+    liveness.recordTaskLiveness({
+      threadId: "thread",
+      taskId: "completed-task",
+      taskType: undefined,
+      status: undefined,
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
+  });
+
   it("agents present as working; monitors as monitoring; agents win", () => {
     const liveness = ThreadBackgroundLiveness.make();
     const threadId = "t-live-1";

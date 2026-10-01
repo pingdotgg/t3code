@@ -15,13 +15,11 @@ import { Hyperdrive, NeonDatabase } from "./src/backend/database.ts";
  */
 export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
   compatibility: {
-    flags: ["nodejs_compat", "enable_request_signal"],
+    // Node.js compatibility is supplied by Alchemy's 2026-08-31 default.
+    flags: ["enable_request_signal"],
   },
   env: {
     BACKEND: Backend,
-  },
-  assets: {
-    runWorkerFirst: true,
   },
 }) {}
 

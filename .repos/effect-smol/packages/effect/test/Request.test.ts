@@ -1,11 +1,12 @@
 import { assert, describe, expect, it } from "@effect/vitest"
-import { Array, Context, Data, Equal, Fiber, Hash } from "effect"
+import { Array, Context, Data, Deferred, Equal, Fiber, Hash, Schema } from "effect"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import { flow, pipe } from "effect/Function"
 import * as Request from "effect/Request"
 import * as Resolver from "effect/RequestResolver"
+import { Persistable, Persistence } from "effect/unstable/persistence"
 
 class Counter extends Context.Service<Counter, { count: number }>()("Counter") {}
 class Requests extends Context.Service<Requests, { count: number }>()("Requests") {}
@@ -132,7 +133,7 @@ const provideEnv = flow(
   Effect.provideServiceEffect(Requests, Effect.sync(() => ({ count: 0 })))
 )
 
-describe.sequential("Request", () => {
+describe("Request", { concurrent: false }, () => {
   it("preserves __proto__ as an own constructor property", () => {
     interface ProtoRequest extends Request.Request<void> {
       readonly "__proto__": { readonly polluted: boolean }
@@ -199,6 +200,69 @@ describe.sequential("Request", () => {
       expect(names).toEqual(userIds.map((id) => userNames.get(id)))
     }, provideEnv)
   )
+
+  it.effect("fromEffectTagged preserves typed errors", () =>
+    Effect.gen(function*() {
+      const resolver = Resolver.fromEffectTagged<GetNameById>()({
+        GetNameById: () => Effect.fail("missing")
+      })
+      const error = yield* Effect.flip(Effect.request(new GetNameById({ id: 1 }), resolver))
+
+      assert.strictEqual(error, "missing")
+    }))
+
+  it.effect("fromEffectTagged preserves defects", () =>
+    Effect.gen(function*() {
+      const defect = new Error("boom")
+      const resolver = Resolver.fromEffectTagged<GetNameById>()({
+        GetNameById: () => Effect.die(defect)
+      })
+      const exit = yield* Effect.exit(Effect.request(new GetNameById({ id: 1 }), resolver))
+
+      assert.isTrue(Exit.isFailure(exit))
+      if (Exit.isFailure(exit)) {
+        assert.strictEqual(exit.cause.reasons.length, 1)
+        const reason = exit.cause.reasons[0]
+        assert.isTrue(Cause.isDieReason(reason))
+        if (Cause.isDieReason(reason)) {
+          assert.strictEqual(reason.defect, defect)
+        }
+      }
+    }))
+
+  it.effect("fromEffectTagged preserves interrupts", () =>
+    Effect.gen(function*() {
+      const resolver = Resolver.fromEffectTagged<GetNameById>()({
+        GetNameById: () => Effect.interrupt
+      })
+      const exit = yield* Effect.exit(Effect.request(new GetNameById({ id: 1 }), resolver))
+
+      assert.isTrue(Exit.hasInterrupts(exit))
+    }))
+
+  it.effect.each([
+    { name: "array", make: (values: Array<string>) => values },
+    { name: "array iterator", make: (values: Array<string>) => values.values() },
+    {
+      name: "generator",
+      make: (values: Array<string>) =>
+        (function*() {
+          yield* values
+        })()
+    }
+  ])("fromEffectTagged resolves requests from $name results", ({ make }) =>
+    Effect.gen(function*() {
+      const resolver = Resolver.fromEffectTagged<GetNameById>()({
+        GetNameById: (requests) => Effect.succeed(make(requests.map(({ request }) => String(request.id))))
+      })
+      const names = yield* Effect.forEach(
+        [1, 2, 3],
+        (id) => Effect.request(new GetNameById({ id }), resolver),
+        { concurrency: "unbounded" }
+      )
+
+      assert.deepStrictEqual(names, ["1", "2", "3"])
+    }))
 
   it.effect(
     "requests don't break interruption",
@@ -270,6 +334,323 @@ describe.sequential("Request", () => {
     })
   )
 
+  for (const cached of [false, true]) {
+    it.effect(`repro: cancelling a pending batch does not poison ${cached ? "cached" : "uncached"} requests`, () =>
+      Effect.gen(function*() {
+        const gate = yield* Deferred.make<void>()
+        const base = Resolver.make<GetNameById>((entries) =>
+          Effect.sync(() => {
+            for (const entry of entries) entry.completeUnsafe(Exit.succeed("Alice"))
+          })
+        ).pipe(Resolver.setDelayEffect(Deferred.await(gate)))
+        const resolver = cached ? yield* Resolver.withCache(base, { capacity: 10 }) : base
+        const request = new GetNameById({ id: 1 })
+
+        const first = yield* Effect.request(request, resolver).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Fiber.interrupt(first)
+        const next = yield* Effect.request(request, resolver).pipe(Effect.forkChild({ startImmediately: true }))
+
+        // Allow execution only after cancelling the first batch and retrying.
+        yield* Deferred.succeed(gate, undefined)
+        yield* Effect.yieldNow
+        const exit = next.pollUnsafe()
+        yield* Fiber.interrupt(next)
+
+        assert.deepStrictEqual(exit, Exit.succeed("Alice"))
+      }))
+  }
+
+  it.effect("withCache removes cancelled entries from a surviving batch", () =>
+    Effect.gen(function*() {
+      const gate = yield* Deferred.make<void>()
+      const batches: Array<Array<number>> = []
+      const resolver = yield* Resolver.make<GetNameById>((entries) =>
+        Effect.sync(() => {
+          batches.push(entries.map((entry) => entry.request.id))
+          for (const entry of entries) entry.completeUnsafe(Exit.succeed(String(entry.request.id)))
+        })
+      ).pipe(
+        Resolver.setDelayEffect(Effect.andThen(Effect.yieldNow, Deferred.await(gate))),
+        Resolver.withCache({ capacity: 10 })
+      )
+      const first = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      const other = yield* Effect.request(new GetNameById({ id: 2 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Fiber.interrupt(first)
+      yield* Deferred.succeed(gate, undefined)
+      yield* Effect.yieldNow
+      assert.deepStrictEqual(other.pollUnsafe(), Exit.succeed("2"))
+      assert.deepStrictEqual(batches, [[2]])
+
+      const retry = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Effect.yieldNow
+      assert.deepStrictEqual(retry.pollUnsafe(), Exit.succeed("1"))
+      assert.deepStrictEqual(batches, [[2], [1]])
+    }))
+
+  for (const cancelFirst of [false, true]) {
+    it.effect(`withCache preserves coalesced requests when the ${cancelFirst ? "first" : "second"} caller cancels`, () =>
+      Effect.gen(function*() {
+        const gate = yield* Deferred.make<void>()
+        const batches: Array<number> = []
+        const resolver = yield* Resolver.make<GetNameById>((entries) =>
+          Effect.sync(() => {
+            batches.push(entries.length)
+            for (const entry of entries) entry.completeUnsafe(Exit.succeed("Alice"))
+          })
+        ).pipe(Resolver.setDelayEffect(Deferred.await(gate)), Resolver.withCache({ capacity: 10 }))
+        const first = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+          Effect.forkChild({ startImmediately: true })
+        )
+        const second = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+          Effect.forkChild({ startImmediately: true })
+        )
+        const cancelled = cancelFirst ? first : second
+        const remaining = cancelFirst ? second : first
+        yield* Fiber.interrupt(cancelled)
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(cancelled)))
+        assert.deepStrictEqual(batches, [])
+        yield* Deferred.succeed(gate, undefined)
+        yield* Effect.yieldNow
+
+        assert.deepStrictEqual(remaining.pollUnsafe(), Exit.succeed("Alice"))
+        assert.strictEqual(yield* Effect.request(new GetNameById({ id: 1 }), resolver), "Alice")
+        assert.deepStrictEqual(batches, [1])
+      }))
+  }
+
+  it.effect("withCache still caches completed failures", () =>
+    Effect.gen(function*() {
+      let calls = 0
+      const resolver = yield* Resolver.make<GetNameById>((entries) =>
+        Effect.sync(() => {
+          calls++
+          for (const entry of entries) entry.completeUnsafe(Exit.fail("Not Found"))
+        })
+      ).pipe(Resolver.withCache({ capacity: 10 }))
+
+      for (let i = 0; i < 2; i++) {
+        assert.deepStrictEqual(
+          yield* Effect.exit(Effect.request(new GetNameById({ id: 1 }), resolver)),
+          Exit.fail("Not Found")
+        )
+      }
+      assert.strictEqual(calls, 1)
+    }))
+
+  it.effect("withCache does not cache interrupted resolver results", () =>
+    Effect.gen(function*() {
+      let calls = 0
+      const resolver = yield* Resolver.make<GetNameById>((entries) =>
+        Effect.sync(() => {
+          calls++
+          for (const entry of entries) {
+            entry.completeUnsafe(calls === 1 ? Exit.interrupt() : Exit.succeed("Alice"))
+          }
+        })
+      ).pipe(Resolver.withCache({ capacity: 10 }))
+
+      assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(Effect.request(new GetNameById({ id: 1 }), resolver))))
+      assert.strictEqual(yield* Effect.request(new GetNameById({ id: 1 }), resolver), "Alice")
+      assert.strictEqual(calls, 2)
+    }))
+
+  it.effect("withCache cancellation does not evict a replacement entry", () =>
+    Effect.gen(function*() {
+      const gate = yield* Deferred.make<void>()
+      const batches: Array<Array<number>> = []
+      let delays = 0
+      const resolver = yield* Resolver.make<GetNameById>((entries) =>
+        Effect.sync(() => {
+          batches.push(entries.map((entry) => entry.request.id))
+          for (const entry of entries) entry.completeUnsafe(Exit.succeed("Alice"))
+        })
+      ).pipe(
+        Resolver.grouped(({ request }) => request.id),
+        Resolver.setDelayEffect(Effect.suspend(() => ++delays === 1 ? Deferred.await(gate) : Effect.yieldNow)),
+        Resolver.withCache({ capacity: 1 })
+      )
+      const first = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Effect.yieldNow
+      // Completing another group evicts the first entry while its batch is still pending.
+      yield* Effect.request(new GetNameById({ id: 2 }), resolver)
+      yield* Effect.yieldNow
+      const replacement = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Fiber.interrupt(first)
+      const coalesced = yield* Effect.request(new GetNameById({ id: 1 }), resolver).pipe(
+        Effect.forkChild({ startImmediately: true })
+      )
+      yield* Deferred.succeed(gate, undefined)
+      yield* Effect.yieldNow
+
+      assert.deepStrictEqual(replacement.pollUnsafe(), Exit.succeed("Alice"))
+      assert.deepStrictEqual(coalesced.pollUnsafe(), Exit.succeed("Alice"))
+      assert.deepStrictEqual(batches, [[2], [1]])
+    }))
+
+  it.effect("withCache allows an equal retry from the cancelled delay's finalizer", () =>
+    Effect.gen(function*() {
+      const gate = yield* Deferred.make<void>()
+      const context = yield* Effect.context<never>()
+      const results: Array<Request.Result<GetNameById>> = []
+      const batches: Array<number> = []
+      let cancelledCallbacks = 0
+      let finalizers = 0
+      const resolver = yield* Resolver.make<GetNameById>((entries) =>
+        Effect.sync(() => {
+          batches.push(entries.length)
+          for (const entry of entries) entry.completeUnsafe(Exit.succeed("Alice"))
+        })
+      ).pipe(
+        Resolver.setDelayEffect(
+          Deferred.await(gate).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                finalizers++
+                Effect.requestUnsafe(new GetNameById({ id: 1 }), {
+                  resolver,
+                  context,
+                  onExit: (exit) => results.push(exit)
+                })
+              })
+            )
+          )
+        ),
+        Resolver.withCache({ capacity: 10 })
+      )
+      const cancel = Effect.requestUnsafe(new GetNameById({ id: 1 }), {
+        resolver,
+        context,
+        onExit: () => cancelledCallbacks++
+      })
+      cancel()
+      assert.strictEqual(finalizers, 1)
+      assert.deepStrictEqual(results, [])
+      cancel()
+      yield* Deferred.succeed(gate, undefined)
+      yield* Effect.yieldNow
+
+      assert.strictEqual(cancelledCallbacks, 0)
+      assert.strictEqual(finalizers, 1)
+      assert.deepStrictEqual(results, [Exit.succeed("Alice")])
+      assert.deepStrictEqual(batches, [1])
+    }))
+
+  it.effect("withCache preserves the race winner when the losing resolver is interrupted", () =>
+    Effect.gen(function*() {
+      const finished = yield* Deferred.make<void>()
+      let calls = 0
+      let interruptions = 0
+      const fast = Resolver.fromEffect<GetNameById>(() =>
+        Effect.andThen(
+          Effect.yieldNow,
+          Effect.sync(() => {
+            calls++
+            return "Alice"
+          })
+        )
+      )
+      const slow = Resolver.fromEffect<GetNameById>(() =>
+        Effect.never.pipe(Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptions++
+          })
+        ))
+      )
+      const resolver = yield* Resolver.race(fast, slow).pipe(
+        Resolver.around(() => Effect.void, () => Deferred.succeed(finished, undefined)),
+        Resolver.withCache({ capacity: 10 })
+      )
+
+      assert.strictEqual(yield* Effect.request(new GetNameById({ id: 1 }), resolver), "Alice")
+      // Wait for the losing resolver's interruption before reading the cache again.
+      yield* Deferred.await(finished)
+      assert.strictEqual(interruptions, 1)
+      assert.deepStrictEqual(
+        yield* Effect.exit(Effect.request(new GetNameById({ id: 1 }), resolver)),
+        Exit.succeed("Alice")
+      )
+      assert.strictEqual(calls, 1)
+    }))
+
+  it.effect("withCache accepts refreshed results from stale-while-revalidate", () =>
+    Effect.gen(function*() {
+      class GetName extends Persistable.Class()("GetName", {
+        primaryKey: () => "name",
+        success: Schema.String
+      }) {}
+      const store = yield* (yield* Persistence.Persistence).make({ storeId: "names" })
+      yield* store.set(new GetName(), Exit.succeed("Alice"))
+      const finished = yield* Deferred.make<void>()
+      let calls = 0
+      const persisted = yield* Resolver.fromFunction<GetName>(() => {
+        calls++
+        return "Bob"
+      }).pipe(Resolver.persisted({ storeId: "names", staleWhileRevalidate: () => true }))
+      const resolver = yield* persisted.pipe(
+        Resolver.around(() => Effect.void, () => Deferred.succeed(finished, undefined)),
+        Resolver.withCache({ capacity: 10 })
+      )
+
+      assert.strictEqual(yield* Effect.request(new GetName(), resolver), "Alice")
+      yield* Deferred.await(finished)
+      assert.strictEqual(yield* Effect.request(new GetName(), resolver), "Bob")
+      assert.strictEqual(calls, 1)
+    }).pipe(Effect.provide(Persistence.layerMemory)))
+
+  it.effect("persisted propagates failures to unfinished requests", () =>
+    Effect.gen(function*() {
+      class GetValue extends Persistable.Class<{ payload: { id: number } }>()("GetValue", {
+        primaryKey: ({ id }) => String(id),
+        success: Schema.String,
+        error: Persistence.PersistenceError
+      }) {}
+      const request = new GetValue({ id: 1 })
+      const error = new Persistence.PersistenceError({ message: "backend failed" })
+      const resolver = Resolver.make<GetValue>((entries) => {
+        entries[0].completeUnsafe(Exit.succeed("first"))
+        return Effect.fail(error)
+      })
+      const persisted = yield* Resolver.persisted(resolver, { storeId: "resolver-failure" })
+
+      assert.deepStrictEqual(
+        yield* Effect.forEach(
+          [request, request, new GetValue({ id: 2 })],
+          (request) => Effect.exit(Effect.request(request, persisted)),
+          { concurrency: "unbounded" }
+        ),
+        [Exit.succeed("first"), Exit.fail(error), Exit.fail(error)]
+      )
+    }).pipe(Effect.provide(Persistence.layerMemory)))
+
+  it.effect("persisted stores synchronous resolver failures", () =>
+    Effect.gen(function*() {
+      class GetValue extends Persistable.Class()("ThrowingValue", {
+        primaryKey: () => "value",
+        success: Schema.String
+      }) {}
+      let calls = 0
+      const resolver = Resolver.make<GetValue>(() => {
+        calls++
+        throw "backend defect"
+      })
+      const persisted = yield* Resolver.persisted(resolver, { storeId: "resolver-throw" })
+      const request = new GetValue()
+
+      assert.deepStrictEqual(yield* Effect.exit(Effect.request(request, persisted)), Exit.die("backend defect"))
+      assert.deepStrictEqual(yield* Effect.exit(Effect.request(request, persisted)), Exit.die("backend defect"))
+      assert.strictEqual(calls, 1)
+    }).pipe(Effect.provide(Persistence.layerMemory)))
+
   it.effect(
     "batching preserves individual & identical requests",
     Effect.fnUntraced(function*() {
@@ -312,6 +693,36 @@ describe.sequential("Request", () => {
       expect(requestsCount).toEqual(26)
     })
   )
+
+  it.effect("batchN normalizes the maximum batch size", () =>
+    Effect.gen(function*() {
+      const sizes = yield* Effect.forEach([Number.NaN, -1, 0, 0.5, 1.9, 2.9], (n) =>
+        Effect.gen(function*() {
+          const batchSizes: Array<number> = []
+          const resolver = Resolver.make<GetNameById>((entries) =>
+            Effect.sync(() => {
+              batchSizes.push(entries.length)
+              for (const entry of entries) {
+                entry.completeUnsafe(Exit.succeed(String(entry.request.id)))
+              }
+            })
+          ).pipe(Resolver.batchN(n))
+
+          yield* Effect.forEach([1, 2, 3], (id) => Effect.request(new GetNameById({ id }), resolver), {
+            concurrency: "unbounded"
+          })
+          return batchSizes
+        }))
+
+      assert.deepStrictEqual(sizes, [
+        [1, 1, 1],
+        [1, 1, 1],
+        [1, 1, 1],
+        [1, 1, 1],
+        [1, 1, 1],
+        [2, 1]
+      ])
+    }))
 
   it.effect(
     "batch fibers use request services for runAll",

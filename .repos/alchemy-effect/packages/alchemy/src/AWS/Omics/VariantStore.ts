@@ -86,9 +86,8 @@ export interface VariantStore extends Resource<
  * A variant store name is auto-generated from the app, stage, and logical ID
  * unless you provide one. The `reference` and `sseConfig` are immutable —
  * changing either replaces the store. `description` is updated in place.
- * @resource
- * @section Creating a Variant Store
- * @example Basic Variant Store
+ * ### Creating a Variant Store
+ * **Example:** Basic Variant Store
  * ```typescript
  * import * as Omics from "alchemy/AWS/Omics";
  *
@@ -98,6 +97,8 @@ export interface VariantStore extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const VariantStore = Resource<VariantStore>("AWS.Omics.VariantStore");
 

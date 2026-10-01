@@ -2,12 +2,16 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  decodeAwardEmojiJson,
+  decodeRepositoryBlobsJson,
   decodeCommitsJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
   decodeNotesJson,
+  decodeOwnAwardIdJson,
   decodeViewerJson,
+  gitLabAwardName,
 } from "./gitLabMergeRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -177,6 +181,53 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(detail.changedFiles).toBe(0);
   });
 
+  it("reads either auto-merge field, and says nothing where GitLab named neither", () => {
+    const armed = (entry: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).autoMergeEnabled;
+
+    expect(armed({ merge_when_pipeline_succeeds: true })).toBe(true);
+    // The newer name for the same fact, which older GitLab installs do not send.
+    expect(armed({ auto_merge_enabled: true })).toBe(true);
+    expect(armed({ merge_when_pipeline_succeeds: false })).toBe(false);
+    // Absent is GitLab not saying, which the page must not read as "not armed".
+    expect(armed({})).toBeUndefined();
+  });
+
+  it("keeps the squash choice stored with auto-merge", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({ auto_merge_enabled: true, squash_on_merge: true }),
+        ),
+      ),
+    ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({
+            auto_merge_enabled: true,
+            squash: true,
+            squash_on_merge: false,
+          }),
+        ),
+      ).autoMergeMethod,
+    ).toBeUndefined();
+  });
+
+  it("keeps a divergence GitLab did not count apart from a divergence of none", () => {
+    const behind = (entry: Record<string, unknown>) =>
+      expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).divergedCommits;
+
+    expect(behind({ diverged_commits_count: 3 })).toBe(3);
+    // Counted and found level, which is the one answer that entitles the page to say so.
+    expect(behind({ diverged_commits_count: 0 })).toBe(0);
+    // An install that does not answer, and a null where the answer would have gone, are both
+    // silence: reading either as zero would tell a stale branch it is current.
+    expect(behind({})).toBeUndefined();
+    expect(behind({ diverged_commits_count: null })).toBeUndefined();
+  });
+
   it("maps a pipeline waiting on a person to neutral, not failure", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(detailJson({ head_pipeline: { status: "manual" } })),
@@ -331,6 +382,57 @@ describe("decodeCommitsJson", () => {
 });
 
 describe("decodeMergeRequestDiffsJson", () => {
+  it("quotes literal backslashes without interpreting them as escapes", () => {
+    const result = expectSuccess(
+      decodeMergeRequestDiffsJson(
+        JSON.stringify([
+          {
+            old_path: String.raw`src\notes.ts`,
+            new_path: String.raw`src\notes.ts`,
+            diff: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
+        String.raw`--- "a/src\\notes.ts"`,
+        String.raw`+++ "b/src\\notes.ts"`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves spaces and literal backslashes in both rename paths", () => {
+    const result = expectSuccess(
+      decodeMergeRequestDiffsJson(
+        JSON.stringify([
+          {
+            old_path: String.raw` old\name.ts `,
+            new_path: String.raw` new\name.ts `,
+            renamed_file: true,
+            diff: "",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        String.raw`rename from " old\\name.ts "`,
+        String.raw`rename to " new\\name.ts "`,
+        String.raw`--- "a/ old\\name.ts "`,
+        String.raw`+++ "b/ new\\name.ts "`,
+      ].join("\n"),
+    );
+  });
+
   it("assembles a unified patch GitLab does not return", () => {
     const result = expectSuccess(
       decodeMergeRequestDiffsJson(
@@ -451,5 +553,251 @@ describe("merge request viewer fields", () => {
     expect(
       expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: null }))).viewerCanMerge,
     ).toBe(true);
+  });
+});
+
+describe("decodeAwardEmojiJson", () => {
+  it("reads MR-level awards, keys per-note awards by the REST id inside their gid, and ignores an award outside the eight", () => {
+    const result = expectSuccess(
+      decodeAwardEmojiJson(
+        JSON.stringify({
+          data: {
+            currentUser: { username: "bilal" },
+            project: {
+              mergeRequest: {
+                awardEmoji: {
+                  nodes: [
+                    { name: "thumbsup", user: { username: "bilal" } },
+                    { name: "thumbsup", user: { username: "julius" } },
+                  ],
+                },
+                notes: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      id: "gid://gitlab/DiffNote/42",
+                      awardEmoji: { nodes: [{ name: "heart", user: { username: "julius" } }] },
+                    },
+                    {
+                      id: "gid://gitlab/Note/7",
+                      // Not one of the eight the contract carries.
+                      awardEmoji: {
+                        nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    // `bilal` is `currentUser`, so the group they are in reads back as reacted, but their own
+    // username is left out of `actors` — the page names them "You" instead — while `count` still
+    // counts them; `julius` alone does not turn a group's own `viewerHasReacted` on.
+    expect(result.reactions).toEqual([
+      { content: "thumbs-up", count: 2, actors: ["julius"], viewerHasReacted: true },
+    ]);
+    // Note 7's only award named nobody the eight recognise, so it carries no reactions and is
+    // left out of the map rather than kept empty.
+    expect([...result.reactionsByNoteId]).toEqual([
+      ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
+    ]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it("hands back a cursor when GitLab has more notes to page", () => {
+    const result = expectSuccess(
+      decodeAwardEmojiJson(
+        JSON.stringify({
+          data: {
+            currentUser: null,
+            project: {
+              mergeRequest: {
+                awardEmoji: { nodes: [] },
+                notes: { pageInfo: { hasNextPage: true, endCursor: "Y3Vyc29yOjE" }, nodes: [] },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(result.nextCursor).toBe("Y3Vyc29yOjE");
+  });
+
+  it("matches the viewer's username case-insensitively, since GitLab is not consistent about case", () => {
+    const result = expectSuccess(
+      decodeAwardEmojiJson(
+        JSON.stringify({
+          data: {
+            currentUser: { username: "Bilal" },
+            project: {
+              mergeRequest: {
+                awardEmoji: {
+                  nodes: [
+                    { name: "heart", user: { username: "bilal" } },
+                    { name: "heart", user: { username: "julius" } },
+                  ],
+                },
+                notes: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(result.reactions).toEqual([
+      { content: "heart", count: 2, actors: ["julius"], viewerHasReacted: true },
+    ]);
+  });
+});
+
+describe("decodeOwnAwardIdJson", () => {
+  const awards = JSON.stringify([
+    { id: 101, name: "thumbsup", user: { username: "julius" } },
+    { id: 102, name: "thumbsup", user: { username: "bilal" } },
+  ]);
+
+  it("finds the reader's own award of that name, which is the one a removal deletes", () => {
+    expect(
+      expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
+    ).toBe(102);
+  });
+
+  it("returns nothing where the reader has no award of that name", () => {
+    expect(
+      expectSuccess(decodeOwnAwardIdJson(awards, { content: "heart", viewer: "bilal" })),
+    ).toBeNull();
+  });
+});
+
+describe("gitLabAwardName", () => {
+  it("spells the contents whose GitLab award name is not their own kebab-case", () => {
+    expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
+    expect(gitLabAwardName("laugh")).toBe("laughing");
+    expect(gitLabAwardName("hooray")).toBe("tada");
+  });
+});
+
+describe("decodeRepositoryBlobsJson", () => {
+  /** Null is the query going unanswered, which these cases are not about. */
+  function expectBlobs(result: Result.Result<ReadonlyMap<string, string> | null, unknown>) {
+    const blobs = expectSuccess(result);
+    expect(blobs).not.toBe(null);
+    if (blobs === null) throw new Error("expected an answered blobs query");
+    return blobs;
+  }
+
+  it("reads a blob id per path", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: "aaa111" },
+                    { path: "src/b.ts", oid: "bbb222" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      ["src/a.ts", "aaa111"],
+      ["src/b.ts", "bbb222"],
+    ]);
+  });
+
+  it("leaves out a node missing either half, which names no version", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: null },
+                    { path: null, oid: "bbb222" },
+                    null,
+                    { path: "src/c.ts", oid: "ccc333" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([["src/c.ts", "ccc333"]]);
+  });
+
+  it("keys a blob by the path the host spelled, spaces and all", () => {
+    // A leading or trailing space is a legal part of a file's name. Trimmed here, the id lands
+    // under a key the asked-for path is not spelled with, and the caller fills that path in as
+    // the empty revision: a mark on the file then never compares against the real head blob.
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: " leading.ts", oid: "aaa111" },
+                    { path: "trailing.ts ", oid: "bbb222" },
+                    { path: "   ", oid: "ccc333" },
+                    { path: "", oid: "ddd444" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      [" leading.ts", "aaa111"],
+      ["trailing.ts ", "bbb222"],
+      // A name that is only spaces is one Git carries too, so it is a path like any other.
+      ["   ", "ccc333"],
+    ]);
+  });
+
+  it("tells a project the reader cannot see from a revision with none of the files", () => {
+    // Null is the query going unanswered. Read as an empty answer it would say the head has none
+    // of the asked-for files, which reports every file a reader has cleared as changed.
+    expect(
+      expectSuccess(decodeRepositoryBlobsJson(JSON.stringify({ data: { project: null } }))),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(JSON.stringify({ data: { project: { repository: null } } })),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(
+          JSON.stringify({ data: { project: { repository: { blobs: { nodes: [] } } } } }),
+        ),
+      ),
+    ).toEqual(new Map());
+  });
+
+  it("fails on output that is not the query's shape", () => {
+    expect(Result.isSuccess(decodeRepositoryBlobsJson("not json"))).toBe(false);
+    expect(Result.isSuccess(decodeRepositoryBlobsJson(JSON.stringify({ errors: [] })))).toBe(false);
   });
 });

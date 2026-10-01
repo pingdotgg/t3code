@@ -90,11 +90,8 @@ export type ProviderKey = {
  * `providerSlug`) renames the secret — a replacement — and cascades: the
  * provider config is replaced and re-pointed at the new secret.
  *
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Bringing your own key
- * @example Bring your own OpenAI key
+ * ### Bringing your own key
+ * **Example:** Bring your own OpenAI key
  * ```typescript
  * const store = yield* Cloudflare.SecretsStore.Store("Store");
  *
@@ -107,11 +104,11 @@ export type ProviderKey = {
  *   store,
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  * });
  * ```
  *
- * @example Multiple keys for one provider
+ * **Example:** Multiple keys for one provider
  * Distinguish keys for the same provider with an `alias` — each alias gets
  * its own secret and provider config.
  * ```typescript
@@ -119,7 +116,7 @@ export type ProviderKey = {
  *   store,
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  * });
  *
  * const evals = yield* Cloudflare.AI.ProviderKey("OpenAiEvalsKey", {
@@ -127,11 +124,15 @@ export type ProviderKey = {
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
  *   alias: "evals",
- *   value: yield* Config.redacted("OPENAI_EVALS_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_EVALS_API_KEY"),
  * });
  * ```
  *
  * @see https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const ProviderKey = (id: string, props: InputProps<ProviderKeyProps>) =>
   Effect.gen(function* () {

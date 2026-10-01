@@ -4,6 +4,7 @@ import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3t
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import {
   PullRequestProviderError,
+  type PullRequestProviderFailure,
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
@@ -19,6 +20,9 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: ["merge", "close"],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
+  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
+  // read and none is offered.
+  reactions: false,
   review: {
     inlineComment: true,
     reply: true,
@@ -26,6 +30,12 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
+  edit: { changeRequest: true, comment: true },
+  // Bitbucket Cloud states nothing about what a reviewer has already read: no endpoint carries a
+  // viewed file, and the per-pull-request properties it does offer are one value shared by
+  // everyone rather than one per reader. So the marks are kept here, and the client says whose
+  // they are rather than implying bitbucket.org will show them.
+  viewedFiles: "environment",
 };
 
 /**
@@ -55,15 +65,24 @@ export function bitbucketViewerPermissions(input: {
 }
 
 /** The failures that mean the credentials are the problem, rather than one request. */
-export function bitbucketErrorReason(
+export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
-): PullRequestProviderError["reason"] {
+): PullRequestProviderFailure {
   // Bitbucket is read over HTTP with credentials from the environment, so there is no tool to be
   // missing: unusable always means the credentials are absent or refused.
   if (error._tag === "BitbucketResponseError" && error.status === 401) {
-    return "unauthenticated";
+    return { reason: "unauthenticated" };
   }
-  return "failed";
+  if (
+    (error._tag === "BitbucketResponseError" || error._tag === "BitbucketResponseBodyReadError") &&
+    error.status === 429
+  ) {
+    return {
+      reason: "rate-limited",
+      ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+    };
+  }
+  return { reason: "failed" };
 }
 
 function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeRequest {
@@ -73,6 +92,9 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     url: pullRequest.url,
     author: pullRequest.author,
     headBranch: pullRequest.headBranch,
+    ...(pullRequest.headRepositoryNameWithOwner
+      ? { headRepositoryNameWithOwner: pullRequest.headRepositoryNameWithOwner }
+      : {}),
     baseBranch: pullRequest.baseBranch,
     state: pullRequest.state,
     isDraft: pullRequest.isDraft,
@@ -96,12 +118,37 @@ export const make = Effect.gen(function* () {
       new PullRequestProviderError({
         provider: "bitbucket",
         operation,
-        reason: bitbucketErrorReason(error),
+        ...bitbucketProviderFailure(error),
         // Every Bitbucket failure states its own fact; this names the operation around it, so
         // the two do not stack into "failed in x: failed in y: ...".
         detail: error.detail,
         cause: error,
       });
+
+  const recoverRead = <A>(
+    read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
+    fallback: A,
+  ) => {
+    const recover = () => Effect.succeed(fallback);
+    return Effect.catchTags(read, {
+      BitbucketResponseError: (error) => (error.status === 429 ? Effect.fail(error) : recover()),
+      BitbucketUntrustedUrlError: recover,
+      BitbucketRepositoryLocatorError: recover,
+      BitbucketRequestError: recover,
+      BitbucketResponseBodyReadError: (error) =>
+        error.status === 429 ? Effect.fail(error) : recover(),
+      BitbucketResponseDecodeError: recover,
+      BitbucketRepositoryVcsResolveError: recover,
+      BitbucketRepositoryRemotesListError: recover,
+      BitbucketRepositoryRemoteNotFoundError: recover,
+      BitbucketPullRequestBodyReadError: recover,
+      BitbucketCheckoutError: recover,
+      BitbucketPullRequestReadError: recover,
+      BitbucketViewerUnavailableError: recover,
+      BitbucketRepositoryUnsupportedError: recover,
+      BitbucketDiffCommitError: recover,
+    });
+  };
 
   const provider: PullRequestProviderApi = {
     kind: "bitbucket",
@@ -137,12 +184,12 @@ export const make = Effect.gen(function* () {
         [
           api.getPullRequest(target),
           api.getDiffStat(target),
-          api.getMergeability(target).pipe(Effect.orElseSucceed(() => "unknown" as const)),
-          api.listChecks(target).pipe(Effect.orElseSucceed(() => [])),
+          recoverRead(api.getMergeability(target), "unknown" as const),
+          recoverRead(api.listChecks(target), []),
           // A permission that could not be read is an unknown one, which is granted: a hidden
           // Merge leaves someone entitled to it with no way through, and one Bitbucket refuses
           // at least says why.
-          api.getRepositoryPermission(target).pipe(Effect.orElseSucceed(() => true)),
+          recoverRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
       ).pipe(
@@ -161,8 +208,8 @@ export const make = Effect.gen(function* () {
             deletions: diffStat.deletions,
             changedFiles: diffStat.changedFiles,
             body: pullRequest.body,
-            mergedAt: pullRequest.state === "merged" ? pullRequest.updatedAt : null,
-            closedAt: pullRequest.state === "closed" ? pullRequest.updatedAt : null,
+            mergedAt: null,
+            closedAt: null,
             reviewers: pullRequest.reviewers,
             checks,
             // Bitbucket publishes no per-repository list of allowed strategies, so the ones it
@@ -181,25 +228,21 @@ export const make = Effect.gen(function* () {
           // Reviews ride on the pull request itself, so this inexpensive core read is repeated
           // here rather than making the core response wait for the conversation endpoints.
           api.getPullRequest(target),
-          api
-            .listComments(target)
-            .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
-          api.listCommits(target).pipe(Effect.orElseSucceed(() => [])),
+          recoverRead(api.listComments(target), { comments: [], threads: [], truncated: true }),
+          recoverRead(api.listCommits(target), []),
         ],
         { concurrency: 3 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([pullRequest, comments, commits]): ProviderChangeRequestActivity => ({
-            comments: [...comments.comments, ...pullRequest.reviews].toSorted((left, right) =>
-              left.createdAt.localeCompare(right.createdAt),
-            ),
-            commentCount: comments.comments.length + pullRequest.reviews.length,
-            commentsTruncated: comments.truncated,
-            reviewThreads: comments.threads,
-            commits,
-          }),
-        ),
+        Effect.map(([pullRequest, comments, commits]): ProviderChangeRequestActivity => ({
+          comments: [...comments.comments, ...pullRequest.reviews].toSorted((left, right) =>
+            left.createdAt.localeCompare(right.createdAt),
+          ),
+          commentCount: comments.comments.length + pullRequest.reviews.length,
+          commentsTruncated: comments.truncated,
+          reviewThreads: comments.threads,
+          commits,
+        })),
       );
     },
 
@@ -221,6 +264,15 @@ export const make = Effect.gen(function* () {
           Effect.mapError(fail("getDiff")),
           Effect.map((diff) => ({ ...diff, nextCursor: null })),
         ),
+
+    getFileRevisions: (input) =>
+      api
+        .getFileRevisions({
+          repository: input.repository,
+          number: input.number,
+          paths: input.paths,
+        })
+        .pipe(Effect.mapError(fail("getFileRevisions"))),
 
     // Users only: Bitbucket requests a review of an account, and has no group that stands in for
     // one on a pull request.
@@ -249,10 +301,30 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    updateChangeRequest: (input) =>
+      api
+        .updateChangeRequest({
+          repository: input.repository,
+          number: input.number,
+          title: input.title,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+
     comment: (input) =>
       api
         .comment({ repository: input.repository, number: input.number, body: input.body })
         .pipe(Effect.mapError(fail("comment"))),
+
+    updateComment: (input) =>
+      api
+        .updateComment({
+          repository: input.repository,
+          number: input.number,
+          commentId: input.commentId,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) =>
       api
@@ -274,6 +346,17 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+
+    // Never called: `capabilities.reactions` is false, and the service refuses without it.
+    setReaction: () =>
+      Effect.fail(
+        new PullRequestProviderError({
+          provider: "bitbucket",
+          operation: "setReaction",
+          reason: "failed",
+          detail: "Bitbucket does not support reactions.",
+        }),
+      ),
 
     setThreadResolution: (input) =>
       api

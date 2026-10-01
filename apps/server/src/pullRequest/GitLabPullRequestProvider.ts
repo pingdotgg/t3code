@@ -1,9 +1,14 @@
 import * as Effect from "effect/Effect";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestReaction,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import {
   PullRequestProviderError,
+  type PullRequestProviderFailure,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
@@ -12,10 +17,29 @@ import {
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
-  actions: ["merge", "ready", "draft", "close", "reopen"],
+  actions: [
+    "merge",
+    "ready",
+    "draft",
+    "close",
+    "reopen",
+    "update-branch",
+    "enable-auto-merge",
+    "disable-auto-merge",
+  ],
   // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
   mergeMethods: ["merge", "squash", "rebase"],
+  // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing
+  // that merges the target back in the way GitHub's update button can. Declaring only what it
+  // does is what lets a request to merge the target in be refused instead of quietly rebasing.
+  updateMethods: ["rebase"],
   search: true,
+  reactions: true,
+  // GitLab keeps a reader's viewed files in one browser's local storage, where nothing outside
+  // that browser can read or write them. So the marks made here are this environment's own: they
+  // follow the reader between the clients connected to it, but they are not the ones gitlab.com
+  // shows, and the surface says so rather than implying a review can be carried on from there.
+  viewedFiles: "environment",
   review: {
     inlineComment: true,
     reply: true,
@@ -25,7 +49,20 @@ const CAPABILITIES: PullRequestCapabilities = {
     verdicts: ["comment", "approve"],
   },
   reviewers: { request: true, listCandidates: true },
+  edit: { changeRequest: true, comment: true },
 };
+
+/**
+ * The actions `user.can_merge` answers for. Rebasing writes to the source branch rather than to
+ * the target, so it is not literally the same permission — but GitLab reports nothing narrower,
+ * and someone it will not let land this change has no business rewriting its branch either.
+ */
+const MERGE_ACTIONS: ReadonlySet<string> = new Set([
+  "merge",
+  "update-branch",
+  "enable-auto-merge",
+  "disable-auto-merge",
+]);
 
 /**
  * What the signed-in account may do here. GitLab answers exactly one of these questions per
@@ -45,21 +82,27 @@ export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
 }): PullRequestViewerPermissions {
   return {
-    actions: CAPABILITIES.actions.filter((action) => action !== "merge" || input.viewerCanMerge),
+    // Arming the merge and taking the arming back are the merge, deferred, so they answer to
+    // the same `can_merge` the merge itself does.
+    actions: CAPABILITIES.actions.filter(
+      (action) => !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
+    ),
     comment: true,
     resolve: true,
     verdicts: CAPABILITIES.review.verdicts,
     requestReviewers: true,
+    ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
 }
 
 /** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
-function reasonFor(
+export function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
-): PullRequestProviderError["reason"] {
-  if (error._tag === "GitLabCliUnavailableError") return "missing-tool";
-  if (error._tag === "GitLabCliAuthenticationError") return "unauthenticated";
-  return "failed";
+): PullRequestProviderFailure {
+  if (error._tag === "GitLabCliUnavailableError") return { reason: "missing-tool" };
+  if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
+  if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
+  return { reason: "failed" };
 }
 
 export const make = Effect.gen(function* () {
@@ -69,7 +112,7 @@ export const make = Effect.gen(function* () {
     new PullRequestProviderError({
       provider: "gitlab",
       operation,
-      reason: reasonFor(error),
+      ...gitLabProviderFailure(error),
       detail: error.detail,
       cause: error,
     });
@@ -109,13 +152,22 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(
-          ([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
-            ...mergeRequest,
-            mergeCapabilities,
-            viewerPermissions: gitLabViewerPermissions(mergeRequest),
-          }),
-        ),
+        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
+          ...mergeRequest,
+          mergeCapabilities,
+          viewerPermissions: gitLabViewerPermissions(mergeRequest),
+          // A GitLab too old to count the divergence says nothing here rather than "up to
+          // date": the banner is worth missing, and a wrong all-clear is not worth showing.
+          baseComparison:
+            mergeRequest.divergedCommits === undefined
+              ? "unknown"
+              : mergeRequest.divergedCommits > 0
+                ? "behind"
+                : "up-to-date",
+          ...(mergeRequest.divergedCommits === undefined
+            ? {}
+            : { behindBy: mergeRequest.divergedCommits }),
+        })),
       ),
 
     getChangeRequestActivity: (input) =>
@@ -128,22 +180,38 @@ export const make = Effect.gen(function* () {
           cli
             .listDiscussions(input)
             .pipe(Effect.orElseSucceed(() => ({ threads: [], truncated: true }))),
+          // The notes endpoint carries no award of any kind, so they are read alongside it. A
+          // failed read costs the conversation its reactions rather than its words.
+          cli.listReactions(input).pipe(
+            Effect.orElseSucceed(() => ({
+              reactions: [] as ReadonlyArray<PullRequestReaction>,
+              reactionsByNoteId: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+            })),
+          ),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(
-          ([notes, commits, discussions]): ProviderChangeRequestActivity => ({
-            comments: notes.comments,
-            // GitLab reports no count of its own, so the walk's own total is the host's: the
-            // notes endpoint carries every comment on the merge request, including the ones
-            // written under a discussion, and it is read until GitLab runs out.
-            commentCount: notes.comments.length,
-            commentsTruncated: notes.truncated || discussions.truncated,
-            reviewThreads: discussions.threads,
-            commits,
-          }),
-        ),
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
+          reactions: awards.reactions,
+          comments: notes.comments.map((comment) => ({
+            ...comment,
+            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+          })),
+          // GitLab reports no count of its own, so the walk's own total is the host's: the
+          // notes endpoint carries every comment on the merge request, including the ones
+          // written under a discussion, and it is read until GitLab runs out.
+          commentCount: notes.comments.length,
+          commentsTruncated: notes.truncated || discussions.truncated,
+          reviewThreads: discussions.threads.map((thread) => ({
+            ...thread,
+            comments: thread.comments.map((comment) => ({
+              ...comment,
+              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+            })),
+          })),
+          commits,
+        })),
       ),
 
     // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
@@ -154,6 +222,15 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+
+    // What each marked file is at the head, which is what tells a mark that still stands from one
+    // the branch has moved past. GitLab's own local-storage marks are keyed on the blob id too,
+    // so this stales at the same moment its web UI would.
+    getFileRevisions: (input) =>
+      cli.getFileRevisions(input).pipe(
+        Effect.mapError(fail("getFileRevisions")),
+        Effect.map((revisions) => ({ revisions })),
+      ),
 
     // Users only: GitLab requests a review of a person, and the groups that can stand in for one
     // appear in approval rules rather than in a merge request's reviewers.
@@ -188,7 +265,31 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("runAction"))),
 
+    updateChangeRequest: (input) =>
+      cli
+        .updateMergeRequest({
+          cwd: input.cwd,
+          repository: input.repository,
+          number: input.number,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.body === undefined ? {} : { description: input.body }),
+        })
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+
     comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+
+    // The kind is not read: every comment this provider hands out, positioned or not, carries a
+    // plain REST note id, and one endpoint rewrites both.
+    updateComment: (input) =>
+      cli
+        .updateNote({
+          cwd: input.cwd,
+          repository: input.repository,
+          number: input.number,
+          noteId: input.commentId,
+          body: input.body,
+        })
+        .pipe(Effect.mapError(fail("updateComment"))),
 
     submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
 
@@ -202,6 +303,18 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+
+    setReaction: (input) =>
+      cli
+        .setReaction({
+          cwd: input.cwd,
+          repository: input.repository,
+          number: input.number,
+          ...(input.subjectId === undefined ? {} : { noteId: input.subjectId }),
+          content: input.content,
+          reacted: input.reacted,
+        })
+        .pipe(Effect.mapError(fail("setReaction"))),
 
     setThreadResolution: (input) =>
       cli

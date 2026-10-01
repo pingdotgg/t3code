@@ -78,9 +78,8 @@ export interface SlotType extends Resource<
  * A custom slot type on the DRAFT locale of an Amazon Lex V2 bot — the set of
  * values a slot can take, with optional synonyms and resolution strategy.
  *
- * @resource
- * @section Creating Slot Types
- * @example Enumerated Slot Type
+ * ### Creating Slot Types
+ * **Example:** Enumerated Slot Type
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -94,6 +93,8 @@ export interface SlotType extends Resource<
  *   resolutionStrategy: "TopResolution",
  * });
  * ```
+ *
+ * @resource
  */
 export const SlotType = Resource<SlotType>("AWS.LexV2.SlotType");
 

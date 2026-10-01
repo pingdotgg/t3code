@@ -15,13 +15,14 @@ export interface CreatePlatformEndpointRequest extends Omit<
  * push tokens at runtime. The `PlatformApplicationArn` is injected
  * automatically; the call is idempotent per token.
  * Provide the `CreatePlatformEndpointHttp` layer on the Function to implement the binding.
- * @binding
- * @section Mobile Push
- * @example Register a Device Token
+ * ### Mobile Push
+ * **Example:** Register a Device Token
  * ```typescript
  * const createEndpoint = yield* SNS.CreatePlatformEndpoint(app);
  * const endpoint = yield* createEndpoint({ Token: deviceToken });
  * ```
+ *
+ * @binding
  */
 export interface CreatePlatformEndpoint extends Binding.Service<
   CreatePlatformEndpoint,

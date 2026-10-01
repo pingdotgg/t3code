@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -13,19 +13,29 @@ import * as Layer from "effect/Layer";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
-const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(1);
+// Background sweeps resolve every project each minute. A long TTL keeps them
+// from spawning git each time. Clone, publish, and PR discovery (after a turn
+// and before it saves links) resolve with `refresh: true`.
+const DEFAULT_POSITIVE_CACHE_TTL = Duration.minutes(15);
+// Short, so a folder that gains a repository or a remote shows up quickly.
 const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly refine?: (
+    identity: RepositoryIdentity,
+  ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
-    readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
+    readonly resolve: (
+      cwd: string,
+      options?: { readonly refresh?: boolean },
+    ) => Effect.Effect<RepositoryIdentity | null>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -90,7 +100,6 @@ function buildRepositoryIdentity(input: {
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
-    let cacheKey = cwd;
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.
@@ -102,15 +111,11 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       })
       .pipe(Effect.option);
     if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-      return cacheKey;
+      return null;
     }
 
     const candidate = topLevelResult.value.stdout.trim();
-    if (candidate.length > 0) {
-      cacheKey = candidate;
-    }
-
-    return cacheKey;
+    return candidate.length > 0 ? candidate : null;
   },
 );
 
@@ -139,32 +144,50 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
+  const refine = options.refine ?? Effect.succeed;
+  // Git errors and timeouts resolve to null, so they use the negative TTL like
+  // "no repository" or "no remote". Only interrupts and defects skip the cache.
+  const timeToLive = (exit: Exit.Exit<unknown>) =>
+    Exit.match(exit, {
+      onSuccess: (value) =>
+        value === null
+          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
+          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+      onFailure: () => Duration.zero,
+    });
+
+  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+    (cwd) =>
+      resolveRepositoryIdentityCacheKey(cwd).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      ),
+    { capacity: cacheCapacity, timeToLive },
+  );
 
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.filterOrElse(
+          (identity): identity is null => identity === null,
+          (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+        ),
       ),
-    {
-      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
-      timeToLive: Exit.match({
-        onSuccess: (value) =>
-          value === null
-            ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-            : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
+    { capacity: cacheCapacity, timeToLive },
   );
 
-  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
-    "RepositoryIdentityResolver.resolve",
-  )(function* (cwd) {
-    const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-    );
-    return yield* Cache.get(repositoryIdentityCache, cacheKey);
-  });
+  // Untraced because almost every call is a cache hit. The lookups that spawn
+  // git keep their own spans.
+  const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
+    function* (cwd, options) {
+      if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
+      const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+      if (cacheKey === null) return null;
+      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+    },
+  );
 
   return RepositoryIdentityResolver.of({ resolve });
 });

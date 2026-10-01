@@ -21,9 +21,8 @@ export interface ExecutePolicyRequest extends Omit<
  * testing a policy's design or driving scaling from application logic.
  * Target-tracking policies cannot be executed manually. Provide the
  * implementation with `Effect.provide(AWS.AutoScaling.ExecutePolicyHttp)`.
- * @binding
- * @section Manual Scaling
- * @example Execute a step scaling policy
+ * ### Manual Scaling
+ * **Example:** Execute a step scaling policy
  * ```typescript
  * // init — bind the operation to the group
  * const executePolicy = yield* AWS.AutoScaling.ExecutePolicy(group);
@@ -35,6 +34,8 @@ export interface ExecutePolicyRequest extends Omit<
  *   BreachThreshold: 80,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ExecutePolicy extends Binding.Service<
   ExecutePolicy,

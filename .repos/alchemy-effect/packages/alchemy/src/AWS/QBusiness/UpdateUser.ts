@@ -19,9 +19,8 @@ export interface UpdateUserRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.UpdateUserHttp)`.
  *
- * @binding
- * @section User Management
- * @example Update a User's Aliases
+ * ### User Management
+ * **Example:** Update a User's Aliases
  * ```typescript
  * const updateUser = yield* AWS.QBusiness.UpdateUser(app);
  *
@@ -30,6 +29,8 @@ export interface UpdateUserRequest extends Omit<
  *   userAliasesToUpdate: [{ userId: "corp\\user" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateUser extends Binding.Service<
   UpdateUser,

@@ -1,12 +1,91 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
+import { decodePullRequestJson } from "./bitbucketPullRequestJson.ts";
 import {
-  bitbucketErrorReason,
+  bitbucketProviderFailure,
   bitbucketViewerPermissions,
+  make,
 } from "./BitbucketPullRequestProvider.ts";
 
-describe("bitbucketErrorReason", () => {
+for (const operation of [
+  "getMergeability",
+  "listChecks",
+  "getRepositoryPermission",
+  "listComments",
+  "listCommits",
+] as const) {
+  it.effect.each(["response", "body read"])(
+    `preserves rate limits from ${operation} on %s errors while recovering other optional-read failures`,
+    (variant) =>
+      Effect.gen(function* () {
+        const pullRequest = Result.getOrThrow(
+          decodePullRequestJson(`{
+            "id": 1, "title": "Check polling", "state": "OPEN",
+            "source": { "branch": { "name": "feature" } },
+            "destination": { "branch": { "name": "main" } },
+            "created_on": "2026-09-16T00:00:00Z",
+            "updated_on": "2026-09-16T00:00:00Z",
+            "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+          }`),
+        );
+        for (const status of [429, 403]) {
+          const provider = yield* make.pipe(
+            Effect.provide(
+              Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+                getPullRequest: () => Effect.succeed(pullRequest),
+                getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
+                getMergeability: () => Effect.succeed("unknown" as const),
+                listChecks: () => Effect.succeed([]),
+                getRepositoryPermission: () => Effect.succeed(true),
+                listComments: () => Effect.succeed({ comments: [], threads: [], truncated: false }),
+                listCommits: () => Effect.succeed([]),
+                [operation]: () =>
+                  Effect.fail(
+                    variant === "response"
+                      ? new BitbucketApi.BitbucketResponseError({
+                          operation: "request",
+                          status,
+                          responseBodyLength: 0,
+                          retryAt: 120_000,
+                        })
+                      : new BitbucketApi.BitbucketResponseBodyReadError({
+                          operation: "request",
+                          status,
+                          cause: new Error("response stream failed"),
+                          retryAt: 120_000,
+                        }),
+                  ),
+              }),
+            ),
+          );
+          const reference = {
+            cwd: "/repo",
+            repository: "acme/web",
+            number: 1,
+            host: "bitbucket.org",
+          };
+          const result = yield* operation === "listComments" || operation === "listCommits"
+            ? Effect.result(provider.getChangeRequestActivity(reference))
+            : Effect.result(provider.getChangeRequest(reference));
+          if (status === 429) {
+            expect(result).toMatchObject({
+              _tag: "Failure",
+              failure: { reason: "rate-limited", retryAt: 120_000 },
+            });
+          } else {
+            expect(result._tag).toBe("Success");
+          }
+        }
+      }),
+  );
+}
+
+describe("bitbucketProviderFailure", () => {
   it("treats only an HTTP 401 as unusable credentials", () => {
     const responseError = (status: number) =>
       new BitbucketApi.BitbucketResponseError({
@@ -15,8 +94,8 @@ describe("bitbucketErrorReason", () => {
         responseBodyLength: 0,
       });
 
-    expect(bitbucketErrorReason(responseError(401))).toBe("unauthenticated");
-    expect(bitbucketErrorReason(responseError(403))).toBe("failed");
+    expect(bitbucketProviderFailure(responseError(401)).reason).toBe("unauthenticated");
+    expect(bitbucketProviderFailure(responseError(403)).reason).toBe("failed");
   });
 });
 

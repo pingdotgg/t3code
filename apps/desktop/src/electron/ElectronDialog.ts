@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
-export class ElectronDialogPickFolderError extends Schema.TaggedErrorClass<ElectronDialogPickFolderError>()(
+export class ElectronDialogPickFolderError extends Schema.TaggedError<ElectronDialogPickFolderError>()(
   "ElectronDialogPickFolderError",
   {
     ownerWindowId: Schema.NullOr(Schema.Number),
@@ -21,7 +21,7 @@ export class ElectronDialogPickFolderError extends Schema.TaggedErrorClass<Elect
   }
 }
 
-export class ElectronDialogPickFilesError extends Schema.TaggedErrorClass<ElectronDialogPickFilesError>()(
+export class ElectronDialogPickFilesError extends Schema.TaggedError<ElectronDialogPickFilesError>()(
   "ElectronDialogPickFilesError",
   {
     ownerWindowId: Schema.NullOr(Schema.Number),
@@ -36,7 +36,7 @@ export class ElectronDialogPickFilesError extends Schema.TaggedErrorClass<Electr
   }
 }
 
-export class ElectronDialogShowMessageBoxError extends Schema.TaggedErrorClass<ElectronDialogShowMessageBoxError>()(
+export class ElectronDialogShowMessageBoxError extends Schema.TaggedError<ElectronDialogShowMessageBoxError>()(
   "ElectronDialogShowMessageBoxError",
   {
     type: Schema.NullOr(Schema.Literals(["none", "info", "error", "question", "warning"])),
@@ -53,7 +53,7 @@ export class ElectronDialogShowMessageBoxError extends Schema.TaggedErrorClass<E
   }
 }
 
-export class ElectronDialogShowErrorBoxError extends Schema.TaggedErrorClass<ElectronDialogShowErrorBoxError>()(
+export class ElectronDialogShowErrorBoxError extends Schema.TaggedError<ElectronDialogShowErrorBoxError>()(
   "ElectronDialogShowErrorBoxError",
   {
     titleLength: Schema.Number,
@@ -73,7 +73,6 @@ export const ElectronDialogError = Schema.Union([
   ElectronDialogShowErrorBoxError,
 ]);
 export type ElectronDialogError = typeof ElectronDialogError.Type;
-export const isElectronDialogError = Schema.is(ElectronDialogError);
 
 export interface ElectronDialogPickFolderInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
@@ -84,6 +83,7 @@ export interface ElectronDialogPickFilesInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
   readonly defaultPath: Option.Option<string>;
   readonly filters: readonly Electron.FileFilter[];
+  readonly multiple: boolean;
 }
 
 export class ElectronDialog extends Context.Service<
@@ -102,6 +102,7 @@ export class ElectronDialog extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronDialog") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronDialog.of({
   pickFolder: Effect.fn("desktop.electron.dialog.pickFolder")(function* (input) {
     const ownerWindowId = Option.match(input.owner, {
@@ -144,7 +145,7 @@ export const make = ElectronDialog.of({
     });
     const defaultPath = Option.getOrNull(input.defaultPath);
     const openDialogOptions: Electron.OpenDialogOptions = {
-      properties: ["openFile", "multiSelections"],
+      properties: input.multiple ? ["openFile", "multiSelections"] : ["openFile"],
       filters: [...input.filters],
       ...(defaultPath === null ? {} : { defaultPath }),
     };

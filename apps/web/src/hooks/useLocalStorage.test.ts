@@ -55,9 +55,28 @@ describe("local storage errors", () => {
     }
   });
 
-  it("preserves decode failure context", async () => {
+  it("retries when access to browser storage becomes available", async () => {
+    const storage = createStorage();
+    storage.setItem("read-key", JSON.stringify("saved value"));
+    let blocked = true;
+    vi.stubGlobal("window", {
+      get localStorage() {
+        if (blocked) throw new Error("storage unavailable");
+        return storage;
+      },
+    });
+    const { getLocalStorageItem, LocalStorageOperationError } = await import("./useLocalStorage");
+
+    expect(() => getLocalStorageItem("read-key", Schema.String)).toThrow(
+      LocalStorageOperationError,
+    );
+    blocked = false;
+    expect(getLocalStorageItem("read-key", Schema.String)).toBe("saved value");
+  });
+
+  it.each(["", "not-json"])("preserves decode failure context for %j", async (value) => {
     const { getLocalStorageItem, LocalStorageOperationError } = await loadWithStorage(
-      createStorage({ getItem: () => "not-json" }),
+      createStorage({ getItem: () => value }),
     );
 
     try {

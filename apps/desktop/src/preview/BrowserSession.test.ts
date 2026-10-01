@@ -13,7 +13,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
-      readonly getUserAgent: ReturnType<typeof vi.fn>;
+      readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
@@ -60,6 +60,83 @@ describe("BrowserSession", () => {
       assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps scopes that differ only by a lone surrogate in separate partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
+      // two supported ids would hash to one partition and share every cookie.
+      const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
+      const replacementChar = yield* browserSessions.getPartition("p\ufffd");
+      assert.notStrictEqual(loneSurrogate, replacementChar);
+
+      // The escape can't be forged with a literal backslash either.
+      const literal = yield* browserSessions.getPartition("p\\ud800");
+      assert.notStrictEqual(literal, loneSurrogate);
+
+      // And a well-formed scope still lands on its historical partition.
+      assert.strictEqual(
+        yield* browserSessions.getPartition("scope-a"),
+        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // These share the same scope string: default environment `a::b`, and
+      // environment `a` with nondefault profile `b`.
+      const legacyDefault = yield* browserSessions.getPartition("a::b");
+      const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
+
+      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
+      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
+      assert.notStrictEqual(nondefaultProfile, legacyDefault);
+      assert.isTrue(browserSessions.isPartition(legacyDefault));
+      assert.isTrue(browserSessions.isPartition(nondefaultProfile));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  // A rewritten session UA — any variant, even ones that keep the Electron
+  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so
+  // the guest must end up with Electron's native User-Agent. The mock applies
+  // setUserAgent calls, so this fails on any reintroduced rewrite while still
+  // permitting a harmless re-set of the unchanged native string.
+  it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
+    Effect.gen(function* () {
+      // Electron's real UA shape: app token, then Chrome, then Electron, then
+      // Safari — the token order and casing matter to any strip regex.
+      const nativeUserAgent =
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) T3Code(Alpha)/0.0.33 Chrome/146.0.7680.216 Electron/41.5.0 Safari/537.36";
+      fromPartition.mockReset();
+      fromPartition.mockImplementation((partition: string) => {
+        let userAgent = nativeUserAgent;
+        const browserSession = {
+          clearCache: vi.fn(() => Promise.resolve()),
+          clearStorageData: vi.fn(() => Promise.resolve()),
+          getUserAgent: vi.fn(() => userAgent),
+          setPermissionRequestHandler: vi.fn(),
+          setPermissionCheckHandler: vi.fn(),
+          setUserAgent: vi.fn((next: string) => {
+            userAgent = next;
+          }),
+        };
+        sessions.set(partition, browserSession);
+        return browserSession;
+      });
+
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+      assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -133,8 +210,6 @@ describe("BrowserSession", () => {
       const error = yield* browserSessions.getPartition("environment-a").pipe(Effect.flip);
 
       assert.instanceOf(error, BrowserSession.BrowserSessionPartitionDerivationError);
-      assert.isTrue(BrowserSession.isBrowserSessionGetSessionError(error));
-      assert.isTrue(BrowserSession.isBrowserSessionError(error));
       assert.equal(error.scope, "environment-a");
       assert.strictEqual(error.cause, platformCause);
       assert.strictEqual(error.cause.reason.cause, nativeCause);
@@ -157,8 +232,6 @@ describe("BrowserSession", () => {
       const error = yield* browserSessions.getSession("environment-b").pipe(Effect.flip);
 
       assert.instanceOf(error, BrowserSession.BrowserSessionCreationError);
-      assert.isTrue(BrowserSession.isBrowserSessionGetSessionError(error));
-      assert.isTrue(BrowserSession.isBrowserSessionError(error));
       assert.equal(error.scope, "environment-b");
       assert.equal(error.partition, partition);
       assert.strictEqual(error.cause, cause);
@@ -184,11 +257,33 @@ describe("BrowserSession", () => {
         assert.strictEqual(browserSession.clearStorageData.mock.calls.length, 1);
         assert.deepEqual(browserSession.clearStorageData.mock.calls[0], [
           {
-            storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
+            storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
           },
         ]);
         assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("clears a partition whose session has not been opened yet", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-untouched");
+
+      // Deriving the partition string does not create the session, and the
+      // clear only walks sessions it already holds. Without loading it first
+      // this reports success and deletes nothing — which is what a user
+      // clearing a profile after a restart would get.
+      assert.isUndefined(sessions.get(partition));
+      yield* browserSessions.clearCookies([partition]);
+      assert.isUndefined(sessions.get(partition));
+
+      yield* browserSessions.getSession("scope-untouched");
+      yield* browserSessions.clearCookies([partition]);
+
+      const created = sessions.get(partition);
+      assert.isDefined(created);
+      assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
   );
 
@@ -209,7 +304,6 @@ describe("BrowserSession", () => {
       const storageError = yield* browserSessions.clearCookies().pipe(Effect.flip);
 
       assert.instanceOf(storageError, BrowserSession.BrowserSessionStorageClearError);
-      assert.isTrue(BrowserSession.isBrowserSessionError(storageError));
       assert.equal(storageError.partition, secondPartition);
       assert.strictEqual(storageError.cause, storageCause);
       assert.equal(
@@ -226,7 +320,6 @@ describe("BrowserSession", () => {
       const cacheError = yield* browserSessions.clearCache().pipe(Effect.flip);
 
       assert.instanceOf(cacheError, BrowserSession.BrowserSessionCacheClearError);
-      assert.isTrue(BrowserSession.isBrowserSessionError(cacheError));
       assert.equal(cacheError.partition, firstPartition);
       assert.strictEqual(cacheError.cause, cacheCause);
       assert.equal(

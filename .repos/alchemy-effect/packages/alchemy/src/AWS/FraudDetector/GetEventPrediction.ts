@@ -19,14 +19,13 @@ export interface GetEventPredictionRequest extends Omit<
  * real-time model scores and rule outcomes for it — the effectful prediction
  * call made from a deployed Lambda or Task.
  *
- * @binding
- * @section Scoring Events
+ * ### Scoring Events
  * Provide the `GetEventPredictionHttp` implementation layer on the Function
  * effect, bind the detector in the init phase, then call the returned client
  * at runtime. The binding grants `frauddetector:GetEventPrediction` on the
  * detector and injects its `detectorId` automatically.
  *
- * @example Predict from a Lambda
+ * **Example:** Predict from a Lambda
  * ```typescript
  * // init
  * const getEventPrediction = yield* FraudDetector.GetEventPrediction(detector);
@@ -48,6 +47,8 @@ export interface GetEventPredictionRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.GetEventPredictionHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetEventPrediction extends Binding.Service<
   GetEventPrediction,

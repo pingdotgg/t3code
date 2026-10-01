@@ -1,5 +1,8 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -12,12 +15,14 @@ import type {
   PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
 } from "@t3tools/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
 import {
   buildReviewThreads,
   decodeCommentsJson,
@@ -40,7 +45,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class BitbucketPullRequestReadError extends Schema.TaggedErrorClass<BitbucketPullRequestReadError>()(
+export class BitbucketPullRequestReadError extends Schema.TaggedError<BitbucketPullRequestReadError>()(
   "BitbucketPullRequestReadError",
   {
     operation: Schema.String,
@@ -57,7 +62,7 @@ export class BitbucketPullRequestReadError extends Schema.TaggedErrorClass<Bitbu
 }
 
 /** Not a decode failure: Bitbucket answered, the account it answered for just has no handle. */
-export class BitbucketViewerUnavailableError extends Schema.TaggedErrorClass<BitbucketViewerUnavailableError>()(
+export class BitbucketViewerUnavailableError extends Schema.TaggedError<BitbucketViewerUnavailableError>()(
   "BitbucketViewerUnavailableError",
   {},
 ) {
@@ -71,7 +76,7 @@ export class BitbucketViewerUnavailableError extends Schema.TaggedErrorClass<Bit
 }
 
 /** A repository that is not `workspace/slug`, which is the only form Bitbucket addresses. */
-export class BitbucketRepositoryUnsupportedError extends Schema.TaggedErrorClass<BitbucketRepositoryUnsupportedError>()(
+export class BitbucketRepositoryUnsupportedError extends Schema.TaggedError<BitbucketRepositoryUnsupportedError>()(
   "BitbucketRepositoryUnsupportedError",
   {
     repository: Schema.String,
@@ -87,7 +92,7 @@ export class BitbucketRepositoryUnsupportedError extends Schema.TaggedErrorClass
 }
 
 /** Not a decode failure: the reader named a commit that is not a sha this repository could hold. */
-export class BitbucketDiffCommitError extends Schema.TaggedErrorClass<BitbucketDiffCommitError>()(
+export class BitbucketDiffCommitError extends Schema.TaggedError<BitbucketDiffCommitError>()(
   "BitbucketDiffCommitError",
   {},
 ) {
@@ -108,6 +113,16 @@ export type BitbucketPullRequestApiError =
   | BitbucketDiffCommitError;
 
 /**
+ * `/user/permissions/repositories` answering CHANGE-2770's removal notice rather than a
+ * permission — Bitbucket sends this for every account now, not only ones it would have refused.
+ */
+function isRepositoryPermissionRemovedError(
+  error: BitbucketPullRequestApiError,
+): error is BitbucketApi.BitbucketResponseError {
+  return error._tag === "BitbucketResponseError" && error.status === 410;
+}
+
+/**
  * Bitbucket's own ceiling. Asking for more does not fail — it answers with an empty page and no
  * error at all, so this is a number to respect rather than to push against.
  */
@@ -124,7 +139,13 @@ const CONVERSATION_PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
-
+/**
+ * Deliberately far shorter than the window the caller holds versions for: a refresh drops what the
+ * caller holds precisely so the next read reaches Bitbucket, and this must not be what answers it
+ * instead.
+ */
+const REVISION_PATCH_TTL = Duration.seconds(5);
+const REVISION_PATCH_CAPACITY = 16;
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
   readonly truncated: boolean;
@@ -170,6 +191,25 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError>;
+
+    /**
+     * What the pull request's head has of each of these paths, as opaque ids, read off the pull
+     * request's own patch, the only place Bitbucket states a file's version. A path the patch does
+     * not carry is answered as the empty revision, and left out altogether when the patch was cut
+     * short at the byte ceiling and so cannot be spoken for.
+     *
+     * Answers with every file the patch carries rather than only the paths asked about, since
+     * reading one file's version here means parsing all of them. `complete` is false for a patch
+     * cut short, which cannot speak for what came after the cut.
+     */
+    readonly getFileRevisions: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      { readonly revisions: ReadonlyMap<string, string>; readonly complete: boolean },
+      BitbucketPullRequestApiError
+    >;
 
     readonly getMergeability: (input: {
       readonly repository: string;
@@ -222,9 +262,23 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
+    readonly updateChangeRequest: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly title?: string | undefined;
+      readonly body?: string | undefined;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
     readonly comment: (input: {
       readonly repository: string;
       readonly number: number;
+      readonly body: string;
+    }) => Effect.Effect<void, BitbucketPullRequestApiError>;
+
+    readonly updateComment: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly commentId: string;
       readonly body: string;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
@@ -340,6 +394,20 @@ function mergeStrategy(method: PullRequestMergeMethod | undefined): string {
   }
 }
 
+function bitbucketReviewPosition(
+  position: PullRequestReviewPosition,
+): { readonly from: number } | { readonly to: number } {
+  switch (position.kind) {
+    case "added":
+      return { to: position.newLine };
+    case "deleted":
+      return { from: position.oldLine };
+    case "context":
+      return position.side === "left" ? { from: position.oldLine } : { to: position.newLine };
+  }
+}
+
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
@@ -486,6 +554,58 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestDiff = (input: {
+    readonly repository: string;
+    readonly number: number;
+    readonly commit?: string | undefined;
+  }): Effect.Effect<
+    { readonly patch: string; readonly truncated: boolean },
+    BitbucketPullRequestApiError
+  > =>
+    input.commit !== undefined && !isCommitSha(input.commit)
+      ? Effect.fail(new BitbucketDiffCommitError())
+      : withRepository(input.repository, (path) =>
+          // Already a unified patch, so it needs no decoding at all, only a bound, which a
+          // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
+          // request's at `/diff/{sha}` and reads the same way.
+          bitbucket
+            .request({
+              method: "GET",
+              url:
+                input.commit === undefined
+                  ? `${path}/pullrequests/${input.number}/diff`
+                  : `${path}/diff/${input.commit}`,
+              maxBytes: DIFF_MAX_BYTES,
+            })
+            .pipe(
+              Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
+            ),
+        );
+
+  /**
+   * What the version reads that come one tick at a time want out of the pull request's whole
+   * patch, shared between them. The parsed answer rather than the patch, which at this capacity
+   * would hold sixteen bodies of up to the byte ceiling each resident, and saves walking a patch
+   * of a hundred thousand lines again on every tick.
+   */
+  const revisionPatches = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number];
+      return pullRequestDiff({ repository, number }).pipe(
+        Effect.map((diff) => ({
+          revisions: parseDiffFileRevisions(diff.patch),
+          truncated: diff.truncated,
+        })),
+      );
+    },
+    {
+      capacity: REVISION_PATCH_CAPACITY,
+      // A failure is not held: the tick after it should reach Bitbucket rather than be handed the
+      // same error for as long as a good patch would have lasted.
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_PATCH_TTL : Duration.zero),
+    },
+  );
+
   return BitbucketPullRequestApi.of({
     getViewer: () =>
       bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -539,6 +659,13 @@ export const make = Effect.gen(function* () {
     // Nothing on the repository, the pull request or the workspace states what the credentials
     // may do, so this endpoint is the one request Bitbucket makes unavoidable. It is asked
     // alongside the reads the detail was already making, so it costs no round trip of its own.
+    //
+    // Bitbucket permanently removed this endpoint (CHANGE-2770): every account now gets HTTP 410
+    // in place of an answer, whatever it may do. That is the deprecated-endpoint signal, not a
+    // permission being refused, so it is read the same way an unreachable read already is
+    // elsewhere — as a permission that could not be learned, which grants rather than blocks, and
+    // leaves the actual merge or write to say why if the account may not do it. Any other failure
+    // (a bad token, a network fault, an unreadable body) still fails as it did before.
     getRepositoryPermission: (input) =>
       withRepository(input.repository, () =>
         readPage({
@@ -548,27 +675,25 @@ export const make = Effect.gen(function* () {
           )}`,
           decode: decodeRepositoryPermissionJson,
         }),
-      ),
+      ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
-    getPullRequestDiff: (input) =>
-      input.commit !== undefined && !isCommitSha(input.commit)
-        ? Effect.fail(new BitbucketDiffCommitError())
-        : withRepository(input.repository, (path) =>
-            // Already a unified patch, so it needs no decoding at all — only a bound, which a
-            // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
-            // request's at `/diff/{sha}` and reads the same way.
-            bitbucket
-              .request({
-                method: "GET",
-                url:
-                  input.commit === undefined
-                    ? `${path}/pullrequests/${input.number}/diff`
-                    : `${path}/diff/${input.commit}`,
-                maxBytes: DIFF_MAX_BYTES,
-              })
-              .pipe(
-                Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
-              ),
+    getPullRequestDiff: pullRequestDiff,
+
+    getFileRevisions: (input) =>
+      input.paths.length === 0
+        ? Effect.succeed({ revisions: new Map(), complete: false })
+        : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
+            Effect.map((diff) => {
+              const revisions = new Map(diff.revisions);
+              // A patch cut short at the byte ceiling says nothing about the files past the cut,
+              // so those paths are left out rather than reported as removed.
+              if (!diff.truncated) {
+                for (const path of input.paths) {
+                  if (!revisions.has(path)) revisions.set(path, "");
+                }
+              }
+              return { revisions, complete: !diff.truncated };
+            }),
           ),
 
     getDiffStat: (input) =>
@@ -701,6 +826,24 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.asVoid);
       }),
 
+    updateChangeRequest: (input) =>
+      withRepository(input.repository, (path) =>
+        // Only the words this call rewrites travel in the body: as `setReviewerRequest` above
+        // relies on, Bitbucket's PUT is a partial update, so any field left out is left as it
+        // was — sending `reviewers` back here would overwrite a change another user made to it
+        // between this call being issued and the request landing.
+        bitbucket
+          .request({
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}`,
+            body: JSON.stringify({
+              ...(input.title === undefined ? {} : { title: input.title }),
+              ...(input.body === undefined ? {} : { description: input.body }),
+            }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
     comment: (input) =>
       withRepository(input.repository, (path) =>
         bitbucket
@@ -708,6 +851,21 @@ export const make = Effect.gen(function* () {
             method: "POST",
             url: `${path}/pullrequests/${input.number}/comments`,
             // A JSON document rather than a form field, so the body stays text whatever it says.
+            body: JSON.stringify({ content: { raw: input.body } }),
+          })
+          .pipe(Effect.asVoid),
+      ),
+
+    updateComment: (input) =>
+      withRepository(input.repository, (path) =>
+        bitbucket
+          .request({
+            // Bitbucket keeps a pull request's remarks and its line comments in the one
+            // collection, so this endpoint rewrites either kind.
+            method: "PUT",
+            url: `${path}/pullrequests/${input.number}/comments/${encodeURIComponent(
+              input.commentId,
+            )}`,
             body: JSON.stringify({ content: { raw: input.body } }),
           })
           .pipe(Effect.asVoid),
@@ -730,7 +888,7 @@ export const make = Effect.gen(function* () {
                   content: { raw: comment.body },
                   inline: {
                     path: comment.path,
-                    ...(comment.side === "left" ? { from: comment.line } : { to: comment.line }),
+                    ...bitbucketReviewPosition(comment.position),
                   },
                 }),
               }),

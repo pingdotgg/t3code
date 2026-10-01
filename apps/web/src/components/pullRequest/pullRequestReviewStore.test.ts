@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { ProjectId } from "@t3tools/contracts";
 
-import { type PendingReviewComment, usePullRequestReviewStore } from "./pullRequestReviewStore";
+import {
+  type PendingReviewComment,
+  pullRequestReviewKey,
+  usePullRequestReviewStore,
+} from "./pullRequestReviewStore";
 
 function comment(id: string, body = id): PendingReviewComment {
-  return { id, body, path: "src/app.ts", line: 1, side: "right" };
+  return { id, body, path: "src/app.ts", position: { kind: "added", newLine: 1 } };
 }
 
 describe("pull request review drafts", () => {
@@ -34,6 +39,30 @@ describe("pull request review drafts", () => {
     expect(usePullRequestReviewStore.getState().summaries).toEqual({
       "review-b": "Summary B",
     });
+  });
+
+  it("keeps drafts on different hosts separate when a thread reviews the same repository and number", () => {
+    const reference = {
+      projectId: ProjectId.make("project-a"),
+      repository: "owner/repo",
+      number: 7,
+    };
+    const publicKey = pullRequestReviewKey({ ...reference, host: "github.com" });
+    const enterpriseKey = pullRequestReviewKey({ ...reference, host: "github.example.com" });
+    const store = usePullRequestReviewStore.getState();
+    store.addComment(publicKey, comment("public"));
+    store.setSummary(publicKey, "Public review");
+
+    expect(usePullRequestReviewStore.getState().drafts[enterpriseKey]).toBeUndefined();
+    expect(usePullRequestReviewStore.getState().summaries[enterpriseKey]).toBeUndefined();
+
+    store.addComment(enterpriseKey, comment("enterprise"));
+    store.setSummary(enterpriseKey, "Enterprise review");
+    store.clear(enterpriseKey);
+    store.clearSummary(enterpriseKey, "Enterprise review");
+
+    expect(usePullRequestReviewStore.getState().drafts[publicKey]).toEqual([comment("public")]);
+    expect(usePullRequestReviewStore.getState().summaries[publicKey]).toBe("Public review");
   });
 
   it("does not clear a summary revised while submission is in flight", () => {

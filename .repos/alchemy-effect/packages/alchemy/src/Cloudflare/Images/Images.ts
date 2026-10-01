@@ -25,11 +25,8 @@ export class ImagesError extends Data.TaggedError("ImagesError")<{
  * it inside an Effect-native Worker to attach the binding and obtain the
  * {@link ImagesClient}.
  *
- * @binding
- * @product Images
- * @category Media
- * @section Effect-style Worker (recommended)
- * @example Read image format and dimensions from the request body
+ * ### Effect-style Worker (recommended)
+ * **Example:** Read image format and dimensions from the request body
  * ```typescript
  * import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
  *
@@ -47,8 +44,8 @@ export class ImagesError extends Data.TaggedError("ImagesError")<{
  * );
  * ```
  *
- * @section Binding to a Worker (declarative)
- * @example
+ * ### Binding to a Worker (declarative)
+ * **Example:** Example
  * ```typescript
  * export const Worker = Cloudflare.Worker("Worker", {
  *   main: "./src/worker.ts",
@@ -59,7 +56,23 @@ export class ImagesError extends Data.TaggedError("ImagesError")<{
  * //   { MEDIA: ImagesBinding }
  * ```
  *
+ * ### Local development
+ * **Example:** Proxy to the real Images service in dev
+ * ```typescript
+ * // Default: transforms run locally via Sharp under `alchemy dev` and
+ * // hosted images are stored on disk. Alchemy.remote() opts the binding
+ * // into the real Images service instead — in an Effect-native Worker:
+ * const images = yield* Cloudflare.Images.Images("IMAGES").pipe(Alchemy.remote());
+ *
+ * // or declared on an async Worker's env:
+ * env: { IMAGES: Cloudflare.Images.Images("IMAGES").pipe(Alchemy.remote()) }
+ * ```
+ *
  * @see https://developers.cloudflare.com/images/transform-images/bindings/
+ *
+ * @binding
+ * @product Images
+ * @category Media
  */
 export interface Images extends Binding.Service<Images, TypeId, ImagesClient> {
   /**
@@ -72,7 +85,10 @@ export interface Images extends Binding.Service<Images, TypeId, ImagesClient> {
 export const Images = Binding.Service<Images>({
   id: TypeId,
   defaultName: "IMAGES",
-  toWorkerBinding: (binding) => ({ type: "images", name: binding.name }),
+  toWorkerBinding: (binding) => ({
+    type: "images",
+    name: binding.name,
+  }),
 });
 
 export const isImages = (value: unknown): value is ImagesBinding =>

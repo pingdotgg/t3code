@@ -7,21 +7,18 @@ import { cn } from "~/lib/utils";
 import {
   Autocomplete,
   AutocompleteCollection,
-  AutocompleteEmpty,
   AutocompleteGroup,
   AutocompleteGroupLabel,
   AutocompleteInput,
   AutocompleteItem,
   AutocompleteList,
-  AutocompleteSeparator,
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
+import { Button } from "~/components/ui/button";
 
 const CommandDialog = CommandDialogPrimitive.Root;
 
 const CommandDialogPortal = CommandDialogPrimitive.Portal;
-
-const CommandCreateHandle = CommandDialogPrimitive.createHandle;
 
 function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
   return <CommandDialogPrimitive.Trigger data-slot="command-dialog-trigger" {...props} />;
@@ -96,19 +93,11 @@ function Command({
 
 function CommandInput({
   className,
-  wrapperClassName,
   placeholder,
   ...props
-}: React.ComponentProps<typeof AutocompleteInput> & {
-  wrapperClassName?: string | undefined;
-}) {
+}: React.ComponentProps<typeof AutocompleteInput>) {
   return (
-    <div
-      className={cn(
-        "px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]",
-        wrapperClassName,
-      )}
-    >
+    <div className="px-[var(--command-shell-inset)] py-1.5 [&_[data-slot=autocomplete-start-addon]]:ps-[calc(var(--command-shell-inset)+0.0625rem)]">
       <AutocompleteInput
         autoFocus
         className={cn(
@@ -129,16 +118,6 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Autoco
     <AutocompleteList
       className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
       data-slot="command-list"
-      {...props}
-    />
-  );
-}
-
-function CommandEmpty({ className, ...props }: React.ComponentProps<typeof AutocompleteEmpty>) {
-  return (
-    <AutocompleteEmpty
-      className={cn("not-empty:py-6", className)}
-      data-slot="command-empty"
       {...props}
     />
   );
@@ -173,27 +152,25 @@ function CommandCollection({ ...props }: React.ComponentProps<typeof Autocomplet
   return <AutocompleteCollection data-slot="command-collection" {...props} />;
 }
 
-function CommandItem({ className, ...props }: React.ComponentProps<typeof AutocompleteItem>) {
+// Pass `active` when the palette tracks the highlighted row itself; the
+// primitive's hover and keyboard highlight are then ignored so the two never
+// disagree, and the row shows the active surface instead.
+function CommandItem({
+  className,
+  active,
+  ...props
+}: React.ComponentProps<typeof AutocompleteItem> & { active?: boolean }) {
   return (
     <AutocompleteItem
       className={cn(
         "py-1.5 data-selected:bg-foreground/[0.06] data-highlighted:bg-foreground/[0.09] data-highlighted:text-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-foreground",
+        active !== undefined &&
+          "cursor-pointer hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit",
+        active && "bg-accent! text-accent-foreground!",
         className,
       )}
+      data-active={active || undefined}
       data-slot="command-item"
-      {...props}
-    />
-  );
-}
-
-function CommandSeparator({
-  className,
-  ...props
-}: React.ComponentProps<typeof AutocompleteSeparator>) {
-  return (
-    <AutocompleteSeparator
-      className={cn("my-2", className)}
-      data-slot="command-separator"
       {...props}
     />
   );
@@ -225,21 +202,33 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+function CommandFooterAction({
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "size" | "variant">) {
+  return (
+    <Button
+      {...props}
+      variant="ghost-muted"
+      size="xs"
+      className={cn("h-auto px-2 text-xs hover:bg-transparent", className)}
+    />
+  );
+}
+
 export {
-  CommandCreateHandle,
   Command,
   CommandCollection,
   CommandDialog,
   CommandDialogPopup,
   CommandDialogTrigger,
-  CommandEmpty,
   CommandFooter,
+  CommandFooterAction,
   CommandGroup,
   CommandGroupLabel,
   CommandInput,
   CommandItem,
   CommandList,
   CommandPanel,
-  CommandSeparator,
   CommandShortcut,
 };

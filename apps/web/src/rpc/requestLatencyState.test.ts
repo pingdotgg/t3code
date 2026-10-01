@@ -59,6 +59,23 @@ describe("requestLatencyState", () => {
     expect(getSlowRpcAckRequests()).toEqual([]);
   });
 
+  it("ignores usage summary requests", () => {
+    trackRpcRequestSent("1", WS_METHODS.serverGetUsageSummary);
+    vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+    expect(getSlowRpcAckRequests()).toEqual([]);
+  });
+
+  it.each(Object.values(WS_METHODS).filter((method) => method.startsWith("pullRequests.")))(
+    "ignores pull request workspace request %s",
+    (method) => {
+      trackRpcRequestSent("1", method);
+      vi.advanceTimersByTime(SLOW_RPC_ACK_THRESHOLD_MS * 2);
+
+      expect(getSlowRpcAckRequests()).toEqual([]);
+    },
+  );
+
   it("keeps ignoring untracked methods when a display tag is supplied", () => {
     trackRpcRequestSent(
       "1",

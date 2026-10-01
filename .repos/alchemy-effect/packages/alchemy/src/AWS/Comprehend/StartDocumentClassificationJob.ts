@@ -31,9 +31,8 @@ export interface StartDocumentClassificationJobRequest extends Omit<
  * action (which has no resource-level IAM). Track the job with
  * {@link DescribeDocumentClassificationJob}.
  *
- * @binding
- * @section Starting Analysis Jobs
- * @example Start an Asynchronous Document Classification Job
+ * ### Starting Analysis Jobs
+ * **Example:** Start an Asynchronous Document Classification Job
  * ```typescript
  * // deploy time — bind the Comprehend data-access role
  * const startDocumentClassificationJob = yield* AWS.Comprehend.StartDocumentClassificationJob(dataAccessRole);
@@ -46,6 +45,8 @@ export interface StartDocumentClassificationJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartDocumentClassificationJob extends Binding.Service<
   StartDocumentClassificationJob,

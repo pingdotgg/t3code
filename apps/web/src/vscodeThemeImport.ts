@@ -1,7 +1,10 @@
 import {
   createVividThemeColors,
   getThemeModes,
+  isReservedThemeId,
   parseThemeFile,
+  themeColorToHex,
+  themeIdFromName,
   THEME_FILE_VERSION,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -138,7 +141,7 @@ function contrastRatio(first: VsCodeRgb, second: VsCodeRgb): number {
 }
 
 function hexToRgb(value: string): VsCodeRgb {
-  return parseVsCodeColor(value) ?? { r: 0, g: 0, b: 0, a: 1 };
+  return parseVsCodeColor(themeColorToHex(value) ?? value) ?? { r: 0, g: 0, b: 0, a: 1 };
 }
 
 /**
@@ -320,9 +323,12 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  const name = resolveName(value);
+  const generatedId = themeIdFromName(name);
   return parseThemeFile({
     version: THEME_FILE_VERSION,
-    name: resolveName(value),
+    ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
+    name,
     appearance,
     colors: { ...derived, ...overrides },
   });
@@ -336,6 +342,9 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
  */
 export function pairVsCodeThemes(
   themes: ReadonlyArray<ThemeDefinition>,
+  options?: {
+    pairedId?: (light: ThemeDefinition, dark: ThemeDefinition) => string;
+  },
 ): ReadonlyArray<ThemeDefinition> {
   const stripAppearance = (label: string) =>
     label
@@ -348,9 +357,11 @@ export function pairVsCodeThemes(
   const passthrough: Array<{ theme: ThemeDefinition; order: number }> = [];
   themes.forEach((theme, order) => {
     // Only single-appearance themes with an appearance word in the name can
-    // pair; anything else is already what the user asked for.
+    // pair, and only when the rest of the name can still identify the pair
+    // ("Dark+" and "Light+" would pair as "+"); anything else is already
+    // what the user asked for.
     const key = stripAppearance(theme.label);
-    if (getThemeModes(theme).length !== 1 || key === theme.label || key.length === 0) {
+    if (getThemeModes(theme).length !== 1 || key === theme.label || !/[a-z0-9]/i.test(key)) {
       passthrough.push({ theme, order });
       return;
     }
@@ -371,6 +382,7 @@ export function pairVsCodeThemes(
           order: group.order,
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
+            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
             name: key,
             appearance: "light",
             colors: group.light[0]!.colors,

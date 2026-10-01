@@ -22,7 +22,8 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
           url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
           baseRefName: "main",
           headRefName: "feature/source-control",
-          state: "open",
+          state: "closed",
+          closedAt: "2026-08-23T10:00:00Z",
           updatedAt: Option.none(),
         }),
     });
@@ -39,7 +40,9 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
       url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
       baseRefName: "main",
       headRefName: "feature/source-control",
-      state: "open",
+      state: "closed",
+      closedAt: "2026-08-23T10:00:00Z",
+      mergedAt: null,
       updatedAt: Option.none(),
       isCrossRepository: false,
     });
@@ -113,22 +116,5 @@ it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
     });
-  }),
-);
-
-it.effect("uses Azure CLI repository detection for default branch lookup", () =>
-  Effect.gen(function* () {
-    let cwdInput: string | null = null;
-    const provider = yield* makeProvider({
-      getDefaultBranch: (input) => {
-        cwdInput = input.cwd;
-        return Effect.succeed("main");
-      },
-    });
-
-    const defaultBranch = yield* provider.getDefaultBranch({ cwd: "/repo" });
-
-    assert.strictEqual(defaultBranch, "main");
-    assert.strictEqual(cwdInput, "/repo");
   }),
 );

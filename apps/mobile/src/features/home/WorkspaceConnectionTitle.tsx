@@ -1,15 +1,15 @@
-import type {
-  NativeStackHeaderItem,
-  NativeStackNavigationOptions,
-} from "@react-navigation/native-stack";
+import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ActivityIndicator, Animated, Platform, Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { brandTitleOffset, CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { useThemeColor } from "../../lib/useThemeColor";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
+import {
+  brandTitleOffset,
+  CompactBrandTitle,
+  getCompactBrandHeaderOptions,
+} from "../../components/CompactBrandTitle";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   workspaceConnectionStatusPresentation,
@@ -52,7 +52,11 @@ function useDelayedConnectionStatus(): WorkspaceConnectionStatusPresentation | n
  * native-driver animated nodes blank the re-hosted view entirely. The JS driver
  * updates opacity through the ordinary style path, which those subviews handle.
  */
-function StatusFadeIn(props: { readonly children: ReactNode; readonly grow?: boolean }) {
+function StatusFadeIn(props: {
+  readonly children: ReactNode;
+  readonly grow?: boolean;
+  readonly maxWidth?: number;
+}) {
   const opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -68,7 +72,7 @@ function StatusFadeIn(props: { readonly children: ReactNode; readonly grow?: boo
   return (
     <Animated.View
       style={[
-        { alignItems: "center", flexDirection: "row", opacity },
+        { alignItems: "center", flexDirection: "row", maxWidth: props.maxWidth, opacity },
         props.grow ? { flex: 1, minWidth: 0 } : null,
       ]}
     >
@@ -97,10 +101,12 @@ export function WorkspaceConnectionTitle(props: {
   readonly size?: "navbar" | "pageTitle";
   /** Horizontal correction so the status aligns with the brand in native title slots. */
   readonly statusOffset?: number;
+  /** Space available beside the native header actions. */
+  readonly maxWidth?: number;
 }) {
-  const iconColor = String(useThemeColor("--color-icon-muted"));
   const status = useDelayedConnectionStatus();
   const size = props.size ?? "navbar";
+  const { scale } = useAndroidControlSizing();
 
   if (status === null) {
     return props.grow ? (
@@ -113,7 +119,7 @@ export function WorkspaceConnectionTitle(props: {
   }
 
   return (
-    <StatusFadeIn grow={props.grow}>
+    <StatusFadeIn grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
         accessibilityHint="Opens environment settings"
         accessibilityLabel={status.label}
@@ -122,26 +128,28 @@ export function WorkspaceConnectionTitle(props: {
         hitSlop={8}
         onPress={props.onPress}
         className="flex-row items-center gap-2"
-        style={{ marginLeft: props.statusOffset ?? 0 }}
+        style={[
+          { flexShrink: 1, marginLeft: props.statusOffset ?? 0 },
+          Platform.OS === "android" && { gap: 7 * scale },
+        ]}
       >
         {status.showsProgress ? (
-          <ActivityIndicator color={iconColor} size="small" />
+          <ActivityIndicator
+            colorClassName={"accent-icon-muted"}
+            size={Platform.OS === "android" ? Math.round(20 * scale) : "small"}
+          />
         ) : (
           <SymbolView
             name="wifi.slash"
-            size={size === "pageTitle" ? 17 : 15}
-            tintColor={iconColor}
+            size={Math.round((size === "pageTitle" ? 17 : 15) * scale)}
+            tintColorClassName={"accent-icon-muted"}
             type="monochrome"
           />
         )}
         <Text
-          className={
-            size === "pageTitle"
-              ? "text-[20px] font-t3-bold text-foreground-muted"
-              : "text-[16px] font-t3-bold text-foreground-muted"
-          }
+          className="font-t3-bold text-foreground-muted"
           numberOfLines={1}
-          style={{ flexShrink: 1 }}
+          style={{ flexShrink: 1, fontSize: (size === "pageTitle" ? 20 : 16) * scale }}
         >
           {status.label}
         </Text>
@@ -156,39 +164,24 @@ export function WorkspaceConnectionTitle(props: {
  * this over the static brand options at mount.
  */
 export function getConnectionAwareBrandHeaderOptions(opts: {
+  readonly headerWidth: number;
+  readonly trailingItemCount?: number;
   readonly onOpenEnvironments: () => void;
   readonly fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"];
 }): NativeStackNavigationOptions {
-  if (Platform.OS === "ios" && NATIVE_LIQUID_GLASS_SUPPORTED) {
-    return {
-      headerTitle: "Threads",
-      headerTitleStyle: { color: "transparent", fontSize: 18, fontWeight: "800" },
-      title: "Threads",
-      unstable_headerLeftItems: (): NativeStackHeaderItem[] => [
-        {
-          element: (
-            <WorkspaceConnectionTitle
-              brand={<CompactBrandTitle nativeLeadingItem />}
-              onPress={opts.onOpenEnvironments}
-              statusOffset={brandTitleOffset(true)}
-            />
-          ),
-          hidesSharedBackground: true,
-          type: "custom",
-        },
-      ],
-    };
-  }
+  // Leave room for bar margins, title spacing and the 44-point native actions.
+  // Long status labels must not push Settings into UIKit's overflow menu.
+  const maxWidth = Math.max(0, opts.headerWidth - 64 - 44 * (opts.trailingItemCount ?? 1));
 
   return {
+    ...getCompactBrandHeaderOptions(opts.fallbackTitleStyle),
     headerTitle: () => (
       <WorkspaceConnectionTitle
         brand={<CompactBrandTitle />}
+        maxWidth={maxWidth}
         onPress={opts.onOpenEnvironments}
-        statusOffset={brandTitleOffset(false)}
+        statusOffset={brandTitleOffset()}
       />
     ),
-    headerTitleStyle: opts.fallbackTitleStyle,
-    title: "Threads",
   };
 }

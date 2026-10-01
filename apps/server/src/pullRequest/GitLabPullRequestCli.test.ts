@@ -414,6 +414,69 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("arms auto-merge with the same strategy a merge would have used", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "enable-auto-merge",
+        mergeMethod: "squash",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "mr",
+        "merge",
+        "7",
+        "--repo",
+        "acme/web",
+        "--auto-merge=true",
+        "--yes",
+        "--squash",
+      ]);
+    }),
+  );
+
+  it.effect("cancels an armed auto-merge through the API glab has no flag for", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/platform/web",
+        number: 7,
+        action: "disable-auto-merge",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "api",
+        "projects/acme%2Fplatform%2Fweb/merge_requests/7/cancel_merge_when_pipeline_succeeds",
+        "--method",
+        "POST",
+      ]);
+    }),
+  );
+
+  it.effect("brings a stale branch up to date by rebasing it, the only way GitLab has", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "update-branch",
+      });
+
+      expect(argsOfCall(0)).toEqual(["mr", "rebase", "7", "--repo", "acme/web"]);
+    }),
+  );
+
   it.effect("moves a merge request back to draft through glab", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
@@ -791,6 +854,21 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("asks the detail read for the divergence GitLab withholds by default", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"404 Not Found"}')));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* Effect.ignore(
+        cli.getMergeRequestDetail({ cwd: "/w", repository: "acme/web", number: 7 }),
+      );
+
+      expect(argsOfCall(0)[1]).toBe(
+        "projects/acme%2Fweb/merge_requests/7?include_diverged_commits_count=true",
+      );
+    }),
+  );
+
   it.effect("fails the read when GitLab returns something unreadable", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"message":"404 Not Found"}')));
@@ -940,7 +1018,12 @@ layer("GitLabPullRequestCli.layer", (it) => {
         verdict: "approve",
         body: "Looks right.",
         comments: [
-          { path: "src/b.ts", oldPath: "src/a.ts", line: 4, side: "left", body: "why remove?" },
+          {
+            path: "src/b.ts",
+            oldPath: "src/a.ts",
+            position: { kind: "deleted", oldLine: 4 },
+            body: "why remove?",
+          },
         ],
       });
 
@@ -1008,6 +1091,89 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("awards an emoji through a POST naming it, not a body", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReaction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        content: "thumbs-up",
+        reacted: true,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      expect(argsOfCall(0)).toEqual([
+        "api",
+        "projects/acme%2Fweb/merge_requests/7/award_emoji?name=thumbsup",
+        "--method",
+        "POST",
+      ]);
+    }),
+  );
+
+  it.effect("removes an award by listing them and deleting the reader's own id", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              { id: 5, name: "thumbsup", user: { username: "bilal" } },
+              { id: 6, name: "thumbsup", user: { username: "julius" } },
+            ]),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReaction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        content: "thumbs-up",
+        reacted: false,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
+      expect(argsOfCall(2)).toEqual([
+        "api",
+        "projects/acme%2Fweb/merge_requests/7/award_emoji/5",
+        "--method",
+        "DELETE",
+      ]);
+    }),
+  );
+
+  it.effect("does nothing when the reader has no award of that name to take back", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReaction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        content: "thumbs-up",
+        reacted: false,
+      });
+
+      // Nothing to delete: the reaction the caller asked to take back is already gone.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
   it.effect("names a merge request with no diff revisions rather than calling it unreadable", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -1036,7 +1202,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
           number: 7,
           verdict: "comment",
           body: "",
-          comments: [{ path: "src/a.ts", line: 4, side: "right", body: "nit" }],
+          comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
         }),
       );
 
@@ -1139,6 +1305,268 @@ layer("GitLabPullRequestCli.layer", (it) => {
       // Sending it as a number would rewrite the reviewer set around something nobody chose.
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5] });
+    }),
+  );
+
+  it.effect("rewrites a title without touching the description", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        title: "A better title",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "api",
+        "projects/acme%2Fweb/merge_requests/7",
+        "--method",
+        "PUT",
+        "--input",
+        "-",
+        "--header",
+        "Content-Type: application/json",
+      ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ title: "A better title" });
+    }),
+  );
+
+  it.effect("sends a rewritten body as GitLab's description, and nothing else", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        description: "What this changes.",
+      });
+
+      // A title sent as an empty string would wipe the one the merge request already has.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ description: "What this changes." });
+    }),
+  );
+
+  it.effect("rewrites title and description together in one request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        title: "A better title",
+        description: "What this changes.",
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({
+        title: "A better title",
+        description: "What this changes.",
+      });
+    }),
+  );
+
+  it.effect("rewrites a note in place through the note it names", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateNote({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        noteId: "42",
+        body: "true",
+      });
+
+      expect(argsOfCall(0)).toEqual([
+        "api",
+        "projects/acme%2Fweb/merge_requests/7/notes/42",
+        "--method",
+        "PUT",
+        "--input",
+        "-",
+        "--header",
+        "Content-Type: application/json",
+      ]);
+      // A JSON body, so a note rewritten to a literal `true` stays text.
+      expect(callAt(0).stdin).toBe('{"body":"true"}');
+    }),
+  );
+  it.effect("reads blob ids for the marked paths at the merge request's head", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 7,
+              title: "t",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+              source_branch: "feat",
+              target_branch: "main",
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+              diff_refs: { base_sha: "base", head_sha: "head", start_sha: "start" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              data: {
+                project: { repository: { blobs: { nodes: [{ path: "src/a.ts", oid: "aaa" }] } } },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const revisions = yield* cli.getFileRevisions({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        paths: ["src/a.ts", "src/gone.ts"],
+      });
+
+      // Every path was looked for at the head, so one the head does not have is one the merge
+      // request removed: said as the empty version, which a mark on it was stamped with too.
+      expect([...revisions]).toEqual([
+        ["src/a.ts", "aaa"],
+        ["src/gone.ts", ""],
+      ]);
+      // The head the reader is looking at, not whatever the source branch has moved on to.
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const body: unknown = JSON.parse(callAt(1).stdin ?? "{}");
+      expect(body).toMatchObject({
+        variables: { fullPath: "acme/web", ref: "head", paths: ["src/a.ts", "src/gone.ts"] },
+      });
+    }),
+  );
+
+  it.effect("leaves the paths out when GitLab did not answer the blobs query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 7,
+              title: "t",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+              source_branch: "feat",
+              target_branch: "main",
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+              diff_refs: { base_sha: "base", head_sha: "head", start_sha: "start" },
+            }),
+          ),
+        ),
+      );
+      // What GitLab says of a project the token cannot see. It is not the head having none of
+      // these files, and reading it that way would report every file the reader has cleared as
+      // changed on nothing worse than a permission.
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          output(JSON.stringify({ data: { project: null } })),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const revisions = yield* cli.getFileRevisions({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        paths: ["src/a.ts", "src/b.ts"],
+      });
+
+      expect([...revisions]).toEqual([]);
+    }),
+  );
+
+  it.effect("asks GitLab nothing when no file is marked", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const revisions = yield* cli.getFileRevisions({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        paths: [],
+      });
+
+      expect([...revisions]).toEqual([]);
+      expect(mockedExecute).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("splits the paths across requests, because GitLab charges the query by how many", () =>
+    Effect.gen(function* () {
+      const paths = Array.from({ length: 150 }, (_, index) => `src/${index}.ts`);
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              iid: 7,
+              title: "t",
+              web_url: "https://gitlab.com/acme/web/-/merge_requests/7",
+              source_branch: "feat",
+              target_branch: "main",
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+              diff_refs: { base_sha: "base", head_sha: "head", start_sha: "start" },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockImplementation((request) => {
+        const body = JSON.parse(request.stdin ?? "{}") as {
+          readonly variables: { readonly paths: ReadonlyArray<string> };
+        };
+        return Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                project: {
+                  repository: {
+                    blobs: {
+                      nodes: body.variables.paths.map((path) => ({ path, oid: `oid-${path}` })),
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const revisions = yield* cli.getFileRevisions({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        paths,
+      });
+
+      assert.strictEqual(revisions.size, 150);
+      assert.strictEqual(revisions.get("src/149.ts"), "oid-src/149.ts");
+      // The diff refs, then two batches: a hundred paths and the fifty left over.
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
 });

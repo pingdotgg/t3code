@@ -1,10 +1,9 @@
 "use client";
-
 import { mergeProps } from "@base-ui/react/merge-props";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import { ChevronDownIcon, ChevronsUpDownIcon, ChevronUpIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
@@ -26,6 +25,8 @@ const selectTriggerVariants = cva(
           "border-transparent text-secondary-label focus-visible:ring-2 focus-visible:ring-ring data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-foreground",
       },
       size: {
+        compact:
+          "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "min-h-9 px-[calc(--spacing(3)-1px)] sm:min-h-8",
         lg: "min-h-10 px-[calc(--spacing(3)-1px)] sm:min-h-9",
         sm: "min-h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)] sm:min-h-7",
@@ -34,41 +35,6 @@ const selectTriggerVariants = cva(
     },
   },
 );
-
-const selectTriggerIconClassName = "-me-1 size-4.5 opacity-80 sm:size-4";
-
-interface SelectButtonProps extends useRender.ComponentProps<"button"> {
-  size?: VariantProps<typeof selectTriggerVariants>["size"];
-  variant?: VariantProps<typeof selectTriggerVariants>["variant"];
-}
-
-function SelectButton({ className, size, variant, render, children, ...props }: SelectButtonProps) {
-  const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
-    ? undefined
-    : "button";
-
-  const defaultProps = {
-    children: (
-      <>
-        <span className="flex-1 truncate in-data-placeholder:text-placeholder">{children}</span>
-        {variant === "ghost" ? (
-          <ChevronDownIcon className="-me-1 size-3 opacity-50" />
-        ) : (
-          <ChevronsUpDownIcon className={selectTriggerIconClassName} />
-        )}
-      </>
-    ),
-    className: cn(selectTriggerVariants({ size, variant }), "min-w-none", className),
-    "data-slot": "select-button",
-    type: typeValue,
-  };
-
-  return useRender({
-    defaultTagName: "button",
-    props: mergeProps<"button">(defaultProps, props),
-    render,
-  });
-}
 
 function SelectTrigger({
   className,
@@ -93,6 +59,37 @@ function SelectTrigger({
   );
 }
 
+/**
+ * The select-field look for a picker that is not a Select, such as a Menu or
+ * Combobox trigger. Render it as that trigger: `<MenuTrigger render={<SelectButton />}>`.
+ */
+function SelectButton({
+  className,
+  size = "default",
+  children,
+  render,
+  ...props
+}: useRender.ComponentProps<"button"> & Pick<VariantProps<typeof selectTriggerVariants>, "size">) {
+  const defaultProps = {
+    className: cn(selectTriggerVariants({ size }), className),
+    "data-slot": "select-trigger",
+    type: render ? undefined : ("button" as const),
+  };
+  return useRender({
+    defaultTagName: "button",
+    props: {
+      ...mergeProps<"button">(defaultProps, props),
+      children: (
+        <>
+          <span className="min-w-0 flex-1 truncate text-left">{children}</span>
+          <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
+        </>
+      ),
+    },
+    render,
+  });
+}
+
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
@@ -105,7 +102,6 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
 
 function SelectPopup({
   className,
-  popupClassName,
   children,
   side = "bottom",
   sideOffset = 4,
@@ -116,7 +112,6 @@ function SelectPopup({
   anchor,
   ...props
 }: SelectPrimitive.Popup.Props & {
-  popupClassName?: string;
   side?: SelectPrimitive.Positioner.Props["side"];
   sideOffset?: SelectPrimitive.Positioner.Props["sideOffset"];
   align?: SelectPrimitive.Positioner.Props["align"];
@@ -132,7 +127,7 @@ function SelectPopup({
         alignItemWithTrigger={alignItemWithTrigger}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className="z-[130] select-none"
         data-slot="select-positioner"
         side={side}
         sideOffset={sideOffset}
@@ -150,9 +145,8 @@ function SelectPopup({
           </SelectPrimitive.ScrollUpArrow>
           <div
             className={cn(
-              "dropdown-glass relative h-full rounded-lg",
+              "dropdown-glass relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
               matchTriggerWidth && "min-w-(--anchor-width)",
-              popupClassName,
             )}
           >
             <SelectPrimitive.List
@@ -201,16 +195,6 @@ function SelectItem({
   );
 }
 
-function SelectSeparator({ className, ...props }: SelectPrimitive.Separator.Props) {
-  return (
-    <SelectPrimitive.Separator
-      className={cn("mx-2 my-1 h-px bg-border", className)}
-      data-slot="select-separator"
-      {...props}
-    />
-  );
-}
-
 function SelectGroup(props: SelectPrimitive.Group.Props) {
   return <SelectPrimitive.Group data-slot="select-group" {...props} />;
 }
@@ -229,12 +213,10 @@ export {
   Select,
   SelectTrigger,
   SelectButton,
-  selectTriggerVariants,
   SelectValue,
   SelectPopup,
   SelectPopup as SelectContent,
   SelectItem,
-  SelectSeparator,
   SelectGroup,
   SelectGroupLabel,
 };

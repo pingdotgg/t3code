@@ -1,8 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
+import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
   Select,
   SelectGroup,
@@ -12,8 +14,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarEnvironmentSelectorProps {
+  autoEnvironmentLabel?: string | undefined;
+  onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
@@ -23,22 +28,29 @@ interface BranchToolbarEnvironmentSelectorProps {
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
+  autoEnvironmentLabel,
+  onAutoEnvironment,
   envLocked,
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
 }: BranchToolbarEnvironmentSelectorProps) {
+  const composerFloatingLayerProps = useComposerMenuProps();
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
 
   const environmentItems = useMemo(
-    () =>
-      availableEnvironments.map((env) => ({
+    () => [
+      ...(onAutoEnvironment
+        ? [{ value: "auto", label: autoEnvironmentLabel ?? "Auto balance" }]
+        : []),
+      ...availableEnvironments.map((env) => ({
         value: env.environmentId,
         label: env.label,
       })),
-    [availableEnvironments],
+    ],
+    [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -48,58 +60,97 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   // only thing in the strip.
   if (envLocked || onEnvironmentChange === undefined) {
     return (
-      <span className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs">
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
-        <span
-          data-composer-label
-          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+      <Tooltip>
+        <TooltipTrigger
+          render={<span />}
+          className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
+          data-composer-context-control
         >
-          {activeEnvironment?.label ?? "Run on"}
-        </span>
-      </span>
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className="size-3 shrink-0"
+          />
+          <span
+            data-composer-label
+            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+          >
+            <span
+              data-composer-label-motion
+              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            >
+              {activeEnvironment?.label ?? "Run on"}
+            </span>
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
     <Select
       modal={false}
-      value={environmentId}
-      onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
+      value={autoEnvironmentLabel ? "auto" : environmentId}
+      onValueChange={(value) =>
+        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
+      }
       items={environmentItems}
     >
-      <SelectTrigger
-        variant="ghost"
-        size="xs"
-        className="min-w-0 max-w-full font-medium"
-        aria-label="Run on"
-      >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
-        <span
-          data-composer-label
-          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SelectTrigger
+              variant="ghost"
+              size="xs"
+              className="min-w-0 max-w-full"
+              aria-label="Run on"
+              data-composer-shortcut="composer.host"
+              data-composer-context-control
+            />
+          }
         >
-          <SelectValue />
-        </span>
-      </SelectTrigger>
-      <SelectPopup>
+          {autoEnvironmentLabel ? (
+            <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <EnvironmentMachineIcon
+              kind={activeEnvironment?.machine ?? "server"}
+              className="size-3 shrink-0"
+            />
+          )}
+          <span
+            data-composer-label
+            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+          >
+            <span
+              data-composer-label-motion
+              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-drawer group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            >
+              <SelectValue />
+            </span>
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+      </Tooltip>
+      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
+          {onAutoEnvironment && (
+            <SelectItem
+              value="auto"
+              onClick={() => {
+                if (autoEnvironmentLabel) onAutoEnvironment?.();
+              }}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <ScaleIcon className="size-3" aria-hidden="true" />
+                {autoEnvironmentLabel ?? "Auto balance"}
+              </span>
+            </SelectItem>
+          )}
           {availableEnvironments.map((env) => (
             <SelectItem key={env.environmentId} value={env.environmentId}>
               <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
+                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>

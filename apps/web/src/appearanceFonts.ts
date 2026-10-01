@@ -71,12 +71,6 @@ export function cssFontFamilies(input: string): string | null {
   return families.length > 0 ? families.join(", ") : null;
 }
 
-/** The full stack a preference resolves to: custom families before the default. */
-export function appearanceFontStack(custom: string, defaultStack: string): string {
-  const families = cssFontFamilies(custom);
-  return families === null ? defaultStack : `${families}, ${defaultStack}`;
-}
-
 export interface AppearanceFontPreferences {
   readonly sans: string;
   readonly code: string;

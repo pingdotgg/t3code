@@ -25,10 +25,8 @@ describe("DiffCommentAnnotation", () => {
     expect(markup).toContain("Add a comment…");
     expect(markup).toContain(">Comment</button>");
     expect(markup).toContain("autofocus");
-    const textareaControl = markup.match(/<span[^>]*data-slot="textarea-control"[^>]*>/)?.[0];
-    expect(textareaControl).toBeDefined();
-    expect(textareaControl).not.toContain("ring-ring");
-    expect(markup).toContain("cursor-text");
+    // The comment box is the standard small Textarea, not a bespoke surface.
+    expect(markup).toMatch(/<span[^>]*data-size="sm"[^>]*data-slot="textarea-control"/);
   });
 
   it("lets a pull-request diff configure actions without replacing the composer", () => {
@@ -40,21 +38,16 @@ describe("DiffCommentAnnotation", () => {
         {...callbacks}
         submitLabel="Add to review"
         secondaryAction={{
-          label: "Ask",
-          icon: <span data-test-icon />,
-          allowEmpty: true,
+          label: "Add to agent",
           onAction: vi.fn(),
         }}
       />,
     );
 
     expect(markup).toContain("Add a comment…");
-    expect(markup).toContain(">Ask</button>");
     expect(markup).toContain(">Add to review</button>");
     expect(markup.match(/<button[^>]*disabled[^>]*>Add to review<\/button>/)).not.toBeNull();
-    const askButton = markup.match(/<button[^>]*>.*?Ask<\/button>/)?.[0];
-    expect(askButton).toBeDefined();
-    expect(askButton).not.toContain(' disabled=""');
+    expect(markup.match(/<button[^>]*disabled[^>]*>Add to agent<\/button>/)).not.toBeNull();
   });
 
   it("renders a saved comment without a nested card or redundant range label", () => {

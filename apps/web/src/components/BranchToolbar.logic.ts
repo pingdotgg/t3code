@@ -1,9 +1,17 @@
-import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  EnvironmentMachineKind,
+  VcsRef,
+  ProjectId,
+  WorktreeSubmodules,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  sanitizeNewRefName,
 } from "@t3tools/shared/git";
 
 export interface EnvironmentOption {
@@ -11,6 +19,7 @@ export interface EnvironmentOption {
   projectId: ProjectId;
   label: string;
   isPrimary: boolean;
+  machine: EnvironmentMachineKind;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
@@ -58,20 +67,51 @@ export function shouldShowComposerContextStrip(input: {
   hasActiveProject: boolean;
   isGitRepo: boolean;
   showEnvironmentIndicator: boolean;
+  /** A collapsed composer's controls currently fit in their measured strip host. */
+  hostsRestingComposerControls: boolean;
 }): boolean {
-  return input.hasActiveProject && (input.isGitRepo || input.showEnvironmentIndicator);
+  return (
+    input.hasActiveProject &&
+    (input.isGitRepo || input.showEnvironmentIndicator || input.hostsRestingComposerControls)
+  );
+}
+
+// Labels collapse to icons when the strip's content no longer fits. A small
+// hysteresis on the way back out keeps the boundary from flapping.
+const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
+
+export function resolveContextStripLabelsCompact(input: {
+  compact: boolean;
+  neededWidth: number;
+  availableWidth: number;
+}): boolean {
+  return input.compact
+    ? input.neededWidth > input.availableWidth - CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX
+    : input.neededWidth > input.availableWidth;
 }
 
 export function resolveEnvModeLabel(mode: EnvMode): string {
   return mode === "worktree" ? "New worktree" : "Current checkout";
 }
 
+export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
+  recursive: "Recursive",
+  "top-level": "Top level only",
+  none: "Skip",
+};
+
 export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
   return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
 }
 
-export function resolveLockedWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Worktree" : "Local checkout";
+// A locked thread in worktree mode with no path is still creating its
+// worktree, so it reads as a new worktree rather than the project checkout.
+export function resolveLockedWorkspaceLabel(
+  activeWorktreePath: string | null,
+  effectiveEnvMode: EnvMode,
+): string {
+  if (activeWorktreePath) return "Worktree";
+  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
 }
 
 export interface PreviousWorktreeSeed {
@@ -125,15 +165,20 @@ export function resolveEffectiveEnvMode(input: {
   activeWorktreePath: string | null;
   hasServerThread: boolean;
   draftThreadEnvMode: EnvMode | undefined;
+  /**
+   * The server is still creating this thread's worktree. The thread exists
+   * from the start of that setup but gets its worktree path only at the end.
+   */
+  preparingWorktree?: boolean;
 }): EnvMode {
-  const { activeWorktreePath, hasServerThread, draftThreadEnvMode } = input;
+  const { activeWorktreePath, hasServerThread, draftThreadEnvMode, preparingWorktree } = input;
   if (!hasServerThread) {
     if (activeWorktreePath) {
       return "local";
     }
     return draftThreadEnvMode === "worktree" ? "worktree" : "local";
   }
-  return activeWorktreePath ? "worktree" : "local";
+  return activeWorktreePath || preparingWorktree ? "worktree" : "local";
 }
 
 export function resolveDraftEnvModeAfterBranchChange(input: {
@@ -263,5 +308,18 @@ export function shouldIncludeBranchPickerItem(input: {
     return true;
   }
 
-  return itemValue.toLowerCase().includes(normalizedQuery);
+  const lowerItemValue = itemValue.toLowerCase();
+  if (lowerItemValue.includes(normalizedQuery)) {
+    return true;
+  }
+
+  // A query containing whitespace can only ever match a ref under its sanitized
+  // name, because that is the name such a ref would have been created with.
+  // Without this, typing "new branch" hides an existing "new-branch".
+  const sanitizedQuery = sanitizeNewRefName(normalizedQuery);
+  return (
+    sanitizedQuery.length > 0 &&
+    sanitizedQuery !== normalizedQuery &&
+    lowerItemValue.includes(sanitizedQuery)
+  );
 }

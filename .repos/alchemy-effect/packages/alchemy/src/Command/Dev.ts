@@ -1,19 +1,24 @@
+import * as ConsoleService from "effect/Console";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FiberMap from "effect/FiberMap";
-import * as Hash from "effect/Hash";
 import * as Stream from "effect/Stream";
-import { isResolved } from "../Diff.ts";
+import { stripVTControlCharacters } from "node:util";
+import { makeResourceOutput } from "../Util/ResourceOutput.ts";
+import { makeDevLogOpener } from "../Local/DevLog.ts";
+import { FQN_SEPARATOR } from "../FQN.ts";
+import * as LocalProvider from "../Local/LocalProvider.ts";
 import * as ProviderLayer from "../Local/ProviderLayer.ts";
-import * as RpcProvider from "../Local/RpcProvider.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
+import { Stage } from "../Stage.ts";
 import {
-  CommandError,
   CommandExecutor,
   UnexpectedExit,
+  makeCommandError,
   type CommandProps,
 } from "./Command.ts";
+import { makeCommandRedactor } from "./Redaction.ts";
+import { moduleExtension } from "../Util/Node.ts";
 
 export interface DevProps extends CommandProps {}
 
@@ -45,13 +50,12 @@ export interface Dev extends Resource<
  * attribute — useful for surfacing a dev server's local URL back out to
  * whatever resource declared this `Dev`.
  *
- * @resource
  *
- * @section Basic Usage
+ * ### Basic Usage
  * Pass a shell command that starts a long-lived dev server. Alchemy
  * runs it in the background and extracts the first URL it prints.
  *
- * @example Start a Vite dev server
+ * **Example:** Start a Vite dev server
  * ```typescript
  * const dev = yield* Dev("Frontend", {
  *   command: "npm run dev",
@@ -59,11 +63,11 @@ export interface Dev extends Resource<
  * yield* Console.log(dev.url); // e.g. "http://localhost:5173"
  * ```
  *
- * @section Working Directory
+ * ### Working Directory
  * Use `cwd` to run the command in a subdirectory — useful in
  * monorepos where each package has its own dev server.
  *
- * @example Monorepo package
+ * **Example:** Monorepo package
  * ```typescript
  * const dev = yield* Dev("Web", {
  *   command: "npm run dev",
@@ -71,12 +75,12 @@ export interface Dev extends Resource<
  * });
  * ```
  *
- * @section Environment Variables
+ * ### Environment Variables
  * Extra environment variables are merged on top of `process.env`.
  * Sensitive values can be wrapped in `Redacted` to keep them out
  * of logs and state files.
  *
- * @example Custom port and env
+ * **Example:** Custom port and env
  * ```typescript
  * const dev = yield* Dev("Api", {
  *   command: "npm run dev",
@@ -86,11 +90,13 @@ export interface Dev extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Dev = Resource<Dev>("Command.Dev");
 
 export const DevProvider = () =>
-  ProviderLayer.select({
+  ProviderLayer.dual(Dev, {
     live: DevProviderLive,
     local: DevProviderLocal,
   });
@@ -104,120 +110,116 @@ export const DevProviderLive = () =>
   });
 
 export const DevProviderLocal = () =>
-  RpcProvider.effect(
+  LocalProvider.make(
     Dev,
     import.meta.resolve(
-      import.meta.url.endsWith(".ts") ? "./Local.ts" : "./Local.js",
+      `./Local${moduleExtension(import.meta.url)}`,
       import.meta.url,
     ),
     Effect.gen(function* () {
       const { spawn } = yield* CommandExecutor;
-      const map = yield* FiberMap.make();
-      const hashes = new Map<string, number>();
+      const stage = yield* Stage;
+      const openDevLog = yield* makeDevLogOpener;
+      const baseConsole = yield* ConsoleService.Console;
 
-      const spawnAndExtractResult = Effect.fn(function* (
-        props: DevProps,
-        urlDeferred: Deferred.Deferred<string | undefined, CommandError>,
-      ) {
-        const child = yield* spawn(props);
+      return {
+        // The dev process is spawned into the instance scope the helper
+        // provides: it keeps running after `start` returns (readiness) and
+        // is killed when the helper closes the scope on restart/delete.
+        start: Effect.fn(function* ({ id, fqn, news: props, invalidate }) {
+          const child = yield* spawn(props);
+          const redactor = makeCommandRedactor(props.env);
+          // One log file per process generation, closed with the instance
+          // scope: log/{stage}/{fqn…}/{timestamp}.log (namespaces nest as dirs). Terminal lines
+          // carry the resource's pnpm-style prefix; the file gets raw text.
+          const devLog = yield* openDevLog(stage, ...fqn.split(FQN_SEPARATOR));
+          yield* Effect.log(`[${fqn}] Logs → ${devLog.path}`);
+          // Through the Console SERVICE, never a raw fd write: the process
+          // that owns the terminal runs an ink renderer, and a bare write
+          // to its stdout tears the animated region. The CLI's console
+          // capture inserts these lines above it instead.
+          const prefixed = makeResourceOutput(fqn, baseConsole);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              prefixed.stdout.flush();
+              prefixed.stderr.flush();
+            }),
+          );
 
-        let buffer = "";
-        // A non-local URL seen so far (docs link, error page, update notice,
-        // …). Held as a fallback so that if the dev server never prints a
-        // localhost/IP URL we still surface something, but a localhost URL
-        // always wins if one shows up. See issue #695.
-        let fallbackUrl: string | undefined;
-        const deferred = yield* Deferred.make<string>();
+          let buffer = "";
+          // A non-local URL seen so far (docs link, error page, update notice,
+          // …). Held as a fallback so that if the dev server never prints a
+          // localhost/IP URL we still surface something, but a localhost URL
+          // always wins if one shows up. See issue #695.
+          let fallbackUrl: string | undefined;
+          const deferred = yield* Deferred.make<string>();
 
-        const mirror = (sink: "stdout" | "stderr") =>
-          child[sink].pipe(
-            Stream.tap((chunk) =>
-              Effect.sync(() => process[sink].write(chunk)),
-            ),
-            Stream.decodeText,
-            Stream.tap((text) =>
-              Effect.sync(() => {
-                if (Deferred.isDoneUnsafe(deferred)) return;
-                buffer += text;
-                const url = extractUrl(buffer);
-                if (!url) return;
-                if (isLocalUrl(url)) {
-                  // The dev server's own address — resolve immediately.
-                  Deferred.doneUnsafe(deferred, Effect.succeed(url));
-                } else {
-                  // Keep scanning: a localhost/IP URL may still appear.
-                  fallbackUrl = url;
-                }
+          const mirror = (sink: "stdout" | "stderr") =>
+            child[sink].pipe(
+              Stream.decodeText,
+              redactor.stream,
+              Stream.tap((text) =>
+                Effect.sync(() => {
+                  prefixed[sink].push(text);
+                  devLog.write(text);
+                }),
+              ),
+              Stream.tap((text) =>
+                Effect.sync(() => {
+                  if (Deferred.isDoneUnsafe(deferred)) return;
+                  buffer += text;
+                  const url = extractUrl(buffer);
+                  if (!url) return;
+                  if (isLocalUrl(url)) {
+                    // The dev server's own address — resolve immediately.
+                    Deferred.doneUnsafe(deferred, Effect.succeed(url));
+                  } else {
+                    // Keep scanning: a localhost/IP URL may still appear.
+                    fallbackUrl = url;
+                  }
+                }),
+              ),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+
+          yield* mirror("stdout");
+          yield* mirror("stderr");
+
+          // Readiness: a URL appears (or the 5s budget elapses), unless the
+          // process exits first — an exit before readiness is a failure.
+          const url = yield* Effect.raceAllFirst([
+            Deferred.await(deferred).pipe(
+              Effect.timeoutOrElse({
+                duration: "5 seconds",
+                // No localhost/IP URL appeared in time — fall back to any
+                // other URL we saw (or `undefined` if it stayed silent).
+                orElse: () => Effect.succeed(fallbackUrl),
               }),
             ),
-            Stream.runDrain,
+            child.exitCode.pipe(
+              Effect.mapError((error) => makeCommandError(props, error.reason)),
+              Effect.flatMap((exitCode) =>
+                makeCommandError(
+                  props,
+                  new UnexpectedExit({ exitCode, stderr: buffer }),
+                ),
+              ),
+            ),
+          ]);
+
+          // The process may die on its own after readiness (crash, manual
+          // kill). Drop it from the running registry so the next plan
+          // reports `update` and restarts it.
+          yield* child.exitCode.pipe(
+            Effect.exit,
+            Effect.flatMap(() => invalidate),
             Effect.forkScoped,
           );
 
-        yield* mirror("stdout");
-        yield* mirror("stderr");
-        yield* Effect.raceAllFirst([
-          Deferred.await(deferred).pipe(
-            Effect.timeoutOrElse({
-              duration: "5 seconds",
-              // No localhost/IP URL appeared in time — fall back to any other
-              // URL we saw (or `undefined` if the process stayed silent).
-              orElse: () => Effect.succeed(fallbackUrl),
-            }),
-          ),
-          child.exitCode.pipe(
-            Effect.mapError(
-              (error) =>
-                new CommandError({
-                  command: props.command,
-                  reason: error.reason,
-                }),
-            ),
-            Effect.flatMap(
-              (exitCode) =>
-                new CommandError({
-                  command: props.command,
-                  reason: new UnexpectedExit({ exitCode, stderr: buffer }),
-                }),
-            ),
-          ),
-        ]).pipe(Deferred.into(urlDeferred));
-        return yield* child.exitCode;
-      }, Effect.scoped);
-
-      return {
-        list: () => Effect.succeed([]),
-        diff: Effect.fn(function* ({ instanceId, news }) {
-          if (!isResolved(news)) return undefined;
-          const hash = Hash.structure(news);
-          if (
-            hashes.get(instanceId) === hash &&
-            (yield* FiberMap.has(map, instanceId))
-          ) {
-            return { action: "noop" };
-          }
-          return { action: "update" };
+          return { url };
         }),
-        reconcile: Effect.fn(function* ({ instanceId, news }) {
-          const hash = Hash.structure(news);
-          hashes.set(instanceId, hash);
-          const deferred = yield* Deferred.make<
-            string | undefined,
-            CommandError
-          >();
-          yield* FiberMap.run(
-            map,
-            instanceId,
-            spawnAndExtractResult(news, deferred),
-            { propagateInterruption: true },
-          );
-          return { url: yield* Deferred.await(deferred) };
-        }),
-        delete: Effect.fn(function* ({ instanceId }) {
-          yield* FiberMap.remove(map, instanceId);
-          hashes.delete(instanceId);
-        }),
-      };
+      } satisfies LocalProvider.LocalProviderSpec<Dev>;
     }),
   );
 
@@ -232,20 +234,25 @@ const LOCAL_URL_REGEX =
 // set of punctuation typically used to wrap URLs in log output.
 const URL_REGEX = /https?:\/\/[^\s)\],"'`]+/;
 
-// ECMA-262 ANSI/VT100 escape sequences — `Vite`, `Next`, etc. surround the
-// URL with color codes that would otherwise be eaten by the URL regex.
-// eslint-disable-next-line no-control-regex
-const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
-
 /**
  * Extract a URL from `text`, favoring a localhost/IP URL (the dev server's
  * own address) over any other URL. Returns the first localhost/IP URL if one
  * is present, otherwise the first plain http(s) URL, otherwise `undefined`.
+ * `Vite`, `Next`, etc. surround the URL with ANSI color codes that would
+ * otherwise be eaten by the URL regex, so strip them first.
  * @internal
  */
 export const extractUrl = (text: string) => {
-  const clean = text.replaceAll(ANSI_REGEX, "");
-  return clean.match(LOCAL_URL_REGEX)?.[0] ?? clean.match(URL_REGEX)?.[0];
+  const clean = stripVTControlCharacters(text);
+  const url = clean.match(LOCAL_URL_REGEX)?.[0] ?? clean.match(URL_REGEX)?.[0];
+  // Some dev servers print their *bind* address (Nuxt: `http://0.0.0.0:3000`),
+  // which is not a connectable host. Normalize the unspecified address to
+  // `localhost` so consumers of `url` — browser links, Router dev routing,
+  // the emulated CloudFront edge dialing the origin — can actually reach it.
+  return url?.replace(
+    /^(https?:\/\/)(?:0\.0\.0\.0|\[::\]|\[0+:0+:0+:0+:0+:0+:0+:0+\])(?=[:/]|$)/,
+    "$1localhost",
+  );
 };
 
 const isLocalUrl = (url: string) => LOCAL_URL_REGEX.test(url);

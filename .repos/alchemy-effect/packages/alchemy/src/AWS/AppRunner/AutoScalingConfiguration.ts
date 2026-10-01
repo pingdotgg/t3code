@@ -99,9 +99,8 @@ export interface AutoScalingConfiguration extends Resource<
  * `maxConcurrency`, `minSize`, or `maxSize` creates a new revision under
  * the same name (the ARN and revision attributes change). A configuration
  * can be shared across multiple App Runner services.
- * @resource
- * @section Creating an Auto Scaling Configuration
- * @example Basic Configuration
+ * ### Creating an Auto Scaling Configuration
+ * **Example:** Basic Configuration
  * ```typescript
  * const scaling = yield* AppRunner.AutoScalingConfiguration("Scaling", {
  *   maxConcurrency: 50,
@@ -110,8 +109,8 @@ export interface AutoScalingConfiguration extends Resource<
  * });
  * ```
  *
- * @section Using with an App Runner Service
- * @example Attach to a Service
+ * ### Using with an App Runner Service
+ * **Example:** Attach to a Service
  * ```typescript
  * const service = yield* AppRunner.Service("Api", {
  *   imageRepository: {
@@ -122,6 +121,8 @@ export interface AutoScalingConfiguration extends Resource<
  *   autoScalingConfigurationArn: scaling.autoScalingConfigurationArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const AutoScalingConfiguration = Resource<AutoScalingConfiguration>(
   "AWS.AppRunner.AutoScalingConfiguration",

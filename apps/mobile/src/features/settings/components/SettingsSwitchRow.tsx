@@ -1,40 +1,28 @@
 import type { ComponentProps } from "react";
-import { Switch, View } from "react-native";
 
-import { SymbolView } from "../../../components/AppSymbol";
-import { AppText as Text } from "../../../components/AppText";
-import { useThemeColor } from "../../../lib/useThemeColor";
+import { ThemedSwitch } from "../../../components/ThemedSwitch";
+import { SettingsControlRow } from "./SettingsControlRow";
 
-type SymbolName = ComponentProps<typeof SymbolView>["name"];
-
-export function SettingsSwitchRow(props: {
-  readonly disabled?: boolean;
-  readonly icon: SymbolName;
-  readonly label: string;
-  readonly value: boolean;
-  readonly onValueChange: (value: boolean) => void;
-}) {
-  const icon = useThemeColor("--color-icon");
-  const activeTrack = String(useThemeColor("--color-switch-active"));
-  const track = String(useThemeColor("--color-secondary-border"));
-
+export function SettingsSwitchRow(
+  props: Omit<ComponentProps<typeof SettingsControlRow>, "children"> & {
+    readonly value: boolean;
+    readonly onValueChange: (value: boolean) => void;
+  },
+) {
   return (
-    <View
-      className={
-        props.disabled
-          ? "flex-row items-center gap-4 p-4 opacity-[0.45]"
-          : "flex-row items-center gap-4 p-4"
-      }
+    <SettingsControlRow
+      disabled={props.disabled}
+      icon={props.icon}
+      label={props.label}
+      subtitle={props.subtitle}
     >
-      <SymbolView name={props.icon} size={22} tintColor={icon} type="monochrome" weight="regular" />
-      <Text className="flex-1 text-lg text-foreground">{props.label}</Text>
-      <Switch
+      <ThemedSwitch
+        style={{ alignSelf: "center" }}
+        accessibilityLabel={props.label}
         disabled={props.disabled}
-        ios_backgroundColor={track}
         onValueChange={props.onValueChange}
-        trackColor={{ false: track, true: activeTrack }}
         value={props.value}
       />
-    </View>
+    </SettingsControlRow>
   );
 }

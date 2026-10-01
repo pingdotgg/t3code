@@ -76,9 +76,8 @@ export interface Asset extends Resource<
  * `ACTIVE`); the provider waits for the asset to converge to `ACTIVE`
  * before returning.
  *
- * @resource
- * @section Creating Assets
- * @example Asset from an Asset Model
+ * ### Creating Assets
+ * **Example:** Asset from an Asset Model
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -93,6 +92,8 @@ export interface Asset extends Resource<
  *   assetDescription: "Pump #1 on the west line",
  * });
  * ```
+ *
+ * @resource
  */
 export const Asset = Resource<Asset>("AWS.IoTSiteWise.Asset");
 
