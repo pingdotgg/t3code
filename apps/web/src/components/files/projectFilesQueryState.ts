@@ -198,6 +198,10 @@ export function useProjectFilePickerQuery(
   };
 }
 
+/**
+ * Subscribes to a project file read query, returning optimistic contents,
+ * structured read error details, directory indication, and a refresh callback.
+ */
 export function useProjectFileQuery(
   environmentId: EnvironmentId,
   cwd: string,

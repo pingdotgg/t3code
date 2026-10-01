@@ -31,6 +31,10 @@ export function detectDuplicatedWorkspacePrefix(
   return null;
 }
 
+/**
+ * Resolves user-friendly error title, description, attempted path, and hints
+ * from structured project file read errors.
+ */
 export function getFilePreviewErrorDetails(options: {
   readonly cwd?: string | null | undefined;
   readonly relativePath?: string | null | undefined;

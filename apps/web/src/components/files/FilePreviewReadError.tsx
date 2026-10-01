@@ -10,6 +10,10 @@ interface FilePreviewReadErrorProps {
   readonly onRetry?: (() => void) | undefined;
 }
 
+/**
+ * Renders structured read failure details for the file preview panel,
+ * including attempted path, specific failure reason, and path mistake hints.
+ */
 export function FilePreviewReadError(props: FilePreviewReadErrorProps) {
   const details = getFilePreviewErrorDetails({
     cwd: props.cwd,
