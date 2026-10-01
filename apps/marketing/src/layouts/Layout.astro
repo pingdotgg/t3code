@@ -1,7 +1,7 @@
 ---
 import { getImage, Image } from "astro:assets";
 import appIcon from "../assets/icon.webp";
-import desktopScreenshot from "../assets/app-desktop.webp";
+import socialCard from "../assets/social-card.webp";
 import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
 import "../styles/fonts.css";
 import {
@@ -23,19 +23,19 @@ const {
   pageClass,
 } = Astro.props;
 
-// Social preview card. Link unfurlers (Instagram, iMessage, X, Slack) want a
-// 1200x630 jpg or png at an absolute URL. Built from the hero screenshot so it
-// stays in sync with the homepage.
+// Social preview card, shared by og:image and twitter:image. Link unfurlers
+// (Instagram, iMessage, X, Slack) want a 1200x630 jpg or png at an absolute URL.
+// The source is a 2x export so the downscale stays sharp.
 const socialImage = await getImage({
-  src: desktopScreenshot,
+  src: socialCard,
   width: 1200,
   height: 630,
-  fit: "cover",
-  position: "top",
   format: "jpg",
   quality: 90,
 });
 const socialImageUrl = new URL(socialImage.src, Astro.site);
+const socialImageAlt =
+  "T3 Code: the open-source control plane for coding agents, with Claude Code, Codex, Cursor, OpenCode, Grok and Antigravity.";
 const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
 ---
 
@@ -53,12 +53,13 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     <meta property="og:image" content={socialImageUrl} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="The T3 Code desktop app with a thread open." />
+    <meta property="og:image:alt" content={socialImageAlt} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@t3dotgg" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImageUrl} />
+    <meta name="twitter:image:alt" content={socialImageAlt} />
     <link
       rel="preload"
       href={dmSansLatinUrl}
