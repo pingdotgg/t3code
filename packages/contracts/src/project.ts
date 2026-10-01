@@ -288,6 +288,20 @@ export const ProjectEnsureScratchResult = Schema.Struct({
 });
 export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
 
+/** A project started from just a name, in a new folder the server makes. */
+export const ProjectCreateNewInput = Schema.Struct({
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+});
+export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
+
+export const ProjectCreateNewResult = Schema.Struct({
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  /** Why the first commit failed. The project and its files exist either way. */
+  commitError: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
+
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {

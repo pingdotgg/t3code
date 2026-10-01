@@ -99,6 +99,13 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    // Makes a new folder and repository from just a name, then the project.
+    createNew: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-new",
+      tag: WS_METHODS.projectsCreateNew,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,
