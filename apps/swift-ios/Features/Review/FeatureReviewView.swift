@@ -131,6 +131,8 @@ public struct FeatureReviewView: View {
             guard loadGeneration.accepts(generation) else { return }
             review = loaded
             errorMessage = nil
+        } catch is CancellationError {
+            return
         } catch {
             guard loadGeneration.accepts(generation) else { return }
             errorMessage = error.localizedDescription
