@@ -9,7 +9,9 @@ import { threadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { AutomaticArchiveGuardRegistry } from "../orchestration/Services/AutomaticArchiveGuardRegistry.ts";
 import {
+  canAutoArchiveThreadNow,
   liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
@@ -108,6 +110,7 @@ export const sweepOnce = Effect.gen(function* () {
         type: "thread.archive",
         commandId: reviewThreadMergeArchiveCommandId(candidate),
         threadId: candidate.threadId,
+        automatic: true,
       })
       .pipe(
         Effect.catchCause((cause) =>
@@ -118,10 +121,27 @@ export const sweepOnce = Effect.gen(function* () {
           }),
         ),
       );
+
+    // A dispatch that produced no events is the admission guard refusing, which is a normal
+    // deferral rather than a fault. Dispatch carries no event count, so the outcome is read back:
+    // without this a guard that never approves looks exactly like a feature doing nothing.
+    const settled = yield* engine.getReadModel();
+    if (settled.threads.find((thread) => thread.id === candidate.threadId)?.archivedAt == null) {
+      yield* Effect.logDebug(`${LOG_TAG}: archive deferred at admission`, {
+        threadId: candidate.threadId,
+        pullRequestKey: candidate.pullRequestKey,
+      });
+    }
   }
 }) satisfies Effect.Effect<void, never, SweepServices>;
 
 const makeReactor = Effect.gen(function* () {
+  const guards = yield* AutomaticArchiveGuardRegistry;
+  // The archive command is marked automatic, so admission asks this guard against the read model
+  // as it stands when the command is decided — later than any read in the sweep. That is what
+  // stops a turn started, a thread settled, or a link swapped while the sweep was reading from
+  // being overridden here.
+  yield* guards.register(({ readModel, threadId }) => canAutoArchiveThreadNow(readModel, threadId));
   yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
 });
 

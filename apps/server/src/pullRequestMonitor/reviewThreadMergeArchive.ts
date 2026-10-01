@@ -41,6 +41,24 @@ export function reviewThreadPullRequests(
   return [...linked, legacy];
 }
 
+/**
+ * Whether this thread may be auto-archived right now, as admission re-checks it. The sweep's own
+ * plan and this guard share one predicate so the two cannot drift apart: a thread that qualifies
+ * for planning qualifies for admission.
+ */
+export function canAutoArchiveThreadNow(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+): boolean {
+  const thread = readModel.threads.find((entry) => entry.id === threadId);
+  if (thread === undefined || !isArchiveCandidate(thread)) return false;
+  if (!isReviewWorkflowThread(thread)) return false;
+  // The planned pull request must still be the one this thread is watching; a link swapped while
+  // the sweep was reading would otherwise archive on the old pull request's merge.
+  if (reviewThreadPullRequests(thread).length === 0) return false;
+  return !subtreeHasRunningTurn(readModel, threadId);
+}
+
 function isArchiveCandidate(thread: OrchestrationThread): boolean {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
   // Settling is a deliberate signal from the user; archiving would overwrite it.

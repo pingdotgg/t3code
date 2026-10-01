@@ -163,6 +163,15 @@ describe("sweepOnce", () => {
     }),
   );
 
+  it.effect("marks the archive automatic so admission re-checks it", () =>
+    Effect.gen(function* () {
+      const h = yield* harness({ threads: [reviewThread("root", 7)], mergedNumbers: [7] });
+      yield* h.run;
+      const commands = yield* Ref.get(h.dispatched);
+      assert.strictEqual(commands[0]?.type === "thread.archive" && commands[0].automatic, true);
+    }),
+  );
+
   it.effect("asks the provider once per project rather than once per pull request", () =>
     Effect.gen(function* () {
       const h = yield* harness({

@@ -288,3 +288,109 @@ describe("decider archive cascade", () => {
     }
   });
 });
+
+describe("decider automatic archive admission", () => {
+  const automaticArchive = (threadId: string, commandId: string) =>
+    ({
+      type: "thread.archive",
+      commandId: asCommandId(commandId),
+      threadId: asThreadId(threadId),
+      automatic: true,
+    }) satisfies OrchestrationCommand;
+
+  it("archives when a registered guard approves", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-ok"),
+        readModel,
+        automaticArchiveGuards: [() => true],
+      }),
+    );
+    const events = Array.isArray(decided) ? decided : [decided];
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0]?.type).toBe("thread.archived");
+  });
+
+  it("decides nothing when a guard refuses, leaving the command retryable", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-refused"),
+        readModel,
+        automaticArchiveGuards: [() => false],
+      }),
+    );
+    expect(Array.isArray(decided) ? decided : [decided]).toEqual([]);
+  });
+
+  it("decides nothing when no guard is registered, so an automatic archive fails closed", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-unguarded"),
+        readModel,
+        automaticArchiveGuards: [],
+      }),
+    );
+    expect(Array.isArray(decided) ? decided : [decided]).toEqual([]);
+  });
+
+  it("decides nothing when the guard is not supplied at all", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-absent"),
+        readModel,
+      }),
+    );
+    expect(Array.isArray(decided) ? decided : [decided]).toEqual([]);
+  });
+
+  it("lets any single guard veto, so one refusing guard is enough", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-veto"),
+        readModel,
+        automaticArchiveGuards: [() => true, () => false],
+      }),
+    );
+    expect(Array.isArray(decided) ? decided : [decided]).toEqual([]);
+  });
+
+  it("leaves a user-initiated archive unguarded", async () => {
+    const readModel = await seedReadModel();
+    const decided = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.archive",
+          commandId: asCommandId("cmd-user-archive"),
+          threadId: asThreadId("parent"),
+        } satisfies OrchestrationCommand,
+        readModel,
+        automaticArchiveGuards: [() => false],
+      }),
+    );
+    const events = Array.isArray(decided) ? decided : [decided];
+    expect(events[0]?.type).toBe("thread.archived");
+  });
+
+  it("passes the thread under admission to the guard", async () => {
+    const readModel = await seedReadModel();
+    const seen: string[] = [];
+    await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: automaticArchive("parent", "cmd-auto-seen"),
+        readModel,
+        automaticArchiveGuards: [
+          (input) => {
+            seen.push(input.threadId);
+            return true;
+          },
+        ],
+      }),
+    );
+    expect(seen).toEqual(["parent"]);
+  });
+});

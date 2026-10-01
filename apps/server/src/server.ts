@@ -39,6 +39,7 @@ import { TerminalManagerLive } from "./terminal/Layers/Manager.ts";
 import { GitManagerLive } from "./git/Layers/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup.ts";
+import { layer as automaticArchiveGuardRegistryLayer } from "./orchestration/Services/AutomaticArchiveGuardRegistry.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { TurnLifecycleRuntimeLayerLive } from "./orchestration/Layers/TurnLifecycleRuntime.ts";
@@ -308,9 +309,10 @@ const PullRequestAssociationRecoveryLayerLive = pullRequestAssociationRecoveryLa
 
 // Archiving a merged review is a poll-driven fact, not an event: the sweep asks the monitors
 // that observe merges and dispatches the archive itself. Layer memoization keeps this the same
-// pull request service instance the rest of the runtime uses.
+// pull request service instance — and the same guard registry — the rest of the runtime uses.
 const reviewThreadMergeArchiveLayerLive = reviewThreadMergeArchiveReactorLayer.pipe(
   Layer.provide(PullRequestLayerLive),
+  Layer.provide(automaticArchiveGuardRegistryLayer),
 );
 
 // Associating a pull request with a chat is the ownership signal, so monitoring follows it.
