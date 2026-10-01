@@ -16,7 +16,7 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
  * Latest clone list an environment has streamed; empty until the subscription
  * delivers, and never subscribed on servers that predate clone tracking.
  */
-const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
+export const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
     const supported =
       get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
