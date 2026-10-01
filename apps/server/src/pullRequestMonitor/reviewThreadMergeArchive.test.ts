@@ -109,6 +109,31 @@ describe("planReviewThreadAutoArchive", () => {
     ]);
   });
 
+  it("leaves out a nested review thread listed before the parent that archives it", () => {
+    const threads = [
+      reviewThread({ id: "nested", parentThreadId: "root" }),
+      reviewThread({ id: "root" }),
+    ];
+    expect(
+      planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7).map(
+        (candidate) => candidate.threadId,
+      ),
+    ).toEqual(["root"]);
+  });
+
+  it("leaves out a review thread nested two levels under a candidate ancestor", () => {
+    const threads = [
+      reviewThread({ id: "deep", parentThreadId: "middle" }),
+      reviewThread({ id: "middle", parentThreadId: "root" }),
+      reviewThread({ id: "root" }),
+    ];
+    expect(
+      planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7).map(
+        (candidate) => candidate.threadId,
+      ),
+    ).toEqual(["root"]);
+  });
+
   it("archives each unrelated merged review thread once", () => {
     const threads = [
       reviewThread({ id: "root-a" }),

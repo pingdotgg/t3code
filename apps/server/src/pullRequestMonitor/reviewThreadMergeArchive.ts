@@ -11,7 +11,6 @@ import {
   threadPullRequestKey,
 } from "@t3tools/shared/threadPullRequests";
 
-import { collectActiveThreadSubtree } from "../orchestration/threadHierarchy.ts";
 import { isReviewWorkflowThread } from "./reviewWorkflowThread.ts";
 
 export type ReviewThreadMergeArchiveCandidate = {
@@ -102,21 +101,36 @@ export function planReviewThreadAutoArchive(
   mergedPullRequestKeys: ReadonlySet<string>,
 ): ReadonlyArray<ReviewThreadMergeArchiveCandidate> {
   if (mergedPullRequestKeys.size === 0) return [];
-  const candidates: ReviewThreadMergeArchiveCandidate[] = [];
-  for (const thread of activeReviewRoots(readModel)) {
+  const merged = activeReviewRoots(readModel).flatMap((thread) => {
     const pullRequestKey = reviewThreadPullRequests(thread)
       .map(threadPullRequestKey)
       .find((key) => mergedPullRequestKeys.has(key));
-    if (pullRequestKey === undefined) continue;
-    const archivedByAncestor = candidates.some((candidate) =>
-      collectActiveThreadSubtree(readModel, candidate.threadId).some(
-        (descendant) => descendant.id === thread.id,
-      ),
-    );
-    if (archivedByAncestor) continue;
-    candidates.push({ threadId: thread.id, pullRequestKey });
-  }
-  return candidates;
+    return pullRequestKey === undefined ? [] : [{ threadId: thread.id, pullRequestKey }];
+  });
+
+  // Ancestor membership is decided over the whole candidate set rather than against the threads
+  // already accepted, because the read model does not order a parent before its children and a
+  // child accepted first would otherwise be archived separately from the parent that covers it.
+  const parentByThreadId = new Map(
+    readModel.threads.flatMap((thread) =>
+      thread.parentThreadId === undefined || thread.parentThreadId === null
+        ? []
+        : ([[thread.id, thread.parentThreadId]] as const),
+    ),
+  );
+  const candidateIds = new Set(merged.map((candidate) => candidate.threadId));
+  const hasCandidateAncestor = (threadId: ThreadId) => {
+    const visited = new Set<ThreadId>();
+    let parentId = parentByThreadId.get(threadId) ?? null;
+    while (parentId !== null && !visited.has(parentId)) {
+      if (candidateIds.has(parentId)) return true;
+      visited.add(parentId);
+      parentId = parentByThreadId.get(parentId) ?? null;
+    }
+    return false;
+  };
+
+  return merged.filter((candidate) => !hasCandidateAncestor(candidate.threadId));
 }
 
 /**
