@@ -618,6 +618,11 @@ export const ServerConfig = Schema.Struct({
    */
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
+   * Folder that holds projects started from just a name. Present only on
+   * servers that answer projects.createNew.
+   */
+  newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a
    * snapshot carrying it too would hand every subscriber the same array twice
