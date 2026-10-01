@@ -150,7 +150,7 @@ export function VoicePostProcessingSettings() {
         serverScoped
         settingKeys={["speechCorrectionWord"]}
         {...searchableSetting("speech-correction-word")}
-        description="If automatic cleanup misses your spoken corrections, enter a word or phrase you use to signal them. Transcription gets it as a hint; post-processing uses it only when context indicates a correction."
+        description="If automatic cleanup misses your spoken corrections, enter a word or phrase you use to signal them. Transcription gets it as a hint. Post-processing uses it only when context indicates a correction."
         control={
           <div className="w-40">
             <Input
