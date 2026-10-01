@@ -174,9 +174,11 @@ const makeWorkflowCoordinatorReactor = Effect.gen(function* () {
       modelSelection: input.workerConfig.modelSelection,
       runtimeMode: input.workerConfig.runtimeMode,
       interactionMode: input.workerConfig.interactionMode,
-      // Workflow workers are independent writers. Preserve the configured
-      // source revision while letting orchestration allocate a fresh task
-      // branch/worktree for the child.
+      // Workflow workers are independent writers. Orchestration snapshots a
+      // configured source worktree into a commit parented to its HEAD, then
+      // points the child's fresh branch at that snapshot. The source checkout
+      // stays untouched, and the child's initial checkpoint baseline is its
+      // snapshot HEAD.
       branch: null,
       worktreePath: null,
       ...(input.workerConfig.branch !== null

@@ -396,6 +396,54 @@ const makeCheckpointStore = Effect.gen(function* () {
     });
   });
 
+  const createWorkspaceSnapshotCommit: CheckpointStoreShape["createWorkspaceSnapshotCommit"] =
+    Effect.fn("createWorkspaceSnapshotCommit")(function* (input) {
+      const operation = "CheckpointStore.createWorkspaceSnapshotCommit";
+      const { headCommit, treeOid } = yield* snapshotWorkspace({
+        cwd: input.cwd,
+        operation,
+      });
+      if (headCommit === null) {
+        return yield* new GitCommandError({
+          operation,
+          command: "git rev-parse HEAD",
+          cwd: input.cwd,
+          detail: "Cannot snapshot a source worktree without a HEAD commit.",
+        });
+      }
+      const headTree = yield* git.execute({
+        operation,
+        cwd: input.cwd,
+        args: ["rev-parse", `${headCommit}^{tree}`],
+      });
+      if (headTree.stdout.trim() === treeOid) {
+        return headCommit;
+      }
+
+      const commit = yield* git.execute({
+        operation,
+        cwd: input.cwd,
+        args: ["commit-tree", treeOid, "-p", headCommit, "-m", "t3 snapshot fork"],
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "T3 Code",
+          GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
+          GIT_COMMITTER_NAME: "T3 Code",
+          GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        },
+      });
+      const commitOid = commit.stdout.trim();
+      if (commitOid.length === 0) {
+        return yield* new GitCommandError({
+          operation,
+          command: "git commit-tree",
+          cwd: input.cwd,
+          detail: "git commit-tree returned an empty commit oid.",
+        });
+      }
+      return commitOid;
+    });
+
   const hasCheckpointRef: CheckpointStoreShape["hasCheckpointRef"] = (input) =>
     resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
       Effect.map((commit) => commit !== null),
@@ -1084,6 +1132,7 @@ const makeCheckpointStore = Effect.gen(function* () {
   return {
     isGitRepository,
     captureCheckpoint,
+    createWorkspaceSnapshotCommit,
     hasCheckpointRef,
     checkpointRefMatchesWorkspace,
     restoreCheckpoint: (input) => coordinator.withCheckout(input.cwd, restoreCheckpoint(input)),

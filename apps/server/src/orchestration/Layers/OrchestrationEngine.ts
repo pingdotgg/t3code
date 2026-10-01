@@ -42,6 +42,7 @@ import { CheckoutCoordinator, CheckoutCoordinatorLive } from "../../git/Checkout
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import { WorkspaceOwnershipRepositoryLive } from "../../persistence/Layers/WorkspaceOwnership.ts";
 import { ThreadUrlBuilder } from "../../threadUrl.ts";
+import { CheckpointStore } from "../../checkpointing/Services/CheckpointStore.ts";
 import {
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -120,6 +121,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const maybeDelegationAuditRepository = yield* Effect.serviceOption(DelegationAuditRepository);
   const threadUrls = yield* Effect.serviceOption(ThreadUrlBuilder);
   const coordinator = yield* CheckoutCoordinator;
+  const checkpointStore = yield* Effect.serviceOption(CheckpointStore);
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
   const automaticArchiveGuards = yield* AutomaticArchiveGuardRegistry;
 
@@ -285,6 +287,12 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     claimOwnership: (input) => workspaceOwnership.claim(input),
     hasCleanupReservationByPath: (canonicalPath) =>
       worktreeCleanupJobs.hasReservationByPath(canonicalPath),
+    createWorkspaceSnapshotCommit: (cwd) =>
+      Option.isSome(checkpointStore)
+        ? checkpointStore.value.createWorkspaceSnapshotCommit({ cwd })
+        : Effect.fail(
+            new Error("Checkpoint snapshot service is unavailable; refusing a HEAD-only fork."),
+          ),
   };
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
@@ -885,6 +893,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       thread?.worktreePath ?? bootstrap?.createThread?.worktreePath ?? project?.workspaceRoot;
     // This is the command worker itself, not dispatch(). Release after the
     // committed pending state is visible, before the provider starts its turn.
+    // A bootstrap source snapshot takes its own short checkout lock during
+    // capture; don't recursively acquire the same (non-reentrant) lock here.
+    if (bootstrap?.createThread?.sourceWorktreePath !== undefined) {
+      return worktreeProcess;
+    }
     return cwd ? coordinator.withCheckout(cwd, worktreeProcess) : worktreeProcess;
   };
 

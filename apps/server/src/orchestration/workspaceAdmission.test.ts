@@ -31,6 +31,7 @@ const depsWithoutOwnership: WorkspaceAdmissionDeps = {
   findProject: () => undefined,
   claimOwnership: () => Effect.die(new Error("claim must not run without a path")),
   hasCleanupReservationByPath: () => Effect.succeed(false),
+  createWorkspaceSnapshotCommit: () => Effect.die(new Error("snapshot must not run in this test")),
 };
 
 describe("commandWorktreePath", () => {

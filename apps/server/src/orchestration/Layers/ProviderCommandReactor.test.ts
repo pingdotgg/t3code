@@ -357,6 +357,7 @@ describe("ProviderCommandReactor", () => {
           turnStartOrder.push("captureCheckpoint");
         }),
       ),
+      createWorkspaceSnapshotCommit: () => Effect.die("unused in provider command tests"),
       restoreCheckpoint: () => Effect.die(new Error("restoreCheckpoint should not be called")),
       diffCheckpoints: () => Effect.die(new Error("diffCheckpoints should not be called")),
       diffCheckpointFiles: () => Effect.die(new Error("diffCheckpointFiles should not be called")),
