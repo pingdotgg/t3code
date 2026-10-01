@@ -1030,7 +1030,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
       assert.deepEqual(settings.speechPostProcessingModelSelection, {
-        instanceId: "claudeAgent",
+        instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "claude-haiku-4-5",
         options: [{ id: "thinking", value: false }],
       });
