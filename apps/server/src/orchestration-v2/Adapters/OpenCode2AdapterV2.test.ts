@@ -2235,6 +2235,17 @@ describe("OpenCode2 adapter", () => {
       cursor: {},
     }),
   ];
+  /** What a reconnect reads back of the requests a still-running session waits on. */
+  const openRequests = (
+    permissions: ReadonlyArray<unknown>,
+    forms: ReadonlyArray<unknown> = [],
+  ): ReadonlyArray<ProviderReplayEntry> => [
+    out("permission.list", { sessionID: SESSION }),
+    replyData("permission.list", permissions),
+    out("session.form.list", { sessionID: SESSION }),
+    replyData("session.form.list", forms),
+  ];
+
   const turnItems = (collected: ReadonlyArray<ProviderAdapterV2Event>) =>
     collected.flatMap((event) =>
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
@@ -2459,6 +2470,8 @@ describe("OpenCode2 adapter", () => {
             data: [{ id: PROMPT_ID, time: { created: 1 }, text: "hi", type: "user" }],
             cursor: {},
           }),
+          // The parent still runs, so what it waits on is read back too.
+          ...openRequests([]),
           // The parent goes on after the reconnect and ends its turn.
           event("session.execution.succeeded", { sessionID: SESSION }),
         ]);
@@ -2496,6 +2509,7 @@ describe("OpenCode2 adapter", () => {
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
         ...reconnected({ [SESSION]: { type: "running" } }),
+        ...openRequests([]),
         event("session.text.ended", {
           sessionID: SESSION,
           assistantMessageID: "msg_assistant_after",
@@ -2520,6 +2534,64 @@ describe("OpenCode2 adapter", () => {
         "Sent while the stream was down.",
         "Arrived on the new stream.",
       ]);
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows a permission asked while the stream was down, and answers it", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          // `permission.asked` went by while the stream was down; the run waits on it.
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([shellAsk.data]),
+          out("permission.reply", {
+            sessionID: SESSION,
+            requestID: shellAsk.data.id,
+            decision: "once",
+          }),
+          reply("permission.reply", null),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { supervised: true },
+      );
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+      const request = yield* Fiber.join(requested);
+      assert.equal(request?.nativeRequestRef?.nativeId, shellAsk.data.id);
+      yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision: "accept" });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("settles a request OpenCode no longer lists after the stream came back", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          shellAskEvent,
+          // Answered in another OpenCode client while the stream was down.
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { supervised: true },
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+      const collected = yield* Fiber.join(events);
+      const statuses = collected.flatMap((event) =>
+        event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
+      );
+      assert.deepEqual(statuses, ["pending", "cancelled"]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
     }).pipe(Effect.scoped),
   );

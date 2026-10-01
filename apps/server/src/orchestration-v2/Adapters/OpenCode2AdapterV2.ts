@@ -1997,8 +1997,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* setSessionStatus("waiting", null);
     });
 
-    const onPermissionAsked = Effect.fnUntraced(function* (event: EventOf<"permission.asked">) {
-      const { data } = event;
+    const onPermissionAsked = Effect.fnUntraced(function* (data: Permission.Request) {
       // The asking session's own turn knows the tool: a subagent's session runs its own.
       const turn = threads.get(data.sessionID)?.active;
       const toolName =
@@ -2030,8 +2029,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    const onFormCreated = Effect.fnUntraced(function* (event: EventOf<"form.created">) {
-      const { form } = event.data;
+    const onFormCreated = Effect.fnUntraced(function* (form: NativeForm) {
       const target = requestTurn(form.sessionID);
       if (target === undefined) return;
       const { state } = target;
@@ -2064,6 +2062,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           class: "provider_error",
         }),
       });
+    });
+
+    /**
+     * A permission ask or question form, from the stream or read back after a
+     * reconnect: shown under the turn it blocks, or stopped when it is the run
+     * a Stop left behind, which nothing answers.
+     */
+    const onAsked = Effect.fnUntraced(function* (
+      asked:
+        | { readonly type: "permission"; readonly request: Permission.Request }
+        | { readonly type: "form"; readonly form: NativeForm },
+    ) {
+      const asking = asked.type === "permission" ? asked.request.sessionID : asked.form.sessionID;
+      const state = ownerOf(asking);
+      if (state === undefined) return;
+      const target = requestTurn(asking);
+      if (target !== undefined && !target.turn.awaitingStart) {
+        if (asked.type === "permission") return yield* onPermissionAsked(asked.request);
+        return yield* onFormCreated(asked.form);
+      }
+      if (state.unsettled || state.active?.awaitingStart === true) {
+        yield* stopStaleRequest(
+          asking,
+          asked.type === "permission"
+            ? { type: "permission", id: asked.request.id }
+            : { type: "form", id: asked.form.id },
+        );
+      }
     });
 
     const sessionOfEvent = (event: OpenCode2StreamEvent) =>
@@ -2461,27 +2487,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 },
         );
       }
-      if (event.type === "permission.asked" || event.type === "form.created") {
-        const asking =
-          event.type === "permission.asked" ? event.data.sessionID : event.data.form.sessionID;
-        const state = ownerOf(asking);
-        if (state === undefined) return;
-        const target = requestTurn(asking);
-        if (target !== undefined && !target.turn.awaitingStart) {
-          if (event.type === "permission.asked") return yield* onPermissionAsked(event);
-          return yield* onFormCreated(event);
-        }
-        // Asked by the run a Stop left behind, which nothing answers.
-        if (state.unsettled || state.active?.awaitingStart === true) {
-          yield* stopStaleRequest(
-            asking,
-            event.type === "permission.asked"
-              ? { type: "permission", id: event.data.id }
-              : { type: "form", id: event.data.form.id },
-          );
-        }
-        return;
+      if (event.type === "permission.asked") {
+        return yield* onAsked({ type: "permission", request: event.data });
       }
+      if (event.type === "form.created")
+        return yield* onAsked({ type: "form", form: event.data.form });
       // Answered in another OpenCode client, or dropped by OpenCode: a reject
       // it sends on its own (a Stop, or another reject in the same session)
       // cancels the request. T3's own answers are settled where they are sent.
@@ -2663,7 +2673,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * still the previous execution's, so no `idle` means the turn was
      * interrupted. A continuation turn is settled the same way, from the report
      * its execution answers. A turn still holding for an undelivered steer only
-     * ends once the session is idle.
+     * ends once the session is idle. Permission asks and question forms are
+     * read back from every session still running, so a run that asked during
+     * the gap can be answered.
      *
      * What the stream carried outside a turn is not read back: a background
      * subagent's report, a follow-up OpenCode started on its own, or one held
@@ -2718,6 +2730,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const session of sessionsOf(state)) {
           for (const wake of session.wakes.splice(0)) wake.dropped = true;
           session.reports.clear();
+        }
+      }
+      // A request asked while the stream was down was never shown, and the
+      // run waits on it; one T3 shows that OpenCode no longer lists was
+      // answered elsewhere or dropped with its execution. A session that
+      // stopped dropped its requests.
+      const listed = new Map<string, Set<string>>();
+      for (const sessionId of Object.keys(active)) {
+        if (ownerOf(sessionId) === undefined) continue;
+        const sessionID = Session.ID.make(sessionId);
+        const [permissions, forms] = yield* Effect.all([
+          client.permission.list({ sessionID }),
+          client.session.form.list({ sessionID }),
+        ]);
+        listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
+        const shown = new Set([...pending.values()].map((entry) => entry.native.id));
+        for (const request of permissions) {
+          if (!shown.has(request.id)) yield* onAsked({ type: "permission", request });
+        }
+        for (const form of forms) {
+          if (!shown.has(form.id)) yield* onAsked({ type: "form", form });
+        }
+      }
+      // A snapshot: settling a request removes it from the map.
+      for (const entry of Array.from(pending.values())) {
+        if (listed.get(entry.sessionId)?.has(entry.native.id) !== true) {
+          yield* settleRequest(entry, "cancelled");
         }
       }
     });
