@@ -15,7 +15,7 @@ export function LoadingScreen(props: {
 
   return (
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
-      <StatusBar barStyle={colorScheme === "dark" ? "light-content" : "dark-content"} translucent />
+      <StatusBar barStyle={colorScheme === "dark" ? "light-content" : "dark-content"} />
       <View className="flex-1 items-center justify-center gap-5 px-6">
         <BrandMark compact />
         {messagePlacement === "above-spinner" ? (

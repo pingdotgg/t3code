@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from "react";
 import { View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
@@ -8,7 +7,7 @@ import { cn } from "../lib/cn";
 import { MaterialIconButton } from "./MaterialIconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
-import { useMaterialToolbarHeight } from "./useMaterialToolbarHeight";
+import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -25,7 +24,7 @@ export function AndroidHeaderIconButton(props: {
   readonly disabled?: boolean;
   readonly selected?: boolean;
 }) {
-  return <MaterialIconButton {...props} variant={props.selected ? "tonal" : "standard"} />;
+  return <MaterialIconButton {...props} tintColorClassName="accent-header-foreground" />;
 }
 
 export function AndroidScreenHeader(props: {
@@ -38,10 +37,11 @@ export function AndroidScreenHeader(props: {
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
 }) {
-  const insets = useSafeAreaInsets();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
-  const materialToolbarHeight = useMaterialToolbarHeight();
+  const { height: materialToolbarHeight, ...headerPadding } = useMaterialToolbarLayout(
+    props.embedded,
+  );
   const [headerWidth, setHeaderWidth] = useState(0);
   const actions = props.actions ?? [];
   const directCount = actions.length > 2 ? (headerWidth >= 600 ? 3 : 1) : actions.length;
@@ -51,20 +51,18 @@ export function AndroidScreenHeader(props: {
   return (
     <View
       onLayout={(event) => setHeaderWidth(event.nativeEvent.layout.width)}
-      className="border-b border-header-border bg-header px-2 pb-2"
+      className="border-b border-header-border bg-header px-2"
       style={{
-        paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
+        ...headerPadding,
         borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
       }}
     >
-      <View
-        style={{ minHeight: materialToolbarHeight }}
-        className="min-h-14 flex-row items-center gap-1"
-      >
+      <View style={{ minHeight: materialToolbarHeight }} className="flex-row items-center gap-1">
         {props.onBack ? (
           <MaterialIconButton
             accessibilityLabel="Navigate up"
             icon="arrow.left"
+            tintColorClassName="accent-header-foreground"
             onPress={props.onBack}
           />
         ) : null}
@@ -72,7 +70,7 @@ export function AndroidScreenHeader(props: {
         {props.leading}
 
         <View className={cn("min-w-0 flex-1", !props.onBack && "pl-1")}>
-          <Text numberOfLines={1} style={titleTypography} className="text-foreground">
+          <Text numberOfLines={1} style={titleTypography} className="text-header-foreground">
             {props.title}
           </Text>
           {props.subtitle ? (
@@ -114,6 +112,7 @@ export function AndroidScreenHeader(props: {
               <MaterialIconButton
                 accessibilityLabel="More actions"
                 icon="ellipsis"
+                tintColorClassName="accent-header-foreground"
                 onPress={open}
               />
             )}

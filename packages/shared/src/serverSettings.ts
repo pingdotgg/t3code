@@ -102,6 +102,7 @@ export function resolveSourceControlWriterModelSelection(
 export interface PersistedServerObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
+  readonly otlpLogsUrl: string | undefined;
 }
 
 function normalizePersistedServerSettingString(
@@ -115,11 +116,13 @@ function extractPersistedServerObservabilitySettings(input: {
   readonly observability?: {
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
+    readonly otlpLogsUrl?: string;
   };
 }): PersistedServerObservabilitySettings {
   return {
     otlpTracesUrl: normalizePersistedServerSettingString(input.observability?.otlpTracesUrl),
     otlpMetricsUrl: normalizePersistedServerSettingString(input.observability?.otlpMetricsUrl),
+    otlpLogsUrl: normalizePersistedServerSettingString(input.observability?.otlpLogsUrl),
   };
 }
 
@@ -130,7 +133,7 @@ export function parsePersistedServerObservabilitySettings(
   if (Option.isSome(decoded)) {
     return extractPersistedServerObservabilitySettings(decoded.value);
   }
-  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
+  return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined, otlpLogsUrl: undefined };
 }
 
 function shouldReplaceTextGenerationModelSelection(

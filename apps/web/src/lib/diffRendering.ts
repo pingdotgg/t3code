@@ -1,4 +1,5 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
+import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
@@ -46,6 +47,7 @@ export type RenderablePatch =
   | {
       kind: "files";
       files: FileDiffMetadata[];
+      sourceFiles: FileDiffMetadata[];
     }
   | {
       kind: "raw";
@@ -73,6 +75,7 @@ export function getDiffLineStat(files: ReadonlyArray<FileDiffMetadata>): DiffLin
 }
 
 interface RenderablePatchOptions {
+  ignoreWhitespace?: boolean;
   /**
    * Pierre's partial-patch parser keeps hunk render starts in source-file
    * coordinates. Its virtualizer iterates partial patches as compact rows, so
@@ -80,6 +83,59 @@ interface RenderablePatchOptions {
    * for the "N unmodified lines" separator.
    */
   compactPartialHunkOffsets?: boolean;
+}
+
+function hideWhitespaceChanges(file: FileDiffMetadata): FileDiffMetadata {
+  let splitDelta = 0;
+  let unifiedDelta = 0;
+  const hunks = file.hunks.map((hunk) => {
+    const oldContents = file.deletionLines
+      .slice(hunk.deletionLineIndex, hunk.deletionLineIndex + hunk.deletionCount)
+      .map((line) => `${line.replace(/\s/g, "")}\n`)
+      .join("");
+    const newContents = file.additionLines
+      .slice(hunk.additionLineIndex, hunk.additionLineIndex + hunk.additionCount)
+      .map((line) => `${line.replace(/\s/g, "")}\n`)
+      .join("");
+    const filtered = parseDiffFromFile(
+      { name: file.name, contents: oldContents },
+      { name: file.name, contents: newContents },
+      { context: Infinity },
+    ).hunks[0];
+    const next = {
+      ...hunk,
+      additionLines: filtered?.additionLines ?? 0,
+      deletionLines: filtered?.deletionLines ?? 0,
+      hunkContent: filtered
+        ? filtered.hunkContent.map((content) => ({
+            ...content,
+            additionLineIndex: content.additionLineIndex + hunk.additionLineIndex,
+            deletionLineIndex: content.deletionLineIndex + hunk.deletionLineIndex,
+          }))
+        : [
+            {
+              type: "context" as const,
+              lines: hunk.additionCount,
+              additionLineIndex: hunk.additionLineIndex,
+              deletionLineIndex: hunk.deletionLineIndex,
+            },
+          ],
+      splitLineStart: hunk.splitLineStart + splitDelta,
+      unifiedLineStart: hunk.unifiedLineStart + unifiedDelta,
+      splitLineCount: filtered?.splitLineCount ?? hunk.additionCount,
+      unifiedLineCount: filtered?.unifiedLineCount ?? hunk.additionCount,
+    };
+    splitDelta += next.splitLineCount - hunk.splitLineCount;
+    unifiedDelta += next.unifiedLineCount - hunk.unifiedLineCount;
+    return next;
+  });
+  return {
+    ...file,
+    hunks,
+    splitLineCount: file.splitLineCount + splitDelta,
+    unifiedLineCount: file.unifiedLineCount + unifiedDelta,
+    ...(file.cacheKey ? { cacheKey: `${file.cacheKey}:ignore-whitespace` } : {}),
+  };
 }
 
 function compactPartialHunkOffsets(file: FileDiffMetadata): FileDiffMetadata {
@@ -121,13 +177,13 @@ export function getRenderablePatch(
       normalizedPatch,
       buildPatchCacheKey(normalizedPatch, cacheScope),
     );
-    const files = parsedPatches.flatMap((parsedPatch) =>
-      options.compactPartialHunkOffsets
-        ? parsedPatch.files.map(compactPartialHunkOffsets)
-        : parsedPatch.files,
-    );
+    const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
+    const files = sourceFiles.map((file) => {
+      const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
+      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
+    });
     if (files.length > 0) {
-      return { kind: "files", files };
+      return { kind: "files", files, sourceFiles };
     }
 
     return {
@@ -166,8 +222,13 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
   return fileDiffPath(fileDiff.prevName ?? fileDiff.name ?? "");
 }
 
+/**
+ * Stable across re-renders of the same file, distinct for every block in a
+ * patch. A type change (regular file to symlink) arrives as a deletion and an
+ * addition of the same path, so the change type is part of the identity.
+ */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
-  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}`;
+  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {

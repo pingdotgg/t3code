@@ -14,9 +14,12 @@ to keep a large paste editable in the composer instead.
 
 ## Attach files
 
-Attach up to eight files per message. Images can be up to 10 MB; other files can
-be up to 50 MB, subject to the environment's upload support and limit. The agent
-receives them on the environment's machine.
+Attach up to 100 files per message. Each image can be up to 10 MiB, with at most
+80 MiB of images in one message. Other files, including videos, can be up to
+50 MiB each, subject to the environment's upload support and limit. The agent
+receives them on the environment's machine. Provider and model limits still
+apply, including images already in the conversation. A video attachment gives
+the agent a file path; it does not enable native video input.
 
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
@@ -33,7 +36,7 @@ See [images and videos](#images-and-videos-in-messages) for previewing and savin
 
 On web and desktop, a message sent during a running turn waits at the end of the conversation as a
 dashed bubble. It goes out on its own when the agent finishes its next tool
-call, or when the turn ends. Use the arrow under the bubble to send it right
+call, or when the turn ends, even while you have another thread open. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
 message to the composer.
 
@@ -148,6 +151,10 @@ provider. On mobile, both are also available before starting a thread on
 
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
+
+After you add or change skills, plugins, or MCP servers, use **Restart agent
+session** in the command palette on web and desktop. The conversation continues,
+and your next message starts the agent again with the new setup.
 
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.

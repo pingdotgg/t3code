@@ -5,10 +5,13 @@ import { ControlPillMenu } from "../../../components/ControlPill";
 import { SymbolView } from "../../../components/AppSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
+import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
 export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?: boolean }) {
   const navigation = useNavigation();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
   const {
     availableTargets,
     selectedTargets,
@@ -26,6 +29,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
       ? "line.3.horizontal.decrease"
       : "line.3.horizontal.decrease.circle.fill";
   const filterVersion = JSON.stringify({
+    closeSettings,
     selection: selectedIds === null ? null : [...selectedIds].sort(),
     targets: availableTargets.map((entry) => [entry.environmentId, entry.label, entry.displayUrl]),
     project: selectedProjectKey,
@@ -94,7 +98,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
               ],
             },
           }),
-          ...(props.closeSettings
+          ...(closeSettings
             ? [
                 withNativeGlassHeaderItem({
                   accessibilityLabel: "Close settings",

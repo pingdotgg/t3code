@@ -24,6 +24,7 @@ export function SettingsRow(props: {
   if (Platform.OS === "android") {
     return (
       <MaterialListRow
+        className="bg-grouped-card"
         title={props.label}
         subtitle={props.valuePosition === "trailing" ? undefined : props.value}
         accessibilityLabel={[props.label, props.value].filter(Boolean).join(", ")}

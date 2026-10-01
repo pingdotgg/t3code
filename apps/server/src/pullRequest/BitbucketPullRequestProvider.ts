@@ -73,7 +73,10 @@ export function bitbucketProviderFailure(
   if (error._tag === "BitbucketResponseError" && error.status === 401) {
     return { reason: "unauthenticated" };
   }
-  if (error._tag === "BitbucketResponseError" && error.status === 429) {
+  if (
+    (error._tag === "BitbucketResponseError" || error._tag === "BitbucketResponseBodyReadError") &&
+    error.status === 429
+  ) {
     return {
       reason: "rate-limited",
       ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
@@ -122,6 +125,31 @@ export const make = Effect.gen(function* () {
         cause: error,
       });
 
+  const recoverRead = <A>(
+    read: Effect.Effect<A, BitbucketPullRequestApi.BitbucketPullRequestApiError>,
+    fallback: A,
+  ) => {
+    const recover = () => Effect.succeed(fallback);
+    return Effect.catchTags(read, {
+      BitbucketResponseError: (error) => (error.status === 429 ? Effect.fail(error) : recover()),
+      BitbucketUntrustedUrlError: recover,
+      BitbucketRepositoryLocatorError: recover,
+      BitbucketRequestError: recover,
+      BitbucketResponseBodyReadError: (error) =>
+        error.status === 429 ? Effect.fail(error) : recover(),
+      BitbucketResponseDecodeError: recover,
+      BitbucketRepositoryVcsResolveError: recover,
+      BitbucketRepositoryRemotesListError: recover,
+      BitbucketRepositoryRemoteNotFoundError: recover,
+      BitbucketPullRequestBodyReadError: recover,
+      BitbucketCheckoutError: recover,
+      BitbucketPullRequestReadError: recover,
+      BitbucketViewerUnavailableError: recover,
+      BitbucketRepositoryUnsupportedError: recover,
+      BitbucketDiffCommitError: recover,
+    });
+  };
+
   const provider: PullRequestProviderApi = {
     kind: "bitbucket",
     capabilities: CAPABILITIES,
@@ -156,12 +184,12 @@ export const make = Effect.gen(function* () {
         [
           api.getPullRequest(target),
           api.getDiffStat(target),
-          api.getMergeability(target).pipe(Effect.orElseSucceed(() => "unknown" as const)),
-          api.listChecks(target).pipe(Effect.orElseSucceed(() => [])),
+          recoverRead(api.getMergeability(target), "unknown" as const),
+          recoverRead(api.listChecks(target), []),
           // A permission that could not be read is an unknown one, which is granted: a hidden
           // Merge leaves someone entitled to it with no way through, and one Bitbucket refuses
           // at least says why.
-          api.getRepositoryPermission(target).pipe(Effect.orElseSucceed(() => true)),
+          recoverRead(api.getRepositoryPermission(target), true),
         ],
         { concurrency: 5 },
       ).pipe(
@@ -200,10 +228,8 @@ export const make = Effect.gen(function* () {
           // Reviews ride on the pull request itself, so this inexpensive core read is repeated
           // here rather than making the core response wait for the conversation endpoints.
           api.getPullRequest(target),
-          api
-            .listComments(target)
-            .pipe(Effect.orElseSucceed(() => ({ comments: [], threads: [], truncated: true }))),
-          api.listCommits(target).pipe(Effect.orElseSucceed(() => [])),
+          recoverRead(api.listComments(target), { comments: [], threads: [], truncated: true }),
+          recoverRead(api.listCommits(target), []),
         ],
         { concurrency: 3 },
       ).pipe(

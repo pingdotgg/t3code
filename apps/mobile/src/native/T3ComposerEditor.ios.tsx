@@ -13,16 +13,19 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
-import { Image, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
 
-import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
+import {
+  markdownFileIconSource,
+  markdownIconAssetUri,
+} from "@t3tools/mobile-markdown-text/file-icons";
 import {
   composerChipSizeSuffix,
   contextChipPresentation,
 } from "@t3tools/mobile-markdown-text/markdown";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { flattenThemeColor } from "../lib/mobileTheme";
+import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
@@ -109,8 +112,8 @@ function basename(path: string): string {
   return separator >= 0 ? path.slice(separator + 1) : path;
 }
 
-function fileIconUri(path: string): string {
-  return Image.resolveAssetSource(markdownFileIconSource(resolveMarkdownFileIcon(path))).uri;
+function fileIconUri(path: string): string | null {
+  return markdownIconAssetUri(markdownFileIconSource(resolveMarkdownFileIcon(path))) ?? null;
 }
 
 export function ComposerEditor({
@@ -257,18 +260,7 @@ export function ComposerEditor({
     },
     [],
   );
-  const themeJson = JSON.stringify({
-    text: theme["--color-foreground"],
-    placeholder: theme["--color-placeholder"],
-    chipBackground: theme["--color-subtle"],
-    // Native chip drawing parses opaque hex only, and this role is translucent.
-    chipBorder: flattenThemeColor(theme["--color-border"], theme["--color-user-bubble"]),
-    chipText: theme["--color-foreground"],
-    skillBackground: theme["--color-inline-skill-background"],
-    skillBorder: theme["--color-inline-skill-border"],
-    skillText: theme["--color-inline-skill-foreground"],
-    fileTint: theme["--color-icon-muted"],
-  });
+  const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   return (
     <NativeView

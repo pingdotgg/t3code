@@ -1,3 +1,4 @@
+// @effect-diagnostics abortControllerInEffect:off - Tests hand-built AbortSignals to the SDK query stub to exercise cancellation.
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -72,6 +73,8 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+  /** Set by tests that exercise Claude's graceful interrupt. */
+  public interrupt?: () => Promise<unknown>;
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -1548,6 +1551,73 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(String(completed.turnId), String(turn.turnId));
         assert.equal(completed.payload.state, "completed");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a turn open past the result of a Claude-initiated turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/compact",
+        attachments: [],
+      });
+
+      // Recorded order after a resume: Claude first reports a background task
+      // the previous process left behind, then runs the queued `/compact`.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 0,
+        origin: { kind: "task-notification" },
+        session_id: "sdk-session-1",
+        uuid: "result-task-notification",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "manual", pre_tokens: 959489, post_tokens: 10107 },
+        session_id: "sdk-session-1",
+        uuid: "compact-boundary",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 0,
+        user_message_uuid: turn.turnId,
+        user_message_uuids: [turn.turnId],
+        local_command: "compact",
+        session_id: "sdk-session-1",
+        uuid: "result-compact",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const compactedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      const completedIndex = runtimeEvents.findIndex((event) => event.type === "turn.completed");
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.completed").length, 1);
+      assert.equal(String(runtimeEvents[completedIndex]?.turnId), String(turn.turnId));
+      assert.equal(String(runtimeEvents[compactedIndex]?.turnId), String(turn.turnId));
+      assert.isAbove(completedIndex, compactedIndex);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -3254,6 +3324,83 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("interruptTurn lets Claude abort the turn before closing the session", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      let closeCallsAtInterrupt: number | undefined;
+      harness.query.interrupt = async () => {
+        closeCallsAtInterrupt = harness.query.closeCalls;
+        harness.query.emit({
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: false,
+          errors: ["Error: Request was aborted."],
+          session_id: "sdk-session",
+          uuid: "result-interrupted",
+        } as unknown as SDKMessage);
+      };
+
+      yield* adapter.interruptTurn(session.threadId);
+
+      assert.equal(closeCallsAtInterrupt, 0);
+      assert.equal(harness.query.closeCalls, 1);
+      const [turnCompleted] = Array.from(yield* Fiber.join(turnCompletedFiber));
+      assert.equal(turnCompleted?.type, "turn.completed");
+      if (turnCompleted?.type === "turn.completed") {
+        assert.equal(turnCompleted.payload.state, "interrupted");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("interruptTurn closes the session when Claude never aborts the turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      harness.query.interrupt = () => new Promise(() => {});
+
+      const interruptFiber = yield* adapter.interruptTurn(session.threadId).pipe(Effect.forkChild);
+      yield* TestClock.adjust("3 seconds");
+      yield* Fiber.join(interruptFiber);
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(session.threadId), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the session available when process close fails", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -3844,7 +3991,7 @@ describe("ClaudeAdapterLive", () => {
 
       const taskEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.type.startsWith("task.")),
-        Stream.take(2),
+        Stream.take(3),
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -3878,24 +4025,27 @@ describe("ClaudeAdapterLive", () => {
         session_id: "sdk-session",
       } as unknown as SDKMessage);
       // The subagent's assistant snapshot carries the authoritative API
-      // model id, which refines the linkage on later rows.
+      // model id. The correction is pushed at once, not on the next task row.
+      // Its tool calls arrive only here, so a task one of them launches must
+      // still resolve to this subagent as owner.
       harness.query.emit({
         type: "assistant",
         parent_tool_use_id: "toolu_agent_m",
         message: {
           model: SYNTHETIC_SUBAGENT_MODEL,
-          content: [],
+          content: [{ type: "tool_use", id: "toolu_nested", name: "Skill", input: {} }],
         },
         uuid: "subagent-snapshot-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
       harness.query.emit({
         type: "system",
-        subtype: "task_progress",
-        task_id: "task-model",
-        description: "Agent M",
-        usage: { total_tokens: 100, tool_uses: 1, duration_ms: 10 },
-        uuid: "task-model-progress-uuid",
+        subtype: "task_started",
+        task_id: "task-nested",
+        description: "Nested",
+        task_type: "local_agent",
+        tool_use_id: "toolu_nested",
+        uuid: "task-nested-uuid",
         session_id: "sdk-session",
       } as unknown as SDKMessage);
 
@@ -3906,11 +4056,18 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(started.payload.model, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
         assert.equal(started.payload.effort, "max");
       }
-      const progress = taskEvents[1];
-      assert.equal(progress?.type, "task.progress");
-      if (progress?.type === "task.progress") {
-        assert.equal(progress.payload.model, SYNTHETIC_SUBAGENT_MODEL);
-        assert.equal(progress.payload.effort, "max");
+      const refined = taskEvents[1];
+      assert.equal(refined?.type, "task.updated");
+      if (refined?.type === "task.updated") {
+        assert.equal(refined.payload.taskId, "task-model");
+        assert.equal(refined.payload.model, SYNTHETIC_SUBAGENT_MODEL);
+        assert.equal(refined.payload.status, undefined);
+      }
+      const nested = taskEvents[2];
+      assert.equal(nested?.type, "task.started");
+      if (nested?.type === "task.started") {
+        assert.equal(nested.payload.agentId, "task-model");
+        assert.equal(nested.payload.model, SYNTHETIC_SUBAGENT_MODEL);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -6684,6 +6841,56 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(resetOptions?.resumeSessionAt, undefined);
       assert.equal(resetOptions?.forkSession, undefined);
       assert.ok(resetOptions?.sessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("completed turns keep their ids but not the SDK messages", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+      const completedFiber = yield* Stream.filter(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runHead, Effect.forkChild);
+
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-1",
+        uuid: "assistant-1",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-1",
+          content: [{ type: "text", text: "Hi" }],
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-1",
+        uuid: "result-1",
+      } as unknown as SDKMessage);
+      yield* Fiber.join(completedFiber);
+
+      const snapshot = yield* adapter.readThread(session.threadId);
+      assert.deepEqual(
+        snapshot.turns.map((entry) => ({ id: String(entry.id), items: entry.items })),
+        [{ id: String(turn.turnId), items: [] }],
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

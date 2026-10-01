@@ -190,7 +190,7 @@ const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
@@ -213,9 +213,9 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
     const resolved = yield* workspacePaths.resolveRelativePathWithinRoot(input).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catchTags({
-        WorkspacePathOutsideRootError: () => Effect.succeed(Option.none()),
+        WorkspacePathOutsideRootError: () => Effect.succeedNone,
       }),
     );
     if (Option.isNone(resolved)) return null;
@@ -419,6 +419,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
   readonly projectFaviconPath?: string;
+  /** The project's clone has not landed, so its icon is reported missing without a lookup. */
+  readonly projectCheckoutPending?: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -573,17 +575,20 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         ),
       );
       const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
-      const faviconPath = yield* faviconResolver
-        .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new AssetProjectFaviconResolutionError({
-                resource: input.resource,
-                cause,
-              }),
-          ),
-        );
+      // A lookup in a half-cloned checkout would cache a miss that outlives the clone.
+      const faviconPath = input.projectCheckoutPending
+        ? null
+        : yield* faviconResolver
+            .resolvePath(workspaceRoot, input.projectFaviconPath ?? undefined)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AssetProjectFaviconResolutionError({
+                    resource: input.resource,
+                    cause,
+                  }),
+              ),
+            );
       const isExternalOverride =
         faviconPath !== null &&
         input.projectFaviconPath !== undefined &&
