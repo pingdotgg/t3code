@@ -63,6 +63,8 @@ export const ServerProviderAuth = Schema.Struct({
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
+  subscriptionSharing: Schema.optional(Schema.Boolean),
+  profileId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -148,6 +150,22 @@ export const ServerProviderContinuation = Schema.Struct({
 });
 export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
 
+export const ServerProviderCompatibilityStatus = Schema.Literals([
+  "unknown",
+  "supported",
+  "graceful",
+  "unsupported",
+  "broken",
+]);
+export const ServerProviderCompatibilityAdvisory = Schema.Struct({
+  status: ServerProviderCompatibilityStatus,
+  latestVersionStatus: Schema.optionalKey(ServerProviderCompatibilityStatus),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  recommendedRange: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
+
 export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
   "unknown",
   "current",
@@ -161,6 +179,7 @@ export const ServerProviderVersionAdvisory = Schema.Struct({
   latestVersion: Schema.NullOr(TrimmedNonEmptyString),
   updateCommand: Schema.NullOr(TrimmedNonEmptyString),
   canUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  canInstallVersion: Schema.optionalKey(Schema.Boolean),
   checkedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
 });
@@ -209,6 +228,12 @@ export const ServerProvider = Schema.Struct({
       canInstall: Schema.Boolean,
     }),
   ),
+  runtimePaths: Schema.optionalKey(
+    Schema.Struct({
+      homePath: TrimmedNonEmptyString,
+      shadowHomePath: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+  ),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -234,6 +259,7 @@ export const ServerProvider = Schema.Struct({
   // Absent when the driver has no notion of subscription usage.
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
+  compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
 export type ServerProvider = typeof ServerProvider.Type;
@@ -586,6 +612,17 @@ export const ServerConfig = Schema.Struct({
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**
+   * Folder behind this environment's Scratch project, for threads that need
+   * no repository. Present only on servers that answer projects.ensureScratch
+   * and whose data dir is outside a Git checkout.
+   */
+  scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Folder that holds projects started from just a name. Present only on
+   * servers that answer projects.createNew.
+   */
+  newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
    * Palettes published by this environment's machine. Never sent in a config
    * snapshot: the theme stream emits the current set before any change, so a
    * snapshot carrying it too would hand every subscriber the same array twice
@@ -799,6 +836,7 @@ export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.T
 
 export const ServerProviderUpdateInput = Schema.Struct({
   provider: ProviderDriverKind,
+  targetVersion: Schema.optionalKey(TrimmedNonEmptyString),
   instanceId: Schema.optionalKey(ProviderInstanceId),
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;

@@ -225,28 +225,31 @@ describe("Android delivery routing", () => {
     ["waiting_for_approval", "waiting_for_input", "2 agents need attention", "true"],
     ["completed", "failed", "2 agents finished", "false"],
   ] as const) {
-    it.effect(`groups ${firstPhase} and ${secondPhase} once across their queued jobs`, () => {
-      const h = harness();
-      h.current.otherStates = [secondState];
-      return Effect.gen(function* () {
-        const delivery = yield* FcmDeliveries;
-        yield* delivery.process(h.job);
-        h.current.state = { ...state, phase: firstPhase };
-        h.current.otherStates = [{ ...secondState, phase: secondPhase }];
-        yield* delivery.process({ ...h.job, state: h.current.state });
-        yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
-        yield* delivery.process({ ...h.job, state: h.current.state });
-        const alerts = h.sent.filter((message) => message.alert);
-        expect(alerts).toHaveLength(1);
-        expect(alerts[0]?.data).toMatchObject({
-          alert_title: title,
-          alert_body: "Fix notifications, Second thread",
-          alert_path: firstPhase === "completed" ? secondState.deepLink : state.deepLink,
-          active,
-        });
-        expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
-      }).pipe(Effect.provide(h.layer));
-    });
+    it.effect(
+      `routes grouped ${firstPhase} and ${secondPhase} to the overview once across their queued jobs`,
+      () => {
+        const h = harness();
+        h.current.otherStates = [secondState];
+        return Effect.gen(function* () {
+          const delivery = yield* FcmDeliveries;
+          yield* delivery.process(h.job);
+          h.current.state = { ...state, phase: firstPhase };
+          h.current.otherStates = [{ ...secondState, phase: secondPhase }];
+          yield* delivery.process({ ...h.job, state: h.current.state });
+          yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
+          yield* delivery.process({ ...h.job, state: h.current.state });
+          const alerts = h.sent.filter((message) => message.alert);
+          expect(alerts).toHaveLength(1);
+          expect(alerts[0]?.data).toMatchObject({
+            alert_title: title,
+            alert_body: "Fix notifications, Second thread",
+            alert_path: "/",
+            active,
+          });
+          expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+        }).pipe(Effect.provide(h.layer));
+      },
+    );
   }
 
   it.effect("filters disabled event types before counting a group", () => {
@@ -454,7 +457,32 @@ describe("Android delivery routing", () => {
     ).toMatchObject({
       alert_title: `${"T".repeat(117)}...`,
       alert_body: `Done: ${"P".repeat(111)}...`,
+      alert_group: JSON.stringify([state.environmentId, state.threadId]),
     });
+  });
+
+  it("keeps notification groups distinct when identifiers contain slashes", () => {
+    const left = androidAlertForState(
+      {
+        ...state,
+        environmentId: EnvironmentId.make("a/b"),
+        threadId: ThreadId.make("c"),
+        phase: "completed",
+      },
+      preferences,
+      0,
+    );
+    const right = androidAlertForState(
+      {
+        ...state,
+        environmentId: EnvironmentId.make("a"),
+        threadId: ThreadId.make("b/c"),
+        phase: "completed",
+      },
+      preferences,
+      0,
+    );
+    expect(left?.alert_group).not.toBe(right?.alert_group);
   });
 
   it.effect(

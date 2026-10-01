@@ -19,6 +19,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -26,6 +27,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
+  readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -104,6 +106,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
+  "ThreadAutoSettleOptOutUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support turning auto-settle off per thread yet. Update the server to use it.";
+  }
 }
 
 export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinningUnsupportedError>()(
@@ -198,6 +212,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unpinThreadMutation = useAtomCommand(threadEnvironment.unpin, {
+    reportFailure: false,
+  });
+  const setThreadAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useAtomCommand(threadEnvironment.reorderPin, {
@@ -383,12 +400,18 @@ export function useThreadActions() {
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
-      const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
+      const environmentConfig = appAtomRegistry
+        .get(environmentServerConfigsAtom)
+        .get(threadRef.environmentId);
+      // A Scratch thread's folder is not a git worktree, and deleting the
+      // thread keeps its files.
+      const canDeleteWorktree =
+        orphanedWorktreePath !== null &&
+        threadProject !== null &&
+        !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot);
       const localApi = readLocalApi();
       let shouldDeleteWorktree = false;
-      const environmentSettings = appAtomRegistry
-        .get(environmentServerConfigsAtom)
-        .get(threadRef.environmentId)?.settings;
+      const environmentSettings = environmentConfig?.settings;
       const automaticWorktreeCleanup = environmentSettings
         ? resolveWorktreeCleanup(environmentSettings, thread.projectId).worktreeOnDelete
         : false;
@@ -554,6 +577,27 @@ export function useThreadActions() {
       });
     },
     [unsettleThreadMutation],
+  );
+
+  /** Turns automatic settlement (inactivity, merged PR) on or off for one thread. */
+  const setThreadAutoSettle = useCallback(
+    async (target: ScopedThreadRef, enabled: boolean) => {
+      if (!readEnvironmentSupportsAutoSettleOptOut(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadAutoSettleOptOutUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setThreadAutoSettleMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, enabled },
+      });
+    },
+    [setThreadAutoSettleMutation],
   );
 
   const pinThread = useCallback(
@@ -875,6 +919,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
     }),
     [
       archiveThread,
@@ -884,6 +929,7 @@ export function useThreadActions() {
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoSettle,
       settleThread,
       snoozeThread,
       unarchiveThread,

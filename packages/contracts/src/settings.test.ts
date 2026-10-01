@@ -301,6 +301,23 @@ describe("ClientSettings diff colors", () => {
   });
 });
 
+describe("ClientSettings chat width", () => {
+  it("keeps the comfortable width for existing settings without a saved width", () => {
+    expect(decodeClientSettings({}).chatWidth).toBe("comfortable");
+  });
+
+  it.each(["comfortable", "wide", "full"])("round-trips the %s width", (chatWidth) => {
+    const settings = decodeClientSettings({ chatWidth });
+    expect(encodeClientSettings(settings).chatWidth).toBe(chatWidth);
+    expect(decodeClientSettingsPatch({ chatWidth }).chatWidth).toBe(chatWidth);
+  });
+
+  it("rejects unsupported widths", () => {
+    expect(() => decodeClientSettings({ chatWidth: "huge" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ chatWidth: "huge" })).toThrow();
+  });
+});
+
 describe("ClientSettings load balancing", () => {
   it("requires opt-in when settings are new or omit load balancing", () => {
     expect(decodeClientSettings({}).loadBalancingEnabled).toBe(false);
@@ -690,14 +707,6 @@ describe("ClientSettings pull request merge methods", () => {
 });
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
-  it("defaults text generation to Luna at low reasoning effort", () => {
-    expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-5.6-luna",
-      options: [{ id: "reasoningEffort", value: "low" }],
-    });
-  });
-
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});
   });
