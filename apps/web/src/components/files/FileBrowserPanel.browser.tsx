@@ -28,14 +28,16 @@ const listFixture = async (input: ProjectListEntriesInput) => ({
   truncated: false,
 });
 const listEntries = vi.fn(listFixture);
+const searchFixture = async () => ({
+  entries: entriesFixture.filter((entry) => entry.path.includes("creation-")),
+  truncated: false,
+});
+const searchEntries = vi.fn(searchFixture);
 vi.mock("~/environmentApi", () => ({
   ensureEnvironmentApi: () => ({
     projects: {
       listEntries,
-      searchEntries: async () => ({
-        entries: entriesFixture.filter((entry) => entry.path.includes("creation-")),
-        truncated: false,
-      }),
+      searchEntries,
     },
   }),
 }));
@@ -69,6 +71,43 @@ describe("FileBrowserPanel", () => {
     document.body.innerHTML = "";
     vi.clearAllMocks();
     listEntries.mockImplementation(listFixture);
+    searchEntries.mockReset().mockImplementation(searchFixture);
+  });
+
+  it("retries the displayed directory failure before a simultaneous search failure", async () => {
+    listEntries.mockRejectedValueOnce(new Error("Directory temporarily unavailable."));
+    searchEntries.mockRejectedValueOnce(new Error("Search temporarily unavailable."));
+    const screen = await render(
+      <div className="flex h-96 w-96 flex-col">
+        <FileBrowserPanel
+          environmentId={threadRef.environmentId}
+          cwd="/repo/retry-files"
+          projectName="t3code"
+          selectedPath={null}
+          revealRequest={null}
+          onOpenFile={vi.fn()}
+        />
+      </div>,
+    );
+    try {
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Could not load workspace files.");
+      await page.getByRole("textbox", { name: "Filter workspace files" }).fill("creation-");
+      await vi.waitFor(() => expect(searchEntries).toHaveBeenCalledOnce());
+      await expect.element(page.getByText("No matches", { exact: true }).first()).toBeVisible();
+      await page.getByRole("button", { name: "Retry", exact: true }).click();
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Search temporarily unavailable.");
+      await page.getByRole("button", { name: "Retry", exact: true }).click();
+      await vi.waitFor(() => {
+        expect(treeRowPaths().some((path) => path.includes("creation-examples"))).toBe(true);
+        expect(document.querySelector("[role='alert']")).toBeNull();
+      });
+    } finally {
+      await screen.unmount();
+    }
   });
 
   it("filters the tree down to matches plus their ancestor chain", async () => {

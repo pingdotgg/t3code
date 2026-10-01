@@ -496,8 +496,8 @@ export default function FileBrowserPanel({
             type="button"
             className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
             onClick={() => {
-              if (searchError) setSearchRetry((previous) => previous + 1);
-              else listing.refresh();
+              if (listing.error) listing.refresh();
+              else setSearchRetry((previous) => previous + 1);
             }}
           >
             Retry
