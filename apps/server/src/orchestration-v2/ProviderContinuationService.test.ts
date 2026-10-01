@@ -224,7 +224,7 @@ describe("ProviderContinuationService", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
       yield* Effect.gen(function* () {
-        const requests = yield* ProviderContinuationRequests;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
           threadId,
           providerThreadId,

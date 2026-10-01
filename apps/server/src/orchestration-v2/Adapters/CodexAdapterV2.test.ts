@@ -1846,7 +1846,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(request?.delivery, "message_text");
           assert.equal(request?.detail, "run the tests");
           assert.equal(request?.providerThreadId, harness.providerThread.id);
-        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
 

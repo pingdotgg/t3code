@@ -28,7 +28,9 @@ function loadWebRTC(): typeof WebRTC {
 }
 
 /** Runs the voice stream on the connection runtime, holding it for the conversation's lifetime. */
-function runOnConnectionRuntime(effect: Effect.Effect<void, never, EnvironmentRegistry>) {
+function runOnConnectionRuntime(
+  effect: Effect.Effect<void, never, EnvironmentRegistry.EnvironmentRegistry>,
+) {
   return Effect.runFork(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(appAtomRegistry, connectionAtomRuntime);
