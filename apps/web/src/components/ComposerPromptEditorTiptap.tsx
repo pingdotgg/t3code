@@ -1201,10 +1201,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       // overwrite that prompt; the pending rewrite places the caret instead.
       if (snapshotRef.current.value !== latestValueRef.current) return;
       const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
-      const expandedCursor = expandCollapsedComposerCursor(
-        snapshotRef.current.value,
-        boundedCursor,
-      );
+      // The collapsed cursor cannot say where inside `$name` text a caret sits,
+      // so restoring the caret the editor already holds reuses its exact offset.
+      const expandedCursor =
+        boundedCursor === snapshotRef.current.cursor
+          ? snapshotRef.current.expandedCursor
+          : expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor);
       const map = serializeEditorDoc(editor.state.doc);
       editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, expandedCursor)));
       scrollTiptapCaretIntoView(editor);
