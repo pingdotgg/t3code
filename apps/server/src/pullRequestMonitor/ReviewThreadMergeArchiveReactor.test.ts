@@ -67,7 +67,6 @@ const harness = ({
   readonly settings?: Partial<ServerSettings>;
   readonly mergedNumbers?: ReadonlyArray<number>;
   readonly failList?: boolean;
-  /** A user action that lands while the provider read is still in flight. */
   readonly duringProviderRead?: (thread: OrchestrationThread) => OrchestrationThread;
 }) =>
   Effect.gen(function* () {
@@ -91,8 +90,6 @@ const harness = ({
           ...settings,
         } satisfies ServerSettings),
       } as unknown as ServerSettingsShape),
-      // No monitor: this suite exercises the provider fallback, which is the path a review
-      // thread takes when automatic monitoring is off.
       Layer.succeed(PullRequestMonitorService, {
         status: () => Effect.succeed({ monitor: null, latestSnapshot: null }),
       } as never),

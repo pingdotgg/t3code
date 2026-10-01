@@ -307,9 +307,8 @@ const PullRequestAssociationRecoveryLayerLive = pullRequestAssociationRecoveryLa
   Layer.provideMerge(PullRequestCreationAutomationLive),
 );
 
-// Archiving a merged review is a poll-driven fact, not an event: the sweep asks the monitors
-// that observe merges and dispatches the archive itself. Layer memoization keeps this the same
-// pull request service instance — and the same guard registry — the rest of the runtime uses.
+// Layer memoization keeps this on the same pull request service and guard registry as the rest of
+// the runtime.
 const reviewThreadMergeArchiveLayerLive = reviewThreadMergeArchiveReactorLayer.pipe(
   Layer.provide(PullRequestLayerLive),
   Layer.provide(automaticArchiveGuardRegistryLayer),
