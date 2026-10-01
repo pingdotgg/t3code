@@ -101,6 +101,7 @@ const settingsByPage: ReadonlyArray<{
       "Chat export directory",
       "Transfer active chats",
       "Chat export details",
+      "Archive review chats on merge",
       "Archive confirmation",
       "Delete confirmation",
       "Text generation model",
@@ -142,6 +143,7 @@ const relatedTerms: Readonly<Record<string, string>> = {
   Theme: "appearance dark light system",
   "UI density": "spacing compact comfortable spacious",
   "Archived threads": "archive restore delete",
+  "Archive review chats on merge": "review pull request merged cleanup",
 };
 
 export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [

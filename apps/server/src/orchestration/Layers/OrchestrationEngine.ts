@@ -48,6 +48,10 @@ import {
   OrchestrationCommandWorktreeCleanupPendingError,
   type OrchestrationDispatchError,
 } from "../Errors.ts";
+import {
+  AutomaticArchiveGuardRegistry,
+  layer as AutomaticArchiveGuardRegistryLayer,
+} from "../Services/AutomaticArchiveGuardRegistry.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { childReportDedupeKey } from "../dispatchAuthority.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
@@ -117,6 +121,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const threadUrls = yield* Effect.serviceOption(ThreadUrlBuilder);
   const coordinator = yield* CheckoutCoordinator;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
+  const automaticArchiveGuards = yield* AutomaticArchiveGuardRegistry;
 
   let readModel = createEmptyReadModel(new Date().toISOString());
 
@@ -400,6 +405,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const eventBase = yield* decideOrchestrationCommand({
           command: admittedCommand,
           readModel,
+          // Read here rather than captured at startup: an archiver may register after the worker
+          // is already running, and an unregistered automatic archive decides as nothing.
+          ...(admittedCommand.type === "thread.archive" && admittedCommand.automatic === true
+            ? { automaticArchiveGuards: yield* automaticArchiveGuards.guards }
+            : {}),
           ...(recordedReportOutcome !== undefined ? { recordedReportOutcome } : {}),
         });
         const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
@@ -947,4 +957,8 @@ export const OrchestrationEngineLive = Layer.effect(
   Layer.provideMerge(WorktreeCleanupJobRepositoryLive),
   Layer.provideMerge(CheckoutCoordinatorLive),
   Layer.provideMerge(WorkspaceOwnershipRepositoryLive),
+  // Provided privately: the engine reads the guards while deciding commands but does not export
+  // the registry. Whoever fills it obtains the same instance from the runtime composition, where
+  // the layer value below is memoized once.
+  Layer.provide(AutomaticArchiveGuardRegistryLayer),
 );

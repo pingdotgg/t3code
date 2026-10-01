@@ -17,6 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import { Effect, Option, Schema } from "effect";
 
+import { automaticArchiveIsApproved, type AutomaticArchiveGuard } from "./automaticArchiveGuard.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import { resolveThreadWorkspaceCwd } from "../checkpointing/Utils.ts";
 import {
@@ -846,10 +847,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   recordedReportOutcome,
+  automaticArchiveGuards,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly recordedReportOutcome?: RecordedReportOutcome;
+  /** Consulted only for archives marked `automatic`; see {@link AutomaticArchiveGuard}. */
+  readonly automaticArchiveGuards?: ReadonlyArray<AutomaticArchiveGuard>;
 }): Effect.fn.Return<DecideOrchestrationCommandResult, OrchestrationCommandInvariantError> {
   switch (command.type) {
     case "thread.validation.request": {
@@ -1687,6 +1691,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
+      // Checked before anything else so an automatic archive that no longer qualifies is decided
+      // as nothing: a state-dependent no-op writes no receipt, so the archiver retries it on a
+      // later pass rather than being locked out by this attempt.
+      if (
+        command.automatic === true &&
+        !automaticArchiveIsApproved(automaticArchiveGuards, {
+          readModel,
+          threadId: command.threadId,
+        })
+      ) {
+        return [];
+      }
       yield* requireThreadNotArchived({
         readModel,
         command,

@@ -1117,6 +1117,14 @@ const ThreadArchiveCommand = Schema.Struct({
   type: Schema.Literal("thread.archive"),
   commandId: CommandId,
   threadId: ThreadId,
+  /**
+   * Set by an automatic archiver rather than a person. Admission then re-checks the archiver's
+   * own rules against the read model as it stands when the command is decided, so work started
+   * or a choice made while the archiver was reading cannot be overridden. `Literal(true)` so an
+   * archive can be marked automatic but never un-marked. Absent on a user's archive, which is
+   * always honoured.
+   */
+  automatic: Schema.optional(Schema.Literal(true)),
 });
 
 const ThreadUnarchiveCommand = Schema.Struct({
