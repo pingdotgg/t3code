@@ -16,9 +16,8 @@ export interface SetAlarmStateRequest extends Omit<
  *
  * Provide `CloudWatch.SetAlarmStateHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Managing Alarm Actions
- * @example Force an Alarm into ALARM to Test Its Actions
+ * ### Managing Alarm Actions
+ * **Example:** Force an Alarm into ALARM to Test Its Actions
  * ```typescript
  * // init — grants cloudwatch:SetAlarmState on the alarm
  * const setAlarmState = yield* AWS.CloudWatch.SetAlarmState(alarm);
@@ -29,6 +28,8 @@ export interface SetAlarmStateRequest extends Omit<
  *   StateReason: "fire-drill: verifying the on-call page",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SetAlarmState extends Binding.Service<
   SetAlarmState,

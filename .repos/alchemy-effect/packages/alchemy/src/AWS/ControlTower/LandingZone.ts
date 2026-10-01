@@ -82,9 +82,8 @@ export interface LandingZone extends Resource<
  * managed from the Organizations management account. Creating, updating,
  * and decommissioning a landing zone are asynchronous operations that can
  * take an hour or more.
- * @resource
- * @section Creating a Landing Zone
- * @example Landing Zone from a manifest
+ * ### Creating a Landing Zone
+ * **Example:** Landing Zone from a manifest
  * ```typescript
  * import * as ControlTower from "alchemy/AWS/ControlTower";
  *
@@ -110,14 +109,16 @@ export interface LandingZone extends Resource<
  * });
  * ```
  *
- * @section Upgrading
- * @example Upgrade the landing zone version
+ * ### Upgrading
+ * **Example:** Upgrade the landing zone version
  * ```typescript
  * const landingZone = yield* ControlTower.LandingZone("LandingZone", {
  *   version: "3.3", // bump to upgrade in place
  *   manifest,
  * });
  * ```
+ *
+ * @resource
  */
 export const LandingZone = Resource<LandingZone>(
   "AWS.ControlTower.LandingZone",

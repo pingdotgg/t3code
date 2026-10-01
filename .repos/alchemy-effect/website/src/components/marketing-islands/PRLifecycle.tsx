@@ -150,7 +150,7 @@ export default function PRLifecycle() {
             : "DESTROY";
 
   return (
-    <div className="pr-lc">
+    <div className="pr-lc" data-nosnippet="">
       <ol className="pr-lc__timeline" aria-label="PR lifecycle">
         {PHASES.map((p, i) => {
           const activeIdx = PHASES.findIndex((x) => x.id === phase);

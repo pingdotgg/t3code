@@ -70,16 +70,15 @@ export interface Queue extends Resource<
  * create additional queues to isolate workloads or to purchase reserved
  * render capacity.
  *
- * @resource
- * @section Creating a Queue
- * @example On-Demand Queue
+ * ### Creating a Queue
+ * **Example:** On-Demand Queue
  * ```typescript
  * const queue = yield* MediaConvert.Queue("Transcode", {
  *   description: "Marketing video transcodes",
  * });
  * ```
  *
- * @example Paused Queue
+ * **Example:** Paused Queue
  * ```typescript
  * const queue = yield* MediaConvert.Queue("Transcode", {
  *   status: "PAUSED",
@@ -87,8 +86,8 @@ export interface Queue extends Resource<
  * });
  * ```
  *
- * @section Reserved Capacity
- * @example Reserved Queue with a One-Year Commitment
+ * ### Reserved Capacity
+ * **Example:** Reserved Queue with a One-Year Commitment
  * ```typescript
  * const queue = yield* MediaConvert.Queue("Reserved", {
  *   pricingPlan: "RESERVED",
@@ -99,6 +98,8 @@ export interface Queue extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Queue = Resource<Queue>("AWS.MediaConvert.Queue");
 

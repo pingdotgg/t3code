@@ -1,14 +1,15 @@
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
-import { readPythonWorkerBundle } from "@/Cloudflare/Workers/PythonWorkerBundle";
+import { readPythonWorkerBundle } from "@/Cloudflare/Workers/Sources/Python";
 import * as Test from "@/Test/Alchemy";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
+import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as pathe from "pathe";
-import { expectUrlContains } from "../Utils/Http.ts";
+import { expectUrlContains, HttpAssertionFailed } from "../Utils/Http.ts";
 import { waitForWorkerToBeDeleted } from "../Utils/Worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
@@ -43,26 +44,28 @@ describe.concurrent("Cloudflare.Worker with a Python entrypoint", () => {
         // sources are interpreted directly by Pyodide.
         const expected = yield* readPythonWorkerBundle({
           id: "PythonWorker",
+          fqn: "PythonWorker",
           main,
           compatibility: { date: "2026-03-17", flags: ["python_workers"] },
         });
-        expect(expected.files.map((file) => file.path)).toEqual([
-          "worker.py",
-          "util.py",
-        ]);
+        const paths = expected.files.map((file) => file.path);
+        expect(paths.slice(0, 2)).toEqual(["worker.py", "util.py"]);
+        // Current workerd releases externalize the Python Workers SDK, so
+        // Alchemy vendors the managed runtime even without a pyproject.toml.
+        expect(paths).toContain("python_modules/workers/__init__.py");
 
         const worker = yield* stack.deploy(
           Effect.gen(function* () {
             return yield* Cloudflare.Worker("PythonWorker", {
               main,
-              subdomain: { enabled: true },
+              workersDev: true,
               env: { PY_SUFFIX: "42" },
             });
           }),
         );
 
-        // The stored bundle hash equals the hash of the source bytes only
-        // when no bundling/minification ran.
+        // The stored bundle hash covers the source and managed SDK bytes;
+        // Python modules are uploaded directly without JS bundling.
         expect(worker.hash?.bundle).toEqual(expected.hash);
 
         // End-to-end: the response interpolates a constant from the
@@ -93,6 +96,7 @@ describe.concurrent("Cloudflare.Worker with a Python entrypoint", () => {
 
         const bundle = yield* readPythonWorkerBundle({
           id: "PythonDepsWorker",
+          fqn: "PythonDepsWorker",
           main: depsMain,
           compatibility: { date: "2026-03-17", flags: ["python_workers"] },
         });
@@ -111,7 +115,7 @@ describe.concurrent("Cloudflare.Worker with a Python entrypoint", () => {
           Effect.gen(function* () {
             return yield* Cloudflare.Worker("PythonDepsWorker", {
               main: depsMain,
-              subdomain: { enabled: true },
+              workersDev: true,
             });
           }),
         );
@@ -147,7 +151,7 @@ describe.concurrent("Cloudflare.Worker with a Python entrypoint", () => {
           Effect.gen(function* () {
             return yield* Cloudflare.Worker("PythonFastapiWorker", {
               main: fastapiMain,
-              subdomain: { enabled: true },
+              workersDev: true,
               env: { DEPLOYMENT: "alchemy-fastapi-e2e" },
             });
           }),
@@ -165,13 +169,37 @@ describe.concurrent("Cloudflare.Worker with a Python entrypoint", () => {
         yield* expectUrlContains(`${url}/outbound`, '"status":200');
 
         // pydantic: POST body is validated and parsed into the Item model.
+        // The POST rides the same first-deploy propagation as the GETs above
+        // (a cold POP can still 404 briefly), so retry it the same way
+        // instead of asserting a single shot.
         const client = yield* HttpClient.HttpClient;
-        const response = yield* HttpClientRequest.post(`${url}/items`).pipe(
+        const body = (yield* HttpClientRequest.post(`${url}/items`).pipe(
           HttpClientRequest.bodyJsonUnsafe({ name: "widget", quantity: 21 }),
           client.execute,
-        );
-        expect(response.status).toBe(200);
-        const body = (yield* response.json) as { name: string; total: number };
+          Effect.flatMap((response) =>
+            response.status === 200
+              ? response.json
+              : response.text.pipe(
+                  Effect.flatMap((text) =>
+                    Effect.fail(
+                      new HttpAssertionFailed({
+                        url: `${url}/items`,
+                        marker: "200",
+                        status: response.status,
+                        bodyExcerpt: text.slice(0, 240),
+                      }),
+                    ),
+                  ),
+                ),
+          ),
+          Effect.retry({
+            while: (e) => e._tag === "HttpAssertionFailed",
+            schedule: Schedule.max([
+              Schedule.exponential("1 second"),
+              Schedule.recurs(8),
+            ]),
+          }),
+        )) as { name: string; total: number };
         expect(body).toEqual({ name: "widget", total: 42 });
 
         yield* stack.destroy();

@@ -23,9 +23,8 @@ export interface ReEncryptRequest extends Omit<
  *   `kms:ReEncryptTo` on the destination and `kms:ReEncryptFrom` on the
  *   source, and pins `SourceKeyId` in every request.
  *
- * @binding
- * @section Re-Encryption
- * @example Rotate the Encryption Context In Place
+ * ### Re-Encryption
+ * **Example:** Rotate the Encryption Context In Place
  * ```typescript
  * const reEncrypt = yield* AWS.KMS.ReEncrypt(key);
  *
@@ -36,7 +35,7 @@ export interface ReEncryptRequest extends Omit<
  * });
  * ```
  *
- * @example Migrate Ciphertexts to a New Key
+ * **Example:** Migrate Ciphertexts to a New Key
  * ```typescript
  * const reEncrypt = yield* AWS.KMS.ReEncrypt(newKey, oldKey);
  *
@@ -44,6 +43,8 @@ export interface ReEncryptRequest extends Omit<
  *   CiphertextBlob: legacyCiphertext,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ReEncrypt extends Binding.Service<
   ReEncrypt,

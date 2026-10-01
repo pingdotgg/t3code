@@ -37,7 +37,7 @@ import { OpenRouterConfig } from "./OpenRouterConfig.ts"
  * Provides methods for interacting with OpenRouter's Chat Completions API,
  * including both synchronous and streaming message creation.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Service {
@@ -228,6 +228,7 @@ export const make = Effect.fnUntraced(
         Stream.catchTags({
           // TODO: handle SSE retries
           Retry: (error) => Stream.die(error),
+          SseError: (error) => Stream.fail(Errors.mapSseError(error, "createChatCompletionStream")),
           HttpClientError: (error) => Stream.fromEffect(Errors.mapHttpClientError(error, "createChatCompletionStream")),
           SchemaError: (error) => Stream.fail(Errors.mapSchemaError(error, "createChatCompletionStream"))
         })

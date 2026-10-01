@@ -33,6 +33,33 @@ describe("jsdocs", () => {
     }
   })
 
+  it("accepts unstable declarations", () => {
+    const result = parseJSDoc(`/**
+ * Creates an unstable value.
+ *
+ * @unstable
+ * @category constructors
+ * @since 1.0.0
+ */`)
+    assert.strictEqual(result._tag, "Success")
+  })
+
+  it("accepts doctest metadata on TypeScript fences", () => {
+    const result = parseJSDoc(`/**
+ * Creates a value.
+ *
+ * **Example** (Creating a value)
+ *
+ * \`\`\`ts import.meta.vitest name="creates a value"
+ * const value = 1
+ * \`\`\`
+ *
+ * @category constructors
+ * @since 1.0.0
+ */`)
+    assert.strictEqual(result._tag, "Success")
+  })
+
   it("accepts practical When to use forms", () => {
     const result = parseJSDoc(`/**
  * Creates a value.
@@ -73,7 +100,7 @@ describe("jsdocs", () => {
     }
   })
 
-  it("extracts docs with TypeScript", () => {
+  it("refreshes extracted docs after a source change", () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "jsdocs-"))
     fs.mkdirSync(path.join(cwd, "src"), { recursive: true })
     fs.writeFileSync(
@@ -103,12 +130,13 @@ describe("jsdocs", () => {
 export const makeValue = () => 1
 `
     )
-    const model = extractJSDocsSync({
+    const options = {
       cwd,
       tsconfig: "tsconfig.json",
       include: ["src/**/*.ts"],
       output: ".data/jsdocs.json"
-    })
+    }
+    const model = extractJSDocsSync(options)
     assert.strictEqual(model.version, 2)
     assert.strictEqual(model.files.length, 1)
     assert.strictEqual(model.files[0]?.declarations[0]?.name, "makeValue")
@@ -118,6 +146,11 @@ export const makeValue = () => 1
       importDeclaration: "import { Foo } from \"@effect/sample\"",
       usage: "Foo.makeValue"
     })
+
+    const sourcePath = path.join(cwd, "src/Foo.ts")
+    fs.writeFileSync(sourcePath, fs.readFileSync(sourcePath, "utf8").replaceAll("makeValue", "makeUpdatedValue"))
+    const updated = extractJSDocsSync(options)
+    assert.strictEqual(updated.files[0]?.declarations[0]?.name, "makeUpdatedValue")
   })
 
   it("stores a stable input hash for cache checks", () => {

@@ -11,15 +11,16 @@ import type { Cluster } from "./Cluster.ts";
  * resumes and the cluster transitions through `STARTING` back to `ACTIVE`.
  * Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.StartClusterHttp)`.
- * @binding
- * @section Starting and Stopping a Cluster
- * @example Start a Stopped Cluster
+ * ### Starting and Stopping a Cluster
+ * **Example:** Start a Stopped Cluster
  * ```typescript
  * const startCluster = yield* DocDBElastic.StartCluster(cluster);
  *
  * const result = yield* startCluster();
  * // result.cluster.status → "STARTING"
  * ```
+ *
+ * @binding
  */
 export interface StartCluster extends Binding.Service<
   StartCluster,

@@ -52,9 +52,8 @@ export interface Group extends Resource<
  * A group within an Amazon Cognito user pool. Groups organize users, appear
  * in the `cognito:groups` token claim, and can carry an IAM role for
  * identity-pool federation.
- * @resource
- * @section Creating Groups
- * @example Basic Group
+ * ### Creating Groups
+ * **Example:** Basic Group
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  *
@@ -65,7 +64,7 @@ export interface Group extends Resource<
  * });
  * ```
  *
- * @example Group with Role and Precedence
+ * **Example:** Group with Role and Precedence
  * ```typescript
  * const admins = yield* Cognito.Group("Admins", {
  *   userPoolId: pool.userPoolId,
@@ -73,6 +72,8 @@ export interface Group extends Resource<
  *   precedence: 1,
  * });
  * ```
+ *
+ * @resource
  */
 export const Group = Resource<Group>("AWS.Cognito.Group");
 

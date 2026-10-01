@@ -1,0 +1,36 @@
+{
+  "name": "cloudflare-website-solidstart",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "vite start",
+    "preview": "vite preview",
+    "test": "bun test",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@solidjs/meta": "catalog:",
+    "@solidjs/router": "catalog:solid-v1",
+    "@solidjs/start": "catalog:solid-v1",
+    "solid-js": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:",
+    "vite": "catalog:solid-v1",
+    "@solidjs/vite-plugin-nitro-2": "catalog:"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-solidstart"
+  }
+}

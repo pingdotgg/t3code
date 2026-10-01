@@ -80,14 +80,14 @@ describe("environment shell synchronization", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeed(Option.none()),
+        loadShell: () => Effect.succeedNone,
         saveShell: () => Effect.never,
-        loadThread: () => Effect.succeed(Option.none()),
+        loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeed(Option.none()),
+        loadServerConfig: () => Effect.succeedNone,
         saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeed(Option.none()),
+        loadVcsRefs: () => Effect.succeedNone,
         saveVcsRefs: () => Effect.void,
         removeVcsRefs: () => Effect.void,
         clearVcsRefs: () => Effect.void,
@@ -96,7 +96,7 @@ describe("environment shell synchronization", () => {
       // Cold cache with no HTTP snapshot available → falls back to the
       // socket-embedded snapshot.
       const snapshotLoader = ShellSnapshotLoader.of({
-        load: () => Effect.succeed(Option.none()),
+        load: () => Effect.succeedNone,
       });
       const shellState = yield* makeEnvironmentShellState().pipe(
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
@@ -176,14 +176,14 @@ describe("environment shell synchronization", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeed(Option.none()),
+        loadShell: () => Effect.succeedNone,
         saveShell: () => Effect.void,
-        loadThread: () => Effect.succeed(Option.none()),
+        loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeed(Option.none()),
+        loadServerConfig: () => Effect.succeedNone,
         saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeed(Option.none()),
+        loadVcsRefs: () => Effect.succeedNone,
         saveVcsRefs: () => Effect.void,
         removeVcsRefs: () => Effect.void,
         clearVcsRefs: () => Effect.void,
@@ -194,7 +194,7 @@ describe("environment shell synchronization", () => {
         Effect.provideService(Persistence.EnvironmentCacheStore, cache),
         Effect.provideService(
           ShellSnapshotLoader,
-          ShellSnapshotLoader.of({ load: () => Effect.succeed(Option.none()) }),
+          ShellSnapshotLoader.of({ load: () => Effect.succeedNone }),
         ),
       );
       yield* SubscriptionRef.set(supervisorState, {
@@ -284,14 +284,14 @@ describe("environment shell synchronization", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeed(Option.some(cachedSnapshot)),
+        loadShell: () => Effect.succeedSome(cachedSnapshot),
         saveShell: () => Effect.void,
-        loadThread: () => Effect.succeed(Option.none()),
+        loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeed(Option.none()),
+        loadServerConfig: () => Effect.succeedNone,
         saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeed(Option.none()),
+        loadVcsRefs: () => Effect.succeedNone,
         saveVcsRefs: () => Effect.void,
         removeVcsRefs: () => Effect.void,
         clearVcsRefs: () => Effect.void,
@@ -364,14 +364,14 @@ describe("environment shell synchronization", () => {
         retryNow: Effect.void,
       } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const cache = Persistence.EnvironmentCacheStore.of({
-        loadShell: () => Effect.succeed(Option.some(LIVE_SHELL_SNAPSHOT)),
+        loadShell: () => Effect.succeedSome(LIVE_SHELL_SNAPSHOT),
         saveShell: () => Effect.void,
-        loadThread: () => Effect.succeed(Option.none()),
+        loadThread: () => Effect.succeedNone,
         saveThread: () => Effect.void,
         removeThread: () => Effect.void,
-        loadServerConfig: () => Effect.succeed(Option.none()),
+        loadServerConfig: () => Effect.succeedNone,
         saveServerConfig: () => Effect.void,
-        loadVcsRefs: () => Effect.succeed(Option.none()),
+        loadVcsRefs: () => Effect.succeedNone,
         saveVcsRefs: () => Effect.void,
         removeVcsRefs: () => Effect.void,
         clearVcsRefs: () => Effect.void,

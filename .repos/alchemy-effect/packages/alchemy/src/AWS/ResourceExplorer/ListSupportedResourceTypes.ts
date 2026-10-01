@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * operation, so the binding takes no resource argument. Provide the
  * implementation with
  * `Effect.provide(AWS.ResourceExplorer.ListSupportedResourceTypesHttp)`.
- * @binding
- * @section Listing Resources
- * @example Enumerate Searchable Resource Types
+ * ### Listing Resources
+ * **Example:** Enumerate Searchable Resource Types
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listSupportedResourceTypes =
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * const { ResourceTypes } = yield* listSupportedResourceTypes();
  * const s3Types = (ResourceTypes ?? []).filter((t) => t.Service === "s3");
  * ```
+ *
+ * @binding
  */
 export interface ListSupportedResourceTypes extends Binding.Service<
   ListSupportedResourceTypes,

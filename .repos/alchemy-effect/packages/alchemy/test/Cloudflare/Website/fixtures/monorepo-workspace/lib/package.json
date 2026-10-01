@@ -1,0 +1,7 @@
+{
+  "name": "alchemy-monorepo-workspace-lib",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sibling workspace directory imported by app/ across the package boundary. NOT a package-manager workspace member — the app reaches it by relative import, which is exactly the cross-boundary module id the workspace-aware input hash must cover."
+}

@@ -13,9 +13,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  * Control invokes the resource type's create handler with the caller's
  * credentials, pass the handler's underlying permissions via
  * {@link CloudControlBindingOptions.handlerPolicyStatements}.
- * @binding
- * @section Provisioning Resources
- * @example Create an SSM Parameter at runtime
+ * ### Provisioning Resources
+ * **Example:** Create an SSM Parameter at runtime
  * ```typescript
  * // init — account-level; grant the create handler's permissions too
  * const createResource = yield* CloudControl.CreateResource({
@@ -39,6 +38,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  * });
  * // poll created.ProgressEvent.RequestToken until SUCCESS
  * ```
+ *
+ * @binding
  */
 export interface CreateResource extends Binding.Service<
   CreateResource,

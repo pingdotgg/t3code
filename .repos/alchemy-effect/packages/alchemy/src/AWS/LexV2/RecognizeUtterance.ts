@@ -21,9 +21,8 @@ export interface RecognizeUtteranceRequest extends Omit<
  * `messages`/`sessionState`/`interpretations` come back gzip-compressed and
  * base64-encoded, and an `audioStream` reply is available for voice bots.
  *
- * @binding
- * @section Conversing with a Bot
- * @example Send a Text Utterance
+ * ### Conversing with a Bot
+ * **Example:** Send a Text Utterance
  * ```typescript
  * // init
  * const recognizeUtterance = yield* AWS.LexV2.RecognizeUtterance(alias);
@@ -36,6 +35,8 @@ export interface RecognizeUtteranceRequest extends Omit<
  *   inputStream: new TextEncoder().encode("hello"),
  * });
  * ```
+ *
+ * @binding
  */
 export interface RecognizeUtterance extends Binding.Service<
   RecognizeUtterance,

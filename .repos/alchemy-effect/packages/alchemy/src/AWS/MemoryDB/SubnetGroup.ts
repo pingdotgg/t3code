@@ -61,15 +61,16 @@ export interface SubnetGroup extends Resource<
  *
  * Subnet groups are free and provision instantly. A cluster references one by
  * name via `subnetGroupName`.
- * @resource
- * @section Creating a Subnet Group
- * @example Subnet Group Spanning Two Subnets
+ * ### Creating a Subnet Group
+ * **Example:** Subnet Group Spanning Two Subnets
  * ```typescript
  * const subnetGroup = yield* SubnetGroup("CacheSubnets", {
  *   description: "MemoryDB cluster subnets",
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
  * });
  * ```
+ *
+ * @resource
  */
 export const SubnetGroup = Resource<SubnetGroup>("AWS.MemoryDB.SubnetGroup");
 

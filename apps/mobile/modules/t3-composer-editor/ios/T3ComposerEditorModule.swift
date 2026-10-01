@@ -1,15 +1,62 @@
 import ExpoModulesCore
+import UIKit
 
+enum T3ComposerClipboard {
+  static let fragmentType = "app.t3.context-fragment"
+
+  static func write(text: String, fragment: String) {
+    var items: [String: Any] = ["public.utf8-plain-text": text]
+    if let data = fragment.data(using: .utf8),
+       var payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let records = payload["records"] as? [[String: Any]] {
+      var selected = records.filter { record in
+        guard let id = record["contextId"] as? String else { return false }
+        return text.contains("/\(id))")
+      }
+      let screenshots = Set(selected.compactMap { $0["screenshotContextId"] as? String })
+      selected.append(contentsOf: records.filter { screenshots.contains($0["contextId"] as? String ?? "") && !text.contains("/\($0["contextId"] as? String ?? ""))") })
+      payload["records"] = selected
+      if !selected.isEmpty, let encoded = try? JSONSerialization.data(withJSONObject: payload), let raw = String(data: encoded, encoding: .utf8) {
+        let attribute = raw.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+        let escaped = text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        items[fragmentType] = encoded
+        items["public.html"] = Data("<pre data-t3-context-fragment=\"\(attribute)\">\(escaped)</pre>".utf8)
+      }
+    }
+    UIPasteboard.general.items = [items]
+  }
+
+  static func read() -> [String: String] {
+    let board = UIPasteboard.general
+    return [
+      "text": board.string ?? "",
+      "fragment": board.data(forPasteboardType: fragmentType).flatMap { String(data: $0, encoding: .utf8) } ?? "",
+      "html": board.data(forPasteboardType: "public.html").flatMap { String(data: $0, encoding: .utf8) } ?? "",
+    ]
+  }
+}
+
+// Expo Modules 2.0: the clipboard function is a @JS member; the view stays in
+// definition() until the 2.0 view API lands.
+@ExpoModule("T3ComposerEditor")
 public class T3ComposerEditorModule: Module {
-  public func definition() -> ModuleDefinition {
-    Name("T3ComposerEditor")
+  // UIPasteboard is main-thread only, so the member is main-actor isolated.
+  @JS
+  @MainActor
+  func writeContextClipboard(text: String, fragment: String) async {
+    T3ComposerClipboard.write(text: text, fragment: fragment)
+  }
 
+  public func definition() -> ModuleDefinition {
     View(T3ComposerEditorView.self) {
       Prop("controlledDocumentJson") { (view: T3ComposerEditorView, documentJson: String) in
         view.setControlledDocumentJson(documentJson)
       }
       Prop("themeJson") { (view: T3ComposerEditorView, themeJson: String) in
         view.setThemeJson(themeJson)
+      }
+      Prop("clipboardFragment") { (view: T3ComposerEditorView, fragment: String) in
+        view.setClipboardFragment(fragment)
       }
       Prop("placeholder") { (view: T3ComposerEditorView, placeholder: String) in
         view.setPlaceholder(placeholder)
@@ -44,6 +91,15 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("enterBehavior") { (view: T3ComposerEditorView, behavior: String) in
+        view.setEnterBehavior(behavior)
+      }
+      Prop("textPasteThresholdBytes") { (view: T3ComposerEditorView, threshold: Int) in
+        view.setTextPasteThresholdBytes(threshold)
+      }
+      Prop("maxInputChars") { (view: T3ComposerEditorView, maxInputChars: Int) in
+        view.setMaxInputChars(maxInputChars)
+      }
 
       Events(
         "onComposerChange",
@@ -52,6 +108,9 @@ public class T3ComposerEditorModule: Module {
         "onComposerBlur",
         "onComposerSubmit",
         "onComposerPasteImages",
+        "onComposerContextPress",
+        "onComposerPasteContext",
+        "onComposerPasteText",
         "onComposerContentSizeChange"
       )
 

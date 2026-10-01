@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * not support resource-level permissions, so the grant is account-wide.
  * Provide the implementation with
  * `Effect.provide(AWS.DirectoryService.DescribeDirectoriesHttp)`.
- * @binding
- * @section Reading Directories
- * @example Read a Directory's Stage and DNS Servers
+ * ### Reading Directories
+ * **Example:** Read a Directory's Stage and DNS Servers
  * ```typescript
  * // init — request the account-level capability
  * const describeDirectories = yield* AWS.DirectoryService.DescribeDirectories();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * const directory = DirectoryDescriptions?.[0];
  * console.log(directory?.Stage, directory?.DnsIpAddrs);
  * ```
+ *
+ * @binding
  */
 export interface DescribeDirectories extends Binding.Service<
   DescribeDirectories,

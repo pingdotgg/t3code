@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  * Lists the Microsoft Teams teams onboarded to AWS Chatbot in the account —
  * useful for identity/team audit automation. Provide the implementation
  * with `Effect.provide(AWS.Chatbot.ListMicrosoftTeamsConfiguredTeamsHttp)`.
- * @binding
- * @section Microsoft Teams Identity Management
- * @example List configured Microsoft Teams teams
+ * ### Microsoft Teams Identity Management
+ * **Example:** List configured Microsoft Teams teams
  * ```typescript
  * const listMicrosoftTeamsConfiguredTeams =
  *   yield* AWS.Chatbot.ListMicrosoftTeamsConfiguredTeams();
  * const result = yield* listMicrosoftTeamsConfiguredTeams();
  * const teamIds = (result.ConfiguredTeams ?? []).map((t) => t.TeamId);
  * ```
+ *
+ * @binding
  */
 export interface ListMicrosoftTeamsConfiguredTeams extends Binding.Service<
   ListMicrosoftTeamsConfiguredTeams,

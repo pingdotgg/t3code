@@ -42,9 +42,8 @@ export interface OptIn extends Resource<
  * principal on one Data Catalog resource while the account is in hybrid
  * access mode (where IAM/S3 policies otherwise govern access).
  *
- * @resource
- * @section Opting Into Lake Formation Enforcement
- * @example Enforce Lake Formation for a Role on a Database
+ * ### Opting Into Lake Formation Enforcement
+ * **Example:** Enforce Lake Formation for a Role on a Database
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -53,6 +52,8 @@ export interface OptIn extends Resource<
  *   resource: { database: { name: database.databaseName } },
  * });
  * ```
+ *
+ * @resource
  */
 export const OptIn = Resource<OptIn>("AWS.LakeFormation.OptIn");
 

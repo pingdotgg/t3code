@@ -17,9 +17,8 @@ import * as Binding from "../../Binding.ts";
  * policy (even `observabilityadmin:*` on `Resource: "*"`) with a typed
  * `AccessDeniedException`, while principals with managed policies succeed.
  * Handle the typed tag until AWS fixes the action's auth integration.
- * @binding
- * @section Auditing Resource Telemetry
- * @example Find VPCs without flow logs
+ * ### Auditing Resource Telemetry
+ * **Example:** Find VPCs without flow logs
  * ```typescript
  * // init — grants observabilityadmin:ListResourceTelemetry
  * const listResourceTelemetry = yield* AWS.ObservabilityAdmin.ListResourceTelemetry();
@@ -30,6 +29,8 @@ import * as Binding from "../../Binding.ts";
  *   TelemetryConfigurationState: { Logs: "NotEnabled" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListResourceTelemetry extends Binding.Service<
   ListResourceTelemetry,

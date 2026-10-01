@@ -9,7 +9,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "../Config.ts";
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
-import { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
+import type { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
 
 export { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
@@ -53,7 +53,7 @@ export interface ApnsDeliveryResult {
   readonly apnsId: string | null;
 }
 
-export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpRequestError>()(
+export class ApnsHttpRequestError extends Schema.TaggedError<ApnsHttpRequestError>()(
   "ApnsHttpRequestError",
   {
     requestKind: ApnsRequestKindSchema,
@@ -71,12 +71,7 @@ export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpReques
   }
 }
 
-export const ApnsError = Schema.Union([
-  ApnsJwtEncodingError,
-  ApnsJwtSigningError,
-  ApnsHttpRequestError,
-]);
-export type ApnsError = typeof ApnsError.Type;
+export type ApnsError = ApnsJwtEncodingError | ApnsJwtSigningError | ApnsHttpRequestError;
 
 const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -173,6 +168,12 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
   };
 }
 
+function notificationThreadId(notification: ApnsNotificationPayload): string {
+  return notification.threadId.length > 0
+    ? `${notification.environmentId}/${notification.threadId}`
+    : "t3-agent-alerts";
+}
+
 function makePushNotificationRequest(input: {
   readonly token: string;
   readonly notification: ApnsNotificationPayload;
@@ -187,6 +188,9 @@ function makePushNotificationRequest(input: {
           body: input.notification.body,
         },
         sound: "default",
+        // Notification Center stacks alerts by thread so a chatty thread does
+        // not bury the others; a grouped alert for several threads stays alone.
+        "thread-id": notificationThreadId(input.notification),
       },
       environmentId: input.notification.environmentId,
       threadId: input.notification.threadId,

@@ -12,13 +12,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-places:ReverseGeocode`. Requests and responses are raw distilled types
  * (no marshalling).
  *
- * @binding
- * @section Reverse Geocoding
+ * ### Reverse Geocoding
  * Provide the `ReverseGeocodeHttp` implementation layer on the Function effect
  * (`.pipe(Effect.provide(AWS.GeoPlaces.ReverseGeocodeHttp))`), bind in the
  * init phase, then call the client at runtime.
  *
- * @example Reverse geocode a position
+ * **Example:** Reverse geocode a position
  * ```typescript
  * // init
  * const reverseGeocode = yield* AWS.GeoPlaces.ReverseGeocode();
@@ -30,6 +29,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const address = result.ResultItems?.[0]?.Address?.Label;
  * ```
+ *
+ * @binding
  */
 export interface ReverseGeocode extends Binding.Service<
   ReverseGeocode,

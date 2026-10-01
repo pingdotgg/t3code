@@ -187,6 +187,7 @@ describe("ApnsClient", () => {
             body: "Input: Project",
           },
           sound: "default",
+          "thread-id": "env/thread",
         },
         environmentId: "env",
         threadId: "thread",
