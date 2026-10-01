@@ -33,8 +33,83 @@ const workspaceFiles = [
   "scripts/package.json",
 ] as const;
 
+interface WorkspaceManifest {
+  readonly name?: string;
+  readonly dependencies?: Record<string, string>;
+  readonly devDependencies?: Record<string, string>;
+  readonly optionalDependencies?: Record<string, string>;
+  readonly peerDependencies?: Record<string, string>;
+}
+
+function readManifest(relativePath: string): WorkspaceManifest {
+  return JSON.parse(
+    NodeFS.readFileSync(NodePath.resolve(repoRoot, relativePath), "utf8"),
+  ) as WorkspaceManifest;
+}
+
+// Maps each workspace package name to its package.json, following the
+// `packages:` globs in pnpm-workspace.yaml (literal dirs and `dir/*`).
+function workspaceManifestsByName(): Map<string, string> {
+  const workspaceYaml = NodeFS.readFileSync(
+    NodePath.resolve(repoRoot, "pnpm-workspace.yaml"),
+    "utf8",
+  );
+  const globs = [
+    ...(workspaceYaml.match(/^packages:\n((?:\s+-\s.*\n)+)/m)?.[1] ?? "").matchAll(
+      /-\s+["']?([^"'\s]+)/g,
+    ),
+  ].map((match) => match[1]!);
+  const directories = globs.flatMap((glob) => {
+    if (!glob.endsWith("/*")) return [glob];
+    const parent = glob.slice(0, -2);
+    const parentPath = NodePath.resolve(repoRoot, parent);
+    if (!NodeFS.existsSync(parentPath)) return [];
+    return NodeFS.readdirSync(parentPath, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => `${parent}/${entry.name}`);
+  });
+  const byName = new Map<string, string>();
+  for (const directory of directories) {
+    const relativePath = `${directory}/package.json`;
+    if (!NodeFS.existsSync(NodePath.resolve(repoRoot, relativePath))) continue;
+    const name = readManifest(relativePath).name;
+    if (name !== undefined) byName.set(name, relativePath);
+  }
+  return byName;
+}
+
+// The listed manifests plus every workspace package they reach through a
+// `workspace:` dependency, so the fixture resolves without hand-maintaining
+// each new internal package here.
+function workspaceFixtureFiles(): ReadonlyArray<string> {
+  const byName = workspaceManifestsByName();
+  const files = new Set<string>(workspaceFiles);
+  const pending: Array<string> = workspaceFiles.filter((path) => path.endsWith("package.json"));
+  for (let relativePath = pending.pop(); relativePath !== undefined; relativePath = pending.pop()) {
+    const manifest = readManifest(relativePath);
+    for (const dependencies of [
+      manifest.dependencies,
+      manifest.devDependencies,
+      manifest.optionalDependencies,
+      manifest.peerDependencies,
+    ]) {
+      for (const [name, spec] of Object.entries(dependencies ?? {})) {
+        if (!spec.startsWith("workspace:")) continue;
+        const dependencyPath = byName.get(name);
+        if (dependencyPath === undefined) {
+          throw new Error(`${relativePath} depends on ${name}, which is not a workspace package.`);
+        }
+        if (files.has(dependencyPath)) continue;
+        files.add(dependencyPath);
+        pending.push(dependencyPath);
+      }
+    }
+  }
+  return [...files];
+}
+
 function copyWorkspaceManifestFixture(targetRoot: string): void {
-  for (const relativePath of workspaceFiles) {
+  for (const relativePath of workspaceFixtureFiles()) {
     const sourcePath = NodePath.resolve(repoRoot, relativePath);
     const destinationPath = NodePath.resolve(targetRoot, relativePath);
     NodeFS.mkdirSync(NodePath.dirname(destinationPath), { recursive: true });

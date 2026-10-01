@@ -4,6 +4,7 @@ import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
+  PullRequestFileViewed,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
   SourceControlProviderKind,
@@ -23,6 +25,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import { ForgejoCli } from "../sourceControl/ForgejoCli.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import {
@@ -400,6 +403,7 @@ function fakeProvider(
 function makeService(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
+  readonly rateLimits?: SourceControlRateLimit.SourceControlRateLimit["Service"];
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
 }) {
   // Built into the test's own scope rather than provided call by call: the marks store owns a
@@ -421,7 +425,9 @@ function makeService(input: {
           getProjectShellById: (projectId) =>
             Effect.succeed(Option.fromNullishOr(input.projects.find((p) => p.id === projectId))),
         }),
-        SourceControlRateLimit.layer,
+        input.rateLimits
+          ? Layer.succeed(SourceControlRateLimit.SourceControlRateLimit, input.rateLimits)
+          : SourceControlRateLimit.layer,
         // The real store over a database of its own, so the environment-kept marks are exercised
         // through the SQL that holds them rather than through a stand-in that agrees with itself.
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
@@ -3230,6 +3236,57 @@ it.effect("answers a repeated listing from cache, and concurrent readers share o
   }),
 );
 
+it.effect("keeps a shared listing alive when the caller that started it is interrupted", () =>
+  // Version Control's capability probe lists through this cache. React's
+  // effect replay aborts the first probe while its host read is running; the
+  // replayed probe arrives while that read unwinds and must get the listing,
+  // not the interrupt.
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const readInterrupted = yield* Deferred.make<void>();
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          listChangeRequests: () =>
+            // A real CLI takes time to die, so its interruption only
+            // completes once `release` fires.
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.onInterrupt(() =>
+                Deferred.succeed(readInterrupted, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                ),
+              ),
+              Effect.as({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+            ),
+        }),
+      ],
+    });
+
+    const first = yield* Effect.forkChild(service.list({ state: "open", limit: 1 }));
+    yield* Deferred.await(started);
+    const interrupting = yield* Effect.forkChild(Fiber.interrupt(first));
+    // Either the read is being torn down, or the first caller left without
+    // touching it; both are the moment the second caller arrives.
+    yield* Effect.raceFirst(Deferred.await(readInterrupted), Fiber.await(first));
+    const second = yield* Effect.forkChild(service.list({ state: "open", limit: 1 }), {
+      startImmediately: true,
+    });
+    yield* Deferred.succeed(release, undefined);
+
+    const secondExit = yield* Fiber.await(second);
+    yield* Fiber.join(interrupting);
+    assert.isTrue(Exit.isSuccess(secondExit), String(secondExit));
+    assert.strictEqual(Exit.isSuccess(secondExit) ? secondExit.value.entries.length : null, 1);
+  }),
+);
+
 it.effect("shares one cold viewer lookup across distinct concurrent lists", () =>
   Effect.gen(function* () {
     let viewerCalls = 0;
@@ -5400,11 +5457,404 @@ it.effect("names the signed-in account in the detail, and says nothing where the
   }),
 );
 
+const hostViewedPaths = [
+  "café-日本語.txt",
+  "cafe\u0301-日本語.txt",
+  "with spaces.txt",
+  'quote"and\\backslash.txt',
+  "b/nested.txt",
+];
+
+const hostViewedService = (
+  states: Map<string, PullRequestFileViewed["state"]>,
+  write: NonNullable<PullRequestProviderApi["setFilesViewed"]>,
+) =>
+  makeService({
+    projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+    providers: [
+      fakeProvider("github", {
+        capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+        getFilesViewed: () =>
+          Effect.sync(() => ({
+            files: [...states].map(([path, state]) => ({ path, state })),
+            truncated: false,
+          })),
+        setFilesViewed: write,
+      }),
+    ],
+  });
+
+const hostViewedRef = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+
+for (const path of hostViewedPaths) {
+  for (const viewed of [true, false]) {
+    it.effect(`host viewed writes reject a silent no-op: ${path}, viewed=${viewed}`, () =>
+      Effect.gen(function* () {
+        const states = new Map<string, PullRequestFileViewed["state"]>([
+          [path, viewed ? "unviewed" : "viewed"],
+        ]);
+        // GitHub returned { data: { f0: { clientMutationId: null } } }, exit 0,
+        // for the exact NFC path, but the next files read still said UNVIEWED.
+        const service = yield* hostViewedService(states, () => Effect.void);
+        const error = yield* Effect.flip(
+          service.setFilesViewed({ ...hostViewedRef, files: [{ path, viewed }] }),
+        );
+        assert.instanceOf(error, PullRequestOperationError);
+        if (error._tag !== "PullRequestOperationError") return;
+        assert.strictEqual(error.operation, "setFilesViewed");
+        assert.include(error.detail, "confirm");
+      }),
+    );
+  }
+}
+
+it.effect("host viewed writes preserve distinct provider paths and verify the last press", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>(
+      hostViewedPaths.map((path) => [path, "unviewed"]),
+    );
+    const written: unknown[] = [];
+    const service = yield* hostViewedService(states, (input) =>
+      Effect.sync(() => {
+        written.push(input.files);
+        for (const file of input.files) states.set(file.path, file.viewed ? "viewed" : "unviewed");
+      }),
+    );
+    const files = [
+      ...hostViewedPaths.map((path) => ({ path, viewed: true })),
+      { path: hostViewedPaths[0]!, viewed: false },
+    ];
+    yield* service.setFilesViewed({ ...hostViewedRef, files });
+    assert.deepStrictEqual(written, [files]);
+    assert.strictEqual(states.get("café-日本語.txt"), "unviewed");
+    assert.strictEqual(states.get("cafe\u0301-日本語.txt"), "viewed");
+  }),
+);
+
+it.effect(
+  "host viewed writes preserve wrong candidates and reject their completed missing readback",
+  () =>
+    Effect.gen(function* () {
+      const path = "café-日本語.txt";
+      const states = new Map<string, PullRequestFileViewed["state"]>([[path, "unviewed"]]);
+      const writes: string[] = [];
+      const service = yield* hostViewedService(states, (input) =>
+        Effect.sync(() => {
+          writes.push(input.files[0]!.path);
+        }),
+      );
+      for (const candidate of [
+        "cafe\u0301-日本語.txt",
+        `"${path}"`,
+        encodeURIComponent(path),
+        `./${path}`,
+        `${path} `,
+      ]) {
+        const error = yield* Effect.flip(
+          service.setFilesViewed({ ...hostViewedRef, files: [{ path: candidate, viewed: true }] }),
+        );
+        assert.instanceOf(error, PullRequestOperationError);
+      }
+      assert.deepStrictEqual(writes, [
+        "cafe\u0301-日本語.txt",
+        `"${path}"`,
+        encodeURIComponent(path),
+        `./${path}`,
+        `${path} `,
+      ]);
+    }),
+);
+
+it.effect("host viewed failures invalidate held state after a partially applied batch", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["b/nested.txt", "unviewed"],
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const service = yield* hostViewedService(states, () =>
+      Effect.sync(() => {
+        states.set("b/nested.txt", "viewed");
+      }),
+    );
+    yield* service.filesViewed(hostViewedRef);
+    yield* Effect.flip(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [...states.keys()].map((path) => ({ path, viewed: true })),
+      }),
+    );
+    assert.deepStrictEqual((yield* service.filesViewed(hostViewedRef)).files, [
+      { path: "b/nested.txt", state: "viewed" },
+      { path: "café-日本語.txt", state: "unviewed" },
+    ]);
+  }),
+);
+
+it.effect("host viewed writes serialize a later untick until the tick is confirmed", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const writes: boolean[] = [];
+    const service = yield* hostViewedService(states, (input) =>
+      Effect.gen(function* () {
+        const viewed = input.files[0]!.viewed;
+        writes.push(viewed);
+        states.set("café-日本語.txt", viewed ? "viewed" : "unviewed");
+        if (viewed) {
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+        }
+      }),
+    );
+    const tick = yield* Effect.forkChild(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: true }],
+      }),
+    );
+    yield* Deferred.await(started);
+    const untick = yield* Effect.forkChild(
+      service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: false }],
+      }),
+    );
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(tick);
+    yield* Fiber.join(untick);
+    assert.deepStrictEqual(writes, [true, false]);
+    assert.strictEqual(states.get("café-日本語.txt"), "unviewed");
+  }),
+);
+
+it.effect("host viewed writes remain tickable beyond the 500-file read bound", () =>
+  Effect.gen(function* () {
+    const path = "src/file501.ts";
+    let written = false;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+          getFilesViewed: () =>
+            Effect.succeed({
+              files: Array.from({ length: 500 }, (_, i) => ({
+                path: `src/file${i + 1}.ts`,
+                state: "unviewed" as const,
+              })),
+              truncated: true,
+            }),
+          setFilesViewed: (input) =>
+            Effect.sync(() => {
+              assert.deepStrictEqual(input.files, [{ path, viewed: true }]);
+              written = true;
+            }),
+        }),
+      ],
+    });
+    yield* service.setFilesViewed({ ...hostViewedRef, files: [{ path, viewed: true }] });
+    assert.isTrue(written);
+  }),
+);
+
+it.effect("host viewed writes accept a stored mark dismissed by a push before confirmation", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, PullRequestFileViewed["state"]>([
+      ["café-日本語.txt", "unviewed"],
+    ]);
+    const service = yield* hostViewedService(states, () =>
+      Effect.sync(() => {
+        states.set("café-日本語.txt", "dismissed");
+      }),
+    );
+    yield* service.setFilesViewed({
+      ...hostViewedRef,
+      files: [{ path: "café-日本語.txt", viewed: true }],
+    });
+    assert.deepStrictEqual((yield* service.filesViewed(hostViewedRef)).files, [
+      { path: "café-日本語.txt", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect(
+  "host viewed confirmation uses interactive priority while background reads stay paused",
+  () =>
+    Effect.gen(function* () {
+      const rateLimits = yield* SourceControlRateLimit.make;
+      const key = { provider: "github" as const, host: "github.com" };
+      yield* rateLimits.recordRateLimit({ ...key, lease: yield* rateLimits.check(key) });
+      let written = false;
+      let reads = 0;
+      const service = yield* makeService({
+        rateLimits,
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+            getFilesViewed: () =>
+              Effect.gen(function* () {
+                reads++;
+                assert.isTrue(yield* AllowGitHubReserve);
+                assert.isTrue(written);
+                return {
+                  files: [{ path: "café-日本語.txt", state: "viewed" as const }],
+                  truncated: false,
+                };
+              }),
+            setFilesViewed: () =>
+              Effect.sync(() => {
+                written = true;
+              }),
+          }),
+        ],
+      });
+      const refused = yield* Effect.flip(service.filesViewed(hostViewedRef));
+      assert.strictEqual(refused._tag, "PullRequestOperationError");
+      yield* service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: true }],
+      });
+      assert.isTrue(written);
+      assert.strictEqual(reads, 1);
+      assert.deepStrictEqual((yield* service.filesViewed(hostViewedRef)).files, [
+        { path: "café-日本語.txt", state: "viewed" },
+      ]);
+      assert.strictEqual(reads, 1);
+    }),
+);
+
+for (const reason of ["rate-limited", "failed"] as const) {
+  it.effect(`host viewed confirmation failure stays unverified-success: ${reason}`, () =>
+    Effect.gen(function* () {
+      let written = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+            getFilesViewed: () =>
+              Effect.fail(
+                new PullRequestProviderError({
+                  provider: "github",
+                  operation: "getFilesViewed",
+                  reason,
+                  detail: "Confirmation unavailable",
+                }),
+              ),
+            setFilesViewed: () =>
+              Effect.sync(() => {
+                written = true;
+              }),
+          }),
+        ],
+      });
+      yield* service.setFilesViewed({
+        ...hostViewedRef,
+        files: [{ path: "café-日本語.txt", viewed: true }],
+      });
+      assert.isTrue(written);
+      const refresh = yield* Effect.flip(service.filesViewed(hostViewedRef));
+      assert.strictEqual(refresh._tag, "PullRequestOperationError");
+    }),
+  );
+}
+
+it.effect("host viewed writes succeed without a confirmation API", () =>
+  Effect.gen(function* () {
+    let writes = 0;
+    const provider = fakeProvider("github", {
+      capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+      setFilesViewed: () =>
+        Effect.sync(() => {
+          writes++;
+        }),
+    });
+    const { getFilesViewed: _read, ...withoutRead } = provider;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [withoutRead],
+    });
+    yield* service.setFilesViewed({
+      ...hostViewedRef,
+      files: [{ path: "café-日本語.txt", viewed: true }],
+    });
+    assert.strictEqual(writes, 1);
+  }),
+);
+
+it.effect(
+  "host viewed confirmation seeds the routed credential cache and keeps other credentials separate",
+  () =>
+    Effect.gen(function* () {
+      let credential = "first";
+      let reads = 0;
+      let marked = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+            withVerifiedCredential: (_, use) =>
+              Effect.suspend(() =>
+                use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
+              ),
+            getFilesViewed: () =>
+              Effect.sync(() => {
+                reads++;
+                return {
+                  files: [
+                    {
+                      path: "café-日本語.txt",
+                      state:
+                        marked && credential === "first"
+                          ? ("viewed" as const)
+                          : ("unviewed" as const),
+                    },
+                  ],
+                  truncated: false,
+                };
+              }),
+            setFilesViewed: () =>
+              Effect.sync(() => {
+                marked = true;
+              }),
+          }),
+        ],
+      });
+      const ref = { ...hostViewedRef, host: "github.com", expectedAccountId: "101" };
+      yield* service.withRoutingCredential(
+        ref,
+        service.setFilesViewed({ ...ref, files: [{ path: "café-日本語.txt", viewed: true }] }),
+      );
+      assert.deepStrictEqual(
+        (yield* service.withRoutingCredential(ref, service.filesViewed(ref))).files,
+        [{ path: "café-日本語.txt", state: "viewed" }],
+      );
+      assert.strictEqual(reads, 1);
+      credential = "second";
+      assert.deepStrictEqual(
+        (yield* service.withRoutingCredential(ref, service.filesViewed(ref))).files,
+        [{ path: "café-日本語.txt", state: "unviewed" }],
+      );
+      assert.strictEqual(reads, 2);
+    }),
+);
+
 it.effect("keeps the diff cached across a file being ticked off", () =>
   Effect.gen(function* () {
     let diffReads = 0;
     let viewedReads = 0;
-    let state: "viewed" | "dismissed" = "viewed";
+    let state: "viewed" | "unviewed" | "dismissed" = "viewed";
     const service = yield* makeService({
       projects: [
         project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
@@ -5433,7 +5883,10 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
               truncated: false,
             });
           },
-          setFilesViewed: () => Effect.void,
+          setFilesViewed: (input) =>
+            Effect.sync(() => {
+              state = input.files[0]!.viewed ? "viewed" : "unviewed";
+            }),
         }),
       ],
     });
@@ -5495,6 +5948,77 @@ it.effect("returns large diff slices intact without retaining them in either cac
       });
       assert.strictEqual(reads, before + 2);
     }
+  }),
+);
+
+it.effect("delivers UTF-8 PR paths without changing quoted names or patch contents", () =>
+  Effect.gen(function* () {
+    const names = [
+      "café-日本語.txt",
+      "with spaces.txt",
+      'quote"and\\backslash.txt',
+      "b/nested.txt",
+    ];
+    const written = [
+      '"caf\\303\\251-\\346\\227\\245\\346\\234\\254\\350\\252\\236.txt"',
+      "with spaces.txt",
+      '"quote\\"and\\\\backslash.txt"',
+      "b/nested.txt",
+    ];
+    const section = (path: string) => {
+      const side = (prefix: string) =>
+        path.startsWith('"') ? `"${prefix}/${path.slice(1)}` : `${prefix}/${path}`;
+      return [
+        `diff --git ${side("a")} ${side("b")}`,
+        `--- ${side("a")}`,
+        `+++ ${side("b")}`,
+        "@@ -1 +1 @@",
+        '-literal "caf\\303\\251.txt"',
+        '+literal "caf\\303\\251.txt"',
+        "",
+      ].join("\n");
+    };
+    const inputPatch = written.map(section).join("");
+    const expectedPatch = [names[0]!, ...written.slice(1)].map(section).join("");
+    const writes: unknown[] = [];
+    const viewed = new Map<string, PullRequestFileViewed["state"]>(
+      names.map((path) => [path, "unviewed"]),
+    );
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () => Effect.succeed({ patch: inputPatch, truncated: false, nextCursor: "2" }),
+          capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+          getFilesViewed: () =>
+            Effect.sync(() => ({
+              files: [...viewed].map(([path, state]) => ({ path, state })),
+              truncated: false,
+            })),
+          setFilesViewed: (input) =>
+            Effect.sync(() => {
+              writes.push(input.files);
+              for (const file of input.files)
+                viewed.set(file.path, file.viewed ? "viewed" : "unviewed");
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    for (const scope of [
+      reference,
+      { ...reference, cursor: "2" },
+      { ...reference, commit: "a".repeat(40) },
+    ]) {
+      assert.deepStrictEqual(yield* service.diff(scope), {
+        patch: expectedPatch,
+        truncated: false,
+        nextCursor: "2",
+      });
+    }
+    const files = names.map((path) => ({ path, viewed: true }));
+    yield* service.setFilesViewed({ ...reference, files });
+    assert.deepStrictEqual(writes, [files]);
   }),
 );
 

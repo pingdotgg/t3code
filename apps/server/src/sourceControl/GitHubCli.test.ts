@@ -516,6 +516,39 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("reads repository clone URLs from the named host", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              nameWithOwner: "team/repo",
+              url: "https://forge.example:8443/team/repo",
+              sshUrl: "git@forge.example:team/repo.git",
+            }),
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.getRepositoryCloneUrls({
+        cwd: "/repo",
+        host: "forge.example:8443",
+        repository: "team/repo",
+      });
+
+      expect(mockRun.mock.calls.at(-1)?.[0].args).toEqual([
+        "repo",
+        "view",
+        "--json",
+        "nameWithOwner,url,sshUrl",
+        "--",
+        "forge.example:8443/team/repo",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("creates repositories and parses clone URLs from create output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

@@ -96,6 +96,14 @@ export class ExtensionOperationError extends Schema.TaggedError<ExtensionOperati
   }
 }
 
+/** V1 workspace identity shared by view opening, explicit context capture and server authorization. */
+export function extensionWorkspaceRevision(
+  projectWorkspaceRoot: string,
+  threadWorktreePath: string | null,
+): string {
+  return JSON.stringify([projectWorkspaceRoot, threadWorktreePath]);
+}
+
 export const ExtensionApiInvocation = Schema.Struct({
   id: Identity,
   versionRange: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

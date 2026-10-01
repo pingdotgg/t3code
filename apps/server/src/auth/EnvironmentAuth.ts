@@ -13,6 +13,7 @@ import {
   type AuthPairingCredentialResult,
   type AuthSessionId,
   type AuthSessionState,
+  type ServerAuthBootstrapMethod,
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
@@ -69,7 +70,19 @@ export interface AuthenticatedSession {
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
+  /**
+   * Bootstrap grant this session was exchanged from, from the session row.
+   * Authority that must come from the desktop's own launch channel keys on
+   * `"desktop-bootstrap"` here, never on the (CLI-choosable) subject.
+   */
+  readonly grantMethod?: ServerAuthBootstrapMethod;
   readonly expiresAt?: DateTime.DateTime;
+  /**
+   * Deadline of the presented credential (e.g. a five-minute `wsTicket`),
+   * capped by the underlying session. Absent only when the credential
+   * carries no expiry of its own.
+   */
+  readonly credentialExpiresAt?: DateTime.DateTime;
 }
 
 const serverAuthInternalErrorContext = {
@@ -630,7 +643,11 @@ export const make = Effect.gen(function* () {
         method: session.method,
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
+        ...(session.grantMethod ? { grantMethod: session.grantMethod } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+        ...(session.credentialExpiresAt
+          ? { credentialExpiresAt: session.credentialExpiresAt }
+          : {}),
       })),
       mapSessionVerificationErrors,
     );
@@ -743,6 +760,7 @@ export const make = Effect.gen(function* () {
         sessions
           .issue({
             method: "browser-session-cookie",
+            grantMethod: grant.method,
             subject: grant.subject,
             scopes: grant.scopes,
             client: {
@@ -813,6 +831,7 @@ export const make = Effect.gen(function* () {
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                ...(grant.method === "reusable-dev-token" ? {} : { grantMethod: grant.method }),
                 subject: grant.subject,
                 scopes: grantedScopes,
                 ...(input?.proofKeyThumbprint
@@ -1084,7 +1103,11 @@ export const make = Effect.gen(function* () {
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
+              ...(session.grantMethod ? { grantMethod: session.grantMethod } : {}),
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+              ...(session.credentialExpiresAt
+                ? { credentialExpiresAt: session.credentialExpiresAt }
+                : {}),
             })),
             mapSessionVerificationErrors,
           );

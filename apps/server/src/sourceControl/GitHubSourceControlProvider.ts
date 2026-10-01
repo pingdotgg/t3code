@@ -113,6 +113,10 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
+  parseRepositoryHosts: (input) =>
+    parseGitHubAuthStatus(input.stdout)
+      .accounts.filter((account) => account.authenticated)
+      .map((account) => account.host),
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;

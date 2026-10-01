@@ -536,12 +536,8 @@ export const make = Effect.gen(function* () {
       }
       remote = remoteUrl ? parseForgejoRemote(remoteUrl) : null;
     }
-    if (
-      input.host &&
-      !remote?.ssh &&
-      remote?.host !== input.host.toLowerCase() &&
-      remote?.hostname !== input.host.toLowerCase()
-    )
+    // `host` carries its port, so a remote on the same hostname but another port is another server.
+    if (input.host && !remote?.ssh && remote?.host !== input.host.toLowerCase())
       remote = {
         host: input.host.toLowerCase(),
         hostname: input.host.split(":")[0] ?? input.host,
@@ -634,7 +630,8 @@ export const make = Effect.gen(function* () {
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
     const repository = yield* resolveTarget(
       input,
-      input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
+      ["user", "user/repos"].includes(input.path.replace(/^\/+/, "").split("?")[0] ?? "") &&
+        (!input.method || input.method === "GET"),
     );
     const stdin =
       input.body === undefined

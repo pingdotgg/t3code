@@ -17,6 +17,11 @@ import {
 } from "./baseSchemas.ts";
 import { PreviewTabId } from "./preview.ts";
 
+/** The authenticated server-side proxy route root; the hub lives behind it. */
+export const BROWSER_FRAMES_ROUTE_PREFIX = "/api/browser-frames";
+
+export const BROWSER_FRAME_TICKET_TTL_MS = 5 * 60 * 1000;
+
 /**
  * Full fencing identity for a browser session: the runtime tab id the engine
  * host knows is the JSON serialization of this tuple. `serverEpoch` and

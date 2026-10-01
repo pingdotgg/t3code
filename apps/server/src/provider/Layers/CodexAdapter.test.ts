@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
+  EnvironmentId,
   CodexSettings,
   EventId,
   ProviderDriverKind,
@@ -35,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
+import { setMcpProviderSession, clearMcpProviderSession } from "../../mcp/McpProviderSession.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
@@ -296,6 +298,33 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+  it.effect("extensions-only MCP attaches without advertising browser tools", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("extensions-only-adapter");
+      yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+      setMcpProviderSession({
+        threadId,
+        environmentId: EnvironmentId.make("fixture"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "fixture-session",
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer fixture-only",
+        capabilities: new Set(["pull-requests", "extensions"]),
+      });
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const options = validationRuntimeFactory.factory.mock.calls[0]?.[0];
+      NodeAssert.equal(options?.mcpCapabilities?.has("preview"), false);
+      NodeAssert.ok(
+        options?.appServerArgs?.some((argument) => argument.includes("mcp_servers.t3-code.url")),
+      );
     }),
   );
 });

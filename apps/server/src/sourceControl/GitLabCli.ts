@@ -9,6 +9,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -79,10 +81,19 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
   {
     ...gitLabCliExecutionErrorContext,
     reference: Schema.String,
+    host: Schema.optional(Schema.String),
+    loginHint: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
-    return `Merge request ${this.reference} was not found. Check the MR number or URL and try again.`;
+    const url = URL.canParse(this.reference) ? new URL(this.reference) : undefined;
+    const number =
+      url?.pathname.match(/\/-\/merge_requests\/(\d+)\/?$/u)?.[1] ??
+      this.reference.match(/^!?(\d+)$/u)?.[1];
+    const missing = `Merge request ${number ? `!${number}` : this.reference} was not found or is inaccessible on ${this.host ?? url?.host ?? "GitLab"}.`;
+    return this.loginHint
+      ? `${this.loginHint.trim()} ${missing}`
+      : `${missing} Check the MR number or URL and try again.`;
   }
 
   override get message(): string {
@@ -208,6 +219,19 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   }
 }
 
+export class GitLabRepositoryLookupError extends Schema.TaggedError<GitLabRepositoryLookupError>()(
+  "GitLabRepositoryLookupError",
+  {
+    ...gitLabCliDecodeErrorContext,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespaceDecodeError>()(
   "GitLabNamespaceDecodeError",
   {
@@ -234,6 +258,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestListDecodeError,
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
+  GitLabRepositoryLookupError,
   GitLabNamespaceDecodeError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
@@ -283,10 +308,13 @@ export class GitLabCli extends Context.Service<
     readonly getMergeRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
     }) => Effect.Effect<GitLabMergeRequestSummary, GitLabCliError>;
 
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly host?: string;
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
@@ -415,6 +443,7 @@ export const make = Effect.gen(function* () {
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
+    env?: NodeJS.ProcessEnv,
   ) =>
     process
       .run({
@@ -423,17 +452,24 @@ export const make = Effect.gen(function* () {
         args: input.args,
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        ...(env === undefined ? {} : { env }),
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })
       .pipe(Effect.mapError(mapError));
 
-  const execute: GitLabCli["Service"]["execute"] = (input) =>
-    run(input, (error) =>
-      GitLabCliCommandError.fromVcsError(
-        { operation: "execute", command: "glab", cwd: input.cwd },
-        error,
-      ),
+  const execute = (
+    input: Parameters<GitLabCli["Service"]["execute"]>[0],
+    env?: NodeJS.ProcessEnv,
+  ) =>
+    run(
+      input,
+      (error) =>
+        GitLabCliCommandError.fromVcsError(
+          { operation: "execute", command: "glab", cwd: input.cwd },
+          error,
+        ),
+      env,
     );
 
   const executeMergeRequest = (input: {
@@ -452,6 +488,35 @@ export const make = Effect.gen(function* () {
         error,
       ),
     );
+
+  const missingLoginHint = Effect.fn("GitLabCli.missingLoginHint")(function* (
+    cwd: string,
+    host: string,
+    requestedApiHost: string,
+  ) {
+    if (host.length === 0) return "";
+    // glab consults USER before stored login metadata; suppress that OS-user override.
+    const user = yield* execute(
+      { cwd, args: ["config", "get", "user", "--host", host], maxOutputBytes: 8_000 },
+      { USER: "" },
+    ).pipe(
+      Effect.map((output) => output.stdout.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (user.length > 0) return "";
+    const apiHost =
+      requestedApiHost === host
+        ? yield* execute({
+            cwd,
+            args: ["config", "get", "api_host", "--host", host],
+            maxOutputBytes: 8_000,
+          }).pipe(
+            Effect.map((output) => output.stdout.trim() || host),
+            Effect.orElseSucceed(() => host),
+          )
+        : requestedApiHost;
+    return ` If private, run \`glab auth login --hostname ${host}${apiHost === host ? "" : ` --api-host ${apiHost}`}\` and retry.`;
+  });
 
   return GitLabCli.of({
     execute,
@@ -498,6 +563,30 @@ export const make = Effect.gen(function* () {
         reference: input.reference,
         args: ["mr", "view", input.reference, "--output", "json"],
       }).pipe(
+        Effect.catchTag("GitLabMergeRequestNotFoundError", (error) =>
+          Effect.gen(function* () {
+            const baseUrl = input.context?.provider.baseUrl;
+            const url = URL.canParse(input.reference)
+              ? new URL(input.reference)
+              : baseUrl && URL.canParse(baseUrl)
+                ? new URL(baseUrl)
+                : undefined;
+            const loginHint = yield* missingLoginHint(
+              input.cwd,
+              url?.hostname ?? "",
+              url?.host ?? "",
+            );
+            return yield* new GitLabMergeRequestNotFoundError({
+              operation: error.operation,
+              command: error.command,
+              cwd: error.cwd,
+              reference: error.reference,
+              ...(url ? { host: url.host } : {}),
+              cause: error.cause,
+              loginHint,
+            });
+          }),
+        ),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           Effect.sync(() => decodeGitLabMergeRequestJson(raw)).pipe(
@@ -520,27 +609,90 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getRepositoryCloneUrls: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          decodeGitLabRepositoryCloneUrls(raw).pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitLabRepositoryDecodeError({
-                  operation: "getRepositoryCloneUrls",
-                  command: "glab",
-                  cwd: input.cwd,
-                  repository: input.repository,
-                  cause,
-                }),
+      Effect.gen(function* () {
+        const requestedHost = input.host?.trim().toLowerCase() ?? "";
+        const targetUrl = URL.canParse(`https://${requestedHost}`)
+          ? new URL(`https://${requestedHost}`)
+          : undefined;
+        let host = targetUrl?.hostname ?? requestedHost;
+        // glab keys remote/login profiles by hostname; API ports belong in api_host.
+        // Preserve a split SSH/API profile only when its endpoint matches the target.
+        if (host.length > 0) {
+          const baseUrl = input.context?.provider.baseUrl;
+          const profile = baseUrl && URL.canParse(baseUrl) ? new URL(baseUrl).hostname : undefined;
+          if (profile && profile !== host) {
+            const apiHost = yield* execute({
+              cwd: input.cwd,
+              args: ["config", "get", "api_host", "--host", profile],
+              maxOutputBytes: 8_000,
+            });
+            if (apiHost.stdout.trim().toLowerCase() === requestedHost) {
+              host = profile;
+            }
+          }
+        }
+        const result = yield* execute(
+          {
+            cwd: input.cwd,
+            // glab ignores GITLAB_HOST=gitlab.com when filtering known remotes.
+            args: [
+              "api",
+              `projects/${encodeURIComponent(input.repository)}`,
+              ...(host === "gitlab.com" ? ["--hostname", host] : []),
+            ],
+          },
+          host.length > 0 ? { GITLAB_HOST: host } : undefined,
+        ).pipe(
+          Effect.catchTag("GitLabCliCommandError", (error) =>
+            Effect.gen(function* () {
+              const cause = error.cause;
+              if (!isVcsProcessExitError(cause) || cause.failureKind !== "not-found") {
+                return yield* error;
+              }
+              const loginHint = yield* missingLoginHint(input.cwd, host, requestedHost);
+              return yield* new GitLabRepositoryLookupError({
+                operation: "getRepositoryCloneUrls",
+                command: "glab",
+                cwd: input.cwd,
+                detail: "Repository not found or inaccessible on GitLab." + loginHint,
+                cause,
+              });
+            }),
+          ),
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            decodeGitLabRepositoryCloneUrls(raw).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitLabRepositoryDecodeError({
+                    operation: "getRepositoryCloneUrls",
+                    command: "glab",
+                    cwd: input.cwd,
+                    repository: input.repository,
+                    cause,
+                  }),
+              ),
             ),
           ),
-        ),
-        Effect.map(normalizeRepositoryCloneUrls),
-      ),
+          Effect.map(normalizeRepositoryCloneUrls),
+        );
+        if (
+          requestedHost.length > 0 &&
+          (!URL.canParse(result.url) ||
+            new URL(result.url)[targetUrl?.port ? "host" : "hostname"].toLowerCase() !==
+              (targetUrl?.host ?? requestedHost))
+        ) {
+          return yield* new GitLabRepositoryLookupError({
+            operation: "getRepositoryCloneUrls",
+            command: "glab",
+            cwd: input.cwd,
+            detail:
+              "GitLab returned a repository on a different host. Check the glab host profile and retry.",
+            cause: undefined,
+          });
+        }
+        return result;
+      }),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath

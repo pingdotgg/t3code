@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
@@ -49,6 +50,39 @@ export const discovery = {
   // as missing on machines where it is installed. `gh` and `glab` answer in ~0.3s.
   probeTimeoutMs: 20_000,
   parseAuth: parseAzureAuth,
+  repositoryHosts: Effect.fn("AzureDevOpsSourceControlProvider.repositoryHosts")(function* (
+    cwd: string,
+    process: VcsProcess.VcsProcess["Service"],
+  ) {
+    const auth = yield* process
+      .run({
+        operation: "source-control.repository-hosts",
+        command: "az",
+        args: ["account", "show", "--query", "user.name", "-o", "tsv"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 20_000,
+        maxOutputBytes: 8_000,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (!auth || parseAzureAuth(auth).status !== "authenticated") return [];
+    const defaults = yield* process
+      .run({
+        operation: "source-control.repository-hosts",
+        command: "az",
+        args: ["devops", "configure", "--list"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 20_000,
+        maxOutputBytes: 8_000,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    const organization =
+      defaults?.exitCode === 0
+        ? /^\s*organization\s*=\s*(https?:\/\/\S+)\s*$/im.exec(defaults.stdout)?.[1]
+        : undefined;
+    return organization ? ["dev.azure.com", organization] : ["dev.azure.com"];
+  }),
   installHint:
     "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlCliDiscoverySpec;

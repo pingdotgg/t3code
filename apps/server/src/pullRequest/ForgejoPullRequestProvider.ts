@@ -1,9 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import type {
+  PullRequestCapabilities,
+  PullRequestReviewerCandidate,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
+import { ForgejoCli, ForgejoCliError, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
 import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
 import {
   PullRequestProviderError,
@@ -15,6 +19,7 @@ import {
   ForgejoPullRequest,
   ForgejoRepository,
   ForgejoUser,
+  ForgejoTeam,
   ForgejoComment,
   ForgejoReview,
   ForgejoReviewComment,
@@ -25,6 +30,7 @@ import {
   FORGEJO_REACTIONS,
   forgejoChangeRequest,
   forgejoActor,
+  forgejoTeamActor,
   forgejoComment,
   forgejoReview,
   forgejoReviewThread,
@@ -62,6 +68,7 @@ const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =
 // Review IDs differ from the issue-comment IDs used by Forgejo's reactions API.
 const reviewCommentId = (review: typeof ForgejoReview.Type) =>
   /#issuecomment-([1-9]\d*)$/.exec(review.html_url ?? "")?.[1];
+const isForgejoCliError = Schema.is(ForgejoCliError);
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli;
@@ -251,10 +258,13 @@ export const make = Effect.gen(function* () {
         ...forgejoChangeRequest(pr),
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
-        reviewers: (pr.requested_reviewers ?? []).flatMap((user) => {
-          const actor = forgejoActor(user);
-          return actor ? [actor] : [];
-        }),
+        reviewers: [
+          ...(pr.requested_reviewers ?? []).flatMap((user) => {
+            const actor = forgejoActor(user);
+            return actor ? [actor] : [];
+          }),
+          ...(pr.requested_reviewers_teams ?? []).map(forgejoTeamActor),
+        ],
         checks: forgejoChecks(statuses.items),
         baseComparison: !pr.merge_base
           ? "unknown"
@@ -493,29 +503,53 @@ export const make = Effect.gen(function* () {
     }),
     listReviewerCandidates: Effect.fn("ForgejoPullRequestProvider.listReviewerCandidates")(
       function* (input) {
-        const [pr, users] = yield* Effect.all(
-          [getPull(input), page({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser)],
-          { concurrency: 2 },
+        // Assignees and repository teams are complete, unpaginated lists. Forgejo ignores
+        // page/limit on these endpoints and repeats the same rows on every request.
+        const [pr, users, teams] = yield* Effect.all(
+          [
+            getPull(input),
+            readArray({ ...input, path: `${repoPath(input)}/assignees` }, ForgejoUser),
+            readArray({ ...input, path: `${repoPath(input)}/teams` }, ForgejoTeam).pipe(
+              Effect.catch((error) =>
+                isForgejoCliError(error.cause) &&
+                (error.cause.httpStatus === 404 || error.cause.httpStatus === 405)
+                  ? Effect.succeed([])
+                  : Effect.fail(error),
+              ),
+            ),
+          ],
+          { concurrency: 3 },
         );
+        const author = pr.user?.login.toLowerCase();
+        const requestedUsers = new Set(
+          (pr.requested_reviewers ?? []).map((user) => user.login.toLowerCase()),
+        );
+        const requestedTeams = new Set((pr.requested_reviewers_teams ?? []).map((team) => team.id));
+        const candidates = new Map<string, PullRequestReviewerCandidate>();
+        for (const user of users) {
+          const identity = user.login.toLowerCase();
+          const actor = forgejoActor(user);
+          if (!actor || identity === author || candidates.has(`user:${identity}`)) continue;
+          candidates.set(`user:${identity}`, {
+            ...actor,
+            id: user.login,
+            kind: "user",
+            isRequested: requestedUsers.has(identity),
+          });
+        }
+        for (const team of teams) {
+          if (!team.units?.includes("repo.pulls") || candidates.has(`team:${team.id}`)) continue;
+          candidates.set(`team:${team.id}`, {
+            ...forgejoTeamActor(team),
+            // Forgejo accepts team names, rather than numeric IDs, in team_reviewers.
+            id: team.name,
+            kind: "team",
+            isRequested: requestedTeams.has(team.id),
+          });
+        }
         return {
-          candidates: users.items
-            .filter((user) => user.login !== pr.user?.login)
-            .flatMap((user) => {
-              const actor = forgejoActor(user);
-              return actor
-                ? [
-                    {
-                      ...actor,
-                      id: user.login,
-                      kind: "user" as const,
-                      isRequested:
-                        pr.requested_reviewers?.some((reviewer) => reviewer.login === user.login) ??
-                        false,
-                    },
-                  ]
-                : [];
-            }),
-          truncated: users.truncated,
+          candidates: [...candidates.values()].slice(0, 500),
+          truncated: candidates.size > 500,
         };
       },
     ),
@@ -524,7 +558,14 @@ export const make = Effect.gen(function* () {
         ...input,
         path: `${pullPath(input)}/requested_reviewers`,
         method: input.requested ? "POST" : "DELETE",
-        body: { reviewers: input.reviewers.map((reviewer) => reviewer.id) },
+        body: {
+          reviewers: input.reviewers
+            .filter((reviewer) => reviewer.kind === "user")
+            .map((r) => r.id),
+          team_reviewers: input.reviewers
+            .filter((reviewer) => reviewer.kind === "team")
+            .map((r) => r.id),
+        },
       }),
     listLabelCandidates: Effect.fn("ForgejoPullRequestProvider.listLabelCandidates")(
       function* (input) {

@@ -464,6 +464,20 @@ export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   options?: { readonly sessionLive?: boolean },
 ): ReadonlyArray<RuntimeSubagent> {
+  return foldSubagentRoster(activities, options).agents;
+}
+
+/**
+ * {@link foldSubagentActivities} plus the agents the retention cap evicted,
+ * for consumers that must report what the capped roster omits.
+ */
+export function foldSubagentRoster(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  options?: { readonly sessionLive?: boolean },
+): {
+  readonly agents: ReadonlyArray<RuntimeSubagent>;
+  readonly evicted: ReadonlyArray<RuntimeSubagent>;
+} {
   const agents = new Map<string, MutableAgent>();
 
   for (const activity of activities) {
@@ -667,17 +681,22 @@ export function foldSubagentActivities(
   }
 
   let roster = Array.from(agents.values());
+  let evicted: MutableAgent[] = [];
   if (roster.length > ROSTER_LIMIT) {
     // Prefer live, then waiting/idle, then newest settled.
     const rank = (agent: MutableAgent): number =>
       isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
-    roster = roster
+    const ranked = roster
       .slice()
-      .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, ROSTER_LIMIT);
+      .sort((a, b) => rank(a) - rank(b) || b.updatedAt.localeCompare(a.updatedAt));
+    roster = ranked.slice(0, ROSTER_LIMIT);
+    evicted = ranked.slice(ROSTER_LIMIT);
   }
 
-  return roster.map((agent) => ({ ...agent }));
+  return {
+    agents: roster.map((agent) => ({ ...agent })),
+    evicted: evicted.map((agent) => ({ ...agent })),
+  };
 }
 
 export interface AgentPanelWorkflowGroup {

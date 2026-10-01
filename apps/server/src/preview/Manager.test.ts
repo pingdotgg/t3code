@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
+import { type BrowserEngineHostError, type PreviewEvent, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
 import { Effect, PubSub } from "effect";
 import { expect } from "vite-plus/test";
@@ -7,6 +7,20 @@ import { expect } from "vite-plus/test";
 import * as PreviewManager from "./Manager.ts";
 
 const DRAIN_LIMIT = 100;
+
+const engineStatus = (url: string) =>
+  ({
+    navStatus: { _tag: "Success", url, title: "Dev" },
+    canGoBack: false,
+    canGoForward: false,
+    zoomFactor: 1.0,
+    appearance: "system",
+    audioMuted: false,
+    audible: false,
+    devToolsOpen: false,
+    pictureInPicture: false,
+    favicon: null,
+  }) as const;
 
 interface EventCollector {
   /** Drain everything published since the last call (or since subscribe). */
@@ -399,6 +413,106 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("listDetails separates dispatch requests from engine reports", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const afterOpen = yield* manager.listDetails({ threadId });
+      const openDetail = afterOpen.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      // Dispatch-side write: a request revision exists, no engine revision.
+      expect(openDetail?.navigation.requestedUrl).toBe("http://localhost:5173/");
+      expect(openDetail?.navigation.requestRevision).toBeGreaterThan(0);
+      expect(openDetail?.navigation.engineRevision).toBeNull();
+
+      // The unfenced legacy report updates the native snapshot but is not
+      // engine provenance.
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: false,
+        canGoForward: false,
+      });
+      const afterLegacy = yield* manager.listDetails({ threadId });
+      const legacy = afterLegacy.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      expect(legacy?.snapshot.navStatus._tag).toBe("Success");
+      expect(legacy?.navigation.engineRevision).toBeNull();
+
+      const target = { threadId, tabId: opened.tabId, serverEpoch: afterOpen.serverEpoch };
+      yield* manager.claimEngine({ hostConnectionId: "host-a", target, engineGeneration: "7" });
+      yield* manager.reportEngineStatus({
+        hostConnectionId: "host-a",
+        target,
+        engineGeneration: "7",
+        status: engineStatus("http://localhost:5173/"),
+      });
+      const afterReport = yield* manager.listDetails({ threadId });
+      const reported = afterReport.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      // Owner report: engineRevision lands at the report's revision and the
+      // requested URL survives.
+      expect(reported?.navigation.engineRevision).toBe(afterReport.revision);
+      expect(reported?.engine?.status?.navStatus._tag).toBe("Success");
+      expect(reported?.navigation.requestedUrl).toBe("http://localhost:5173/");
+
+      // A newer dispatch request moves requestRevision ahead of the engine
+      // again — provenance, not navStatus, records who wrote last.
+      yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "http://localhost:5173/next",
+      });
+      const afterNavigate = yield* manager.listDetails({ threadId });
+      const pending = afterNavigate.sessions.find((s) => s.snapshot.tabId === opened.tabId);
+      expect(pending?.navigation.requestedUrl).toBe("http://localhost:5173/next");
+      expect(pending?.navigation.requestRevision).toBe(afterNavigate.revision);
+      expect(pending!.navigation.requestRevision!).toBeGreaterThan(
+        pending!.navigation.engineRevision!,
+      );
+    }),
+  );
+
+  it.effect("subscribeDetails pairs each event with its post-commit detail", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const subscription = yield* manager.subscribeDetails;
+
+      const publicEvents = yield* manager.subscribeEvents;
+
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const { serverEpoch } = yield* manager.listDetails({ threadId });
+      const target = { threadId, tabId: opened.tabId, serverEpoch };
+      yield* manager.claimEngine({ hostConnectionId: "host-a", target, engineGeneration: "7" });
+      yield* manager.reportEngineStatus({
+        hostConnectionId: "host-a",
+        target,
+        engineGeneration: "7",
+        status: engineStatus("http://localhost:5173/"),
+      });
+      yield* manager.close({ threadId, tabId: opened.tabId });
+
+      const items = yield* PubSub.takeUpTo(subscription, DRAIN_LIMIT);
+      expect(items.map((item) => item.event.type)).toEqual([
+        "opened",
+        "navigated",
+        "navigated",
+        "closed",
+      ]);
+      const openedItem = items[0]!;
+      expect(openedItem.detail?.navigation.requestRevision).toBe(openedItem.event.revision);
+      expect(items[1]!.detail?.engine?.generation).toBe("7");
+      const reportedItem = items[2]!;
+      expect(reportedItem.detail?.navigation.engineRevision).toBe(reportedItem.event.revision);
+      // Removal publishes a null detail so stale projections cannot be read.
+      expect(items[3]!.detail).toBeNull();
+      // Engine writes never reach native clients as public events.
+      const publicTypes = (yield* PubSub.takeUpTo(publicEvents, DRAIN_LIMIT)).map((e) => e.type);
+      expect(publicTypes).toEqual(["opened", "closed"]);
+    }),
+  );
+
   it.effect("multiple subscribers receive every event independently", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();
@@ -413,6 +527,123 @@ it.layer(PreviewManager.layer)("PreviewManager", (it) => {
       const bEvents = yield* PubSub.takeUpTo(bSub, DRAIN_LIMIT);
       expect(aEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
       expect(bEvents.map((e) => e.type)).toEqual(["opened", "opened"]);
+    }),
+  );
+  it.effect("engine claims fence epoch, owner and generation", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const opened = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const { serverEpoch } = yield* manager.listDetails({ threadId });
+      const target = { threadId, tabId: opened.tabId, serverEpoch };
+      const reasonOf = <A>(effect: Effect.Effect<A, BrowserEngineHostError>) =>
+        effect.pipe(
+          Effect.flip,
+          Effect.map((error) => error.reason),
+        );
+
+      expect(
+        yield* reasonOf(
+          manager.claimEngine({
+            hostConnectionId: "host-a",
+            target: { ...target, serverEpoch: "old-epoch" },
+            engineGeneration: "1",
+          }),
+        ),
+      ).toBe("stale-epoch");
+      expect(
+        yield* reasonOf(
+          manager.claimEngine({
+            hostConnectionId: "host-a",
+            target: { ...target, tabId: "tab_missing" },
+            engineGeneration: "1",
+          }),
+        ),
+      ).toBe("session-not-found");
+
+      yield* manager.claimEngine({ hostConnectionId: "host-a", target, engineGeneration: "1" });
+      // A second host cannot silently take over or report for the guest.
+      expect(
+        yield* reasonOf(
+          manager.claimEngine({ hostConnectionId: "host-b", target, engineGeneration: "9" }),
+        ),
+      ).toBe("foreign-host");
+      expect(
+        yield* reasonOf(
+          manager.reportEngineStatus({
+            hostConnectionId: "host-b",
+            target,
+            engineGeneration: "1",
+            status: engineStatus("http://evil.test/"),
+          }),
+        ),
+      ).toBe("foreign-host");
+      // The owner reporting for a replaced guest is fenced out.
+      yield* manager.claimEngine({ hostConnectionId: "host-a", target, engineGeneration: "2" });
+      expect(
+        yield* reasonOf(
+          manager.reportEngineStatus({
+            hostConnectionId: "host-a",
+            target,
+            engineGeneration: "1",
+            status: engineStatus("http://localhost:5173/"),
+          }),
+        ),
+      ).toBe("stale-generation");
+
+      // Explicit handoff replaces owner and generation and drops old provenance.
+      yield* manager.reportEngineStatus({
+        hostConnectionId: "host-a",
+        target,
+        engineGeneration: "2",
+        status: engineStatus("http://localhost:5173/"),
+      });
+      yield* manager.claimEngine({
+        hostConnectionId: "host-b",
+        target,
+        engineGeneration: "9",
+        handoff: true,
+      });
+      const handedOff = (yield* manager.listDetails({ threadId })).sessions[0]!;
+      expect(handedOff.engine).toEqual({
+        hostConnectionId: "host-b",
+        generation: "9",
+        status: null,
+        lifecycle: null,
+      });
+      expect(handedOff.navigation.engineRevision).toBeNull();
+      expect(
+        yield* reasonOf(
+          manager.releaseEngine({ hostConnectionId: "host-a", target, engineGeneration: "2" }),
+        ),
+      ).toBe("foreign-host");
+    }),
+  );
+
+  it.effect("host disconnect releases every claim it held", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const a = yield* manager.open({ threadId, url: "http://localhost:5173" });
+      const b = yield* manager.open({ threadId, url: "http://localhost:5174" });
+      const { serverEpoch } = yield* manager.listDetails({ threadId });
+      yield* manager.claimEngine({
+        hostConnectionId: "host-gone",
+        target: { threadId, tabId: a.tabId, serverEpoch },
+        engineGeneration: "1",
+      });
+      yield* manager.claimEngine({
+        hostConnectionId: "host-stays",
+        target: { threadId, tabId: b.tabId, serverEpoch },
+        engineGeneration: "2",
+      });
+
+      yield* manager.releaseEngineHost("host-gone");
+
+      const details = yield* manager.listDetails({ threadId });
+      const byTab = new Map(details.sessions.map((d) => [d.snapshot.tabId, d.engine]));
+      expect(byTab.get(a.tabId)).toBeNull();
+      expect(byTab.get(b.tabId)?.hostConnectionId).toBe("host-stays");
     }),
   );
 });

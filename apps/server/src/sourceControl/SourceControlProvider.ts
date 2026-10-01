@@ -124,8 +124,13 @@ export class SourceControlProvider extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
+      /** The host (with any port) the repository lives on, when the caller knows it. */
+      readonly host?: string;
       readonly repository: string;
-    }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    }) => Effect.Effect<
+      SourceControlRepositoryCloneUrls & { readonly repositoryHost?: string },
+      SourceControlProviderError
+    >;
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;

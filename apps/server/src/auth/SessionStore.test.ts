@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AuthSessionId, EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -729,5 +729,119 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       yield* sessions.recordClientConnection(issued.sessionId, {});
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
     }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
+  );
+  it.effect("revalidates a live persisted principal without returning credential material", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "revalidation-subject",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        proofKeyThumbprint: "not-returned",
+      });
+      const result = yield* sessions.revalidate(issued.sessionId);
+      expect(result).toEqual({
+        sessionId: issued.sessionId,
+        subject: "revalidation-subject",
+        method: "bearer-access-token",
+        scopes: ["orchestration:read"],
+        expiresAt: issued.expiresAt,
+      });
+      expect(result).not.toHaveProperty("token");
+      expect(result).not.toHaveProperty("client");
+      expect(result).not.toHaveProperty("proofKeyThumbprint");
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("rejects unknown and revoked session IDs during revalidation", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const unknown = yield* Effect.flip(
+        sessions.revalidate(AuthSessionId.make("unknown-session")),
+      );
+      expect(unknown._tag).toBe("UnknownSessionTokenError");
+
+      const issued = yield* sessions.issue({ subject: "revoked-revalidation" });
+      expect(yield* sessions.revoke(issued.sessionId)).toBe(true);
+      const revoked = yield* Effect.flip(sessions.revalidate(issued.sessionId));
+      expect(revoked._tag).toBe("SessionTokenRevokedError");
+
+      const replacement = yield* sessions.issue({
+        subject: "replacement-revalidation",
+        method: "bearer-access-token",
+        replaceActiveForSubjectAndMethod: true,
+      });
+      const replaced = yield* Effect.flip(sessions.revalidate(issued.sessionId));
+      expect(replaced._tag).toBe("SessionTokenRevokedError");
+      expect((yield* sessions.revalidate(replacement.sessionId)).sessionId).toBe(
+        replacement.sessionId,
+      );
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("rejects expired sessions even while connected and listActive retains them", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "connected-expired-revalidation",
+        ttl: Duration.seconds(1),
+      });
+      yield* sessions.markConnected(issued.sessionId);
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      expect(yield* sessions.listActive()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ sessionId: issued.sessionId, connected: true }),
+        ]),
+      );
+      const error = yield* Effect.flip(sessions.revalidate(issued.sessionId));
+      expect(error._tag).toBe("SessionTokenExpiredError");
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("rejects expired disconnected sessions with the same strict policy", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({
+        subject: "disconnected-expired-revalidation",
+        ttl: Duration.seconds(1),
+      });
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const error = yield* Effect.flip(sessions.revalidate(issued.sessionId));
+      expect(error._tag).toBe("SessionTokenExpiredError");
+    }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("wraps revalidation repository failures as credential verification errors", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const error = yield* Effect.flip(
+        sessions.revalidate(AuthSessionId.make("repository-failure")),
+      );
+      expect(error._tag).toBe("SessionCredentialVerificationError");
+      if (error._tag === "SessionCredentialVerificationError") {
+        expect(error.sessionId).toBe("repository-failure");
+        expect(error.cause).toBe(repositoryFailure);
+      }
+    }).pipe(Effect.provide(failingSessionLookupCredentialLayer)),
+  );
+
+  it.effect("acquires change watching before a revoke and delivers the removal", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const changes = yield* sessions.watchChanges();
+      const pull = yield* Stream.toPull(changes);
+      const issued = yield* sessions.issue({ subject: "watch-before-revoke" });
+      const [created] = yield* pull;
+      expect(created).toMatchObject({
+        type: "clientUpserted",
+        clientSession: { sessionId: issued.sessionId },
+      });
+
+      yield* sessions.revoke(issued.sessionId);
+      const [change] = yield* pull;
+      expect(change).toEqual({ type: "clientRemoved", sessionId: issued.sessionId });
+    }).pipe(Effect.scoped, Effect.provide(makeSessionStoreLayer())),
   );
 });

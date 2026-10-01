@@ -4,6 +4,7 @@ import {
   sourceControlRepositorySelector,
 } from "@t3tools/shared/sourceControl";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { normalizeGitPatchPaths } from "@t3tools/shared/gitPatchPath";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -83,6 +84,7 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
+import { makeSharedCacheGet } from "../utils/sharedCacheGet.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -523,6 +525,16 @@ function withRateLimitBackoff(
     ) =>
     (...args: Args) =>
       protect(operation, call(...args), allowPaused);
+  // The reserve flag signals an interactive confirmation here, which also bypasses the host pause.
+  const requested =
+    <Args extends ReadonlyArray<unknown>, A>(
+      operation: string,
+      call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
+    ) =>
+    (...args: Args) =>
+      AllowGitHubReserve.pipe(
+        Effect.flatMap((allowPaused) => protect(operation, call(...args), allowPaused)),
+      );
   const interactive = <Args extends ReadonlyArray<unknown>, A>(
     operation: string,
     call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
@@ -578,7 +590,7 @@ function withRateLimitBackoff(
       : { getDiffFileContents: wrap("getDiffFileContents", api.getDiffFileContents) }),
     ...(api.getFilesViewed === undefined
       ? {}
-      : { getFilesViewed: wrap("getFilesViewed", api.getFilesViewed) }),
+      : { getFilesViewed: requested("getFilesViewed", api.getFilesViewed) }),
     ...(api.setFilesViewed === undefined
       ? {}
       : { setFilesViewed: interactive("setFilesViewed", api.setFilesViewed) }),
@@ -617,6 +629,10 @@ const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A,
   return { value: yield* read, observedAt };
 });
 
+const encodeFilesViewedCacheKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.Number])),
+);
+
 export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
@@ -626,6 +642,7 @@ export const make = Effect.gen(function* () {
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+  const getShared = yield* makeSharedCacheGet;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -1014,13 +1031,13 @@ export const make = Effect.gen(function* () {
           // roots are the same lookup, and putting them on separate flights would spawn two of
           // this host's CLIs on a cold page load, which is the coalescing this exists for.
           const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
-          if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
+          if (options?.allowPaused === true) return getShared(viewerFlights, key);
           // The pause is checked here rather than inside the lookup, so that it holds back the
           // callers nobody is waiting on without splitting the flight they share with a press.
           // A failed lookup is held nowhere, so letting a background read through would spawn
           // this host's CLI on every refresh for as long as the pause lasted, and re-extend it.
           return rateLimits.check({ provider: api.kind, host }).pipe(
-            Effect.flatMap(() => Cache.get(viewerFlights, key)),
+            Effect.flatMap(() => getShared(viewerFlights, key)),
             Effect.catch((error) =>
               Effect.succeed<ResolvedViewer>({
                 host,
@@ -1799,7 +1816,13 @@ export const make = Effect.gen(function* () {
                 ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
                 ...(input.commit === undefined ? {} : { commit: input.commit }),
               })
-              .pipe(Effect.mapError(toPullRequestError("diff")))
+              .pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  patch: normalizeGitPatchPaths(result.patch),
+                })),
+                Effect.mapError(toPullRequestError("diff")),
+              )
           : Effect.fail(
               new PullRequestOperationError({
                 operation: "diff",
@@ -1856,18 +1879,6 @@ export const make = Effect.gen(function* () {
           ? Effect.succeed(resolved?.viewer ?? null)
           : Effect.fail(toPullRequestError(operation)(error));
       }),
-    );
-
-  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
-    canonicalRef(input).pipe(
-      Effect.flatMap((ref) =>
-        viewedFiles.setFilesViewed(input).pipe(
-          // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
-          // change request, and dropping a 300-file diff on every checkbox is the whole cost of
-          // the feature. Only this reader's own bookkeeping is forgotten.
-          Effect.tap(() => Effect.sync(() => bumpFilesViewedEpoch(ref))),
-        ),
-      ),
     );
 
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
@@ -2854,7 +2865,7 @@ export const make = Effect.gen(function* () {
         ? null
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
-    return Cache.get(listCache, key);
+    return getShared(listCache, key);
   };
 
   const detailCache = yield* Cache.makeWith(
@@ -2922,7 +2933,7 @@ export const make = Effect.gen(function* () {
     // `serveHeld` returns immediately. Skip the write when that read is older
     // than a later strict summary — display reuse would otherwise keep the
     // regression and never ask the host again.
-    const read = Cache.get(detailCache, key).pipe(
+    const read = getShared(detailCache, key).pipe(
       Effect.tap((value) => {
         const summary = summaryFromDetail(value, lastGoodSummary.peek(key));
         return shouldReplaceHeldSummary(key, summary)
@@ -2959,7 +2970,7 @@ export const make = Effect.gen(function* () {
     return Cache.getSuccess(detailCache, key).pipe(
       Effect.flatMap(
         Option.match({
-          onNone: () => Cache.get(previewCache, key),
+          onNone: () => getShared(previewCache, key),
           onSome: (detail) => Effect.succeed(previewFields(detail)),
         }),
       ),
@@ -2967,7 +2978,7 @@ export const make = Effect.gen(function* () {
   };
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = refCacheKey(input);
-    return Cache.get(activityCache, key);
+    return getShared(activityCache, key);
   };
 
   const diffCache = yield* Cache.makeWith(
@@ -2997,7 +3008,7 @@ export const make = Effect.gen(function* () {
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
     ]);
-    const read = Cache.get(diffCache, key).pipe(
+    const read = getShared(diffCache, key).pipe(
       Effect.tap((value) =>
         canCacheDiff(value)
           ? Effect.void
@@ -3014,6 +3025,9 @@ export const make = Effect.gen(function* () {
     return staleDiff(key, read);
   };
 
+  const filesViewedCacheKey = (ref: CredentialRef) =>
+    encodeFilesViewedCacheKey([refCacheKey(ref), filesViewedEpoch(ref)]);
+
   const filesViewedCache = yield* Cache.makeWith(
     (key: string) => {
       const [referenceKey] = JSON.parse(key) as [string, number];
@@ -3028,8 +3042,22 @@ export const make = Effect.gen(function* () {
   // so a reference keyed as the client spelled it would never see a refresh or a press.
   const filesViewed: PullRequestService["Service"]["filesViewed"] = (input) =>
     canonicalRef(input).pipe(
+      Effect.flatMap((ref) => getShared(filesViewedCache, filesViewedCacheKey(ref))),
+    );
+
+  const setFilesViewed: PullRequestService["Service"]["setFilesViewed"] = (input) =>
+    canonicalRef(input).pipe(
       Effect.flatMap((ref) =>
-        Cache.get(filesViewedCache, JSON.stringify([refCacheKey(ref), filesViewedEpoch(ref)])),
+        viewedFiles.setFilesViewed(input, (readback) =>
+          Effect.gen(function* () {
+            // A refused or unverified batch may still have applied some files. Keep invalidation
+            // and readback seeding inside the write gate so a later press cannot be overwritten.
+            bumpFilesViewedEpoch(ref);
+            if (readback !== undefined) {
+              yield* Cache.set(filesViewedCache, filesViewedCacheKey(ref), readback);
+            }
+          }),
+        ),
       ),
     );
 
@@ -3077,7 +3105,7 @@ export const make = Effect.gen(function* () {
     }
     if (missing.size === 0) return { stats: held };
     const key = statsBatchKey(missing.values());
-    const { result, at } = yield* Cache.get(listStatsCache, key);
+    const { result, at } = yield* getShared(listStatsCache, key);
     for (const [key, ref] of missing) {
       const stat = result.stats.find(
         (stat) =>
@@ -3230,7 +3258,7 @@ export const make = Effect.gen(function* () {
     diff: credentialCached(diff),
     diffFileContents,
     filesViewed: credentialCached(filesViewed),
-    setFilesViewed,
+    setFilesViewed: credentialCached(setFilesViewed),
     runAction: runActionAndInvalidate,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),

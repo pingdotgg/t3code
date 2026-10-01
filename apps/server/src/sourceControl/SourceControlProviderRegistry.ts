@@ -19,6 +19,7 @@ import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   probeSourceControlProvider,
+  probeRepositoryHosts,
   refineUnknownRemoteProvider,
   type SourceControlProviderDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
@@ -61,6 +62,9 @@ export class SourceControlProviderRegistry extends Context.Service<
       SourceControlProviderError
     >;
     readonly discover: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>;
+    readonly repositoryHosts: (
+      kind: SourceControlProviderKind,
+    ) => Effect.Effect<ReadonlyArray<string>>;
   }
 >()("t3/sourceControl/SourceControlProviderRegistry") {}
 
@@ -289,6 +293,10 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
+      repositoryHosts: (kind) => {
+        const spec = discoverySpecs.find((candidate) => candidate.kind === kind);
+        return spec ? probeRepositoryHosts({ spec, process, cwd: config.cwd }) : Effect.succeed([]);
+      },
       discover: Effect.forEach(
         discoverySpecs,
         (spec) =>

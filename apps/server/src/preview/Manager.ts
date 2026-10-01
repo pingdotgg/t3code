@@ -10,6 +10,12 @@
  * fail an in-progress `navigate()`).
  */
 import {
+  BrowserEngineHostError,
+  type BrowserEngineHostClaimInput,
+  type BrowserEngineHostLifecycle,
+  type BrowserEngineHostReleaseInput,
+  type BrowserEngineHostReportInput,
+  type BrowserEnginePageStatus,
   type PreviewCloseInput,
   type PreviewEvent,
   type PreviewError,
@@ -44,7 +50,15 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
-    readonly open: (input: PreviewOpenInput) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+    /**
+     * `origin` is server-internal and never read from the wire: the extension
+     * sessions adapter passes the calling installation so extension-only
+     * verbs can refuse sessions they did not open. Native opens omit it.
+     */
+    readonly open: (
+      input: PreviewOpenInput,
+      origin?: PreviewSessionOrigin,
+    ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly navigate: (
       input: PreviewNavigateInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
@@ -57,14 +71,105 @@ export class PreviewManager extends Context.Service<
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
+    /**
+     * In-process detail views for trusted server consumers (the extension
+     * sessions adapter). They carry navigation provenance that the public
+     * wire shapes deliberately omit: which side — dispatch or the private
+     * engine-status report path — authored the session's current navStatus.
+     * Never serialized onto any client-facing channel.
+     */
+    readonly listDetails: (input: PreviewListInput) => Effect.Effect<PreviewListDetailsResult>;
+    readonly subscribeDetails: Effect.Effect<
+      PubSub.Subscription<PreviewInternalEvent>,
+      never,
+      Scope.Scope
+    >;
+    /**
+     * Engine-host authority. Callers are the
+     * `BrowserEngineHosts` registry after it has matched the host connection
+     * to its authenticated socket; these methods enforce epoch, single owner
+     * and generation fencing. Engine writes publish on the detail bus only.
+     */
+    readonly claimEngine: (
+      input: BrowserEngineHostClaimInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    readonly releaseEngine: (
+      input: BrowserEngineHostReleaseInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    readonly reportEngineStatus: (
+      input: BrowserEngineHostReportInput,
+    ) => Effect.Effect<void, BrowserEngineHostError>;
+    /** Drops every claim a disconnected host held. */
+    readonly releaseEngineHost: (hostConnectionId: string) => Effect.Effect<void>;
   }
 >()("t3/preview/Manager/PreviewManager") {}
+
+/**
+ * Navigation provenance for the public sessions projection. `navigate` marks
+ * navStatus Success before any engine report, so navStatus alone cannot
+ * separate "navigate accepted" from "engine loaded" — the revision of the
+ * last dispatch write versus the last authenticated engine report decides
+ * which side authored the current navigation. The legacy
+ * `reportStatus` RPC is not host-fenced and never counts as an engine write.
+ */
+export interface PreviewSessionNavigation {
+  /** Last dispatch-written URL (open-with-url or navigate); null for an idle tab. */
+  readonly requestedUrl: string | null;
+  /** Revision of the last dispatch write; null until a URL is requested. */
+  readonly requestRevision: number | null;
+  /** Revision of the last owner-host report; null until an engine reports. */
+  readonly engineRevision: number | null;
+}
+
+/** The authenticated guest currently rendering a session, if any. */
+export interface PreviewSessionEngine {
+  readonly hostConnectionId: string;
+  readonly generation: string;
+  /** Last owner-host page status; null until the claimed guest reports. */
+  readonly status: BrowserEnginePageStatus | null;
+  /** Guest lifecycle the owner reported; null while the guest is live. */
+  readonly lifecycle: BrowserEngineHostLifecycle | null;
+}
+
+/** Who created a session. Recorded once at open and never changed. */
+export interface PreviewSessionOrigin {
+  /** The extension installation that opened the session. */
+  readonly extensionInstallationId: string;
+}
+
+export interface PreviewSessionDetail {
+  readonly snapshot: PreviewSessionSnapshot;
+  readonly navigation: PreviewSessionNavigation;
+  readonly engine: PreviewSessionEngine | null;
+  /** Null for sessions opened natively (the client preview panel or MCP). */
+  readonly extensionOwner: string | null;
+}
+
+export interface PreviewListDetailsResult {
+  readonly sessions: readonly PreviewSessionDetail[];
+  readonly serverEpoch: string;
+  readonly revision: number;
+}
+
+/** A committed event paired with the post-commit session detail (null after removal). */
+export interface PreviewInternalEvent {
+  readonly event: PreviewEvent;
+  readonly detail: PreviewSessionDetail | null;
+}
 
 interface PreviewSessionState {
   readonly threadId: string;
   readonly tabId: string;
   readonly snapshot: PreviewSessionSnapshot;
+  readonly navigation: PreviewSessionNavigation;
+  readonly engine: PreviewSessionEngine | null;
+  readonly extensionOwner: string | null;
 }
+
+/** Which side authored a state write; the commit resolves the write's revision. */
+type PreviewNavigationWrite =
+  | { readonly kind: "request"; readonly url: string }
+  | { readonly kind: "engine" };
 
 interface ManagerState {
   /** All sessions across every thread, keyed by `${threadId}\u0000${tabId}`. */
@@ -82,6 +187,16 @@ type PreviewEventDraft = PreviewEvent extends infer Event
   : never;
 
 const compositeKey = (threadId: string, tabId: string): string => `${threadId}\u0000${tabId}`;
+
+const detailOf = (session: PreviewSessionState): PreviewSessionDetail => ({
+  snapshot: session.snapshot,
+  navigation: session.navigation,
+  engine: session.engine,
+  extensionOwner: session.extensionOwner,
+});
+
+const engineError = (reason: BrowserEngineHostError["reason"], message: string) =>
+  new BrowserEngineHostError({ reason, message });
 
 const sessionsForThread = (
   state: ManagerState,
@@ -162,6 +277,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   // their own queues downstream.
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
   const events: Stream.Stream<PreviewEvent> = Stream.fromPubSub(eventsPubSub);
+  // The internal detail bus mirrors eventsPubSub with the same publish order
+  // (both inside the same synchronized commit) plus navigation provenance.
+  const internalPubSub = yield* PubSub.unbounded<PreviewInternalEvent>();
 
   /**
    * Atomic read-modify-write over the session for `(threadId, tabId)`. The
@@ -176,9 +294,17 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const mutateExistingSession = <R, E>(
     threadId: string,
     tabId: string,
-    mutator: (
-      session: PreviewSessionState,
-    ) => Effect.Effect<{ next: PreviewSessionState; emit: PreviewEventDraft | null; result: R }, E>,
+    mutator: (session: PreviewSessionState) => Effect.Effect<
+      {
+        next: PreviewSessionState;
+        emit: PreviewEventDraft | null;
+        result: R;
+        navigationWrite?: PreviewNavigationWrite;
+        /** Publish on the detail bus only; native clients see no event. */
+        internalOnly?: boolean;
+      },
+      E
+    >,
   ): Effect.Effect<R, E | PreviewSessionLookupError> => {
     type ModifyResult =
       | { kind: "fail"; error: PreviewSessionLookupError }
@@ -194,17 +320,36 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       }
       return mutator(session).pipe(
         Effect.flatMap(
-          Effect.fn("PreviewManager.commitMutation")(function* ({ next, emit, result }) {
+          Effect.fn("PreviewManager.commitMutation")(function* ({
+            next,
+            emit,
+            result,
+            navigationWrite,
+            internalOnly,
+          }) {
             const revision = emit ? state.revision + 1 : state.revision;
+            const navigation: PreviewSessionNavigation =
+              navigationWrite === undefined
+                ? next.navigation
+                : navigationWrite.kind === "request"
+                  ? {
+                      requestedUrl: navigationWrite.url,
+                      requestRevision: revision,
+                      engineRevision: next.navigation.engineRevision,
+                    }
+                  : { ...next.navigation, engineRevision: revision };
+            const committed: PreviewSessionState = { ...next, navigation };
             if (emit) {
-              yield* PubSub.publish(eventsPubSub, {
+              const event = {
                 ...emit,
                 revision,
                 serverEpoch,
-              } as PreviewEvent);
+              } as PreviewEvent;
+              if (!internalOnly) yield* PubSub.publish(eventsPubSub, event);
+              yield* PubSub.publish(internalPubSub, { event, detail: detailOf(committed) });
             }
             const sessions = new Map(state.sessions);
-            sessions.set(compositeKey(threadId, tabId), next);
+            sessions.set(compositeKey(threadId, tabId), committed);
             return [{ kind: "ok", result } as ModifyResult, { sessions, revision }] as readonly [
               ModifyResult,
               ManagerState,
@@ -220,40 +365,50 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   };
 
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
-    function* (input) {
+    function* (input, origin) {
+      const extensionOwner = origin?.extensionInstallationId ?? null;
       const tabId = newPreviewTabId();
       const updatedAt = yield* currentIsoTimestamp;
       // Clients with a configured default send the viewport up front so the
       // session is born at the right size; older clients omit it and keep the
       // historical fill-panel behaviour.
       const viewport = input.viewport ?? FILL_PREVIEW_VIEWPORT;
-      const snapshot = input.url
-        ? buildLoadingSnapshot({
-            threadId: input.threadId,
-            tabId,
-            url: yield* normalizeUrl(input.url),
-            title: "",
-            viewport,
-            profileId: input.profileId,
-            updatedAt,
-          })
-        : buildIdleSnapshot({
-            threadId: input.threadId,
-            tabId,
-            viewport,
-            profileId: input.profileId,
-            updatedAt,
-          });
+      const normalizedUrl = input.url === undefined ? undefined : yield* normalizeUrl(input.url);
+      const snapshot =
+        normalizedUrl !== undefined
+          ? buildLoadingSnapshot({
+              threadId: input.threadId,
+              tabId,
+              url: normalizedUrl,
+              title: "",
+              viewport,
+              profileId: input.profileId,
+              updatedAt,
+            })
+          : buildIdleSnapshot({
+              threadId: input.threadId,
+              tabId,
+              viewport,
+              profileId: input.profileId,
+              updatedAt,
+            });
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
         Effect.gen(function* () {
           const revision = state.revision + 1;
+          const navigation: PreviewSessionNavigation =
+            normalizedUrl === undefined
+              ? { requestedUrl: null, requestRevision: null, engineRevision: null }
+              : { requestedUrl: normalizedUrl, requestRevision: revision, engineRevision: null };
           const sessions = new Map(state.sessions);
           sessions.set(compositeKey(input.threadId, tabId), {
             threadId: input.threadId,
             tabId,
             snapshot,
+            navigation,
+            engine: null,
+            extensionOwner,
           });
-          yield* PubSub.publish(eventsPubSub, {
+          const event: PreviewEvent = {
             type: "opened",
             threadId: input.threadId,
             tabId,
@@ -261,6 +416,11 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             serverEpoch,
             revision,
             snapshot,
+          };
+          yield* PubSub.publish(eventsPubSub, event);
+          yield* PubSub.publish(internalPubSub, {
+            event,
+            detail: { snapshot, navigation, engine: null, extensionOwner },
           });
           return [snapshot, { sessions, revision }] as const;
         }),
@@ -302,6 +462,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
               snapshot,
             },
             result: snapshot,
+            navigationWrite: { kind: "request", url },
           };
         }),
       );
@@ -347,11 +508,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
                 createdAt: snapshot.updatedAt,
                 snapshot,
               };
-        return {
-          next: { ...session, snapshot },
-          emit,
-          result: undefined as void,
-        };
+        // Unfenced legacy report: it keeps the native snapshot current but
+        // is not proof of an engine load, so no navigationWrite.
+        return { next: { ...session, snapshot }, emit, result: undefined as void };
       }),
     );
   });
@@ -422,9 +581,15 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           return Effect.succeed([undefined, state] as const);
         }
         return Effect.as(
-          Effect.forEach(eventsToEmit, (event) => PubSub.publish(eventsPubSub, event), {
-            discard: true,
-          }),
+          Effect.forEach(
+            eventsToEmit,
+            (event) =>
+              Effect.andThen(
+                PubSub.publish(eventsPubSub, event),
+                PubSub.publish(internalPubSub, { event, detail: null }),
+              ),
+            { discard: true },
+          ),
           [undefined, { sessions, revision }] as const,
         );
       });
@@ -445,7 +610,184 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const listDetails: PreviewManager["Service"]["listDetails"] = Effect.fn(
+    "PreviewManager.listDetails",
+  )(function* (input) {
+    return yield* SynchronizedRef.get(stateRef).pipe(
+      Effect.map((state): PreviewListDetailsResult => ({
+        sessions: sessionsForThread(state, input.threadId)
+          .toSorted((a, b) => a.snapshot.updatedAt.localeCompare(b.snapshot.updatedAt))
+          .map(detailOf),
+        serverEpoch,
+        revision: state.revision,
+      })),
+    );
+  });
+
+  /** Resolves the fenced session or the named reason it is not addressable. */
+  const engineWrite = (
+    target: BrowserEngineHostClaimInput["target"],
+    mutator: (
+      session: PreviewSessionState,
+    ) => Effect.Effect<
+      { next: PreviewSessionState; navigationWrite?: PreviewNavigationWrite },
+      BrowserEngineHostError
+    >,
+  ): Effect.Effect<void, BrowserEngineHostError> =>
+    target.serverEpoch !== serverEpoch
+      ? Effect.fail(engineError("stale-epoch", "The target epoch is not the live server epoch."))
+      : mutateExistingSession(target.threadId, target.tabId, (session) =>
+          Effect.flatMap(mutator(session), ({ next, navigationWrite }) =>
+            Effect.map(currentIsoTimestamp, (createdAt) => ({
+              next,
+              emit: {
+                type: "navigated" as const,
+                threadId: session.threadId,
+                tabId: session.tabId,
+                createdAt,
+                snapshot: next.snapshot,
+              },
+              result: undefined as void,
+              internalOnly: true,
+              ...(navigationWrite === undefined ? {} : { navigationWrite }),
+            })),
+          ),
+        ).pipe(
+          Effect.catchTag("PreviewSessionLookupError", () =>
+            Effect.fail(engineError("session-not-found", "No live session matches the target.")),
+          ),
+        );
+
+  const requireOwner = (
+    session: PreviewSessionState,
+    input: { readonly hostConnectionId: string; readonly engineGeneration: string },
+  ): Effect.Effect<PreviewSessionEngine, BrowserEngineHostError> => {
+    const engine = session.engine;
+    if (engine === null || engine.hostConnectionId !== input.hostConnectionId) {
+      return Effect.fail(engineError("foreign-host", "This host does not own the session."));
+    }
+    if (engine.generation !== input.engineGeneration) {
+      return Effect.fail(engineError("stale-generation", "The engine generation was replaced."));
+    }
+    return Effect.succeed(engine);
+  };
+
+  const claimEngine: PreviewManager["Service"]["claimEngine"] = Effect.fn(
+    "PreviewManager.claimEngine",
+  )(function* (input) {
+    yield* engineWrite(input.target, (session) => {
+      const current = session.engine;
+      if (
+        current !== null &&
+        current.hostConnectionId !== input.hostConnectionId &&
+        input.handoff !== true
+      ) {
+        return Effect.fail(
+          engineError("foreign-host", "Another engine host owns this session; handoff required."),
+        );
+      }
+      if (
+        current !== null &&
+        current.hostConnectionId === input.hostConnectionId &&
+        current.generation === input.engineGeneration
+      ) {
+        return Effect.succeed({ next: session });
+      }
+      // A new owner or generation invalidates the prior engine's reports.
+      return Effect.succeed({
+        next: {
+          ...session,
+          engine: {
+            hostConnectionId: input.hostConnectionId,
+            generation: input.engineGeneration,
+            status: null,
+            lifecycle: null,
+          },
+          navigation: { ...session.navigation, engineRevision: null },
+        },
+      });
+    });
+  });
+
+  const releaseEngine: PreviewManager["Service"]["releaseEngine"] = Effect.fn(
+    "PreviewManager.releaseEngine",
+  )(function* (input) {
+    yield* engineWrite(input.target, (session) =>
+      requireOwner(session, input).pipe(
+        Effect.as({
+          next: {
+            ...session,
+            engine: null,
+            navigation: { ...session.navigation, engineRevision: null },
+          },
+        }),
+      ),
+    );
+  });
+
+  const reportEngineStatus: PreviewManager["Service"]["reportEngineStatus"] = Effect.fn(
+    "PreviewManager.reportEngineStatus",
+  )(function* (input) {
+    yield* engineWrite(input.target, (session) =>
+      requireOwner(session, input).pipe(
+        Effect.map((engine) => ({
+          next: {
+            ...session,
+            engine:
+              "status" in input
+                ? { ...engine, status: input.status, lifecycle: null }
+                : { ...engine, lifecycle: input.lifecycle },
+          },
+          navigationWrite: { kind: "engine" } as const,
+        })),
+      ),
+    );
+  });
+
+  const releaseEngineHost: PreviewManager["Service"]["releaseEngineHost"] = Effect.fn(
+    "PreviewManager.releaseEngineHost",
+  )(function* (hostConnectionId) {
+    const createdAt = yield* currentIsoTimestamp;
+    yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
+      const sessions = new Map(state.sessions);
+      const released: PreviewInternalEvent[] = [];
+      let revision = state.revision;
+      for (const [key, session] of state.sessions) {
+        if (session.engine?.hostConnectionId !== hostConnectionId) continue;
+        revision += 1;
+        const next: PreviewSessionState = {
+          ...session,
+          engine: null,
+          navigation: { ...session.navigation, engineRevision: null },
+        };
+        sessions.set(key, next);
+        released.push({
+          event: {
+            type: "navigated",
+            threadId: session.threadId,
+            tabId: session.tabId,
+            createdAt,
+            serverEpoch,
+            revision,
+            snapshot: session.snapshot,
+          },
+          detail: detailOf(next),
+        });
+      }
+      return Effect.as(
+        Effect.forEach(released, (item) => PubSub.publish(internalPubSub, item), {
+          discard: true,
+        }),
+        [undefined, released.length === 0 ? state : { sessions, revision }] as const,
+      );
+    });
+  });
+
   return PreviewManager.of({
+    claimEngine,
+    releaseEngine,
+    reportEngineStatus,
+    releaseEngineHost,
     open,
     navigate,
     reportStatus,
@@ -453,8 +795,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     refresh,
     close,
     list,
+    listDetails,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),
+    subscribeDetails: PubSub.subscribe(internalPubSub),
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));
 

@@ -146,6 +146,29 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
+function httpAuthority(url: string): string | null {
+  try {
+    const parsed = new URL(url.trim());
+    // `host` drops the default port 80, so an explicit `:80` names the same server.
+    return parsed.protocol === "http:" ? parsed.host : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether Git may fetch from a repository URL a provider reported: HTTPS or SSH, which reach a
+ * hosting service, or plain HTTP on the very host and port the project's `originUrl` already uses
+ * over HTTP. A `file://`, `ext::` or bare-path URL would read the local disk or run a command, and
+ * a leading `-` would be an option.
+ */
+export function isProviderRepositoryUrlAllowed(url: string, originUrl?: string | null): boolean {
+  if (/^-|\s/u.test(url)) return false;
+  if (/^https:\/\//iu.test(url) || isSshRemoteUrl(url)) return true;
+  const authority = httpAuthority(url);
+  return authority !== null && httpAuthority(originUrl ?? "") === authority;
+}
+
 /**
  * Extracts the normalized host used for provider detection. SCP-style and SSH remotes return the
  * hostname only, while other URL schemes retain explicit ports for non-default web endpoints.

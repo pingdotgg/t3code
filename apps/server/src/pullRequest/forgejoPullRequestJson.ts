@@ -18,6 +18,11 @@ export const ForgejoUser = Schema.Struct({
   full_name: Schema.optional(Schema.NullOr(Schema.String)),
   avatar_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
+export const ForgejoTeam = Schema.Struct({
+  id: Schema.Int,
+  name: Schema.String,
+  units: Schema.optional(Schema.Array(Schema.String)),
+});
 export const ForgejoLabel = Schema.Struct({
   id: Schema.Int,
   name: Schema.String,
@@ -62,6 +67,7 @@ export const ForgejoPullRequest = Schema.Struct({
   comments: Schema.optional(Schema.Int),
   labels: Schema.NullOr(Schema.Array(ForgejoLabel)),
   requested_reviewers: Schema.optional(Schema.NullOr(Schema.Array(ForgejoUser))),
+  requested_reviewers_teams: Schema.optional(Schema.NullOr(Schema.Array(ForgejoTeam))),
 });
 export const ForgejoComment = Schema.Struct({
   id: Schema.Int,
@@ -118,6 +124,10 @@ export function forgejoActor(
   return user?.login
     ? { login: user.login, name: user.full_name || null, avatarUrl: user.avatar_url || null }
     : null;
+}
+
+export function forgejoTeamActor(team: typeof ForgejoTeam.Type): PullRequestActor {
+  return { login: team.name, name: team.name, avatarUrl: null };
 }
 
 function toIsoUtc(value: string): string {

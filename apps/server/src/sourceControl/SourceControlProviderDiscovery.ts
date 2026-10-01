@@ -27,6 +27,10 @@ interface SourceControlDiscoverySpecBase {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
   readonly installHint: string;
+  readonly repositoryHosts?: (
+    cwd: string,
+    process: VcsProcess.VcsProcess["Service"],
+  ) => Effect.Effect<ReadonlyArray<string>>;
 }
 
 export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -37,6 +41,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly remoteRefinementArgs?: ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
+  readonly parseRepositoryHosts?: (input: SourceControlAuthProbeInput) => ReadonlyArray<string>;
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
   ) => SourceControlProviderInfo | null;
@@ -331,5 +336,39 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
     const provider = providers.find((candidate) => candidate !== null);
 
     return provider ? { ...context, provider } : context;
+  },
+);
+
+/** Only extensions ask for host authority, and only for their selected provider. */
+export const probeRepositoryHosts = Effect.fn("SourceControlDiscovery.repositoryHosts")(
+  function* (input: {
+    readonly spec: SourceControlProviderDiscoverySpec;
+    readonly process: VcsProcess.VcsProcess["Service"];
+    readonly cwd: string;
+  }) {
+    const spec = input.spec;
+    if (spec.repositoryHosts) return yield* spec.repositoryHosts(input.cwd, input.process);
+    if (spec.type !== "cli") {
+      const item = yield* probeSourceControlProvider(input);
+      return item.status === "available" && item.auth.status === "authenticated"
+        ? Option.toArray(item.auth.host)
+        : [];
+    }
+    const result = yield* input.process
+      .run({
+        operation: "source-control.repository-hosts",
+        command: spec.executable,
+        args: spec.authArgs,
+        cwd: input.cwd,
+        allowNonZeroExit: true,
+        timeoutMs: probeTimeoutMs(spec),
+        maxOutputBytes: 8_000,
+        appendTruncationMarker: true,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (result === null) return [];
+    if (spec.parseRepositoryHosts) return spec.parseRepositoryHosts(result);
+    const auth = spec.parseAuth(result);
+    return auth.status === "authenticated" ? Option.toArray(auth.host) : [];
   },
 );

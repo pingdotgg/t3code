@@ -1,12 +1,14 @@
 /**
- * The marks a reader has ticked off, for a host that keeps none of its own, and the held record of
- * what the head has of those files. The revisions cache is filed here because this is its only
- * consumer: when a second one appears, export `makeFileRevisions` and split it into its own file.
+ * Host-confirmed viewed marks, or the marks a reader has ticked off for a host that keeps none
+ * of its own, and the held record of what the head has of those files. The revisions cache lives
+ * here because this is its only consumer: when another appears, export `makeFileRevisions` and
+ * split it into its own file.
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import {
   PullRequestOperationError,
@@ -15,6 +17,7 @@ import {
   type PullRequestSetFilesViewedInput,
 } from "@t3tools/contracts";
 
+import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import type * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import type { ProviderFileRevisions, PullRequestProviderError } from "./PullRequestProvider.ts";
 import type { PullRequestError, SupportedProject } from "./PullRequestService.ts";
@@ -390,24 +393,64 @@ export const make = (dependencies: Dependencies) => {
 
   const setFilesViewed = (
     input: PullRequestSetFilesViewedInput,
+    onSettled: (readback?: PullRequestFilesViewedResult) => Effect.Effect<void>,
   ): Effect.Effect<void, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
         const write = project.api.setFilesViewed;
         if (project.api.capabilities.viewedFiles === "host" && write) {
-          return write({
+          if (input.files.length === 0) return Effect.void;
+          const read = project.api.getFilesViewed;
+          const reference = {
             cwd: project.project.workspaceRoot,
             repository: project.repository,
             host: project.host,
             number: input.number,
-            files: input.files,
-          }).pipe(Effect.mapError(toPullRequestError("setFilesViewed")));
+          };
+          return inFilesViewedOrder(
+            project,
+            input.number,
+            Effect.gen(function* () {
+              // Preserve exact path identities, including distinct NFC/NFD names. The host
+              // validates membership; its bounded file read must not prevent a write.
+              const files = input.files;
+              yield* write({ ...reference, files }).pipe(
+                Effect.mapError(toPullRequestError("setFilesViewed")),
+              );
+              if (read === undefined) return;
+              // Confirmation belongs to the interactive write. An unavailable read leaves the
+              // acknowledged write unverified; only a completed contradiction is a refusal.
+              const after = yield* read(reference).pipe(
+                Effect.provideService(AllowGitHubReserve, true),
+                Effect.catch(() => Effect.succeed(undefined)),
+              );
+              if (after === undefined) return;
+              const states = new Map(after.files.map((file) => [file.path, file.state]));
+              const expected = new Map(files.map((file) => [file.path, file.viewed]));
+              for (const [path, viewed] of expected) {
+                const state = states.get(path);
+                if (state === undefined && after.truncated) continue;
+                const stored = state === "viewed" || state === "dismissed";
+                if (state === undefined || stored !== viewed) {
+                  return yield* new PullRequestOperationError({
+                    operation: "setFilesViewed",
+                    detail:
+                      "The host did not confirm the viewed file update. Refresh and try again.",
+                  });
+                }
+              }
+              return after;
+            }).pipe(
+              Effect.onExit((exit) => onSettled(Exit.isSuccess(exit) ? exit.value : undefined)),
+              Effect.asVoid,
+            ),
+          );
         }
         if (project.api.capabilities.viewedFiles === "environment") {
           return inFilesViewedOrder(
             project,
             input.number,
-            environmentSetFilesViewed(project, input),
+            environmentSetFilesViewed(project, input).pipe(Effect.ensuring(onSettled())),
           );
         }
         return Effect.fail(

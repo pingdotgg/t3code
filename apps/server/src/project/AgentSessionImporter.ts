@@ -8,6 +8,7 @@ import {
   AgentSessionImportProjectNotFoundError,
   AgentSessionSource,
   AgentSessionScanError,
+  type AgentSessionImportSource,
   isImportedAgentSessionMessageId,
   MessageId,
   ProjectId,
@@ -97,15 +98,149 @@ function hasImportBlockingActivity(
   );
 }
 
+/** Deterministic thread id an imported provider session lands on. */
+export function importedAgentSessionThreadId(
+  providerInstanceId: string,
+  providerSessionId: string,
+): ThreadId {
+  return ThreadId.make(`import:${providerInstanceId}:${providerSessionId}`);
+}
+
+/**
+ * Import one discovered session into `projectId`: install the stopped resume
+ * binding, create the thread, import its history, and record the transcript.
+ * `sequence` is the decider sequence of the last event this call dispatched,
+ * or null when the thread already held the history and only the transcript
+ * identity was refreshed.
+ */
+export const importAgentSessionThread = Effect.fn("importAgentSessionThread")(function* (input: {
+  readonly projectId: ProjectId;
+  readonly workspaceRoot: string;
+  readonly thread: AgentSessionScanner.AgentSessionThread;
+  readonly source: AgentSessionImportSource;
+}) {
+  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const crypto = yield* Crypto.Crypto;
+  const { thread, workspaceRoot } = input;
+  const threadId = importedAgentSessionThreadId(
+    thread.providerInstanceId,
+    thread.providerSessionId,
+  );
+  const provider = ProviderDriverKind.make(thread.source);
+  const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
+  const existingThread = yield* snapshots.getThreadDetailById(threadId);
+  const existingBinding = yield* directory.getBinding(threadId);
+
+  if (
+    thread.source === "claudeAgent" &&
+    !CLAUDE_SESSION_ID_PATTERN.test(thread.providerSessionId)
+  ) {
+    return yield* new AgentSessionUnresumableSessionError({
+      source: thread.source,
+      providerSessionId: thread.providerSessionId,
+    });
+  }
+
+  if (Option.isSome(existingThread) && existingThread.value.projectId !== input.projectId) {
+    return yield* new AgentSessionThreadProjectConflictError({
+      threadId,
+      expectedProjectId: input.projectId,
+      actualProjectId: existingThread.value.projectId,
+    });
+  }
+
+  const importedHistoryPresent = Option.isSome(existingThread)
+    ? hasImportedHistory(existingThread.value)
+    : false;
+  if (Option.isSome(existingThread) && importedHistoryPresent && Option.isSome(existingBinding)) {
+    yield* directory.recordImportedTranscript({ threadId, source: input.source });
+    return { threadId, sequence: null };
+  }
+
+  if (
+    Option.isSome(existingThread) &&
+    hasImportBlockingActivity(existingThread.value, importedHistoryPresent)
+  ) {
+    return yield* new AgentSessionThreadModifiedError({ threadId });
+  }
+
+  if (
+    Option.isSome(existingBinding) &&
+    (existingBinding.value.provider !== provider ||
+      existingBinding.value.providerInstanceId !== thread.providerInstanceId ||
+      existingBinding.value.status !== "stopped")
+  ) {
+    return yield* new AgentSessionThreadModifiedError({ threadId });
+  }
+
+  // Install the cursor before the thread becomes visible. A concurrent
+  // real session can replace it, while insert-ignore keeps this import
+  // from replacing that newer binding.
+  if (Option.isNone(existingBinding)) {
+    yield* directory.upsert(
+      {
+        threadId,
+        provider,
+        providerInstanceId: thread.providerInstanceId,
+        status: "stopped",
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        resumeCursor:
+          thread.source === "codex"
+            ? { threadId: thread.providerSessionId }
+            : { threadId, resume: thread.providerSessionId },
+        runtimePayload: { cwd: workspaceRoot },
+      },
+      { onConflict: "ignore" },
+    );
+  }
+
+  let sequence: number | null = null;
+  if (Option.isNone(existingThread)) {
+    const created = yield* engine.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(yield* crypto.randomUUIDv4),
+      threadId,
+      projectId: input.projectId,
+      title: thread.title,
+      modelSelection: { instanceId: thread.providerInstanceId, model },
+      runtimeMode: DEFAULT_RUNTIME_MODE,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      branch: null,
+      worktreePath: null,
+      createdAt: thread.createdAt,
+      historyImport: true,
+    });
+    sequence = created.sequence;
+  }
+
+  if (!importedHistoryPresent) {
+    const history = yield* engine.dispatch({
+      type: "thread.history.import",
+      commandId: CommandId.make(yield* crypto.randomUUIDv4),
+      threadId,
+      messages: thread.messages.map((message, index) => ({
+        messageId: MessageId.make(`${threadId}:${String(index).padStart(6, "0")}`),
+        role: message.role,
+        text: message.text,
+        createdAt: message.createdAt,
+      })),
+    });
+    sequence = history.sequence;
+  }
+
+  yield* directory.recordImportedTranscript({ threadId, source: input.source });
+  return { threadId, sequence };
+});
+
 /** Import recent transcript text and persist the cursor needed to resume its provider session. */
 export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(function* (
   input: AgentSessionImportInput,
 ) {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-  const crypto = yield* Crypto.Crypto;
   const project = yield* snapshots.getProjectShellById(input.projectId).pipe(
     Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     Effect.flatMap(
@@ -144,8 +279,9 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         return;
       }
       if (outcome._tag === "AlreadyImported" || outcome._tag === "Duplicate") {
-        const threadId = ThreadId.make(
-          `import:${outcome.source.providerInstanceId}:${outcome.source.providerSessionId}`,
+        const threadId = importedAgentSessionThreadId(
+          outcome.source.providerInstanceId,
+          outcome.source.providerSessionId,
         );
         if (outcome._tag === "AlreadyImported") {
           importedThreadIds.add(threadId);
@@ -164,122 +300,21 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         }
         return;
       }
-      const thread = outcome.thread;
-      const threadId = ThreadId.make(
-        `import:${thread.providerInstanceId}:${thread.providerSessionId}`,
+      const threadId = importedAgentSessionThreadId(
+        outcome.thread.providerInstanceId,
+        outcome.thread.providerSessionId,
       );
-      const imported = yield* Effect.gen(function* () {
-        const provider = ProviderDriverKind.make(thread.source);
-        const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
-        const existingThread = yield* snapshots.getThreadDetailById(threadId);
-        const existingBinding = yield* directory.getBinding(threadId);
-
-        if (
-          thread.source === "claudeAgent" &&
-          !CLAUDE_SESSION_ID_PATTERN.test(thread.providerSessionId)
-        ) {
-          return yield* new AgentSessionUnresumableSessionError({
-            source: thread.source,
-            providerSessionId: thread.providerSessionId,
-          });
-        }
-
-        if (Option.isSome(existingThread) && existingThread.value.projectId !== input.projectId) {
-          return yield* new AgentSessionThreadProjectConflictError({
-            threadId,
-            expectedProjectId: input.projectId,
-            actualProjectId: existingThread.value.projectId,
-          });
-        }
-
-        const importedHistoryPresent = Option.isSome(existingThread)
-          ? hasImportedHistory(existingThread.value)
-          : false;
-        if (
-          Option.isSome(existingThread) &&
-          importedHistoryPresent &&
-          Option.isSome(existingBinding)
-        ) {
-          yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
-          return true;
-        }
-
-        if (
-          Option.isSome(existingThread) &&
-          hasImportBlockingActivity(existingThread.value, importedHistoryPresent)
-        ) {
-          return yield* new AgentSessionThreadModifiedError({ threadId });
-        }
-
-        if (
-          Option.isSome(existingBinding) &&
-          (existingBinding.value.provider !== provider ||
-            existingBinding.value.providerInstanceId !== thread.providerInstanceId ||
-            existingBinding.value.status !== "stopped")
-        ) {
-          return yield* new AgentSessionThreadModifiedError({ threadId });
-        }
-
-        // Install the cursor before the thread becomes visible. A concurrent
-        // real session can replace it, while insert-ignore keeps this import
-        // from replacing that newer binding.
-        if (Option.isNone(existingBinding)) {
-          yield* directory.upsert(
-            {
-              threadId,
-              provider,
-              providerInstanceId: thread.providerInstanceId,
-              status: "stopped",
-              runtimeMode: DEFAULT_RUNTIME_MODE,
-              resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
-              runtimePayload: { cwd: workspaceRoot },
-            },
-            { onConflict: "ignore" },
-          );
-        }
-
-        if (Option.isNone(existingThread)) {
-          yield* engine.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(yield* crypto.randomUUIDv4),
-            threadId,
-            projectId: input.projectId,
-            title: thread.title,
-            modelSelection: { instanceId: thread.providerInstanceId, model },
-            runtimeMode: DEFAULT_RUNTIME_MODE,
-            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            branch: null,
-            worktreePath: null,
-            createdAt: thread.createdAt,
-            historyImport: true,
-          });
-        }
-
-        if (!importedHistoryPresent) {
-          yield* engine.dispatch({
-            type: "thread.history.import",
-            commandId: CommandId.make(yield* crypto.randomUUIDv4),
-            threadId,
-            messages: thread.messages.map((message, index) => ({
-              messageId: MessageId.make(`${threadId}:${String(index).padStart(6, "0")}`),
-              role: message.role,
-              text: message.text,
-              createdAt: message.createdAt,
-            })),
-          });
-        }
-
-        yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
-
-        return true;
+      const imported = yield* importAgentSessionThread({
+        projectId: input.projectId,
+        workspaceRoot,
+        thread: outcome.thread,
+        source: outcome.source,
       }).pipe(
+        Effect.as(true),
         Effect.catch((cause) =>
           Effect.logWarning("Could not import an agent session", {
-            provider: thread.source,
-            sessionId: thread.providerSessionId,
+            provider: outcome.thread.source,
+            sessionId: outcome.thread.providerSessionId,
             cause,
           }).pipe(Effect.as(false)),
         ),

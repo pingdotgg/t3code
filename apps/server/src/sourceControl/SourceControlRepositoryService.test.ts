@@ -2,6 +2,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -58,11 +59,37 @@ function makeLayer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly host?: string;
+  readonly probe?: () => void;
 }) {
   const serviceLayer = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
+        discover: Effect.sync(() => {
+          input.probe?.();
+          return [
+            {
+              kind: input.provider?.kind ?? "github",
+              label: "Provider",
+              status: "available" as const,
+              installHint: "Install the CLI",
+              version: Option.none(),
+              detail: Option.none(),
+              auth: {
+                status: "authenticated" as const,
+                account: Option.some("alex"),
+                host: Option.some(input.host ?? providerHost(input.provider?.kind ?? "github")),
+                detail: Option.none(),
+              },
+            },
+          ];
+        }),
+        repositoryHosts: () =>
+          Effect.sync(() => {
+            input.probe?.();
+            return [];
+          }),
         get: () => Effect.succeed(input.provider ?? makeProvider()),
       }),
     ),
@@ -90,11 +117,173 @@ function makeLayer(input: {
 
   return input.fileSystem
     ? serviceLayer.pipe(
-        Layer.provide(Layer.succeed(FileSystem.FileSystem, input.fileSystem)),
+        Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, input.fileSystem)),
         Layer.provideMerge(NodePath.layer),
       )
     : serviceLayer.pipe(Layer.provideMerge(NodeServices.layer));
 }
+
+const providerKinds = ["github", "gitlab", "forgejo", "azure-devops", "bitbucket"] as const;
+const providerHost = (kind: SourceControlProvider.SourceControlProvider["Service"]["kind"]) =>
+  ({
+    github: "github.com",
+    gitlab: "gitlab.com",
+    forgejo: "forge.example",
+    "azure-devops": "dev.azure.com",
+    bitbucket: "bitbucket.org",
+    unknown: "unknown",
+  })[kind];
+const providerUrls = (host: string) => ({
+  nameWithOwner: "o/n",
+  url: `https://${host}/o/n`,
+  sshUrl: `git@${host}:o/n.git`,
+});
+
+it.effect.each(providerKinds)("clones a configured %s repository", (kind) => {
+  const host = providerHost(kind);
+  const urls = providerUrls(host);
+  const calls: Parameters<
+    SourceControlProvider.SourceControlProvider["Service"]["getRepositoryCloneUrls"]
+  >[0][] = [];
+  const clones: ReadonlyArray<string>[] = [];
+  const provider = makeProvider({
+    kind,
+    getRepositoryCloneUrls: (input) =>
+      Effect.sync(() => {
+        calls.push(input);
+        return urls;
+      }),
+  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "configured-clone-" });
+      const result = yield* service.cloneRepository({
+        provider: kind,
+        repository: "o/n",
+        destinationPath: `${parent}/repo`,
+      });
+      assert.strictEqual(result.remoteUrl, urls.sshUrl);
+      assert.strictEqual(calls.length, 1);
+      assert.deepStrictEqual(clones, [["clone", "--progress", "--", urls.sshUrl, "repo"]]);
+      assert.strictEqual(calls[0]?.host, undefined);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider,
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                clones.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect.each(["github", "gitlab"] as const)(
+  "leaves trusted native %s enterprise locators unchanged",
+  (kind) =>
+    Effect.gen(function* () {
+      const host = "enterprise.example";
+      for (const repository of [
+        `${host}/o/n`,
+        `https://${host}/o/n`,
+        `ssh://${host}/o/n`,
+        `git@${host}:o/n`,
+        `https://${host}/o/n/`,
+      ]) {
+        const calls: Parameters<
+          SourceControlProvider.SourceControlProvider["Service"]["getRepositoryCloneUrls"]
+        >[0][] = [];
+        const provider = makeProvider({
+          kind,
+          getRepositoryCloneUrls: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return providerUrls(host);
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+          const result = yield* service.lookupRepository({ provider: kind, repository });
+          assert.strictEqual(result.url, `https://${host}/o/n`);
+          assert.strictEqual(calls[0]?.host, undefined);
+          assert.strictEqual(calls[0]?.repository, repository);
+        }).pipe(Effect.provide(makeLayer({ provider, host })));
+      }
+    }),
+);
+
+it.effect("preserves native scp username behavior from integration", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "scp-redaction-" });
+      const prepared = yield* service.prepareClone({
+        remoteUrl: "private-user@github.com:o/n.git",
+        destinationPath: `${parent}/repo`,
+      });
+      assert.strictEqual(prepared.remoteUrl, "private-user@github.com:o/n.git");
+      assert.strictEqual(prepared.cloneUrl, "private-user@github.com:o/n.git");
+    }),
+  ).pipe(Effect.provide(makeLayer({}))),
+);
+
+it.effect("preserves native provider snapshot behavior from integration", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "provider-scp-redaction-" });
+      const prepared = yield* service.prepareClone({
+        provider: "github",
+        repository: "o/n",
+        destinationPath: `${parent}/repo`,
+      });
+      assert.strictEqual(prepared.cloneUrl, "private-user@github.com:o/n.git");
+      assert.strictEqual(prepared.repository?.sshUrl, "private-user@github.com:o/n.git");
+    }),
+  ).pipe(
+    Effect.provide(
+      makeLayer({
+        provider: makeProvider({
+          getRepositoryCloneUrls: () =>
+            Effect.succeed({
+              ...providerUrls("github.com"),
+              sshUrl: "private-user@github.com:o/n.git",
+            }),
+        }),
+      }),
+    ),
+  ),
+);
+
+it.effect("accepts Azure's fixed SSH endpoint for a configured Azure API host", () =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const result = yield* service.lookupRepository({ provider: "azure-devops", repository: "o/n" });
+    assert.strictEqual(result.sshUrl, "git@ssh.dev.azure.com:v3/o/p/n");
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        provider: makeProvider({
+          kind: "azure-devops",
+          getRepositoryCloneUrls: () =>
+            Effect.succeed({
+              ...providerUrls("dev.azure.com"),
+              sshUrl: "git@ssh.dev.azure.com:v3/o/p/n",
+            }),
+        }),
+      }),
+    ),
+  ),
+);
 
 it.effect("looks up repositories through the requested provider without search", () => {
   const calls: Array<{ cwd: string; repository: string }> = [];
@@ -179,7 +368,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", "--progress", CLONE_URLS.url, "t3code"],
+          args: ["clone", "--progress", "--", CLONE_URLS.url, "t3code"],
         },
       ]);
     }).pipe(
@@ -548,3 +737,105 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+const nativeParityCases = [
+  { kind: "github", repository: "github.com/o/n", urls: providerUrls("github.com") },
+  { kind: "github", repository: "o/n", urls: providerUrls("github.com") },
+  {
+    kind: "gitlab",
+    repository: "g/p",
+    urls: { ...providerUrls("gitlab.corp"), sshUrl: "ssh://git@gitlab.corp:2222/g/p.git" },
+  },
+  {
+    kind: "forgejo",
+    repository: "o/n",
+    urls: { ...providerUrls("forgejo.lan"), url: "http://forgejo.lan:3000/o/n.git" },
+  },
+  {
+    kind: "bitbucket",
+    repository: "o/n",
+    urls: { ...providerUrls("bitbucket.org"), url: "https://alex@bitbucket.org/o/n.git" },
+  },
+  {
+    kind: "azure-devops",
+    repository: "p/r",
+    urls: { ...providerUrls("org.visualstudio.com"), sshUrl: "org@vs-ssh.visualstudio.com:p/r" },
+  },
+] as const;
+it.effect.each(nativeParityCases)(
+  "preserves integration native lookup for $kind: $repository",
+  ({ kind, repository, urls }) => {
+    const calls: unknown[] = [];
+    let probes = 0;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const result = yield* service.lookupRepository({
+        provider: kind,
+        repository: ` ${repository} `,
+      });
+      assert.deepStrictEqual(result, { provider: kind, ...urls });
+      assert.deepStrictEqual(calls, [{ cwd: process.cwd(), repository }]);
+      assert.strictEqual(probes, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider: makeProvider({
+            kind,
+            getRepositoryCloneUrls: (input) =>
+              Effect.sync(() => {
+                calls.push(input);
+                return urls;
+              }),
+          }),
+          host: "discovery-pick.corp",
+          probe: () => {
+            probes++;
+          },
+        }),
+      ),
+    );
+  },
+);
+
+it.effect.each(nativeParityCases)(
+  "preserves integration native clone for $kind: $repository with zero probes",
+  ({ kind, repository, urls }) => {
+    let probes = 0;
+    const clones: ReadonlyArray<string>[] = [];
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const fs = yield* FileSystem.FileSystem;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "native-clone-parity-" });
+        for (const protocol of ["https", "ssh"] as const) {
+          const remote = protocol === "https" ? urls.url : urls.sshUrl;
+          yield* service.cloneRepository({
+            provider: kind,
+            repository,
+            protocol,
+            destinationPath: `${parent}/${protocol}`,
+          });
+          assert.deepStrictEqual(clones.at(-1), ["clone", "--progress", "--", remote, protocol]);
+        }
+        assert.strictEqual(probes, 0);
+      }),
+    ).pipe(
+      Effect.provide(
+        makeLayer({
+          provider: makeProvider({ kind, getRepositoryCloneUrls: () => Effect.succeed(urls) }),
+          host: "discovery-pick.corp",
+          probe: () => {
+            probes++;
+          },
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                clones.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  },
+);

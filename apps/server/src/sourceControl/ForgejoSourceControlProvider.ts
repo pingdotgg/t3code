@@ -3,6 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import { SourceControlProviderError } from "@t3tools/contracts";
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -24,6 +25,10 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["login", "status", "--output", "json"],
   remoteRefinementArgs: ["login", "list", "--output", "json"],
+  parseRepositoryHosts: (input) =>
+    ForgejoCli.parseForgejoLogins(input.stdout)
+      .filter((login) => login.valid === "true")
+      .map((login) => login.url),
   parseAuth: (input) => {
     const logins = ForgejoCli.parseForgejoLogins(input.stdout);
     const login = logins.find((entry) => entry.default === "true") ?? logins[0];
@@ -63,6 +68,32 @@ export const makeDiscovery = Effect.gen(function* () {
     kind: "forgejo",
     label: discovery.label,
     installHint: discovery.installHint,
+    repositoryHosts: Effect.fn("ForgejoSourceControlProvider.repositoryHosts")(function* (
+      cwd: string,
+    ) {
+      const logins = yield* listLogins({ cwd, command: "fj" }).pipe(Effect.orElseSucceed(() => []));
+      const hosts = yield* Effect.forEach(logins, (login) =>
+        cli.getAccount
+          ? cli.getAccount({ cwd, baseUrl: login.url }).pipe(
+              Effect.map(() => login.url),
+              Effect.orElseSucceed(() => null),
+            )
+          : Effect.succeed(null),
+      );
+      if (hosts.some((host) => host !== null)) return hosts.filter((host) => host !== null);
+      const auth = yield* process
+        .run({
+          operation: "source-control.repository-hosts",
+          command: "tea",
+          args: discovery.authArgs,
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+        })
+        .pipe(Effect.orElseSucceed(() => null));
+      return auth ? discovery.parseRepositoryHosts(auth) : [];
+    }),
     probe: Effect.fn("ForgejoSourceControlProvider.discovery")(function* (cwd: string) {
       const remoteUrl = yield* process
         .run({
@@ -283,9 +314,12 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
-        return cloneUrls(
-          yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
-        );
+        return {
+          ...cloneUrls(
+            yield* request({ ...input, path: repositoryPath(repo.repository) }, RepositorySchema),
+          ),
+          repositoryHost: repo.baseUrl,
+        };
       }).pipe(mapError("getRepositoryCloneUrls", input.cwd)),
     createRepository: (input) =>
       Effect.gen(function* () {
@@ -330,16 +364,19 @@ export const make = Effect.gen(function* () {
           );
           const remote = input.context?.remoteUrl;
           const useSsh = remote && ForgejoCli.parseForgejoRemote(remote)?.ssh;
+          const url = useSsh ? urls.ssh_url : urls.clone_url;
+          if (!isProviderRepositoryUrlAllowed(url, remote))
+            return yield* new ForgejoCli.ForgejoCliError({
+              command: "fj",
+              cwd: input.cwd,
+              detail:
+                "Refusing to fetch a repository URL that is not HTTPS, SSH or origin's HTTP server.",
+            });
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",
             cwd: input.cwd,
-            args: [
-              "fetch",
-              "--",
-              useSsh ? urls.ssh_url : urls.clone_url,
-              `refs/pull/${pull.number}/head`,
-            ],
+            args: ["fetch", "--", url, `refs/pull/${pull.number}/head`],
           });
           const branch = `pulls/${pull.number}`;
           const existing = yield* process.run({

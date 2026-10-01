@@ -303,7 +303,13 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(prepared.destinationPath),
-        args: ["clone", "--progress", prepared.cloneUrl, path.basename(prepared.destinationPath)],
+        args: [
+          "clone",
+          "--progress",
+          "--",
+          prepared.cloneUrl,
+          path.basename(prepared.destinationPath),
+        ],
         timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
         // Progress redraws add up on a slow multi-GB clone. The buffered copy
         // is never read (the tail is kept by hand above), so keep it small

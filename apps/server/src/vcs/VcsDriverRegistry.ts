@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
+import { makeSharedCacheGet } from "../utils/sharedCacheGet.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
@@ -111,6 +112,7 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
+  const getShared = yield* makeSharedCacheGet;
   const detectionCache = yield* Cache.makeWith<string, VcsDriverHandle | null, VcsError>(
     (key) => detectResolvedKind(parseDetectionCacheKey(key)),
     {
@@ -125,7 +127,7 @@ export const make = Effect.gen(function* () {
   const detect: VcsDriverRegistry["Service"]["detect"] = Effect.fn("VcsDriverRegistry.detect")(
     function* (input) {
       const requestedKind = yield* projectConfig.resolveKind(input);
-      return yield* Cache.get(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind }));
+      return yield* getShared(detectionCache, detectionCacheKey({ cwd: input.cwd, requestedKind }));
     },
   );
 

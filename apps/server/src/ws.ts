@@ -1,3 +1,5 @@
+import { EnvironmentExtensions } from "./extensions/EnvironmentExtensions.ts";
+import { ExtensionCatalogueChanges } from "./extensions/catalogueChanges.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -22,6 +24,8 @@ import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
   AuthSessionId,
@@ -70,6 +74,8 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
+  BrowserFramesError,
+  type BrowserFramesOpenInputResult,
   EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
@@ -127,9 +133,12 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as BrowserEngineHosts from "./preview/BrowserEngineHosts.ts";
+import type { ClientApiProviders } from "./extensions/ClientApiProviders.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as BrowserFrameLeases from "./browserFrames/BrowserFrameLeases.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -180,6 +189,8 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import { guardExtensionSessionStream } from "./extensions/sessionStream.ts";
+import { makeSessionApiAuthority } from "./extensions/sessionApiAuthority.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -432,6 +443,17 @@ const isClientWebDeployment = Schema.is(ClientWebDeployment);
 const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
+const MAX_CLIENT_INSTANCE_ID_LENGTH = 128;
+
+// The client runtime's per-instance identity, announced on the /ws upgrade
+// URL and echoed on environment HTTP requests. Optional and lenient like the
+// origin params — older clients never send it.
+function readClientInstanceId(request: HttpServerRequest.HttpServerRequest): string | undefined {
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return undefined;
+  const value = url.value.searchParams.get("clientInstanceId")?.trim() ?? "";
+  return value !== "" && value.length <= MAX_CLIENT_INSTANCE_ID_LENGTH ? value : undefined;
+}
 
 // Optional client identity announced on the /ws upgrade URL next to wsTicket.
 // Lenient by design: absent or malformed values degrade to {} so a connection
@@ -504,11 +526,20 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  // One id per ws connection: leases minted on this connection are
+  // authority-separated from other connections sharing the session.
+  wsConnectionId: string,
+  clientApiProviders: ClientApiProviders["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
+      // Minted at socket accept: this connection's identity for the
+      // client-provider seam, bound to this socket's authenticated session
+      // for the socket's lifetime. Registration, respond and emit frames are
+      // accepted only when they arrive on this socket.
+      const clientConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const sql = yield* SqlClient.SqlClient;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       /** A reference's host-level link key; the project's own host where the ref names none. */
@@ -563,6 +594,13 @@ const makeWsRpcLayer = (
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
+      const browserEngineHosts = yield* BrowserEngineHosts.BrowserEngineHosts;
+      // Host identity is this socket plus its session row's grant method;
+      // nothing in a host payload can claim to be the desktop.
+      const engineHostSocket: BrowserEngineHosts.BrowserEngineHostSocket = {
+        socketId: wsConnectionId,
+        grantMethod: currentSession.grantMethod,
+      };
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -665,6 +703,9 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
+      const environmentExtensions = yield* EnvironmentExtensions;
+      const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
@@ -3810,6 +3851,177 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
+        [WS_METHODS.browserFramesOpenInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesOpenInput,
+            // The session listing and hub reads suspend before the mint's
+            // atomic dead-connection check — pin this socket's marker so the
+            // fence is still there when the mint resumes.
+            browserFrameLeases.withRetainedConnection(
+              wsConnectionId,
+              Effect.gen(function* () {
+                const details = yield* previewManager.listDetails({ threadId: input.threadId });
+                const session = details.sessions.find(
+                  (detail) => detail.snapshot.tabId === input.tabId,
+                );
+                if (!session || details.serverEpoch !== input.serverEpoch) {
+                  return yield* new BrowserFramesError({
+                    reason: "session-not-found",
+                    message: "No live browser session matches the requested tuple.",
+                  });
+                }
+                const hubs = yield* previewAutomationBroker.frameHubs;
+                const candidates = hubs.filter((hub) => hub.environmentId === input.environmentId);
+                if (candidates.length === 0) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "No connected engine host serves browser frames.",
+                  });
+                }
+                if (candidates.length > 1) {
+                  return yield* new BrowserFramesError({
+                    reason: "engine-unavailable",
+                    message: "More than one engine host serves this environment; refusing to bind.",
+                  });
+                }
+                const host = candidates[0]!;
+                const minted = yield* browserFrameLeases.issueInputLease({
+                  authority: {
+                    kind: "session",
+                    sessionId: currentSession.sessionId,
+                    subject: currentSession.subject,
+                    connectionId: wsConnectionId,
+                    grants: [AuthOrchestrationOperateScope],
+                  },
+                  authorityExpiresAt: currentSession.credentialExpiresAt?.epochMilliseconds,
+                  session: {
+                    environmentId: input.environmentId,
+                    threadId: input.threadId,
+                    serverEpoch: input.serverEpoch,
+                    tabId: input.tabId,
+                  },
+                  engineGeneration: input.engineGeneration ?? null,
+                  hostClientId: host.clientId,
+                  hostConnectionId: host.connectionId,
+                });
+                return yield* Option.match(minted, {
+                  onNone: () =>
+                    Effect.fail(
+                      new BrowserFramesError({
+                        reason: "unauthorized",
+                        message:
+                          "The named lease is not owned by this connection for this session.",
+                      }),
+                    ),
+                  onSome: (issued) =>
+                    Effect.succeed({
+                      leaseId: issued.leaseId,
+                      inputTicket: issued.inputTicket,
+                      expiresAt: issued.expiresAt,
+                    } satisfies BrowserFramesOpenInputResult),
+                });
+              }),
+            ),
+            { "rpc.aggregate": "browser-frames" },
+          ),
+        [WS_METHODS.browserEngineHostRegister]: (_input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.browserEngineHostRegister,
+            browserEngineHosts.register(engineHostSocket),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostClaim]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostClaim,
+            browserEngineHosts.claim(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostRelease]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostRelease,
+            browserEngineHosts.release(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostReport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostReport,
+            browserEngineHosts.report(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostCommandResult]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostCommandResult,
+            browserEngineHosts.commandResult(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserEngineHostProfiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserEngineHostProfiles,
+            browserEngineHosts.publishProfiles(engineHostSocket, input),
+            { "rpc.aggregate": "browser-engine-host" },
+          ),
+        [WS_METHODS.browserFramesCloseInput]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.browserFramesCloseInput,
+            browserFrameLeases.resolveLease(input.leaseId).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.void,
+                  onSome: (lease) =>
+                    // Ownership is the full authority binding plus the
+                    // resolved tuple — a same-session connection or another
+                    // environment's lease cannot be closed from here.
+                    lease.session.environmentId === input.environmentId &&
+                    BrowserFrameLeases.browserFrameAuthorityKey(lease.authority) ===
+                      `sess:${currentSession.sessionId}:${wsConnectionId}`
+                      ? browserFrameLeases.revokeLease(input.leaseId).pipe(Effect.asVoid)
+                      : Effect.void,
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "browser-frames" },
+          ),
+        [WS_METHODS.extensionsClientProvidersConnect]: (input) =>
+          observeRpcStreamEffect(
+            WS_METHODS.extensionsClientProvidersConnect,
+            clientApiProviders.connect(
+              {
+                connectionId: clientConnectionId,
+                sessionId: currentSessionId,
+                announcedOrigin: {
+                  ...(typeof clientAnalyticsProps.surface === "string"
+                    ? { surface: clientAnalyticsProps.surface }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.appVersion === "string"
+                    ? { appVersion: clientAnalyticsProps.appVersion }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.clientOs === "string"
+                    ? { os: clientAnalyticsProps.clientOs }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.clientDeviceType === "string"
+                    ? { deviceType: clientAnalyticsProps.clientDeviceType }
+                    : {}),
+                  ...(typeof clientAnalyticsProps.connectionMethod === "string"
+                    ? { connectionMethod: clientAnalyticsProps.connectionMethod }
+                    : {}),
+                },
+              },
+              input,
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.extensionsClientProvidersRespond]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionsClientProvidersRespond,
+            clientApiProviders.respond(clientConnectionId, input),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.extensionsClientProvidersEmit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.extensionsClientProvidersEmit,
+            clientApiProviders.emit(clientConnectionId, input),
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
@@ -4000,6 +4212,38 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeExtensionApi]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeExtensionApi,
+            Stream.unwrap(
+              Effect.gen(function* () {
+                const environmentId = yield* serverEnvironment.getEnvironmentId;
+                const root = yield* makeSessionApiAuthority(
+                  currentSession,
+                  environmentId,
+                  AuthOrchestrationReadScope,
+                  sessions,
+                  undefined,
+                  // Extension authorities minted under this root carry the
+                  // connection identity so disconnect revokes them (and two
+                  // connections sharing a session never share a record).
+                  wsConnectionId,
+                );
+                return guardExtensionSessionStream(
+                  environmentExtensions.subscribeApi(input, root),
+                  currentSession,
+                  sessions,
+                );
+              }),
+            ),
+            { "rpc.aggregate": "extensions" },
+          ),
+        [WS_METHODS.subscribeExtensionCatalogue]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeExtensionCatalogue,
+            extensionCatalogueChanges.changes,
+            { "rpc.aggregate": "extensions" },
+          ),
         [WS_METHODS.subscribeServerLifecycle]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerLifecycle,
@@ -4108,6 +4352,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const extensionCatalogueChanges = yield* ExtensionCatalogueChanges;
+    const sharedEnvironmentExtensions = yield* EnvironmentExtensions;
+    // The registry instance lives on EnvironmentExtensions so WS handlers and
+    // server adapters share one socket-derived ownership map per environment.
+    const clientApiProviders = sharedEnvironmentExtensions.clientApiProviders;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4130,6 +4379,10 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         );
         const clientOrigin = readClientConnectionOrigin(request);
         const clientAnalyticsProps = readClientAnalyticsProps(request);
+        const clientInstanceId = readClientInstanceId(request);
+        const crypto = yield* Crypto.Crypto;
+        const wsConnectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+        const browserFrameLeases = yield* BrowserFrameLeases.BrowserFrameLeases;
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
@@ -4147,6 +4400,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              wsConnectionId,
+              clientApiProviders,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
@@ -4156,6 +4411,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              Layer.provide(Layer.succeed(ExtensionCatalogueChanges, extensionCatalogueChanges)),
+              Layer.provide(Layer.succeed(EnvironmentExtensions, sharedEnvironmentExtensions)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
@@ -4181,9 +4438,19 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           ),
         );
         return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
+          // Register this socket's liveness and its client's instance id:
+          // HTTP requests echoing the same instance id resolve to THIS
+          // connection rather than a session-global newest, and connection-
+          // scoped revocation stays attribution-exact per client instance.
+          sessions.markConnected(session.sessionId, wsConnectionId, clientInstanceId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          // Viewer root disconnect terminates everything this connection
+          // minted — leases, held claims, and bound input sockets die with
+          // the ws connection, not just at ticket expiry.
+          () =>
+            sessions
+              .markDisconnected(session.sessionId, wsConnectionId)
+              .pipe(Effect.andThen(browserFrameLeases.revokeConnection(wsConnectionId))),
         );
       }).pipe(
         Effect.catchTags({

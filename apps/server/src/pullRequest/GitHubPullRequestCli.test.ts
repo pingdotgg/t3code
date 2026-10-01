@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -4084,6 +4085,64 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps background viewed reads out of the reserve but admits interactive confirmation pages",
+    () =>
+      Effect.gen(function* () {
+        const host = "viewed-reserve.example";
+        const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+        yield* budget.observe(
+          host,
+          encodeJson({
+            data: {
+              rateLimit: {
+                cost: 1,
+                limit: 5000,
+                remaining: 499,
+                resetAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 1 })),
+              },
+            },
+          }),
+        );
+        const page = (next: boolean) =>
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      files: {
+                        pageInfo: { hasNextPage: next, endCursor: next ? "cursor" : null },
+                        nodes: [
+                          {
+                            path: next ? "café-日本語.txt" : "b/nested.txt",
+                            viewerViewedState: "VIEWED",
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              }),
+            ),
+          );
+        mockedExecute.mockReturnValueOnce(page(true)).mockReturnValueOnce(page(false));
+        const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+        const input = { cwd: "/w", repository: "acme/web", host, number: 7 };
+        const refused = yield* Effect.flip(cli.getPullRequestFilesViewed(input));
+        assert.strictEqual(refused._tag, "SourceControlRateLimitPausedError");
+        expect(mockedExecute).not.toHaveBeenCalled();
+        const confirmed = yield* cli
+          .getPullRequestFilesViewed(input)
+          .pipe(Effect.provideService(GitHubCli.AllowGitHubReserve, true));
+        expect(confirmed.files).toEqual([
+          { path: "café-日本語.txt", state: "viewed" },
+          { path: "b/nested.txt", state: "viewed" },
+        ]);
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
+  );
+
   it.effect("reads every page of viewed files, and says so when there are too many", () =>
     Effect.gen(function* () {
       const page = (index: number, hasNextPage: boolean) =>
@@ -4192,6 +4251,10 @@ layer("GitHubPullRequestCli.layer", (it) => {
         files: [
           { path: "src/a.ts", viewed: true },
           { path: "src/b.ts", viewed: false },
+          { path: "café-日本語.txt", viewed: true },
+          { path: "with spaces.txt", viewed: true },
+          { path: 'quote"and\\backslash.txt', viewed: true },
+          { path: "b/nested.txt", viewed: true },
         ],
       });
 
@@ -4208,6 +4271,10 @@ layer("GitHubPullRequestCli.layer", (it) => {
         pullRequestId: "PR_1",
         path0: "src/a.ts",
         path1: "src/b.ts",
+        path2: "café-日本語.txt",
+        path3: "with spaces.txt",
+        path4: 'quote"and\\backslash.txt',
+        path5: "b/nested.txt",
       });
     }),
   );

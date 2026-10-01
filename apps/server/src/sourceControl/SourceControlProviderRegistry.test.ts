@@ -16,6 +16,7 @@ import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
+import { lookupExtensionRepository } from "../extensions/repositoryLookup.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -42,6 +43,7 @@ function makeRegistry(input: {
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly github?: Partial<GitHubCli.GitHubCli["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
+  readonly forgejo?: Partial<ForgejoCli.ForgejoCli["Service"]>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -96,7 +98,10 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)(input.github ?? {}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
-        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () => Effect.succeed([]),
+          ...input.forgejo,
+        }),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -344,4 +349,183 @@ it.effect(
         );
       }
     }).pipe(Effect.scoped),
+);
+
+it.effect("probes only the requested provider and retains every authenticated GitHub host", () =>
+  Effect.gen(function* () {
+    const commands: unknown[] = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) =>
+          Effect.sync(() => {
+            commands.push({ command: input.command, args: input.args });
+            return processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                hosts: {
+                  "ghe.corp": [{ state: "success", active: true, host: "ghe.corp", login: "alex" }],
+                  "github.com": [
+                    { state: "success", active: true, host: "github.com", login: "alex" },
+                  ],
+                  "logged-out.corp": [
+                    { state: "error", active: true, host: "logged-out.corp", login: "alex" },
+                  ],
+                },
+              }),
+              { exitCode: ChildProcessSpawner.ExitCode(1) },
+            );
+          }),
+      },
+    });
+    assert.deepStrictEqual(yield* registry.repositoryHosts("github"), ["ghe.corp", "github.com"]);
+    assert.deepStrictEqual(commands, [
+      { command: "gh", args: ["auth", "status", "--json", "hosts"] },
+    ]);
+  }),
+);
+it.effect("retains every authenticated GitLab host without probing other providers", () =>
+  Effect.gen(function* () {
+    const commands: string[] = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) =>
+          Effect.sync(() => {
+            commands.push(input.command);
+            return processOutput(
+              "first.corp\n  Logged in to first.corp as alex\ngitlab.corp\n  Logged in to gitlab.corp as alex\nsigned-out.corp\n  Not logged in",
+            );
+          }),
+      },
+    });
+    assert.deepStrictEqual(yield* registry.repositoryHosts("gitlab"), [
+      "first.corp",
+      "gitlab.corp",
+    ]);
+    assert.deepStrictEqual(commands, ["glab"]);
+  }),
+);
+it.effect("retains Forgejo HTTP origins and ports from authenticated tea status", () =>
+  Effect.gen(function* () {
+    const commands: string[] = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: (input) =>
+          Effect.sync(() => {
+            commands.push(input.command);
+            return processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify([
+                {
+                  name: "local",
+                  url: "http://forgejo.lan:3000",
+                  user: "alex",
+                  default: "true",
+                  valid: "true",
+                },
+                {
+                  name: "other",
+                  url: "https://forgejo.corp",
+                  user: "alex",
+                  default: "false",
+                  valid: "true",
+                },
+                {
+                  name: "out",
+                  url: "https://signed-out.corp",
+                  user: "alex",
+                  default: "false",
+                  valid: "false",
+                },
+              ]),
+            );
+          }),
+      },
+    });
+    assert.deepStrictEqual(yield* registry.repositoryHosts("forgejo"), [
+      "http://forgejo.lan:3000",
+      "https://forgejo.corp",
+    ]);
+    assert.deepStrictEqual(commands, ["tea"]);
+  }),
+);
+it.effect(
+  "uses the authenticated Azure CLI organization for legacy and on-prem host authority",
+  () =>
+    Effect.gen(function* () {
+      for (const organization of ["https://org.visualstudio.com", "https://ado.corp/collection"]) {
+        const commands: unknown[] = [];
+        const registry = yield* makeRegistry({
+          remotes: [],
+          process: {
+            run: (input) =>
+              Effect.sync(() => {
+                commands.push({ command: input.command, args: input.args });
+                return processOutput(
+                  input.args[0] === "account"
+                    ? "alex"
+                    : `[defaults]\norganization = ${organization}\nproject = p`,
+                );
+              }),
+          },
+        });
+        assert.deepStrictEqual(yield* registry.repositoryHosts("azure-devops"), [
+          "dev.azure.com",
+          organization,
+        ]);
+        assert.deepStrictEqual(commands, [
+          { command: "az", args: ["account", "show", "--query", "user.name", "-o", "tsv"] },
+          { command: "az", args: ["devops", "configure", "--list"] },
+        ]);
+      }
+    }),
+);
+
+it.effect("uses the resolved Forgejo default login origin without host probes", () =>
+  Effect.gen(function* () {
+    for (const hostile of [false, true]) {
+      let probes = 0;
+      let lookups = 0;
+      const registry = yield* makeRegistry({
+        remotes: [],
+        process: {
+          run: () =>
+            Effect.sync(() => {
+              probes++;
+              return processOutput("");
+            }),
+        },
+        forgejo: {
+          resolveRepository: () =>
+            Effect.succeed({
+              command: "tea",
+              login: "local",
+              baseUrl: "http://forgejo.lan:3000",
+              repository: "o/n",
+            }),
+          api: () =>
+            Effect.sync(() => {
+              lookups++;
+              return processOutput(
+                hostile
+                  ? '{"full_name":"o/n","clone_url":"https://attacker.tld/o/n","ssh_url":"git@attacker.tld:o/n.git"}'
+                  : '{"full_name":"o/n","clone_url":"http://forgejo.lan:3000/o/n","ssh_url":"git@forgejo.lan:o/n.git"}',
+              );
+            }),
+        },
+      });
+      const result = yield* Effect.exit(
+        lookupExtensionRepository(registry, {
+          provider: "forgejo",
+          repository: "o/n",
+          cwd: "/host",
+        }),
+      );
+      assert.strictEqual(result._tag, hostile ? "Failure" : "Success");
+      assert.strictEqual(lookups, 1);
+      assert.strictEqual(probes, 0);
+    }
+  }),
 );

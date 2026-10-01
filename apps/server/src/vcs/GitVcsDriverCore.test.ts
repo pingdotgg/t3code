@@ -343,14 +343,16 @@ it.effect("invalidates origin remote cache when a driver mutation adds origin", 
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
     const cwd = yield* makeTmpDir();
-    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
     yield* initRepoWithCommit(cwd);
-    yield* git(remote, ["init", "--bare"]);
 
     const before = yield* driver.statusDetailsLocal(cwd);
     assert.equal(before.hasOriginRemote, false);
 
-    yield* driver.ensureRemote({ cwd, preferredName: "origin", url: remote });
+    yield* driver.ensureRemote({
+      cwd,
+      preferredName: "origin",
+      url: "https://github.com/pingdotgg/t3code.git",
+    });
 
     const after = yield* driver.statusDetailsLocal(cwd);
     assert.equal(after.hasOriginRemote, true);
@@ -2799,6 +2801,179 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         assert.equal(addedForFork, "octocat");
         assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
+      }),
+    );
+
+    it.effect("ensureRemote does not reuse a remote on another HTTPS port", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["remote", "add", "origin", "https://forge.example:9443/team/repo.git"]);
+
+        const added = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "team",
+          url: "https://forge.example:8443/team/repo.git",
+        });
+        assert.equal(added, "team");
+        assert.equal(
+          yield* git(cwd, ["config", "--get", "remote.team.url"]),
+          "https://forge.example:8443/team/repo.git",
+        );
+
+        const reused = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "other",
+          url: "https://forge.example:8443/team/repo",
+        });
+        assert.equal(reused, "team");
+        const reusedOnSamePort = yield* driver.ensureRemote({
+          cwd,
+          preferredName: "other",
+          url: "https://forge.example:9443/Team/repo",
+        });
+        assert.equal(reusedOnSamePort, "origin");
+      }),
+    );
+
+    it.effect("ensureRemote refuses repository URLs that are not HTTPS or SSH", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        for (const url of [
+          remote,
+          `file://${remote}`,
+          `ext::sh -c touch% ${remote}/pwned`,
+          "git://forge.example/team/repo.git",
+          "http://forge.example/team/repo.git",
+          "-uhttps://forge.example/team/repo.git",
+        ]) {
+          const result = yield* driver
+            .ensureRemote({ cwd, preferredName: "provider", url })
+            .pipe(Effect.result);
+          assert.isTrue(Result.isFailure(result), url);
+          if (Result.isFailure(result)) {
+            assert.equal(result.failure.operation, "GitVcsDriver.ensureRemote", url);
+          }
+        }
+        assert.equal(yield* git(cwd, ["remote"]), "");
+      }),
+    );
+
+    it.effect("ensureRemote keeps SSH ports and plain HTTP apart from other endpoints", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["remote", "add", "origin", "ssh://git@forge.example:2222/team/repo.git"]);
+        yield* git(cwd, ["remote", "add", "legacy", "http://forge.example/team/repo.git"]);
+
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd,
+            preferredName: "other",
+            url: "ssh://git@forge.example:2222/Team/repo",
+          }),
+          "origin",
+        );
+        // Another SSH service on the same host serves a different repository under this path.
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd,
+            preferredName: "mirror",
+            url: "ssh://git@forge.example:2223/team/repo.git",
+          }),
+          "mirror",
+        );
+        // A plain-HTTP service on port 80 is not the HTTPS one on 443.
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd,
+            preferredName: "secure",
+            url: "https://forge.example/team/repo.git",
+          }),
+          "secure",
+        );
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd,
+            preferredName: "other",
+            url: "http://forge.example:80/team/repo",
+          }),
+          "legacy",
+        );
+        // Default-port SSH and HTTPS are one forge's two doors to the same repository.
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd,
+            preferredName: "other",
+            url: "git@forge.example:team/repo.git",
+          }),
+          "secure",
+        );
+      }),
+    );
+
+    it.effect("ensureRemote adds an HTTP remote only on origin's own HTTP host and port", () =>
+      Effect.gen(function* () {
+        const httpOrigin = yield* makeTmpDir();
+        yield* initRepoWithCommit(httpOrigin);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(httpOrigin, ["remote", "add", "origin", "http://Forge.example/team/repo.git"]);
+
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd: httpOrigin,
+            preferredName: "alex",
+            url: "http://forge.example/alex/repo",
+          }),
+          "alex",
+        );
+        assert.equal(
+          yield* driver.ensureRemote({
+            cwd: httpOrigin,
+            preferredName: "sam",
+            url: "http://forge.example:80/sam/repo",
+          }),
+          "sam",
+        );
+        for (const url of [
+          "http://forge.example:8080/kim/repo",
+          "http://other.example/kim/repo",
+          "http://forge.example/kim repo",
+        ]) {
+          const result = yield* driver
+            .ensureRemote({ cwd: httpOrigin, preferredName: "kim", url })
+            .pipe(Effect.result);
+          assert.isTrue(Result.isFailure(result), url);
+        }
+        // Fetching an exact commit by URL is not widened by the origin.
+        const fetched = yield* driver
+          .fetchCommit({
+            cwd: httpOrigin,
+            url: "http://forge.example/alex/repo",
+            ref: "refs/heads/x",
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(fetched));
+
+        const httpsOrigin = yield* makeTmpDir();
+        yield* initRepoWithCommit(httpsOrigin);
+        yield* git(httpsOrigin, ["remote", "add", "origin", "https://forge.example/team/repo.git"]);
+        const downgrade = yield* driver
+          .ensureRemote({
+            cwd: httpsOrigin,
+            preferredName: "alex",
+            url: "http://forge.example/alex/repo",
+          })
+          .pipe(Effect.result);
+        assert.isTrue(Result.isFailure(downgrade));
+        assert.equal(yield* git(httpOrigin, ["remote"]), "alex\norigin\nsam");
+        assert.equal(yield* git(httpsOrigin, ["remote"]), "origin");
       }),
     );
   });

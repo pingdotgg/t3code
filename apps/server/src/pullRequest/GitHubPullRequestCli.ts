@@ -2710,21 +2710,26 @@ export const make = Effect.gen(function* () {
         collected: ReadonlyArray<PullRequestFileViewed>,
         pagesLeft: number,
       ): Effect.Effect<GitHubPullRequestFilesViewed, GitHubPullRequestCliError> =>
-        graphqlRead({
-          cwd: input.cwd,
-          host: input.host,
-          operation: "getPullRequestFilesViewed",
-          variables: [
-            ["-f", `owner=${owner}`],
-            ["-f", `name=${name}`],
-            ["-F", `number=${input.number}`],
-            ...(after === null
-              ? []
-              : ([["-f", `after=${after}`]] as ReadonlyArray<readonly [string, string]>)),
-          ],
-          query: PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
-          decode: decodePullRequestFilesViewedJson,
-        }).pipe(
+        GitHubCli.AllowGitHubReserve.pipe(
+          Effect.flatMap((allowReserve) =>
+            graphqlRead({
+              allowReserve,
+              cwd: input.cwd,
+              host: input.host,
+              operation: "getPullRequestFilesViewed",
+              variables: [
+                ["-f", `owner=${owner}`],
+                ["-f", `name=${name}`],
+                ["-F", `number=${input.number}`],
+                ...(after === null
+                  ? []
+                  : ([["-f", `after=${after}`]] as ReadonlyArray<readonly [string, string]>)),
+              ],
+              query: PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
+              decode: decodePullRequestFilesViewedJson,
+            }),
+          ),
+        ).pipe(
           Effect.flatMap((page) => {
             const files = [...collected, ...page.files];
             if (page.nextCursor === null) {

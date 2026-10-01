@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -38,6 +39,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -75,6 +77,25 @@ export const make = Effect.gen(function* () {
 
     if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
       return;
+    }
+
+    // Projects can live anywhere on disk, not just under the server's launch
+    // cwd, so any registered project root is also a valid review workspace.
+    const projects = yield* projectionSnapshotQuery.getProjectShells().pipe(
+      Effect.mapError(
+        (cause) =>
+          new VcsRepositoryDetectionError({
+            operation,
+            cwd,
+            detail: "Failed to read project roots while validating the review workspace.",
+            cause,
+          }),
+      ),
+    );
+    for (const project of projects) {
+      if (isWithinRoot(candidate, yield* canonicalizePath(project.workspaceRoot))) {
+        return;
+      }
     }
 
     return yield* new VcsRepositoryDetectionError({

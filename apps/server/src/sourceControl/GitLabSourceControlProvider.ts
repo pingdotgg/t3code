@@ -104,6 +104,10 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: parseGitLabAuth,
+  parseRepositoryHosts: (input) =>
+    parseGitLabAuthStatusHosts(combinedAuthOutput(input))
+      .filter((host) => host.account !== null)
+      .map((host) => host.host),
   refineUnknownRemote: refineUnknownGitLabRemote,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",

@@ -23,7 +23,13 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  issueBrowserSurfaceUrl,
+  resolveAsset,
+  verifyBrowserSurfaceClaims,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -1110,6 +1116,105 @@ describe("AssetAccess", () => {
       expect(error.message).toBe("Failed to resolve project favicon.");
       expect(error._tag).toBe("AssetProjectFaviconResolutionError");
       expect(error.cause).toBe(resolutionCause);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  const surface = {
+    environmentId: "env-a",
+    threadId: "thread-1",
+    tabId: "tab-1",
+    serverEpoch: "epoch-1",
+    allowedCommands: ["present", "attach", "attach", "release"] as const,
+  };
+  const surfaceToken = (relativeUrl: string) => {
+    const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+    return suffix.slice(0, suffix.indexOf("/"));
+  };
+
+  it.effect("a browser-surface lease verifies only against its exact session binding", () =>
+    Effect.gen(function* () {
+      const result = yield* issueBrowserSurfaceUrl(surface);
+      const token = surfaceToken(result.relativeUrl);
+      const claims = yield* verifyBrowserSurfaceClaims(token, {
+        environmentId: "env-a",
+        threadId: "thread-1",
+        tabId: "tab-1",
+        serverEpoch: "epoch-1",
+      });
+      expect(claims).toMatchObject({
+        version: 1,
+        kind: "browser-surface",
+        environmentId: "env-a",
+        threadId: "thread-1",
+        tabId: "tab-1",
+        serverEpoch: "epoch-1",
+        // Sorted + deduplicated at mint so equal rights sign identically.
+        allowedCommands: ["attach", "present", "release"],
+      });
+      // Every identity component binds — a lease for one session or epoch
+      // never verifies against another.
+      for (const expected of [
+        { ...surface, environmentId: "env-b" },
+        { ...surface, threadId: "thread-2" },
+        { ...surface, tabId: "tab-2" },
+        { ...surface, serverEpoch: "epoch-2" },
+      ]) {
+        expect(yield* verifyBrowserSurfaceClaims(token, expected)).toBeNull();
+      }
+      // And the lease vends no file: the asset route declines it.
+      expect(yield* resolveAsset(token, "browser-surface")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("simultaneous equivalent mints never share a slot or a token", () =>
+    Effect.gen(function* () {
+      // Deterministic claims once made simultaneous mints sign identical
+      // tokens — the two presentations then shared one held identity and
+      // superseded each other's leases. slotId must differ on every mint.
+      const [a, b] = yield* Effect.all(
+        [issueBrowserSurfaceUrl(surface), issueBrowserSurfaceUrl(surface)],
+        { concurrency: 2 },
+      );
+      expect(a.relativeUrl).not.toBe(b.relativeUrl);
+      expect(a.slotId).not.toBe(b.slotId);
+      // The slotId returned to the registrar is the one signed into the claim.
+      const claimsA = yield* verifyBrowserSurfaceClaims(surfaceToken(a.relativeUrl), surface);
+      const claimsB = yield* verifyBrowserSurfaceClaims(surfaceToken(b.relativeUrl), surface);
+      expect(claimsA?.slotId).toBe(a.slotId);
+      expect(claimsB?.slotId).toBe(b.slotId);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects tampered and expired browser-surface leases", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_000_000);
+      const result = yield* issueBrowserSurfaceUrl(surface);
+      const token = surfaceToken(result.relativeUrl);
+      const [payload, signature] = token.split(".");
+      if (!payload || !signature) throw new Error("malformed minted token");
+
+      // Re-encoding a different payload under the minted signature fails.
+      const forged = Buffer.from(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - a forged payload must be raw bytes.
+        JSON.stringify({
+          version: 1,
+          kind: "browser-surface",
+          environmentId: "env-a",
+          threadId: "thread-1",
+          tabId: "tab-1",
+          serverEpoch: "epoch-2",
+          allowedCommands: ["attach"],
+          expiresAt: Number.MAX_SAFE_INTEGER,
+        }),
+      ).toString("base64url");
+      expect(yield* verifyBrowserSurfaceClaims(`${forged}.${signature}`, surface)).toBeNull();
+      expect(yield* verifyBrowserSurfaceClaims(`${payload}x.${signature}`, surface)).toBeNull();
+      expect(yield* verifyBrowserSurfaceClaims(`${payload}.tampered`, surface)).toBeNull();
+      expect(yield* verifyBrowserSurfaceClaims("not-a-token", surface)).toBeNull();
+
+      // Expiry is enforced at the shared claim layer.
+      yield* TestClock.adjust("61 minutes");
+      expect(yield* verifyBrowserSurfaceClaims(token, surface)).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 

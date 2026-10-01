@@ -59,7 +59,7 @@ import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
-import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
+import { importAgentSessionThread, importRecentAgentThreads } from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -582,6 +582,52 @@ const integrationLayer = Layer.mergeAll(
 );
 
 it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
+  it.effect("imports one session and returns the sequence of its persisted history event", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const projectId = ProjectId.make("single-session-project");
+      const thread = {
+        ...makeThread("claudeAgent"),
+        providerSessionId: "0f8e2a1c-3b4d-4e5f-8a6b-7c8d9e0f1a2b",
+      };
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-single-session-project"),
+        projectId,
+        title: "Single",
+        workspaceRoot: "/tmp/single-session-project",
+        defaultModelSelection: null,
+        createdAt: "2026-08-24T09:00:00.000Z",
+      });
+
+      const result = yield* importAgentSessionThread({
+        projectId,
+        workspaceRoot: "/tmp/single-session-project",
+        thread,
+        source: makeThreadOutcome(thread).source,
+      });
+
+      const snapshot = Option.getOrThrow(yield* snapshots.getThreadDetailSnapshot(result.threadId));
+      expect(result.sequence).not.toBeNull();
+      expect(snapshot.snapshotSequence).toBe(result.sequence);
+      expect(snapshot.thread.projectId).toBe(projectId);
+      expect(snapshot.thread.messages.map((message) => message.text)).toEqual([
+        "Fix the bug",
+        "Fixed",
+      ]);
+
+      // Re-importing the same transcript only refreshes its identity: nothing is dispatched.
+      const again = yield* importAgentSessionThread({
+        projectId,
+        workspaceRoot: "/tmp/single-session-project",
+        thread,
+        source: makeThreadOutcome(thread).source,
+      });
+      expect(again).toEqual({ threadId: result.threadId, sequence: null });
+    }),
+  );
+
   it.effect("imports once after the real engine persists an old rejected receipt", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngine.OrchestrationEngineService;
