@@ -7,6 +7,7 @@ import { BrandMark } from "./BrandMark";
 
 export function LoadingScreen(props: {
   readonly message: string;
+  /** Let the enclosing pane supply the background and top inset. */
   readonly embedded?: boolean;
   readonly messagePlacement?: "above-spinner" | "below-spinner";
 }) {
