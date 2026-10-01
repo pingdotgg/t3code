@@ -664,6 +664,51 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("does not render provider tool-call IDs as expanded tool evidence", async () => {
+    const toolCallId = `call_${"synthetic-tool-id-".repeat(20)}`;
+    const turnId = TurnId.make("tool-evidence-turn");
+    const createdAt = new Date().toISOString();
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnId={turnId}
+        activeTurnInProgress
+        isWorking
+        activeTurnStartedAt={createdAt}
+        timelineEntries={[
+          {
+            id: "tool-1",
+            kind: "work",
+            createdAt,
+            entry: {
+              id: "tool-1",
+              createdAt,
+              turnId,
+              sourceActivityKind: "tool.completed",
+              tone: "tool",
+              label: "Ran web_search",
+              toolData: { toolCallId },
+              toolLifecycleStatus: "completed",
+              isComplete: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await page.getByRole("button", { name: /Expand details/ }).click();
+      await expect
+        .element(page.getByRole("button", { name: "Load full tool evidence" }))
+        .toBeVisible();
+      expect(document.querySelector(".chat-work-details")?.textContent ?? "").not.toContain(
+        toolCallId,
+      );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it.each([125, 5_000])(
     "bounds a %i-action history group to 50 rows per disclosure batch",
     async (count) => {
