@@ -611,6 +611,46 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
+          title="Composer metadata font size"
+          description="Font size for the workspace, branch, and pull request line under the message composer."
+          resetAction={
+            settings.composerMetaFontSize !== recommendedFontSizes.composerMetaFontSize ? (
+              <SettingResetButton
+                label="composer metadata font size"
+                onClick={() =>
+                  updateSettings({
+                    composerMetaFontSize: recommendedFontSizes.composerMetaFontSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.composerMetaFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) updateSettings({ composerMetaFontSize: num });
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Composer metadata font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find(
+                    (option) => option.value === settings.composerMetaFontSize,
+                  )?.label ?? `${recommendedFontSizes.composerMetaFontSize}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           title="Sidebar font size"
           description="Font size for project and chat titles in the sidebar."
           resetAction={
