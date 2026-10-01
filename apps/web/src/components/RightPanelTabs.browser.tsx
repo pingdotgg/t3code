@@ -83,12 +83,12 @@ describe("RightPanelTabs", () => {
     try {
       await expect.element(page.getByTitle("Files")).toBeInTheDocument();
       await expect.element(page.getByTitle("Insights")).toBeInTheDocument();
-      await expect.element(page.getByTitle("index.ts")).toBeInTheDocument();
+      await expect.element(page.getByTitle("src/index.ts")).toBeInTheDocument();
       await expect.element(page.getByTitle("Terminal 2")).toBeInTheDocument();
       const browserTab = page.getByTitle("Local dashboard");
       await expect.element(browserTab).toBeInTheDocument();
       const browserTabElement = await browserTab.element();
-      expect(browserTabElement.querySelector("img")?.src).toBe(
+      expect(browserTabElement.parentElement!.querySelector("img")?.src).toBe(
         `${globalThis.location.origin}/favicon.ico`,
       );
     } finally {
@@ -100,7 +100,7 @@ describe("RightPanelTabs", () => {
     const { screen } = await mountTabs();
     try {
       const tabBar = document.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
-      expect(tabBar.getBoundingClientRect().height).toBe(32);
+      expect(tabBar.getBoundingClientRect().height).toBe(44);
     } finally {
       await screen.unmount();
     }
@@ -112,11 +112,16 @@ describe("RightPanelTabs", () => {
       const tabBar = document.querySelector<HTMLElement>("[data-right-panel-tabbar]")!;
       const closeButton = await page.getByLabelText("Close browser panel").element();
       const browserTab = await page.getByTitle("Local dashboard").element();
-      const fileTab = await page.getByTitle("index.ts").element();
+      const fileTab = await page.getByTitle("src/index.ts").element();
 
       expect(closeButton.parentElement).toBe(tabBar);
-      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("10px");
-      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("11px");
+      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("12px");
+      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("12px");
+      const closeFile = await page.getByLabelText("Close index.ts").element();
+      expect(closeFile.getBoundingClientRect().right).toBeLessThanOrEqual(
+        fileTab.getBoundingClientRect().left,
+      );
+      expect(getComputedStyle(fileTab.parentElement!).borderWidth).toBe("0px");
 
       await page.getByLabelText("Close browser panel").click();
       expect(callbacks.onClosePanel).toHaveBeenCalledOnce();
@@ -228,19 +233,19 @@ describe("RightPanelTabs", () => {
         .element(page.getByRole("menuitem", { name: "Copy path" }))
         .not.toBeInTheDocument();
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Copy path" }).click();
       expect(callbacks.onCopyPath).toHaveBeenCalledWith("src/index.ts");
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close others" }).click();
       expect(callbacks.onCloseOthers).toHaveBeenCalledWith(surfaces[1]);
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close to the right" }).click();
       expect(callbacks.onCloseToRight).toHaveBeenCalledWith(surfaces[1]);
 
-      await page.getByLabelText("Actions for index.ts").click();
+      await page.getByTitle("src/index.ts").click({ button: "right" });
       await page.getByRole("menuitem", { name: "Close all" }).click();
       expect(callbacks.onCloseAll).toHaveBeenCalledOnce();
 

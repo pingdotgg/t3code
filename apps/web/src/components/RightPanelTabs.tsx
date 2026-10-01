@@ -1,4 +1,5 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import { ContextMenu } from "@base-ui/react/context-menu";
 import {
   ClipboardList,
   Activity,
@@ -8,13 +9,14 @@ import {
   Globe2,
   Maximize2,
   Minimize2,
-  MoreHorizontal,
+  PanelBottom,
+  PanelRight,
   Plus,
   Smartphone,
   TerminalSquare,
   X,
 } from "lucide-react";
-import { type MouseEvent, type ReactNode, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { isElectron } from "~/env";
@@ -23,6 +25,7 @@ import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { useTheme } from "~/hooks/useTheme";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import { ScrollArea } from "./ui/scroll-area";
 import {
   Menu,
   MenuItem,
@@ -58,6 +61,8 @@ type Props = {
   readonly showAddSurface?: boolean;
   readonly maximized?: boolean;
   readonly onToggleMaximize?: () => void;
+  readonly terminalOpen?: boolean;
+  readonly onToggleTerminal?: () => void;
   readonly children: ReactNode;
 };
 
@@ -185,11 +190,26 @@ export function RightPanelTabs({
   showAddSurface = true,
   maximized = false,
   onToggleMaximize,
+  terminalOpen = false,
+  onToggleTerminal,
   children,
 }: Props) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
+  const tabListRef = useRef<HTMLDivElement>(null);
   const activeSurface = surfaces.find((surface) => surface.id === activeSurfaceId);
+  useEffect(() => {
+    const list = tabListRef.current;
+    if (!list) return;
+    const revealActive = () =>
+      list
+        .querySelector<HTMLElement>("[data-active-tab='true']")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    revealActive();
+    const observer = new ResizeObserver(revealActive);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [activeSurfaceId, surfaces]);
   const closeOnMiddleClick = (event: MouseEvent, surface: RightPanelSurface) => {
     if (event.button !== 1) return;
     event.preventDefault();
@@ -200,62 +220,69 @@ export function RightPanelTabs({
     <PreviewPanelShell mode={mode} maximized={maximized}>
       <div
         className={cn(
-          "flex h-8 shrink-0 items-center gap-1 border-b border-border/70 bg-chat-background px-1.5",
+          "flex h-11 shrink-0 items-center gap-1 border-b border-border/70 bg-chat-background px-2",
           isElectron && mode === "inline" && "drag-region",
         )}
         data-right-panel-tabbar
       >
-        <div
-          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+        <ScrollArea
+          ref={tabListRef}
+          hideScrollbars
+          scrollFade
+          className="min-w-0 flex-1"
           data-right-panel-tab-list
         >
-          {surfaces.map((surface) => {
-            const title = titleFor(surface, previewSessions, terminalLabels);
-            const fullTitle = surface.kind === "file" ? surface.relativePath : title;
-            const dirty =
-              surface.kind === "file" && (dirtyFilePaths?.has(surface.relativePath) ?? false);
-            const active = surface.id === activeSurfaceId;
-            return (
-              <div
-                key={surface.id}
-                className={cn(
-                  "group flex h-6 min-w-0 max-w-44 shrink-0 items-center rounded-md border",
-                  surface.kind === "preview" ? "text-[10px]" : "text-[11px]",
-                  active
-                    ? "border-border/70 bg-background text-foreground shadow-xs/5"
-                    : "border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                )}
-              >
-                <button
-                  type="button"
-                  title={fullTitle}
-                  onClick={() => onActivate(surface)}
-                  onAuxClick={(event) => closeOnMiddleClick(event, surface)}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 py-0.5 pl-1.5"
-                >
-                  <Icon surface={surface} sessions={previewSessions} theme={resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate text-left">{title}</span>
-                </button>
-                {dirty ? (
-                  <span
-                    role="img"
-                    aria-label="Unsaved changes"
-                    title="Unsaved changes"
-                    className="size-1.5 shrink-0 rounded-full bg-amber-500"
-                  />
-                ) : null}
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label={`Actions for ${title}`}
-                        className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100 focus:opacity-100"
-                      >
-                        <MoreHorizontal className="size-3" />
-                      </button>
-                    }
-                  />
+          <div className="flex h-full w-max items-center gap-0.5">
+            {surfaces.map((surface) => {
+              const title = titleFor(surface, previewSessions, terminalLabels);
+              const fullTitle = surface.kind === "file" ? surface.relativePath : title;
+              const dirty =
+                surface.kind === "file" && (dirtyFilePaths?.has(surface.relativePath) ?? false);
+              const active = surface.id === activeSurfaceId;
+              return (
+                <ContextMenu.Root key={surface.id}>
+                  <ContextMenu.Trigger
+                    render={<div />}
+                    data-active-tab={active}
+                    onMouseDown={(event) => {
+                      if (event.button === 1) event.preventDefault();
+                    }}
+                    onAuxClick={(event) => closeOnMiddleClick(event, surface)}
+                    className={cn(
+                      "group flex h-6 min-w-0 max-w-36 shrink-0 items-center gap-0.5 rounded-md pl-1.5 pr-2 text-xs [-webkit-app-region:no-drag]",
+                      active
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      aria-label={`Close ${title}`}
+                      onClick={() => onClose(surface)}
+                      className="relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted focus-visible:outline focus-visible:outline-ring"
+                    >
+                      <span className="group-hover:hidden group-focus-within:hidden">
+                        <Icon surface={surface} sessions={previewSessions} theme={resolvedTheme} />
+                      </span>
+                      <X className="hidden size-3 group-hover:block group-focus-within:block" />
+                    </button>
+                    <button
+                      type="button"
+                      title={fullTitle}
+                      onClick={() => onActivate(surface)}
+                      className="flex min-w-0 flex-1 items-center gap-1 py-0.5 text-left focus-visible:outline focus-visible:outline-ring"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-left">{title}</span>
+                    </button>
+                    {dirty ? (
+                      <span
+                        role="img"
+                        aria-label="Unsaved changes"
+                        title="Unsaved changes"
+                        className="size-1.5 shrink-0 rounded-full bg-amber-500"
+                      />
+                    ) : null}
+                  </ContextMenu.Trigger>
                   <MenuPopup>
                     {surface.kind === "file" ? (
                       <>
@@ -282,74 +309,80 @@ export function RightPanelTabs({
                       Close all
                     </MenuItem>
                   </MenuPopup>
-                </Menu>
-                <button
-                  type="button"
-                  aria-label={`Close ${title}`}
-                  onClick={() => onClose(surface)}
-                  className="rounded p-0.5 opacity-0 hover:bg-accent group-hover:opacity-100 focus:opacity-100"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            );
-          })}
-          {showAddSurface ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label="Add surface"
-                    className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
-                }
-              />
-              <MenuPopup>
-                <MenuSub>
-                  <MenuSubTrigger>Browser</MenuSubTrigger>
-                  <MenuSubPopup className="min-w-40 max-w-56">
-                    {browserProfiles.map((profile) => (
-                      <MenuItem key={profile.id} onClick={() => onAddBrowserInProfile(profile.id)}>
-                        <span className="min-w-0 truncate">{profile.name}</span>
-                      </MenuItem>
-                    ))}
-                  </MenuSubPopup>
-                </MenuSub>
-                <MenuItem onClick={onAddTerminal}>Terminal</MenuItem>
-                <MenuItem onClick={onAddFiles}>Files</MenuItem>
-                <MenuItem onClick={onAddDiff}>Diff</MenuItem>
-                <MenuItem onClick={onAddInsights}>Insights</MenuItem>
-                {onAddDevice ? <MenuItem onClick={onAddDevice}>Device</MenuItem> : null}
-                {onAddPullRequests ? (
-                  <MenuItem onClick={onAddPullRequests}>Pull requests</MenuItem>
-                ) : null}
-              </MenuPopup>
-            </Menu>
-          ) : null}
-        </div>
+                </ContextMenu.Root>
+              );
+            })}
+            {showAddSurface ? (
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label="Add surface"
+                      className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                    >
+                      <Plus className="size-3.5" />
+                    </button>
+                  }
+                />
+                <MenuPopup>
+                  <MenuSub>
+                    <MenuSubTrigger>Browser</MenuSubTrigger>
+                    <MenuSubPopup className="min-w-40 max-w-56">
+                      {browserProfiles.map((profile) => (
+                        <MenuItem
+                          key={profile.id}
+                          onClick={() => onAddBrowserInProfile(profile.id)}
+                        >
+                          <span className="min-w-0 truncate">{profile.name}</span>
+                        </MenuItem>
+                      ))}
+                    </MenuSubPopup>
+                  </MenuSub>
+                  <MenuItem onClick={onAddTerminal}>Terminal</MenuItem>
+                  <MenuItem onClick={onAddFiles}>Files</MenuItem>
+                  <MenuItem onClick={onAddDiff}>Diff</MenuItem>
+                  <MenuItem onClick={onAddInsights}>Insights</MenuItem>
+                  {onAddDevice ? <MenuItem onClick={onAddDevice}>Device</MenuItem> : null}
+                  {onAddPullRequests ? (
+                    <MenuItem onClick={onAddPullRequests}>Pull requests</MenuItem>
+                  ) : null}
+                </MenuPopup>
+              </Menu>
+            ) : null}
+          </div>
+        </ScrollArea>
+        {onToggleTerminal ? (
+          <button
+            type="button"
+            aria-label={terminalOpen ? "Hide terminal drawer" : "Show terminal drawer"}
+            aria-pressed={terminalOpen}
+            onClick={onToggleTerminal}
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
+          >
+            <PanelBottom className="size-3.5" />
+          </button>
+        ) : null}
         {onToggleMaximize ? (
           <button
             type="button"
             aria-label={maximized ? "Restore panel size" : "Maximize panel"}
             onClick={onToggleMaximize}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
           >
             {maximized ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
           </button>
         ) : null}
-        {activeSurface?.kind === "preview" ? (
-          <button
-            type="button"
-            aria-label="Close browser panel"
-            onClick={onClosePanel}
-            className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <X className="size-3.5" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          aria-label={
+            activeSurface?.kind === "preview" ? "Close browser panel" : "Hide right panel"
+          }
+          onClick={onClosePanel}
+          className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [-webkit-app-region:no-drag]"
+        >
+          <PanelRight className="size-3.5" />
+        </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </PreviewPanelShell>

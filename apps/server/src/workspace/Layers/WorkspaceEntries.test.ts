@@ -78,6 +78,58 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
     vi.restoreAllMocks();
   });
 
+  describe("listDirectory", () => {
+    it.effect("lists immediate children including ignored entries without a recursive scan", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ git: true });
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\nignored.txt\n");
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        yield* writeTextFile(cwd, "ignored.txt");
+        const service = yield* WorkspaceEntries;
+        const root = yield* service.listDirectory({ cwd, directoryPath: "" });
+        expect(root.entries.map((entry) => entry.path)).toEqual([
+          "node_modules",
+          "src",
+          ".gitignore",
+          "ignored.txt",
+        ]);
+        expect(root.entries.find((entry) => entry.path === "node_modules")?.ignored).toBe(true);
+        expect(root.entries.find((entry) => entry.path === "ignored.txt")?.ignored).toBe(true);
+        expect(root.entries.some((entry) => entry.path === ".git")).toBe(false);
+        const children = yield* service.listDirectory({ cwd, directoryPath: "src" });
+        expect(children.entries.map((entry) => entry.path)).toEqual(["src/index.ts"]);
+        yield* writeTextFile(cwd, "src/new.ts");
+        const refreshed = yield* service.listDirectory({ cwd, directoryPath: "src" });
+        expect(refreshed.entries.map((entry) => entry.path)).toEqual([
+          "src/index.ts",
+          "src/new.ts",
+        ]);
+      }),
+    );
+
+    it.effect("rejects traversal, metadata and symlink escapes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        const outside = yield* makeTempDir();
+        yield* writeTextFile(cwd, ".git/config");
+        yield* writeTextFile(outside, "private.txt");
+        yield* Effect.promise(() =>
+          fsPromises.symlink(
+            outside,
+            `${cwd}/linked`,
+            process.platform === "win32" ? "junction" : "dir",
+          ),
+        );
+        const service = yield* WorkspaceEntries;
+        for (const directoryPath of ["..", ".git", "linked"]) {
+          const result = yield* Effect.exit(service.listDirectory({ cwd, directoryPath }));
+          expect(result._tag).toBe("Failure");
+        }
+      }),
+    );
+  });
+
   describe("search", () => {
     it.effect("returns files and directories relative to cwd", () =>
       Effect.gen(function* () {
