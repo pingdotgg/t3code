@@ -24,6 +24,7 @@
 - Runtime PID files published after HTTP startup are observations, not startup ownership. Hold a shared per-state-directory OS-backed claim before constructing runtime services/migrations, revalidate legacy runtime evidence under it, and never unlink the claim file to recover a crash.
 
 - Provider runtime activity is projected into orchestration domain events server-side before the web app consumes it.
+- Preserve command input on tool starts and normalize provider-specific nesting before compact activity projection; shell audit timing must identify native versus observed starts and never treat an unfinished provider call as OS-process liveness.
 - Runtime warning/error activities carry user-facing text in `payload.message` with optional `payload.detail`; every client's work-log derivation must surface both, or the rows render with nothing to expand.
 - Session startup/resume and turn lifecycle require predictable recovery: terminal reconciliation must settle the matching projected turn and clear `session.activeTurnId`; preserve a pre-acknowledgement start failure's `messageId`; and preserve terminal provider-event ordering during normal adapter shutdown.
 - Provider `turn.aborted` events may arrive after interrupt handling clears `session.activeTurnId`: use durable per-turn abort activity to reject later completion signals, condition session writes on the expected active turn at command application, project resolved turn IDs into activity, and clear tool-update fingerprints.
@@ -53,6 +54,7 @@
 
 ## Desktop packaging and React state
 
+- `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; disable ref mapping, tags, submodules, and `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
 - Chat thread URLs can outlive a desktop backend port or advertise a LAN address while the client uses loopback. Resolve private-network aliases by their explicitly registered environment ID and protocol without contacting the alias; preserve exact-origin environment bindings and keep public websites and pairing URLs external.
 - Work-log display paths must use verbatim provider candidates, not Git-normalized changed paths: absolute patch paths are rejected without a cwd. Prefer raw input/ACP locations over shortened previews, and never treat JSON output as a filename.
 - Keep visited work-log bodies local to their virtual timeline row, lazy before first expansion, and hidden after collapse. Preserve mounted details through closing/reversal so output parsing and DOM reconstruction do not interrupt the animation.
@@ -143,6 +145,7 @@
 - Delegation discovery is not a prompt-only reliability boundary. Expose one canonical `delegate_work` interface for singular and batch creation, derive project defaults server-side and delegated model defaults from settings, and keep legacy creation tools as compatibility adapters.
 - A workspace handoff must atomically persist the new branch/worktree and ensure a dispatchable queued continuation; reuse an existing user-queued turn instead of appending duplicate work.
 - Workspace handoff retries must reuse a durable orchestration command ID. If every response is lost, preserve the created worktree because the binding may already have committed; only roll back after a definitive server rejection, and surface cleanup failures.
+- A handoff that re-targets the worktree and branch the thread is already bound to is not a move: compare the canonical path (not the requested spelling) plus branch, and omit the `Moved to` marker instead of appending a divider per request. Still queue the continuation, because the caller is told to end its turn and let T3 resume — dropping it strands the turn rather than merely hiding noise. Ownership stays claimed at the same generation, so the binding is persisted either way.
 - Local desktop flavors must never use Official's `~/.t3` home. If a divergent build replaces role auth tables with scope-only tables, append a repair above the latest auth migration; replaying an earlier repair is impossible once the ledger high-water mark has passed it.
 
 ## PR reviews and checkpoint provenance
@@ -242,6 +245,8 @@
 
 ## Pairing and environment recovery
 
+- The shared WebSocket transport normalizes its endpoint pathname to `/ws`. Native proxy gateways must bind environment identity to single-use tickets, not rely on a URL path prefix surviving that normalization.
+- `/api/auth/session` can report revoked credentials with HTTP 200 and `authenticated: false`; native account HTTP renewal must handle that response as well as HTTP 401.
 - SSH device startup must lock per host, not across the service; keep settings revocation coordinated with those locks so a slow remote install cannot block healthy hosts or publish readiness after access is disabled.
 - Persist agent endpoints under the adapter's reconnect lock using its current endpoint; a service-only lock cannot prevent a stale readiness snapshot from overwriting a new tunnel configuration.
 - Host IDs are environment-local. Cross-environment edits and removals must confirm the SSH destination before trusting an ID, and must not append a duplicate ID belonging to an unrelated host.
@@ -389,6 +394,7 @@
 
 ## UI discovery and browser capture
 
+- Settings rows without search IDs must not match an empty URL hash; ref-driven focus/scroll otherwise jumps to the last ID-less row when Settings opens.
 - Composer-triggered provider discovery must use the route's environment connection; the primary environment cannot safely resolve remote workspace paths or update a remote provider snapshot.
 - Sidebar device markers belong in trailing metadata, not title text: omit primary-machine markers and raw IDs, keep remote names in tooltips, and cover hosted clients with no primary environment in both sidebar layouts.
 - Diff route search is thread-local UI state: clear it when sidebar navigation changes threads, but preserve it for the active thread so the split-layout store can restore each chat independently.
@@ -413,7 +419,7 @@
 
 ## MCP schemas and auth bootstrap
 
-- No-argument MCP parameters need an object-only schema, such as `Schema.Record(Schema.String, Schema.Never)`; `Schema.Struct({})` exports an object/array union. Do not add unused parameters to satisfy provider schema checks.
+- No-argument MCP parameters need an object-only schema, such as `Schema.Record(Schema.String, Schema.Never)`; `Schema.Struct({})` exports an object/array union. Strict clients validate the whole tool list and drop the server if any tool has a non-object top-level `inputSchema.type`. Do not add unused parameters to satisfy provider schema checks.
 - Auth bootstrap cache writes must belong to the current in-flight promise so reset cannot be undone by an older completion. Import auth test dependencies before test execution, not inside a timed test or its cleanup.
 - Direct HTTP authorization must use shared token-only renewal, not relay connection establishment; cached reads must mint no socket tickets or depend on relay availability, while rejected-token retries retain single-flight and account-identity guards.
 

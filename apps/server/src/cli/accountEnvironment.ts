@@ -146,6 +146,10 @@ export interface CliAccountEnvironmentTarget {
   readonly label: string;
   readonly origin: string;
   readonly nextSocketUrl: Effect.Effect<string, CliAccountEnvironmentError>;
+  readonly request: (
+    path: string,
+    request: Request,
+  ) => Effect.Effect<Response, CliAccountEnvironmentError>;
 }
 
 interface CliDpopSigner {
@@ -436,12 +440,15 @@ const withAccountRuntime = <A, E, R>(
     readonly relayUrl: string;
     readonly signer: CliDpopSigner;
   }) => Effect.Effect<A, E, R>,
+  sharedTokens?: CliTokenManager.CloudCliTokenManager["Service"],
 ) =>
   Effect.gen(function* () {
     const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
     const baseLayer = Layer.mergeAll(
       ServerSecretStore.layer,
-      CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+      sharedTokens
+        ? Layer.succeed(CliTokenManager.CloudCliTokenManager, sharedTokens)
+        : CliTokenManager.layer.pipe(Layer.provide(ServerSecretStore.layer)),
     ).pipe(
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(Layer.succeed(ServerConfig, config)),
@@ -491,11 +498,17 @@ const withAccountRuntime = <A, E, R>(
     ),
   );
 
-export const discoverAccountEnvironments = (baseDir: string) =>
-  withAccountRuntime(baseDir, ({ session, relay }) =>
-    relay
-      .listEnvironments({ clerkToken: session.accessToken })
-      .pipe(Effect.map((environments) => ({ session, environments }))),
+export const discoverAccountEnvironments = (
+  baseDir: string,
+  sharedTokens?: CliTokenManager.CloudCliTokenManager["Service"],
+) =>
+  withAccountRuntime(
+    baseDir,
+    ({ session, relay }) =>
+      relay
+        .listEnvironments({ clerkToken: session.accessToken })
+        .pipe(Effect.map((environments) => ({ session, environments }))),
+    sharedTokens,
   );
 
 export const deregisterAccountEnvironment = (
@@ -566,165 +579,266 @@ const prepareAccountEnvironment = (
     readonly accountId: string;
     readonly environmentId: string;
   },
+  sharedTokens?: CliTokenManager.CloudCliTokenManager["Service"],
 ) =>
-  withAccountRuntime(baseDir, ({ session, secrets, tokens, relay, relayUrl, signer }) =>
-    Effect.gen(function* () {
-      if (session.accountId !== selection.accountId) {
-        return yield* new CliAccountEnvironmentError({
-          message:
-            `Selected environment belongs to a different T3 Connect account. ` +
-            "Run `t3 env list`, then select an environment from the current account.",
-        });
-      }
-      const environmentId = EnvironmentId.make(selection.environmentId);
-      const tokenLock = yield* Semaphore.make(1);
-      const tokenStore = makeEnvironmentTokenStore(secrets);
-
-      const mintToken = Effect.fn("cli.accountEnvironment.mintToken")(function* () {
-        const current = yield* assertSameAccount(tokens, session.accountId);
-        const connected = yield* relay.connectEnvironment({
-          clerkToken: current.accessToken,
-          scopes: [RelayEnvironmentConnectScope],
-          environmentId,
-        });
-        if (connected.environmentId !== environmentId) {
+  withAccountRuntime(
+    baseDir,
+    ({ session, secrets, tokens, relay, relayUrl, signer }) =>
+      Effect.gen(function* () {
+        if (session.accountId !== selection.accountId) {
           return yield* new CliAccountEnvironmentError({
-            message: `Relay returned environment '${connected.environmentId}' while '${environmentId}' was selected.`,
+            message:
+              `Selected environment belongs to a different T3 Connect account. ` +
+              "Run `t3 env list`, then select an environment from the current account.",
           });
         }
-        const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-          httpBaseUrl: connected.endpoint.httpBaseUrl,
-        });
-        if (descriptor.environmentId !== environmentId) {
-          return yield* new CliAccountEnvironmentError({
-            message: `Connected endpoint belongs to environment '${descriptor.environmentId}', not '${environmentId}'.`,
-          });
-        }
-        const proof = yield* signer.createProof({
-          method: "POST",
-          url: environmentEndpointUrl(connected.endpoint.httpBaseUrl, "/oauth/token"),
-        });
-        const exchanged = yield* exchangeRemoteDpopAccessToken({
-          httpBaseUrl: connected.endpoint.httpBaseUrl,
-          credential: connected.credential,
-          scopes: AuthStandardClientScopes,
-          clientMetadata: CLIENT_PRESENTATION,
-          dpopProof: proof,
-        });
-        yield* assertSameAccount(tokens, session.accountId);
-        const now = Date.now();
-        const minted: EnvironmentTokenCacheEntry = {
-          accountId: session.accountId,
-          environmentId,
-          relayUrl,
-          label: descriptor.label,
-          endpoint: connected.endpoint,
-          accessToken: exchanged.access_token,
-          expiresAtEpochMs: now + exchanged.expires_in * 1_000,
-          dpopThumbprint: signer.thumbprint,
-          clientId: RelayWebClientId,
-          authorizationScope: [...AuthStandardClientScopes].sort().join(" "),
-        };
-        const stored = yield* tokenStore.load;
-        yield* tokenStore.save([
-          ...stored.filter(
-            (entry) =>
-              entry.environmentId !== environmentId || entry.accountId !== session.accountId,
-          ),
-          minted,
-        ]);
-        return minted;
-      });
+        const environmentId = EnvironmentId.make(selection.environmentId);
+        const tokenLock = yield* Semaphore.make(1);
+        const tokenStore = makeEnvironmentTokenStore(secrets);
 
-      const getToken = (rejectedAccessToken?: string) =>
-        tokenLock
-          .withPermits(1)(
-            Effect.gen(function* () {
-              yield* assertSameAccount(tokens, session.accountId);
-              const now = Date.now();
-              const stored = yield* tokenStore.load;
-              const cached = findReusableEnvironmentToken(stored, {
-                accountId: session.accountId,
-                environmentId,
-                relayUrl,
-                dpopThumbprint: signer.thumbprint,
-                nowEpochMs: now,
-                ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+        const mintToken = Effect.fn("cli.accountEnvironment.mintToken")(function* () {
+          const current = yield* assertSameAccount(tokens, session.accountId);
+          const connected = yield* relay.connectEnvironment({
+            clerkToken: current.accessToken,
+            scopes: [RelayEnvironmentConnectScope],
+            environmentId,
+          });
+          if (connected.environmentId !== environmentId) {
+            return yield* new CliAccountEnvironmentError({
+              message: `Relay returned environment '${connected.environmentId}' while '${environmentId}' was selected.`,
+            });
+          }
+          const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+            httpBaseUrl: connected.endpoint.httpBaseUrl,
+          });
+          if (descriptor.environmentId !== environmentId) {
+            return yield* new CliAccountEnvironmentError({
+              message: `Connected endpoint belongs to environment '${descriptor.environmentId}', not '${environmentId}'.`,
+            });
+          }
+          const proof = yield* signer.createProof({
+            method: "POST",
+            url: environmentEndpointUrl(connected.endpoint.httpBaseUrl, "/oauth/token"),
+          });
+          const exchanged = yield* exchangeRemoteDpopAccessToken({
+            httpBaseUrl: connected.endpoint.httpBaseUrl,
+            credential: connected.credential,
+            scopes: AuthStandardClientScopes,
+            clientMetadata: CLIENT_PRESENTATION,
+            dpopProof: proof,
+          });
+          yield* assertSameAccount(tokens, session.accountId);
+          const now = Date.now();
+          const minted: EnvironmentTokenCacheEntry = {
+            accountId: session.accountId,
+            environmentId,
+            relayUrl,
+            label: descriptor.label,
+            endpoint: connected.endpoint,
+            accessToken: exchanged.access_token,
+            expiresAtEpochMs: now + exchanged.expires_in * 1_000,
+            dpopThumbprint: signer.thumbprint,
+            clientId: RelayWebClientId,
+            authorizationScope: [...AuthStandardClientScopes].sort().join(" "),
+          };
+          const stored = yield* tokenStore.load;
+          yield* tokenStore.save([
+            ...stored.filter(
+              (entry) =>
+                entry.environmentId !== environmentId || entry.accountId !== session.accountId,
+            ),
+            minted,
+          ]);
+          return minted;
+        });
+
+        const getToken = (rejectedAccessToken?: string) =>
+          tokenLock
+            .withPermits(1)(
+              Effect.gen(function* () {
+                yield* assertSameAccount(tokens, session.accountId);
+                const now = Date.now();
+                const stored = yield* tokenStore.load;
+                const cached = findReusableEnvironmentToken(stored, {
+                  accountId: session.accountId,
+                  environmentId,
+                  relayUrl,
+                  dpopThumbprint: signer.thumbprint,
+                  nowEpochMs: now,
+                  ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+                });
+                if (cached !== undefined) {
+                  return cached;
+                }
+                return yield* mintToken();
+              }),
+            )
+            .pipe(
+              Effect.provide(FetchHttpClient.layer),
+              Effect.mapError((cause) =>
+                isCliAccountEnvironmentError(cause)
+                  ? cause
+                  : new CliAccountEnvironmentError({
+                      message: `Could not authorize account environment '${environmentId}'.`,
+                      cause,
+                    }),
+              ),
+            );
+
+        const socketUrl = (token: EnvironmentTokenCacheEntry) =>
+          Effect.gen(function* () {
+            const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+              httpBaseUrl: token.endpoint.httpBaseUrl,
+            });
+            if (descriptor.environmentId !== environmentId)
+              return yield* new CliAccountEnvironmentError({
+                message:
+                  "The endpoint now belongs to a different environment. Refusing to send its credential.",
               });
-              if (cached !== undefined) {
-                return cached;
-              }
-              return yield* mintToken();
-            }),
-          )
-          .pipe(
+            yield* assertSameAccount(tokens, session.accountId);
+            const proof = yield* signer.createProof({
+              method: "POST",
+              url: environmentEndpointUrl(token.endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
+              accessToken: token.accessToken,
+            });
+            return yield* resolveRemoteDpopWebSocketConnectionUrl({
+              wsBaseUrl: token.endpoint.wsBaseUrl,
+              httpBaseUrl: token.endpoint.httpBaseUrl,
+              accessToken: token.accessToken,
+              dpopProof: proof,
+            });
+          }).pipe(
             Effect.provide(FetchHttpClient.layer),
             Effect.mapError((cause) =>
               isCliAccountEnvironmentError(cause)
                 ? cause
                 : new CliAccountEnvironmentError({
-                    message: `Could not authorize account environment '${environmentId}'.`,
+                    message: `Could not issue a WebSocket ticket for '${environmentId}'.`,
                     cause,
                   }),
             ),
           );
 
-      const socketUrl = (token: EnvironmentTokenCacheEntry) =>
-        Effect.gen(function* () {
-          const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-            httpBaseUrl: token.endpoint.httpBaseUrl,
-          });
-          if (descriptor.environmentId !== environmentId)
-            return yield* new CliAccountEnvironmentError({
-              message:
-                "The endpoint now belongs to a different environment. Refusing to send its credential.",
-            });
+        const token = yield* getToken();
+        const nextSocketUrl = Effect.gen(function* () {
+          let current = yield* getToken();
+          let ticket = yield* socketUrl(current).pipe(Effect.result);
+          if (ticket._tag === "Failure") {
+            current = yield* getToken(current.accessToken);
+            ticket = yield* socketUrl(current).pipe(Effect.result);
+          }
+          if (ticket._tag === "Failure") return yield* ticket.failure;
           yield* assertSameAccount(tokens, session.accountId);
-          const proof = yield* signer.createProof({
-            method: "POST",
-            url: environmentEndpointUrl(token.endpoint.httpBaseUrl, "/api/auth/websocket-ticket"),
-            accessToken: token.accessToken,
-          });
-          return yield* resolveRemoteDpopWebSocketConnectionUrl({
-            wsBaseUrl: token.endpoint.wsBaseUrl,
-            httpBaseUrl: token.endpoint.httpBaseUrl,
-            accessToken: token.accessToken,
-            dpopProof: proof,
-          });
-        }).pipe(
-          Effect.provide(FetchHttpClient.layer),
-          Effect.mapError((cause) =>
-            isCliAccountEnvironmentError(cause)
-              ? cause
-              : new CliAccountEnvironmentError({
-                  message: `Could not issue a WebSocket ticket for '${environmentId}'.`,
-                  cause,
-                }),
-          ),
-        );
+          return ticket.success;
+        });
 
-      const token = yield* getToken();
-      const nextSocketUrl = Effect.gen(function* () {
-        let current = yield* getToken();
-        let ticket = yield* socketUrl(current).pipe(Effect.result);
-        if (ticket._tag === "Failure") {
-          current = yield* getToken(current.accessToken);
-          ticket = yield* socketUrl(current).pipe(Effect.result);
-        }
-        if (ticket._tag === "Failure") return yield* ticket.failure;
-        yield* assertSameAccount(tokens, session.accountId);
-        return ticket.success;
-      });
+        const request = (path: string, input: Request) =>
+          Effect.gen(function* () {
+            if (!path.startsWith("/") || path.startsWith("//")) {
+              return yield* new CliAccountEnvironmentError({
+                message: "Invalid environment path.",
+              });
+            }
+            const body =
+              input.body === null ? undefined : yield* Effect.tryPromise(() => input.arrayBuffer());
+            const send = (current: EnvironmentTokenCacheEntry) =>
+              Effect.gen(function* () {
+                const url = new URL(path, current.endpoint.httpBaseUrl);
+                if (url.origin !== new URL(current.endpoint.httpBaseUrl).origin) {
+                  return yield* new CliAccountEnvironmentError({
+                    message: "Invalid environment origin.",
+                  });
+                }
+                const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+                  httpBaseUrl: current.endpoint.httpBaseUrl,
+                }).pipe(Effect.provide(FetchHttpClient.layer));
+                if (descriptor.environmentId !== environmentId) {
+                  return yield* new CliAccountEnvironmentError({
+                    message:
+                      "The endpoint belongs to a different environment. Refusing to send its credential.",
+                  });
+                }
+                yield* assertSameAccount(tokens, session.accountId);
+                const proof = yield* signer.createProof({
+                  method: input.method,
+                  url: url.toString(),
+                  accessToken: current.accessToken,
+                });
+                const headers = new Headers();
+                for (const name of [
+                  "accept",
+                  "content-type",
+                  "range",
+                  "if-match",
+                  "if-none-match",
+                ]) {
+                  const value = input.headers.get(name);
+                  if (value !== null) headers.set(name, value);
+                }
+                headers.set("authorization", `DPoP ${current.accessToken}`);
+                headers.set("dpop", proof);
+                return yield* Effect.tryPromise(async () => {
+                  const timeout = new AbortController();
+                  const timer = setTimeout(() => timeout.abort(), 15_000);
+                  try {
+                    return await fetch(url, {
+                      method: input.method,
+                      headers,
+                      ...(body === undefined ? {} : { body }),
+                      signal: AbortSignal.any([input.signal, timeout.signal]),
+                      redirect: "manual",
+                    });
+                  } finally {
+                    clearTimeout(timer);
+                  }
+                });
+              });
+            let current = yield* getToken();
+            let response = yield* send(current);
+            const sessionRejected =
+              path.split("?")[0] === "/api/auth/session" && response.ok
+                ? yield* Effect.tryPromise(async () => {
+                    const state: unknown = await response.clone().json();
+                    return (
+                      typeof state === "object" &&
+                      state !== null &&
+                      "authenticated" in state &&
+                      state.authenticated === false
+                    );
+                  })
+                : false;
+            if (response.status === 401 || sessionRejected) {
+              yield* Effect.tryPromise(() => response.body?.cancel() ?? Promise.resolve());
+              current = yield* getToken(current.accessToken);
+              response = yield* send(current);
+            }
+            yield* assertSameAccount(tokens, session.accountId);
+            if (response.status >= 300 && response.status < 400 && response.status !== 304) {
+              yield* Effect.tryPromise(() => response.body?.cancel() ?? Promise.resolve());
+              return yield* new CliAccountEnvironmentError({
+                message: "Environment redirects are not allowed for authenticated requests.",
+              });
+            }
+            return response;
+          }).pipe(
+            Effect.mapError((cause) =>
+              isCliAccountEnvironmentError(cause)
+                ? cause
+                : new CliAccountEnvironmentError({ message: "Environment request failed.", cause }),
+            ),
+          );
 
-      return {
-        source: "account",
-        accountId: session.accountId,
-        environmentId,
-        label: token.label,
-        origin: token.endpoint.httpBaseUrl.replace(/\/$/, ""),
-        nextSocketUrl,
-      } satisfies CliAccountEnvironmentTarget;
-    }).pipe(Effect.provide(FetchHttpClient.layer)),
+        return {
+          source: "account",
+          accountId: session.accountId,
+          environmentId,
+          label: token.label,
+          origin: token.endpoint.httpBaseUrl.replace(/\/$/, ""),
+          nextSocketUrl,
+          request,
+        } satisfies CliAccountEnvironmentTarget;
+      }).pipe(Effect.provide(FetchHttpClient.layer)),
+    sharedTokens,
   );
 
 export const withAccountEnvironment = <A, E, R>(
@@ -734,4 +848,5 @@ export const withAccountEnvironment = <A, E, R>(
     readonly environmentId: string;
   },
   run: (target: CliAccountEnvironmentTarget) => Effect.Effect<A, E, R>,
-) => prepareAccountEnvironment(baseDir, selection).pipe(Effect.flatMap(run));
+  sharedTokens?: CliTokenManager.CloudCliTokenManager["Service"],
+) => prepareAccountEnvironment(baseDir, selection, sharedTokens).pipe(Effect.flatMap(run));

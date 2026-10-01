@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
+import { extractToolCommandInput } from "@t3tools/shared/toolActivity";
 import { Effect, Layer, PubSub, Result, Stream } from "effect";
 
 import { resolveThreadWorkspaceCwd } from "../checkpointing/Utils.ts";
@@ -18,6 +19,13 @@ import {
   pullRequestAssociationRetryAt,
 } from "./pullRequestAssociationValidation.ts";
 
+const PULL_REQUEST_URL =
+  /(?<=^|[\s(<"'`])https:\/\/[a-zA-Z0-9.-]+(?::\d+)?\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*(?=$|[\s)>"'`\]?#.,])/g;
+const GH_PR_CREATE = /(?:^|[\s;&|(])gh\s+pr\s+create(?=\s|$)/;
+
+const pullRequestUrls = (text: string) =>
+  Array.from(text.matchAll(PULL_REQUEST_URL), (match) => match[0]);
+
 // A branch match alone is not association intent. Require an unambiguous PR URL
 // reported by the assistant, then independently verify it against the checkout.
 export function reportedPullRequestUrl(
@@ -27,51 +35,90 @@ export function reportedPullRequestUrl(
     (entry) => entry.role === "assistant" && !entry.streaming,
   );
   if (!message) return null;
-  const urls = new Set(
-    Array.from(
-      message.text.matchAll(
-        /(?<=^|[\s(<"'`])https:\/\/[a-zA-Z0-9.-]+(?::\d+)?\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*(?=$|[\s)>"'`\]?#.,])/g,
-      ),
-      (match) => match[0],
-    ),
-  );
+  const urls = new Set(pullRequestUrls(message.text));
   return urls.size === 1 ? (urls.values().next().value ?? null) : null;
 }
 
-function reportsCreatedPullRequest(
-  thread: Pick<OrchestrationThread, "messages">,
-  url: string,
-): boolean {
-  return thread.messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      !message.streaming &&
-      message.text.split(/\r?\n/).some((line) => {
-        const urlIndex = line.indexOf(url);
-        if (urlIndex < 0) return false;
-        if (/^\s*(?:[-*]\s*)?(?:\*\*)?Created(?:\*\*)?(?::|\s)/i.test(line)) {
-          return true;
-        }
-        const prefix = line.slice(0, urlIndex);
-        return /\b(?:created|opened)\b(?:\s+(?:a|the))?(?:\s+new)?\s*(?:\*\*)?\[?\s*(?:pull request|pr)\b/i.test(
-          prefix,
-        );
-      }),
-  );
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
-function recoverablePullRequestUrl(thread: OrchestrationThread): string | null {
-  return (
-    reportedPullRequestUrl(thread) ??
-    thread.pullRequests?.find(
-      (link) =>
-        link.source === "recovered" &&
-        thread.pullRequest &&
-        sameThreadPullRequest(link.pullRequest, thread.pullRequest) &&
-        reportsCreatedPullRequest(thread, link.pullRequest.url),
-    )?.pullRequest.url ??
-    null
-  );
+function collectStrings(value: unknown, output: string[], depth: number): void {
+  if (depth > 6 || output.length >= 64) return;
+  if (typeof value === "string") {
+    output.push(value);
+  } else if (Array.isArray(value)) {
+    for (const entry of value) collectStrings(entry, output, depth + 1);
+  } else {
+    const record = asRecord(value);
+    if (record) for (const entry of Object.values(record)) collectStrings(entry, output, depth + 1);
+  }
+}
+
+// Activity arrays are replaced on every projection change, so unchanged threads
+// cost one lookup per sweep instead of a payload scan.
+const createdPullRequestUrlsCache = new WeakMap<
+  OrchestrationThread["activities"],
+  ReadonlyArray<string>
+>();
+
+/**
+ * PR URLs printed by this thread's own successful `gh pr create` runs, oldest first.
+ * Creation provenance comes from what the thread executed, never from how the
+ * assistant phrased its report. URLs quoted in the command (e.g. a PR body that
+ * references another PR) and echoes of the command itself are not evidence.
+ */
+function threadCreatedPullRequestUrls(
+  thread: Pick<OrchestrationThread, "activities">,
+): ReadonlyArray<string> {
+  const cached = createdPullRequestUrlsCache.get(thread.activities);
+  if (cached) return cached;
+  const urls: string[] = [];
+  for (const activity of thread.activities) {
+    if (activity.kind !== "tool.completed") continue;
+    const payload = asRecord(activity.payload);
+    if (payload?.itemType !== "command_execution" || payload.status === "failed") continue;
+    const commandInput = extractToolCommandInput(asRecord(payload.data));
+    const command = Array.isArray(commandInput) ? commandInput.join(" ") : commandInput;
+    if (!command || !GH_PR_CREATE.test(command)) continue;
+    const quoted = new Set(pullRequestUrls(command));
+    const texts: string[] = [];
+    collectStrings([payload.detail, payload.data], texts, 0);
+    for (const text of texts) {
+      if (command.startsWith(text.trimStart().slice(0, 32))) continue;
+      for (const url of pullRequestUrls(text)) {
+        if (!quoted.has(url) && !urls.includes(url)) urls.push(url);
+      }
+    }
+  }
+  createdPullRequestUrlsCache.set(thread.activities, urls);
+  return urls;
+}
+
+interface RecoveryCandidate {
+  readonly reference: string;
+  readonly createdByThread: boolean;
+}
+
+// Pure snapshot check so sweeps only spend Git/GitHub lookups on actionable threads.
+function recoveryCandidate(thread: OrchestrationThread): RecoveryCandidate | null {
+  const created = threadCreatedPullRequestUrls(thread);
+  for (const reference of [reportedPullRequestUrl(thread), created.at(-1)]) {
+    if (!reference) continue;
+    const number = Number(reference.slice(reference.lastIndexOf("/") + 1));
+    if (
+      thread.pullRequest &&
+      !sameThreadPullRequest(thread.pullRequest, { url: reference, number })
+    )
+      continue;
+    const createdByThread = created.includes(reference);
+    const existingLink = thread.pullRequests?.find((link) => link.pullRequest.url === reference);
+    if (existingLink && (existingLink.source !== "recovered" || !createdByThread)) continue;
+    return { reference, createdByThread };
+  }
+  return null;
 }
 
 export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.now) =>
@@ -226,11 +273,9 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
         if (pending.status === "pending") yield* recoverPending(snapshot, thread, pending);
         return;
       }
-      const reference = recoverablePullRequestUrl(thread);
-      if (!reference) return;
-      const createdByAgent = reportsCreatedPullRequest(thread, reference);
-      const existingLink = thread.pullRequests?.find((link) => link.pullRequest.url === reference);
-      if (existingLink && (existingLink.source !== "recovered" || !createdByAgent)) return;
+      const candidate = recoveryCandidate(thread);
+      if (!candidate) return;
+      const { reference, createdByThread } = candidate;
       const cwd = resolveThreadWorkspaceCwd({ thread, projects: snapshot.projects });
       if (!cwd) return;
 
@@ -245,7 +290,6 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
       ) {
         return;
       }
-      if (thread.pullRequest && !sameThreadPullRequest(thread.pullRequest, status.pr)) return;
       // Serialized dispatch checks the snapshot version: explicit associations,
       // workspace handoffs, and archival that race the lookup always win.
       yield* engine.dispatch({
@@ -255,7 +299,7 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
         expectedUpdatedAt: thread.updatedAt,
         expectedWorkspaceCwd: cwd,
         pullRequest: status.pr,
-        pullRequestSource: createdByAgent ? "agent" : "recovered",
+        pullRequestSource: createdByThread ? "agent" : "recovered",
       });
     });
 
@@ -267,7 +311,7 @@ export const makePullRequestAssociationRecovery = (nowMs: () => number = Date.no
           !thread.archivedAt &&
           !isReviewWorkflowThread(thread) &&
           (thread.pendingPullRequestAssociation?.status === "pending" ||
-            (!thread.pendingPullRequestAssociation && recoverablePullRequestUrl(thread) !== null)),
+            (!thread.pendingPullRequestAssociation && recoveryCandidate(thread) !== null)),
       );
       yield* Effect.forEach(candidates, (thread) => recoverSafely(thread.id), {
         concurrency: 4,

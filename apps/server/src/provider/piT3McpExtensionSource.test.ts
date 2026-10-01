@@ -109,6 +109,51 @@ type ToolCallHook = (
   ctx: { ui: { confirm: (title: string, message: string) => Promise<boolean> } },
 ) => Promise<unknown>;
 
+describe("Pi tool input schemas", () => {
+  const normalizeToolInputSchema = NodeVM.runInNewContext(
+    `${runnableSource}\nnormalizeToolInputSchema`,
+    {},
+  ) as (schema: Record<string, unknown> | undefined) => Record<string, unknown>;
+
+  it("gives property-less object schemas strict-compatible properties", () => {
+    assert.deepEqual(normalizeToolInputSchema({ type: "object", additionalProperties: false }), {
+      type: "object",
+      additionalProperties: false,
+      properties: {},
+      required: [],
+    });
+  });
+
+  it("leaves well-formed schemas untouched", () => {
+    const schema = {
+      type: "object",
+      properties: { terminalId: { type: "string" } },
+      required: ["terminalId"],
+      additionalProperties: false,
+    };
+    assert.deepEqual(normalizeToolInputSchema(schema), schema);
+  });
+
+  it("fills a missing required list from declared properties", () => {
+    assert.deepEqual(
+      normalizeToolInputSchema({ type: "object", properties: { q: { type: "string" } } }),
+      {
+        type: "object",
+        properties: { q: { type: "string" } },
+        required: ["q"],
+      },
+    );
+  });
+
+  it("falls back to an empty object schema for missing input", () => {
+    assert.deepEqual(normalizeToolInputSchema(undefined), {
+      type: "object",
+      properties: {},
+      required: [],
+    });
+  });
+});
+
 describe("Pi approval summaries", () => {
   const confirmMessage = async (toolName: string, input: unknown) => {
     const hook = (await loadHandlers({ T3_PI_RUNTIME_MODE: "approval-required" })).get(

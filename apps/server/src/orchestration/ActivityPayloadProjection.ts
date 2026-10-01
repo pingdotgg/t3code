@@ -5,6 +5,8 @@ import type {
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
 import { extractNormalizedChangedFilePathsFromToolPayload } from "@t3tools/shared/toolChangedFiles";
+import { redactAuditText, redactSensitiveValues } from "./auditRedaction.ts";
+import { extractCommandExecutionMetadata } from "./commandExecution.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -99,10 +101,18 @@ export function projectActivityPayload(
   }
 
   const projectedData: Record<string, unknown> = {};
-  const item = projectCommandData(data);
-  if (item) projectedData.item = item;
+  const isCommand = payload.itemType === "command_execution";
+  if (isCommand) {
+    const { command, ...execution } = extractCommandExecutionMetadata(data);
+    if (command) projectedData.command = command;
+    if (Object.keys(execution).length > 0) projectedData.execution = execution;
+  } else {
+    const item = projectCommandData(data);
+    if (item) projectedData.item = item;
+    if ("command" in data) projectedData.command = data.command;
+  }
 
-  for (const key of ["command", "toolCallId", "kind", "agentRunId", "itemId"] as const) {
+  for (const key of ["toolCallId", "kind", "agentRunId", "itemId"] as const) {
     if (key in data) projectedData[key] = data[key];
   }
 
@@ -114,12 +124,11 @@ export function projectActivityPayload(
   const rawOutput = projectRawOutput(data.rawOutput);
   if (rawOutput) projectedData.rawOutput = rawOutput;
 
+  const projectedPayload = { ...payload, data: projectedData };
   return {
     ...activity,
-    payload: {
-      ...payload,
-      data: projectedData,
-    },
+    ...(isCommand ? { summary: redactAuditText(activity.summary) } : {}),
+    payload: isCommand ? redactSensitiveValues(projectedPayload).payload : projectedPayload,
   };
 }
 

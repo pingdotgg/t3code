@@ -64,6 +64,39 @@ Provider event NDJSON files still exist per-thread under `logs/provider/` for pr
 
 Transient provider progress is intentionally omitted from these event logs. OpenCode text deltas and running tool snapshots are skipped, while pending and terminal tool states remain with their final output or error. This affects observability files only; client events and orchestration persistence are unchanged.
 
+### Inspecting Shell Commands
+
+```sh
+t3 chat show <thread-id> --activities --limit 50
+```
+
+Alongside the chronological activity page, `shellExecutions` groups shell tool calls by
+provider, turn, and item ID. Each entry includes the redacted command, provider-reported
+status, start/end timestamps, elapsed milliseconds, last activity time/age, and working
+directory, timeout, and exit code when supplied by the provider. Argument arrays are
+displayed with quoted argument boundaries; this is diagnostic text, not a replay script.
+
+`timingSource` distinguishes native provider timestamps from an observed `tool.started`
+event. Missing starts produce `null` elapsed time unless the provider supplies a duration.
+For incomplete
+calls, elapsed time is wall time since the recorded start as of `shellExecutions.asOf`.
+It does **not** establish that an OS process is alive, or that it was executing throughout
+that interval. `completionObserved` only means the provider reported a terminal tool event.
+Compare the thread's turn/session state before interpreting an unfinished call as active.
+
+The summary covers **only the returned activity page**, not every running command in the
+thread. Follow `page.before` with `--before` to inspect older events. Historical pages use
+their newest event as `asOf`, rather than making a historical running state appear active
+today. A missing command is `null`; events retained before input preservation was added
+cannot recover arguments that were never stored.
+
+OpenCode's nested command input and native timing survive projection, including for
+already-persisted running/terminal activities. Other providers' `item`, `input`, and
+`rawInput` command shapes use the same inspection path. Tool-start activities now retain
+their status and data, so a shell stuck before its first update remains inspectable.
+Command previews use the existing audit credential redactor; do not treat diagnostic
+output as safe for public sharing without reviewing it.
+
 ### Lifecycle Events
 
 Key server and provider lifecycle transitions are emitted as structured log entries (visible in `server.log` and stdout) so session boundaries are easy to find:

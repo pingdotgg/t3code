@@ -982,7 +982,33 @@ export interface DesktopPreviewBridge {
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
 }
 
+export interface DesktopConnectAccountState {
+  readonly accountId: string;
+  readonly identity: string;
+  readonly environments: readonly {
+    readonly environmentId: string;
+    readonly label: string;
+  }[];
+}
+
+export interface DesktopConnectAccountBridge {
+  discover: () => Promise<DesktopConnectAccountState | null>;
+  login: () => Promise<DesktopConnectAccountState | null>;
+  logout: () => Promise<void>;
+  connect: (
+    accountId: string,
+    environmentId: string,
+  ) => Promise<{
+    readonly environmentId: string;
+    readonly httpBaseUrl: string;
+    readonly wsBaseUrl: string;
+  }>;
+  socketUrl: (accountId: string, environmentId: string) => Promise<string>;
+  onInvalidated: (listener: () => void) => () => void;
+}
+
 export interface DesktopBridge {
+  connectAccount?: DesktopConnectAccountBridge;
   getLocalEnvironments?: () => Promise<{
     readonly selectionError?: string | null;
     readonly currentBaseDir: string;

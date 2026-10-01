@@ -382,6 +382,29 @@ describe("local Dev rebuild staleness", () => {
     expect(calls[0]?.[0]).toBe("rev-parse");
   });
 
+  it.each([
+    { exitCode: 128, error: "Could not obtain remote history: git fetch failed." },
+    { exitCode: 0, error: "Could not compare the running build with the remote tip." },
+  ])(
+    "keeps a failed comparison unknown after fetch exits $exitCode",
+    async ({ exitCode, error }) => {
+      const { runner } = stubRunner({
+        ...behindScenario(),
+        [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 128 },
+      });
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: "/repo/t3code",
+        buildSha: BUILD_SHA,
+        runGit: (args, cwd, options) =>
+          args[0] === "fetch"
+            ? Promise.resolve({ stdout: "", exitCode })
+            : runner(args, cwd, options),
+      });
+      expect(result).toMatchObject({ behind: false, behindBy: null, error });
+    },
+  );
+
   it("falls back to the checkout HEAD when the build carries no commit", async () => {
     const scenario = behindScenario();
     scenario[`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`] = {
@@ -588,11 +611,10 @@ describe("local Dev rebuild staleness", () => {
         expect(unchanged).toMatchObject({ behind: false, error: null });
       }
 
-      const trackingRefBefore = git(sourceRoot, ["rev-parse", "refs/remotes/origin/main"]);
+      git(sourceRoot, ["fetch", "origin"]);
+      const refsBefore = git(sourceRoot, ["show-ref"]);
       const fetchHeadPath = Path.join(sourceRoot, ".git", "FETCH_HEAD");
-      const fetchHeadBefore = FS.existsSync(fetchHeadPath)
-        ? FS.readFileSync(fetchHeadPath, "utf8")
-        : null;
+      const fetchHeadBefore = FS.readFileSync(fetchHeadPath, "utf8");
       pushRemoteCommit(root);
 
       const updated = await checkLocalDevRebuildStaleness({
@@ -609,10 +631,8 @@ describe("local Dev rebuild staleness", () => {
         error: null,
       });
       expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
-      expect(git(sourceRoot, ["rev-parse", "refs/remotes/origin/main"])).toBe(trackingRefBefore);
-      expect(FS.existsSync(fetchHeadPath) ? FS.readFileSync(fetchHeadPath, "utf8") : null).toBe(
-        fetchHeadBefore,
-      );
+      expect(git(sourceRoot, ["show-ref"])).toBe(refsBefore);
+      expect(FS.readFileSync(fetchHeadPath, "utf8")).toBe(fetchHeadBefore);
       expect(git(sourceRoot, ["for-each-ref", "--format=%(refname)", "refs/t3code"])).toBe("");
     } finally {
       FS.rmSync(root, { recursive: true, force: true });

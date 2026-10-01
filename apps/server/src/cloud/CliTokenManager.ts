@@ -253,123 +253,129 @@ export const withLoopbackAuthorizationCallback = <A, E, R>(
       ).pipe(Effect.orDie),
   );
 
-export const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const secrets = yield* ServerSecretStore.ServerSecretStore;
-  const semaphore = yield* Semaphore.make(1);
-  const persist = Effect.fn("cloud.cli_token.persist")(function* (token: PersistedToken) {
-    const encoded = yield* encodePersistedToken(token);
-    yield* secrets.set(CLOUD_CLI_OAUTH_TOKEN_SECRET, stringToBytes(encoded));
-    return token;
-  });
-
-  const clear = secrets
-    .remove(CLOUD_CLI_OAUTH_TOKEN_SECRET)
-    .pipe(wrapError((cause) => new CloudCliCredentialRemovalError({ cause })));
-
-  const read = Effect.fn("cloud.cli_token.read")(function* () {
-    const encoded = yield* secrets.get(CLOUD_CLI_OAUTH_TOKEN_SECRET);
-    if (Option.isNone(encoded)) return Option.none<PersistedToken>();
-    return Option.some(yield* decodePersistedToken(bytesToString(encoded.value)));
-  });
-
-  const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
-    const metadata = yield* cloudCliOAuthConfig;
-    const { token: refreshed } = yield* exchangeOAuthToken(metadata, {
-      grant_type: "refresh_token",
-      refresh_token: token.refreshToken,
-      client_id: metadata.clientId,
+export const makeWithBrowser = (openBrowser: (url: string) => Effect.Effect<void, unknown>) =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    const semaphore = yield* Semaphore.make(1);
+    const persist = Effect.fn("cloud.cli_token.persist")(function* (token: PersistedToken) {
+      const encoded = yield* encodePersistedToken(token);
+      yield* secrets.set(CLOUD_CLI_OAUTH_TOKEN_SECRET, stringToBytes(encoded));
+      return token;
     });
-    return {
-      ...refreshed,
-      ...(refreshed.identity === undefined && token.identity !== undefined
-        ? { identity: token.identity }
-        : {}),
-      ...(refreshed.accountId === undefined && token.accountId !== undefined
-        ? { accountId: token.accountId }
-        : {}),
-    };
-  });
 
-  const login = Effect.fn("cloud.cli_token.login")(function* () {
-    const metadata = yield* cloudCliOAuthConfig;
-    const hostedAppUrl = yield* hostedAppUrlConfig;
-    const verifier = Encoding.encodeBase64Url(yield* crypto.randomBytes(32));
-    const challenge = Encoding.encodeBase64Url(
-      yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
+    const clear = semaphore.withPermits(1)(
+      secrets
+        .remove(CLOUD_CLI_OAUTH_TOKEN_SECRET)
+        .pipe(wrapError((cause) => new CloudCliCredentialRemovalError({ cause }))),
     );
-    const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
-    const authorizationUrl = buildLoopbackAuthorizationUrl({
-      hostedAppUrl,
-      loopbackPort: metadata.loopbackPort,
-      state,
-      challenge,
+
+    const read = Effect.fn("cloud.cli_token.read")(function* () {
+      const encoded = yield* secrets.get(CLOUD_CLI_OAUTH_TOKEN_SECRET);
+      if (Option.isNone(encoded)) return Option.none<PersistedToken>();
+      return Option.some(yield* decodePersistedToken(bytesToString(encoded.value)));
     });
-    const code = yield* withLoopbackAuthorizationCallback(
-      { redirectUri: metadata.redirectUri, state },
-      ({ awaitCode }) =>
-        Console.log(`Open this URL to authorize T3 Connect:\n${authorizationUrl}\n`).pipe(
-          Effect.andThen(
-            awaitCode.pipe(
-              Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
-              Effect.catchTag("TimeoutError", (cause) =>
-                Effect.fail(
-                  new CloudCliAuthorizationTimeoutError({
-                    cause,
-                  }),
+
+    const refresh = Effect.fn("cloud.cli_token.refresh")(function* (token: PersistedToken) {
+      const metadata = yield* cloudCliOAuthConfig;
+      const { token: refreshed } = yield* exchangeOAuthToken(metadata, {
+        grant_type: "refresh_token",
+        refresh_token: token.refreshToken,
+        client_id: metadata.clientId,
+      });
+      return {
+        ...refreshed,
+        ...(refreshed.identity === undefined && token.identity !== undefined
+          ? { identity: token.identity }
+          : {}),
+        ...(refreshed.accountId === undefined && token.accountId !== undefined
+          ? { accountId: token.accountId }
+          : {}),
+      };
+    });
+
+    const login = Effect.fn("cloud.cli_token.login")(function* () {
+      const metadata = yield* cloudCliOAuthConfig;
+      const hostedAppUrl = yield* hostedAppUrlConfig;
+      const verifier = Encoding.encodeBase64Url(yield* crypto.randomBytes(32));
+      const challenge = Encoding.encodeBase64Url(
+        yield* crypto.digest("SHA-256", new TextEncoder().encode(verifier)),
+      );
+      const state = Encoding.encodeBase64Url(yield* crypto.randomBytes(16));
+      const authorizationUrl = buildLoopbackAuthorizationUrl({
+        hostedAppUrl,
+        loopbackPort: metadata.loopbackPort,
+        state,
+        challenge,
+      });
+      const code = yield* withLoopbackAuthorizationCallback(
+        { redirectUri: metadata.redirectUri, state },
+        ({ awaitCode }) =>
+          openBrowser(authorizationUrl).pipe(
+            Effect.andThen(
+              awaitCode.pipe(
+                Effect.timeout(CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT),
+                Effect.catchTag("TimeoutError", (cause) =>
+                  Effect.fail(
+                    new CloudCliAuthorizationTimeoutError({
+                      cause,
+                    }),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
+      );
+      return (yield* exchangeOAuthToken(metadata, {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: metadata.redirectUri,
+        client_id: metadata.clientId,
+        code_verifier: verifier,
+      })).token;
+    });
+
+    const getExistingNoLock = Effect.fn("cloud.cli_token.get_existing_no_lock")(function* () {
+      const token = yield* read();
+      if (Option.isNone(token)) return token;
+      const now = yield* Clock.currentTimeMillis;
+      if (token.value.expiresAtEpochMs - CLOUD_CLI_OAUTH_REFRESH_EARLY_MS > now) {
+        return token;
+      }
+      return Option.some(yield* refresh(token.value).pipe(Effect.flatMap(persist)));
+    });
+
+    const getExisting = semaphore.withPermits(1)(
+      getExistingNoLock().pipe(wrapError((cause) => new CloudCliCredentialRefreshError({ cause }))),
     );
-    return (yield* exchangeOAuthToken(metadata, {
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: metadata.redirectUri,
-      client_id: metadata.clientId,
-      code_verifier: verifier,
-    })).token;
-  });
-
-  const getExistingNoLock = Effect.fn("cloud.cli_token.get_existing_no_lock")(function* () {
-    const token = yield* read();
-    if (Option.isNone(token)) return token;
-    const now = yield* Clock.currentTimeMillis;
-    if (token.value.expiresAtEpochMs - CLOUD_CLI_OAUTH_REFRESH_EARLY_MS > now) {
-      return token;
-    }
-    return Option.some(yield* refresh(token.value).pipe(Effect.flatMap(persist)));
-  });
-
-  const getExisting = semaphore.withPermits(1)(
-    getExistingNoLock().pipe(wrapError((cause) => new CloudCliCredentialRefreshError({ cause }))),
-  );
-  const hasCredential = semaphore.withPermits(1)(
-    read().pipe(
-      Effect.map(Option.isSome),
-      wrapError((cause) => new CloudCliCredentialReadError({ cause })),
-    ),
-  );
-  const get = semaphore.withPermits(1)(
-    Effect.gen(function* () {
-      const token = yield* getExistingNoLock().pipe(Effect.orElseSucceed(() => Option.none()));
-      return Option.isSome(token)
-        ? token.value
-        : yield* Effect.scoped(login()).pipe(Effect.flatMap(persist));
-    }).pipe(wrapError((cause) => new CloudCliAuthorizationError({ cause }))),
-  );
-  const store = (token: PersistedToken) =>
-    semaphore.withPermits(1)(
-      persist(token).pipe(
-        Effect.asVoid,
-        wrapError((cause) => new CloudCliAuthorizationError({ cause })),
+    const hasCredential = semaphore.withPermits(1)(
+      read().pipe(
+        Effect.map(Option.isSome),
+        wrapError((cause) => new CloudCliCredentialReadError({ cause })),
       ),
     );
+    const get = semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const token = yield* getExistingNoLock().pipe(Effect.orElseSucceed(() => Option.none()));
+        return Option.isSome(token)
+          ? token.value
+          : yield* Effect.scoped(login()).pipe(Effect.flatMap(persist));
+      }).pipe(wrapError((cause) => new CloudCliAuthorizationError({ cause }))),
+    );
+    const store = (token: PersistedToken) =>
+      semaphore.withPermits(1)(
+        persist(token).pipe(
+          Effect.asVoid,
+          wrapError((cause) => new CloudCliAuthorizationError({ cause })),
+        ),
+      );
 
-  return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
-});
+    return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
+  });
 
+export const make = makeWithBrowser((url) =>
+  Console.log(`Open this URL to authorize T3 Connect:\n${url}\n`),
+);
 export const layer = Layer.effect(CloudCliTokenManager, make);
 
 export interface OutOfBandOAuthPromptInput {

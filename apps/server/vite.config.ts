@@ -24,7 +24,7 @@ export default mergeConfig(
   baseConfig,
   defineConfig({
     pack: {
-      entry: ["src/bin.ts"],
+      entry: ["src/bin.ts", "src/desktopAccount.ts"],
       outDir: "dist",
       sourcemap: true,
       clean: true,

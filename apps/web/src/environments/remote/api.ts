@@ -49,7 +49,7 @@ async function fetchRemoteJson<T>(input: {
   readonly httpBaseUrl: string;
   readonly pathname: string;
   readonly method?: "GET" | "POST";
-  readonly bearerToken?: string;
+  readonly bearerToken?: string | undefined;
   readonly body?: unknown;
 }): Promise<T> {
   const requestUrl = remoteEndpointUrl(input.httpBaseUrl, input.pathname);
@@ -99,7 +99,7 @@ export async function bootstrapRemoteBearerSession(input: {
 
 export async function fetchRemoteSessionState(input: {
   readonly httpBaseUrl: string;
-  readonly bearerToken: string;
+  readonly bearerToken?: string | undefined;
 }): Promise<AuthSessionState> {
   return fetchRemoteJson<AuthSessionState>({
     httpBaseUrl: input.httpBaseUrl,
@@ -131,7 +131,7 @@ export async function issueRemoteWebSocketToken(input: {
 
 export async function issueRemoteWebSocketTicket(input: {
   readonly httpBaseUrl: string;
-  readonly bearerToken: string;
+  readonly bearerToken?: string | undefined;
 }): Promise<AuthWebSocketTicketResult> {
   return fetchRemoteJson<AuthWebSocketTicketResult>({
     httpBaseUrl: input.httpBaseUrl,

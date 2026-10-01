@@ -477,7 +477,7 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.111
-        version: 0.2.141(supports-color@8.1.1)(zod@4.4.3)
+        version: 0.2.141(zod@4.4.3)
       '@effect/platform-bun':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=17326e206d468ac4ad84f787d2c5a6b3856c44c21deef99c05f205e350272af4)(effect@4.0.0-beta.78(patch_hash=0cae00735e0fe12c8489752232ec73762efe702c2fd518fa8f3790f9aa5f2b09))
@@ -521,6 +521,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=42b87cc47e70d74e62496e7a8261b3fd298ecad4464d209348ab04b96f853a5f)(effect@4.0.0-beta.78(patch_hash=0cae00735e0fe12c8489752232ec73762efe702c2fd518fa8f3790f9aa5f2b09))
+      '@modelcontextprotocol/sdk':
+        specifier: 1.29.0
+        version: 1.29.0(supports-color@8.1.1)(zod@4.4.3)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -957,7 +960,7 @@ importers:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.2.77
-        version: 0.2.141(supports-color@8.1.1)(zod@4.4.3)
+        version: 0.2.141(zod@4.4.3)
       '@effect/platform-node':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(patch_hash=a234d63fcceff2862fd0792d327006a8aaad5dc37d136c88f0acbba6a356557c)(effect@4.0.0-beta.78(patch_hash=0cae00735e0fe12c8489752232ec73762efe702c2fd518fa8f3790f9aa5f2b09))(ioredis@5.11.1)
@@ -10058,7 +10061,7 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-win32-x64@0.2.141':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.2.141(supports-color@8.1.1)(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.2.141(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.93.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(supports-color@8.1.1)(zod@4.4.3)
@@ -12247,7 +12250,7 @@ snapshots:
       eventsource: 3.0.7
       eventsource-parser: 3.1.0
       express: 5.2.1(supports-color@8.1.1)
-      express-rate-limit: 8.5.2(express@5.2.1)
+      express-rate-limit: 8.5.2(express@5.2.1(supports-color@8.1.1))
       hono: 4.12.27
       jose: 6.2.2
       json-schema-typed: 8.0.2
@@ -15988,7 +15991,7 @@ snapshots:
 
   exponential-backoff@3.1.3: {}
 
-  express-rate-limit@8.5.2(express@5.2.1):
+  express-rate-limit@8.5.2(express@5.2.1(supports-color@8.1.1)):
     dependencies:
       express: 5.2.1(supports-color@8.1.1)
       ip-address: 10.2.0

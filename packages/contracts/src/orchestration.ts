@@ -1117,6 +1117,9 @@ const ThreadArchiveCommand = Schema.Struct({
   type: Schema.Literal("thread.archive"),
   commandId: CommandId,
   threadId: ThreadId,
+  // Set by an automatic archiver, which admission then re-checks. `Literal(true)` so it can be
+  // set but never cleared; absent on a user's archive, which is always honoured.
+  automatic: Schema.optional(Schema.Literal(true)),
 });
 
 const ThreadUnarchiveCommand = Schema.Struct({
