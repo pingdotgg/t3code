@@ -1,6 +1,7 @@
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   runAtomCommand,
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
@@ -19,9 +20,11 @@ import {
 import { newMessageId } from "../../lib/utils";
 import { latestCompletedToolActivityId, useQueuedMessageStore } from "../../queuedMessageStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { readThread, readThreadShell } from "../../state/entities";
+import { readProject, readThread, readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
+import { vcsEnvironment } from "../../state/vcs";
+import { resolveCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
@@ -134,12 +137,37 @@ export async function sendQueuedMessage(
     // made in the composer before queueing is saved first.
     const createdAt = new Date().toISOString();
     const shell = readThreadShell(threadRef);
+    const cwd = shell
+      ? (shell.worktreePath ??
+        readProject(scopeProjectRef(environmentId, shell.projectId))?.workspaceRoot)
+      : null;
+    let nextBranch: string | undefined;
+    if (shell?.branch && cwd) {
+      const status = await runAtomCommand(
+        appAtomRegistry,
+        vcsEnvironment.refreshStatus,
+        { environmentId, input: { cwd } },
+        { reportFailure: false },
+      );
+      if (status._tag === "Failure" && isAtomCommandInterrupted(status)) {
+        throw squashAtomCommandFailure(status);
+      }
+      if (status._tag === "Success") {
+        nextBranch = resolveCheckoutBranchMismatch({
+          effectiveEnvMode: shell.worktreePath ? "worktree" : "local",
+          activeWorktreePath: shell.worktreePath,
+          activeThreadBranch: shell.branch,
+          currentGitBranch: status.value.refName,
+        })?.currentBranch;
+      }
+    }
     const metadataUpdate = shell
       ? resolveThreadMetadataUpdateForNextTurn({
           currentModelSelection: shell.modelSelection,
           nextModelSelection: sendSettings.modelSelection,
           currentBranch: shell.branch,
           currentWorktreePath: shell.worktreePath,
+          ...(nextBranch ? { nextBranch } : {}),
         })
       : null;
     if (metadataUpdate) {

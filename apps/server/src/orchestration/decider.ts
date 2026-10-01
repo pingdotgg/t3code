@@ -1012,14 +1012,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           checkoutDirectories.byThread.get(thread.id) !== checkoutDirectories.target ||
           readModel.threads.some(
             (other) =>
-              other.id !== thread.id &&
               // An unresolved active cwd cannot safely be ruled out as a sibling.
               (checkoutDirectories.byThread.get(other.id) == null ||
                 checkoutDirectories.byThread.get(other.id) === checkoutDirectories.target) &&
               (other.session?.activeTurnId != null ||
                 other.session?.status === "starting" ||
                 other.session?.status === "running" ||
-                hasQueuedTurnStartForThread(other, occurredAt)),
+                (other.deletedAt === null && hasQueuedTurnStartForThread(other, occurredAt))),
           ));
       const branch =
         command.branch !== undefined &&

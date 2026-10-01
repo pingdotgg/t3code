@@ -82,6 +82,65 @@ const decideBranchUpdate = Effect.fn(function* (
 
 it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
   for (const status of ["starting", "running", "ready"] as const) {
+    it.effect(`rejects delayed drift when the target starts another turn (${status})`, () =>
+      Effect.gen(function* () {
+        const base = makeReadModel();
+        const thread = base.threads[0]!;
+        const event = yield* decideBranchUpdate({
+          ...base,
+          threads: [
+            {
+              ...thread,
+              session: {
+                threadId: thread.id,
+                status,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: status === "ready" ? TurnId.make("next-turn") : null,
+                lastError: null,
+                updatedAt: NOW,
+              },
+            },
+          ],
+        });
+        expect(event).toMatchObject({
+          type: "thread.meta-updated",
+          payload: { branch: "original", updatedAt: NOW },
+        });
+      }),
+    );
+  }
+
+  it.effect("rejects delayed drift when the target has another turn queued", () =>
+    Effect.gen(function* () {
+      const base = makeReadModel();
+      const event = yield* decideBranchUpdate({
+        ...base,
+        threads: [
+          {
+            ...base.threads[0]!,
+            messages: [
+              {
+                id: MessageId.make("next-message"),
+                role: "user",
+                text: "Continue",
+                turnId: null,
+                streaming: false,
+                createdAt: "1970-01-01T00:00:00.000Z",
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      });
+      expect(event).toMatchObject({
+        type: "thread.meta-updated",
+        payload: { branch: "original", updatedAt: NOW },
+      });
+    }),
+  );
+
+  for (const status of ["starting", "running", "ready"] as const) {
     it.effect(
       `rejects drift when a sibling becomes ${status} with an active turn before dispatch`,
       () =>
@@ -166,6 +225,55 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
       });
     }),
   );
+
+  for (const active of [false, true]) {
+    it.effect(
+      `${active ? "blocks" : "allows"} adoption with an ${active ? "active" : "idle"} deleted sibling`,
+      () =>
+        Effect.gen(function* () {
+          const base = makeReadModel();
+          const thread = base.threads[0]!;
+          const siblingId = ThreadId.make("sibling");
+          const event = yield* decideBranchUpdate({
+            ...base,
+            threads: [
+              thread,
+              {
+                ...thread,
+                id: siblingId,
+                deletedAt: NOW,
+                messages: [
+                  {
+                    id: MessageId.make("deleted-queued-message"),
+                    role: "user",
+                    text: "Cancelled on deletion",
+                    turnId: null,
+                    streaming: false,
+                    createdAt: "1970-01-01T00:00:00.000Z",
+                    updatedAt: "1970-01-01T00:00:00.000Z",
+                  },
+                ],
+                session: active
+                  ? {
+                      threadId: siblingId,
+                      status: "running",
+                      providerName: "codex",
+                      runtimeMode: "full-access",
+                      activeTurnId: TurnId.make("stopping-turn"),
+                      lastError: null,
+                      updatedAt: NOW,
+                    }
+                  : null,
+              },
+            ],
+          });
+          expect(event).toMatchObject({
+            type: "thread.meta-updated",
+            payload: { branch: active ? "original" : "drifted" },
+          });
+        }),
+    );
+  }
 
   it.effect("still timestamps an explicit title update when branch adoption is blocked", () =>
     Effect.gen(function* () {

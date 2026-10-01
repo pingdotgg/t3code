@@ -27,6 +27,7 @@ vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: { get: () => new Map([["env-a", config]]) },
 }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/vcs", () => ({ vcsEnvironment: { refreshStatus: "refresh" } }));
 vi.mock("../state/threads", () => ({
   threadEnvironment: {
     updateMetadata: "metadata",
@@ -44,6 +45,7 @@ vi.mock("../state/entities", () => ({
   useServerConfigs: () => new Map([["env-a", config]]),
   readThreadShell: () => io.shell,
   readThread: () => io.thread,
+  readProject: () => ({ workspaceRoot: "/repo" }),
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: (...args: unknown[]) => io.toast(...args) } }));
 vi.mock("../lib/attachmentUploadQueue", () => ({
@@ -92,6 +94,8 @@ beforeEach(() => {
   io.shell = {
     modelSelection,
     branch: null,
+    worktreePath: null,
+    projectId: "project-a",
     runtimeMode: "full-access",
     interactionMode: "default",
   };
@@ -180,6 +184,59 @@ describe("QueuedMessageSender", () => {
 });
 
 describe("sendQueuedMessage", () => {
+  it.each([null, "/shared-worktree"])(
+    "adopts the fresh checkout branch before sending from %s, without an open chat",
+    async (worktreePath) => {
+      io.shell = { ...io.shell, branch: "original", worktreePath };
+      io.run.mockResolvedValueOnce({ _tag: "Success", value: { refName: "actual-checkout" } });
+      const message = enqueue();
+
+      await sendQueuedMessage(threadRef, message.id);
+
+      expect(commandsRun()).toEqual(["refresh", "metadata", "start"]);
+      expect(io.run.mock.calls[0]?.[2]).toMatchObject({
+        environmentId: "env-a",
+        input: { cwd: worktreePath ?? "/repo" },
+      });
+      expect(io.run.mock.calls[1]?.[2]).toMatchObject({
+        input: { threadId: "thread-a", branch: "actual-checkout" },
+      });
+      if (worktreePath !== null) {
+        expect(io.run.mock.calls[1]?.[2].input).not.toHaveProperty("worktreePath");
+      }
+      expect(queue()).toBeUndefined();
+    },
+  );
+
+  it.each([null, "t3code/0123abcd"])(
+    "preserves the recorded branch for an ineligible checkout (%s)",
+    async (refName) => {
+      io.shell = { ...io.shell, branch: "original", worktreePath: "/shared-worktree" };
+      io.run.mockResolvedValueOnce({ _tag: "Success", value: { refName } });
+      const message = enqueue();
+
+      await sendQueuedMessage(threadRef, message.id);
+
+      expect(commandsRun()).toEqual(["refresh", "start"]);
+      expect(queue()).toBeUndefined();
+    },
+  );
+
+  it("keeps sending available when branch refresh fails", async () => {
+    io.shell = { ...io.shell, branch: "original", worktreePath: "/shared-worktree" };
+    io.run.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail(new Error("PR lookup failed")),
+    });
+    const message = enqueue();
+
+    await sendQueuedMessage(threadRef, message.id);
+
+    expect(commandsRun()).toEqual(["refresh", "start"]);
+    expect(queue()).toBeUndefined();
+    expect(io.toast).not.toHaveBeenCalled();
+  });
+
   it("saves a mode changed before queueing, then starts the turn", async () => {
     io.shell = { ...io.shell, runtimeMode: "approval-required" };
     const message = enqueue();
