@@ -418,6 +418,7 @@ async function fetchRemoteDefaultBranch(
         "fetch",
         ...(shallow ? ["--unshallow"] : []),
         "--no-tags",
+        "--no-recurse-submodules",
         "--no-write-fetch-head",
         "--refmap=",
         "origin",

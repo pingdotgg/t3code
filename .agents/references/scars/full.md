@@ -53,6 +53,7 @@
 
 ## Desktop packaging and React state
 
+- `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; disable ref mapping, tags, submodules, and `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
 - Chat thread URLs can outlive a desktop backend port or advertise a LAN address while the client uses loopback. Resolve private-network aliases by their explicitly registered environment ID and protocol without contacting the alias; preserve exact-origin environment bindings and keep public websites and pairing URLs external.
 - Work-log display paths must use verbatim provider candidates, not Git-normalized changed paths: absolute patch paths are rejected without a cwd. Prefer raw input/ACP locations over shortened previews, and never treat JSON output as a filename.
 - Keep visited work-log bodies local to their virtual timeline row, lazy before first expansion, and hidden after collapse. Preserve mounted details through closing/reversal so output parsing and DOM reconstruction do not interrupt the animation.
