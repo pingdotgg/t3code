@@ -148,6 +148,7 @@ const CURSOR_PRESENTATION = {
   supportsConversationRollback: false,
   badgeLabel: "Early Access",
   showInteractionModeToggle: true,
+  queuesUntilTurnEnd: true,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],

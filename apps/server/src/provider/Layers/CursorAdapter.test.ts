@@ -443,6 +443,82 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
+  it.effect("sends a steer without waiting for the running prompt to finish", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const settings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-steer-immediate");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      // The first prompt never finishes on its own, so the steer only reaches
+      // the agent if it cancels the running prompt instead of queueing.
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_HANG_FIRST_PROMPT_FOREVER: "1" }),
+      );
+      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        // Collect through session exit so a duplicate turn.completed is caught.
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const firstTurnFiber = yield* adapter
+        .sendTurn({ threadId, input: "run forever", attachments: [] })
+        .pipe(Effect.forkChild);
+      const requestsBeforeSteer = yield* waitForJsonLogMatch(
+        requestLogPath,
+        (entry) => entry.method === "session/prompt",
+        1000,
+      );
+      assert.isTrue(requestsBeforeSteer.some((entry) => entry.method === "session/prompt"));
+
+      const steeredTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "stop and reply now",
+        attachments: [],
+      });
+      const firstTurn = yield* Fiber.join(firstTurnFiber);
+      assert.equal(String(steeredTurn.turnId), String(firstTurn.turnId));
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.deepStrictEqual(
+        requests.flatMap((entry) =>
+          entry.method === "session/prompt" || entry.method === "session/cancel"
+            ? [entry.method]
+            : [],
+        ),
+        ["session/prompt", "session/cancel", "session/prompt"],
+      );
+
+      yield* adapter.stopSession(threadId);
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const turnCompletedEvents = runtimeEvents.filter((event) => event.type === "turn.completed");
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.started").length, 1);
+      assert.equal(turnCompletedEvents.length, 1);
+      assert.equal(
+        turnCompletedEvents[0]?.type === "turn.completed"
+          ? turnCompletedEvents[0].payload.state
+          : undefined,
+        "completed",
+      );
+    }),
+  );
+
   it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

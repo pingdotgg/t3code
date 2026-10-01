@@ -51,6 +51,12 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
   );
   const pendingRequests = useMemo(() => derivePendingRequests(activities ?? []), [activities]);
   const phase = derivePhase(thread?.session ?? null);
+  const queuesUntilTurnEnd =
+    environmentId !== null &&
+    serverConfigs
+      .get(environmentId)
+      ?.providers.find((provider) => provider.instanceId === thread?.session?.providerInstanceId)
+      ?.queuesUntilTurnEnd === true;
 
   // A send that starts a new turn leaves the thread idle until the server
   // picks it up. Hold the next message until then, as the composer does for
@@ -90,7 +96,7 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
   const due =
     next !== undefined &&
     !blocked &&
-    isQueuedMessageDue({ message: next, phase, latestToolActivityId });
+    isQueuedMessageDue({ message: next, phase, latestToolActivityId, queuesUntilTurnEnd });
   const nextId = next?.id;
   useEffect(() => {
     if (!due || !threadRef || nextId === undefined) return;

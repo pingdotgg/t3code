@@ -147,8 +147,14 @@ interface CursorSessionContext {
   cursorSkillNames: ReadonlySet<string> | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
-   * continues it, and only the last remaining prompt settles the turn. */
+   * cancels the in-flight prompt and continues the same turn. Only the last
+   * remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** Held by sendTurn from its steer decision until its prompt is registered
+   * with the ACP runtime, and by interruptTurn, so a steer's cancel always
+   * targets the running prompt and Stop cannot slip between that cancel and
+   * its replacement. */
+  readonly promptLifecycle: Semaphore.Semaphore;
   assistantReply: CursorTransportFailure;
   stopped: boolean;
 }
@@ -801,6 +807,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            promptLifecycle: yield* Semaphore.make(1),
             assistantReply: new CursorTransportFailure(),
             stopped: false,
           };
@@ -967,17 +974,23 @@ export function makeCursorAdapter(
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);
-        // A sendTurn while a prompt is in flight is a steer: the agent folds
-        // the new prompt into the ongoing work, so the active turn id is
-        // reused instead of opening a new turn.
-        const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
-        const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
-        // Count this prompt immediately so a superseded in-flight prompt
-        // resolving from here on does not settle the turn; the matching
-        // decrement is the `ensuring` below.
-        ctx.promptsInFlight += 1;
-
-        return yield* Effect.gen(function* () {
+        const { turnId, promptParts, resolvedModel, promptFiber } = yield* Effect.gen(function* () {
+          // A sendTurn while a prompt is in flight is a steer: the in-flight
+          // prompt is cancelled and the new one continues the same turn, so
+          // the active turn id is reused instead of opening a new turn.
+          const steeringTurnId = ctx.promptsInFlight > 0 ? ctx.activeTurnId : undefined;
+          const turnId = steeringTurnId ?? TurnId.make(yield* randomUUIDv4);
+          // Count this prompt until sendTurn ends so a superseded in-flight
+          // prompt resolving from here on does not settle the turn.
+          yield* Effect.acquireRelease(
+            Effect.sync(() => {
+              ctx.promptsInFlight += 1;
+            }),
+            () =>
+              Effect.sync(() => {
+                ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
+              }),
+          );
           const turnModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const model = turnModelSelection?.model ?? ctx.session.model;
@@ -1087,93 +1100,118 @@ export function makeCursorAdapter(
             });
           }
 
+          // The ACP runtime runs one prompt at a time, so a steer cancels the
+          // in-flight prompt to send its replacement now instead of queueing it.
+          if (steeringTurnId !== undefined) {
+            yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+            yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+            yield* Effect.ignore(
+              ctx.acp.cancel.pipe(
+                Effect.mapError((error) =>
+                  mapAcpToAdapterError(PROVIDER, input.threadId, "session/cancel", error),
+                ),
+              ),
+            );
+          }
+
           // ACP commands parse the complete text. Extra context can turn an exact
           // command into an ordinary model prompt or change its arguments.
-          const result = yield* ctx.acp
-            .prompt({
-              prompt: /^\/[^\s/]+(?:\s|$)/.test(rawPrompt)
-                ? promptParts
-                : [
-                    ...promptParts,
-                    {
-                      type: "text",
-                      text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
-                    },
-                  ],
-            })
+          const dispatched = yield* Deferred.make<void>();
+          const promptFiber = yield* ctx.acp
+            .prompt(
+              {
+                prompt: /^\/[^\s/]+(?:\s|$)/.test(rawPrompt)
+                  ? promptParts
+                  : [
+                      ...promptParts,
+                      {
+                        type: "text",
+                        text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                      },
+                    ],
+              },
+              { dispatched },
+            )
             .pipe(
               Effect.mapError((error) =>
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
+              Effect.forkChild({ startImmediately: true }),
             );
+          // Hold the lock until the runtime registers this prompt, so the next
+          // steer or Stop cancels it rather than the previous one.
+          yield* Effect.raceFirst(
+            Deferred.await(dispatched),
+            Fiber.await(promptFiber).pipe(Effect.asVoid),
+          );
+          return { turnId, promptParts, resolvedModel, promptFiber };
+        }).pipe(ctx.promptLifecycle.withPermit);
 
-          yield* ctx.acp.drainEvents;
-          const failure = ctx.assistantReply.failure;
-          if (ctx.promptsInFlight === 1 && result.stopReason !== "cancelled" && failure) {
-            return yield* new ProviderAdapterRequestError({
-              provider: PROVIDER,
-              method: "session/prompt",
-              detail: "Cursor reported a transport failure.",
-              cause: failure,
-            });
-          }
+        const result = yield* Fiber.join(promptFiber);
+        yield* ctx.acp.drainEvents;
+        const failure = ctx.assistantReply.failure;
+        if (ctx.promptsInFlight === 1 && result.stopReason !== "cancelled" && failure) {
+          return yield* new ProviderAdapterRequestError({
+            provider: PROVIDER,
+            method: "session/prompt",
+            detail: "Cursor reported a transport failure.",
+            cause: failure,
+          });
+        }
 
-          const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
-          if (turnRecord) {
-            turnRecord.items.push({ prompt: promptParts, result });
-          } else {
-            ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
-          }
-          ctx.session = {
-            ...ctx.session,
-            activeTurnId: turnId,
-            updatedAt: yield* nowIso,
-            model: resolvedModel,
-          };
+        const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
+        if (turnRecord) {
+          turnRecord.items.push({ prompt: promptParts, result });
+        } else {
+          ctx.turns.push({ id: turnId, items: [{ prompt: promptParts, result }] });
+        }
+        ctx.session = {
+          ...ctx.session,
+          activeTurnId: turnId,
+          updatedAt: yield* nowIso,
+          model: resolvedModel,
+        };
 
-          // Only the last remaining prompt settles the turn — a steer-
-          // superseded prompt resolving (usually cancelled) while another is
-          // in flight or pending must leave the merged turn running.
-          if (ctx.promptsInFlight === 1) {
-            yield* offerRuntimeEvent({
-              type: "turn.completed",
-              ...(yield* makeEventStamp()),
-              provider: PROVIDER,
-              threadId: input.threadId,
-              turnId,
-              payload: {
-                state: result.stopReason === "cancelled" ? "cancelled" : "completed",
-                stopReason: result.stopReason ?? null,
-              },
-            });
-          }
-
-          return {
+        // Only the last remaining prompt settles the turn. A steer-cancelled
+        // prompt resolving while another is in flight or pending must leave
+        // the merged turn running.
+        if (ctx.promptsInFlight === 1) {
+          yield* offerRuntimeEvent({
+            type: "turn.completed",
+            ...(yield* makeEventStamp()),
+            provider: PROVIDER,
             threadId: input.threadId,
             turnId,
-            resumeCursor: ctx.session.resumeCursor,
-          };
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              ctx.promptsInFlight = Math.max(0, ctx.promptsInFlight - 1);
-            }),
-          ),
-        );
-      });
+            payload: {
+              state: result.stopReason === "cancelled" ? "cancelled" : "completed",
+              stopReason: result.stopReason ?? null,
+            },
+          });
+        }
+
+        return {
+          threadId: input.threadId,
+          turnId,
+          resumeCursor: ctx.session.resumeCursor,
+        };
+      }).pipe(Effect.scoped);
 
     const interruptTurn: CursorAdapterShape["interruptTurn"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
-        yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
-        yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
-        yield* Effect.ignore(
-          ctx.acp.cancel.pipe(
-            Effect.mapError((error) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
+        // Wait out a steer between its cancel and its replacement prompt, so
+        // Stop cancels the replacement instead of letting it run.
+        yield* Effect.gen(function* () {
+          yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+          yield* settlePendingUserInputsAsEmptyAnswers(ctx.pendingUserInputs);
+          yield* Effect.ignore(
+            ctx.acp.cancel.pipe(
+              Effect.mapError((error) =>
+                mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", error),
+              ),
             ),
-          ),
-        );
+          );
+        }).pipe(ctx.promptLifecycle.withPermit);
       });
 
     const respondToRequest: CursorAdapterShape["respondToRequest"] = (

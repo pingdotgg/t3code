@@ -18,6 +18,7 @@ const io = vi.hoisted(() => ({
 }));
 const config = {
   environment: { capabilities: { attachmentUploads: true, inlineMessageContext: true } },
+  providers: [],
 };
 vi.mock("@t3tools/client-runtime/state/runtime", async (load) => ({
   ...(await load<typeof import("@t3tools/client-runtime/state/runtime")>()),

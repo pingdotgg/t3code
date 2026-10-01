@@ -221,6 +221,9 @@ export const ServerProvider = Schema.Struct({
   reportsContextWindow: Schema.optional(Schema.Boolean),
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
+  // A message sent mid-turn interrupts the running prompt, so clients hold
+  // queued follow-ups until the turn ends instead of the next tool call.
+  queuesUntilTurnEnd: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
   setup: Schema.optional(
     Schema.Struct({

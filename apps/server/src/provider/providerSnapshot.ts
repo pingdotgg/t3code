@@ -67,6 +67,7 @@ export interface ServerProviderPresentation {
   readonly reportsContextWindow?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
   readonly supportsConversationRollback?: boolean;
+  readonly queuesUntilTurnEnd?: boolean;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -228,6 +229,9 @@ export function buildServerProvider(input: {
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
+      : {}),
+    ...(typeof input.presentation.queuesUntilTurnEnd === "boolean"
+      ? { queuesUntilTurnEnd: input.presentation.queuesUntilTurnEnd }
       : {}),
     enabled: input.enabled,
     installed: input.probe.installed,

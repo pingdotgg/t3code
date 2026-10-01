@@ -179,6 +179,27 @@ describe("queued message dispatch timing", () => {
     );
   });
 
+  it("waits for the turn to end when a mid-turn send would interrupt the provider", () => {
+    const message = { queuedAfterToolActivityId: "a2" };
+    const queuesUntilTurnEnd = true;
+    expect(
+      isQueuedMessageDue({
+        message,
+        phase: "running",
+        latestToolActivityId: "a4",
+        queuesUntilTurnEnd,
+      }),
+    ).toBe(false);
+    expect(
+      isQueuedMessageDue({
+        message,
+        phase: "ready",
+        latestToolActivityId: "a4",
+        queuesUntilTurnEnd,
+      }),
+    ).toBe(true);
+  });
+
   it("never auto-sends a message held for user action", () => {
     const message = { queuedAfterToolActivityId: null, holdUntilUserAction: true };
     expect(isQueuedMessageDue({ message, phase: "ready", latestToolActivityId: "a4" })).toBe(false);
