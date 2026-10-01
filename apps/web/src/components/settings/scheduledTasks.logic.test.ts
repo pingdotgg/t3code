@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { taskToDraft } from "./scheduledTasksSettings.logic";
 import {
   buildScheduledTaskUpdateInput,
+  editorEnabledSwitch,
   moveDetachesThreadBinding,
   scheduleFromDraft,
   workspaceStrategyFromDraft,
@@ -145,6 +146,7 @@ describe("buildScheduledTaskUpdateInput", () => {
     const draft = {
       ...baseline,
       enabled: false,
+      enabledTouched: true,
       threadId: "",
       workspaceMode: "root" as const,
       modelKey: "codex:gpt-5.2-codex",
@@ -561,3 +563,72 @@ it.each([
     expect(patch && scheduledTaskLegacyUpsert(paused, patch).enabled).toBe(false);
   },
 );
+
+describe("enabled after the run cap is reached", () => {
+  const opening: ScheduledTask = {
+    ...task,
+    schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 2 },
+    runCount: 1,
+  };
+  // The final run completed while the editor was open and paused the task.
+  const capped: ScheduledTask = { ...opening, enabled: false, nextRunAt: null, runCount: 2 };
+
+  it("keeps the task paused when only the cap is raised or cleared", () => {
+    for (const maxRuns of ["3", ""]) {
+      const patch = buildPatch({ ...taskToDraft(opening), maxRuns }, capped, taskToDraft(opening));
+      expect(patch).toHaveProperty("schedule");
+      expect(patch).not.toHaveProperty("enabled");
+      expect(patch && scheduledTaskLegacyUpsert(capped, patch).enabled).toBe(false);
+    }
+  });
+
+  it("resumes the task when the user turns Enabled on after raising the cap", () => {
+    const draft = { ...taskToDraft(opening), maxRuns: "3", enabled: true, enabledTouched: true };
+    expect(editorEnabledSwitch(draft, taskToDraft(opening), capped)).toEqual({
+      checked: true,
+      locked: false,
+    });
+    expect(buildPatch(draft, capped, taskToDraft(opening))).toMatchObject({ enabled: true });
+  });
+
+  it("shows the switch the way a save leaves the task", () => {
+    const opened = taskToDraft(opening);
+    expect(editorEnabledSwitch(opened, opened, capped)).toEqual({ checked: false, locked: true });
+    expect(editorEnabledSwitch({ ...opened, maxRuns: "3" }, opened, capped)).toEqual({
+      checked: false,
+      locked: false,
+    });
+    // The same live state follows when another client pauses the task before
+    // its final run completes; clearing the cap must not undo that pause.
+    expect(editorEnabledSwitch({ ...opened, maxRuns: "" }, opened, capped).checked).toBe(false);
+    expect(buildPatch({ ...opened, maxRuns: "" }, capped, opened)).not.toHaveProperty("enabled");
+  });
+
+  it("locks the switch by the cap the saved schedule keeps after another client edits it", () => {
+    // Opened capped; another client raised the cap and resumed the task.
+    const opened = taskToDraft(capped);
+    const resumedElsewhere: ScheduledTask = {
+      ...capped,
+      enabled: true,
+      schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 3 },
+    };
+    const renamed = { ...opened, title: "Renamed" };
+    expect(editorEnabledSwitch(renamed, opened, resumedElsewhere)).toEqual({
+      checked: true,
+      locked: false,
+    });
+    expect(buildPatch(renamed, resumedElsewhere, opened)).not.toHaveProperty("schedule");
+    // Opened uncapped and paused; another client added a used-up cap.
+    const uncapped: ScheduledTask = { ...task, enabled: false, runCount: 2 };
+    const uncappedDraft = taskToDraft(uncapped);
+    const cappedElsewhere: ScheduledTask = {
+      ...uncapped,
+      schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 2 },
+    };
+    const enabled = { ...uncappedDraft, enabled: true, enabledTouched: true };
+    expect(editorEnabledSwitch(enabled, uncappedDraft, cappedElsewhere)).toEqual({
+      checked: false,
+      locked: true,
+    });
+  });
+});

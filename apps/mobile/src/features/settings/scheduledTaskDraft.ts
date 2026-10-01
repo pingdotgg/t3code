@@ -164,6 +164,12 @@ export type ScheduledTaskDraft = {
   readonly baseRef: string;
   readonly checkoutPath: string;
   readonly enabled: boolean;
+  /**
+   * Whether the user used the Enabled switch. Until then the editor shows the
+   * live task's state and a save leaves enabled alone, so a cap pause or
+   * another client's pause is never undone implicitly.
+   */
+  readonly enabledTouched: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
 };
@@ -191,6 +197,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.baseRef,
     draft.checkoutPath,
     draft.enabled,
+    draft.enabledTouched,
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
@@ -219,6 +226,7 @@ export function createDraft(
     baseRef: "main",
     checkoutPath: "",
     enabled: true,
+    enabledTouched: false,
     startFromOrigin: true,
     runtimeMode: "full-access",
   };
@@ -240,6 +248,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? task.workspaceStrategy.worktreePath
         : "",
     enabled: task.enabled,
+    enabledTouched: false,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)
@@ -295,6 +304,44 @@ function workspaceStrategyFromDraft(
   };
 }
 
+/** The schedule a save sends, or undefined when the live schedule stays. */
+function scheduleToSave(
+  draft: ScheduledTaskDraft,
+  liveTask: ScheduledTask,
+): ScheduledTaskUpsertSchedule | undefined {
+  if (draft.task === null) return undefined;
+  const schedule = scheduleFromDraft(draft.schedule);
+  const baselineSchedule = scheduleFromDraft(editDraft(draft.task).schedule);
+  return schedule !== null &&
+    baselineSchedule !== null &&
+    (!sameSchedule(schedule, baselineSchedule) ||
+      // scheduleDraftForTask clamps a legacy sub-minute interval to one
+      // minute, so the baseline diff cannot see the normalization the
+      // editor promises. Emit the normalized schedule while the live task
+      // still carries it — a concurrent write to a valid interval clears
+      // this condition instead of being overwritten.
+      (liveTask.schedule.type === "interval" &&
+        liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
+    ? schedule
+    : undefined;
+}
+
+/**
+ * The editor's Enabled switch, matching what a save produces: the user's
+ * choice once they used it, otherwise the live task's state, and off and
+ * locked while the cap the saved schedule will carry is used up.
+ */
+export function editorEnabledSwitch(
+  draft: ScheduledTaskDraft,
+  live: ScheduledTask | null,
+): { readonly checked: boolean; readonly locked: boolean } {
+  if (live === null) return { checked: draft.enabled, locked: false };
+  const cap = (scheduleToSave(draft, live) ?? live.schedule).maxRuns;
+  const locked = cap !== undefined && live.runCount >= cap;
+  const enabled = draft.enabledTouched ? draft.enabled : live.enabled;
+  return { checked: enabled && !locked, locked };
+}
+
 /**
  * Dirty-field patch for an existing task, scoped to its live project. The
  * baseline is the task snapshot the editor opened with (`draft.task`), so a
@@ -318,23 +365,9 @@ export function buildScheduledTaskUpdateInput(
   if (title !== baseline.title.trim()) patch.title = title;
   const prompt = draft.prompt.trim();
   if (prompt !== baseline.prompt.trim()) patch.prompt = prompt;
-  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
-  const schedule = scheduleFromDraft(draft.schedule);
-  const baselineSchedule = scheduleFromDraft(baseline.schedule);
-  if (
-    schedule !== null &&
-    baselineSchedule !== null &&
-    (!sameSchedule(schedule, baselineSchedule) ||
-      // scheduleDraftForTask clamps a legacy sub-minute interval to one
-      // minute, so the baseline diff cannot see the normalization the
-      // editor promises. Emit the normalized schedule while the live task
-      // still carries it — a concurrent write to a valid interval clears
-      // this condition instead of being overwritten.
-      (liveTask.schedule.type === "interval" &&
-        liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS))
-  ) {
-    patch.schedule = schedule;
-  }
+  if (draft.enabledTouched && draft.enabled !== liveTask.enabled) patch.enabled = draft.enabled;
+  const schedule = scheduleToSave(draft, liveTask);
+  if (schedule !== undefined) patch.schedule = schedule;
   if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
   if (
     draft.modelSelection !== null &&

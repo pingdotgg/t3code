@@ -58,6 +58,7 @@ import {
 } from "./scheduledTasksSettings.logic";
 import {
   buildScheduledTaskUpdateInput,
+  editorEnabledSwitch,
   moveDetachesThreadBinding,
   workspaceStrategyFromDraft,
   workspaceStrategyReady,
@@ -108,6 +109,7 @@ const EMPTY_DRAFT: DraftState = {
   title: "",
   prompt: "",
   enabled: true,
+  enabledTouched: false,
   scheduleMode: "fixed",
   intervalMinutes: "15",
   intervalWeekdays: new Set(),
@@ -541,6 +543,11 @@ function ScheduledTaskEditorDialog({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
+  const enabledSwitch = editorEnabledSwitch(
+    draft,
+    baselineDraft,
+    tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId) ?? task,
+  );
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
@@ -1051,14 +1058,19 @@ function ScheduledTaskEditorDialog({
                   id="scheduled-task-enabled-description"
                   className="text-sm text-muted-foreground"
                 >
-                  Disabled tasks stay saved but do not run.
+                  {enabledSwitch.locked
+                    ? "Run limit reached. Raise or clear the limit to enable it."
+                    : "Disabled tasks stay saved but do not run."}
                 </p>
               </div>
               <Switch
                 id="scheduled-task-enabled"
                 aria-describedby="scheduled-task-enabled-description"
-                checked={draft.enabled}
-                onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
+                checked={enabledSwitch.checked}
+                disabled={enabledSwitch.locked}
+                onCheckedChange={(enabled) =>
+                  setDraft((current) => ({ ...current, enabled, enabledTouched: true }))
+                }
               />
             </div>
           </fieldset>

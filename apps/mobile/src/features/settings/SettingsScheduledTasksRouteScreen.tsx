@@ -59,6 +59,7 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 import {
   buildScheduledTaskUpdateInput,
   editDraft,
+  editorEnabledSwitch,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -583,6 +584,10 @@ function TaskForm({
     draft.task !== null &&
     tasks.data !== null &&
     !tasks.data.tasks.some((task) => task.id === draft.task?.id);
+  const enabledSwitch = editorEnabledSwitch(
+    draft,
+    tasks.data?.tasks.find((task) => task.id === draft.task?.id) ?? draft.task,
+  );
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
@@ -1083,11 +1088,19 @@ function TaskForm({
           onChange={(maxRuns) => setDraft({ ...draft, schedule: { ...draft.schedule, maxRuns } })}
         />
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-          <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>
+          <View className="min-w-0 flex-1">
+            <Text className="text-lg text-foreground">Enabled</Text>
+            {enabledSwitch.locked ? (
+              <Text className="text-sm text-foreground-muted">
+                Run limit reached. Raise or clear the limit to enable it.
+              </Text>
+            ) : null}
+          </View>
           <ThemedSwitch
             accessibilityLabel="Task enabled"
-            value={draft.enabled}
-            onValueChange={(enabled) => setDraft({ ...draft, enabled })}
+            value={enabledSwitch.checked}
+            disabled={enabledSwitch.locked}
+            onValueChange={(enabled) => setDraft({ ...draft, enabled, enabledTouched: true })}
           />
         </View>
       </SettingsSection>

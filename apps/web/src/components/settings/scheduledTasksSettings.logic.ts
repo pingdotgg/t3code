@@ -52,6 +52,12 @@ export interface DraftState {
   readonly title: string;
   readonly prompt: string;
   readonly enabled: boolean;
+  /**
+   * Whether the user used the Enabled switch. Until then the editor shows the
+   * live task's state and a save leaves enabled alone, so a cap pause or
+   * another client's pause is never undone implicitly.
+   */
+  readonly enabledTouched: boolean;
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   /** Weekdays an interval schedule may run on; empty means every day. */
@@ -155,6 +161,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
+    enabledTouched: false,
     scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",

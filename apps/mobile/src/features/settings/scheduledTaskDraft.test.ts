@@ -12,6 +12,7 @@ import {
   scheduledTaskDefaultModel,
   createDraft,
   editDraft,
+  editorEnabledSwitch,
   DEFAULT_SCHEDULE,
   hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
@@ -500,5 +501,96 @@ describe("buildScheduledTaskUpdateInput", () => {
     const patch = buildScheduledTaskUpdateInput(draft, paused);
     expect(patch?.schedule).toEqual(scheduleFromDraft(draft.schedule));
     expect(patch?.enabled).toBeUndefined();
+  });
+});
+
+describe("enabled after the run cap is reached", () => {
+  const opening: ScheduledTask = {
+    id: ScheduledTaskId.make("scheduled-task:mobile-cap"),
+    title: "Capped",
+    prompt: "Run",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 2 },
+    projectId: ProjectId.make("project:one"),
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "mobile",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    nextRunAt: "2026-09-02T00:00:00.000Z",
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 1,
+  };
+  // The final run completed while the editor was open and paused the task.
+  const capped: ScheduledTask = { ...opening, enabled: false, nextRunAt: null, runCount: 2 };
+  const withCap = (maxRuns: string) => {
+    const draft = editDraft(opening);
+    return { ...draft, schedule: { ...draft.schedule, maxRuns } };
+  };
+
+  it("keeps the task paused when only the cap is raised or cleared", () => {
+    for (const maxRuns of ["3", ""]) {
+      const patch = buildScheduledTaskUpdateInput(withCap(maxRuns), capped);
+      expect(patch).toHaveProperty("schedule");
+      expect(patch).not.toHaveProperty("enabled");
+    }
+  });
+
+  it("resumes the task when the user turns Enabled on after raising the cap", () => {
+    const draft = { ...withCap("3"), enabled: true, enabledTouched: true };
+    expect(editorEnabledSwitch(draft, capped)).toEqual({ checked: true, locked: false });
+    expect(buildScheduledTaskUpdateInput(draft, capped)).toMatchObject({ enabled: true });
+  });
+
+  it("shows the switch the way a save leaves the task", () => {
+    expect(editorEnabledSwitch(editDraft(opening), capped)).toEqual({
+      checked: false,
+      locked: true,
+    });
+    expect(editorEnabledSwitch(withCap("3"), capped)).toEqual({ checked: false, locked: false });
+    expect(editorEnabledSwitch(withCap(""), capped).checked).toBe(false);
+  });
+
+  it("locks the switch by the cap the saved schedule keeps after another client edits it", () => {
+    // Opened capped; another client raised the cap and resumed the task.
+    const resumedElsewhere: ScheduledTask = {
+      ...capped,
+      enabled: true,
+      schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 3 },
+    };
+    const renamed = { ...editDraft(capped), title: "Renamed" };
+    expect(editorEnabledSwitch(renamed, resumedElsewhere)).toEqual({
+      checked: true,
+      locked: false,
+    });
+    expect(buildScheduledTaskUpdateInput(renamed, resumedElsewhere)).not.toHaveProperty("schedule");
+    // Opened uncapped and paused; another client added a used-up cap.
+    const uncapped: ScheduledTask = {
+      ...opening,
+      enabled: false,
+      runCount: 2,
+      schedule: { type: "interval", everyMs: 15 * 60_000 },
+    };
+    const cappedElsewhere: ScheduledTask = {
+      ...uncapped,
+      schedule: { type: "interval", everyMs: 15 * 60_000, maxRuns: 2 },
+    };
+    const enabled = { ...editDraft(uncapped), enabled: true, enabledTouched: true };
+    expect(editorEnabledSwitch(enabled, cappedElsewhere)).toEqual({
+      checked: false,
+      locked: true,
+    });
+  });
+
+  it("counts an explicit Enabled change as unsaved even when it matches the opening value", () => {
+    const opened = editDraft(capped);
+    expect(hasScheduledTaskDraftChanges(opened, { ...opened, enabledTouched: true })).toBe(true);
+    expect(hasScheduledTaskDraftChanges(opened, opened)).toBe(false);
   });
 });
