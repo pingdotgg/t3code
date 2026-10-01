@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1307,7 +1308,9 @@ export const makeCodexSessionRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
-    const events = yield* Queue.unbounded<ProviderEvent>();
+    // `Done`-terminated so `close` can end the queue gracefully: the final
+    // `session/closed` event stays readable instead of being cleared.
+    const events = yield* Queue.unbounded<ProviderEvent, Cause.Done>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -2537,7 +2540,10 @@ export const makeCodexSessionRuntime = (
       );
       yield* Scope.close(runtimeScope, Exit.void);
       yield* Queue.shutdown(serverNotifications);
-      yield* Queue.shutdown(events);
+      // `Queue.shutdown` clears buffered messages, which dropped the
+      // `session/closed` emitted just above whenever the consumer had not
+      // taken it yet. `end` lets the consumer drain, then completes.
+      yield* Queue.end(events);
     });
 
     return {

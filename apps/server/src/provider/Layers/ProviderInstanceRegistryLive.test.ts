@@ -44,6 +44,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -60,6 +61,7 @@ import { GrokDriver } from "../Drivers/GrokDriver.ts";
 import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
+import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
@@ -797,5 +799,59 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("ProviderInstanceRegistryLive — reconcile teardown", () => {
+  it.effect("stops live sessions before closing a removed instance's scope", () =>
+    Effect.gen(function* () {
+      const driverKind = ProviderDriverKind.make("codex");
+      const instanceId = ProviderInstanceId.make("codex_removed");
+      const calls: Array<string> = [];
+
+      const fakeDriver: ProviderDriver<unknown> = {
+        driverKind,
+        metadata: { displayName: "Fake" },
+        configSchema: Schema.Unknown,
+        defaultConfig: () => ({}),
+        create: (input) =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() => Effect.sync(() => void calls.push("scope-closed")));
+            const instance: ProviderInstance = {
+              instanceId: input.instanceId,
+              driverKind,
+              continuationIdentity: { driverKind, continuationKey: input.instanceId },
+              displayName: input.displayName,
+              enabled: true,
+              get snapshot(): never {
+                throw new Error("reconcile must not read the provider snapshot.");
+              },
+              // Only `stopAll` is reachable from `reconcile`.
+              adapter: {
+                stopAll: () => Effect.sync(() => void calls.push("stopAll")),
+              } as unknown as ProviderInstance["adapter"],
+              get textGeneration(): never {
+                throw new Error("reconcile must not generate text.");
+              },
+            };
+            return instance;
+          }),
+      };
+
+      const { registry, mutator } = yield* makeProviderInstanceRegistry({
+        drivers: [fakeDriver],
+        configMap: { [instanceId]: { driver: driverKind, config: {} } },
+      });
+      expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
+        instanceId,
+      ]);
+
+      // Removing the instance (a settings edit) must report the exit of every
+      // live session before the adapter is torn down with its scope.
+      yield* mutator.reconcile({});
+
+      expect(calls).toEqual(["stopAll", "scope-closed"]);
+      expect(yield* registry.listInstances).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 });

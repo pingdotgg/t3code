@@ -867,6 +867,35 @@ describe("CodexSessionRuntime collab integration", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   }
+
+  it.effect("keeps the session/closed event readable after close", () =>
+    Effect.gen(function* () {
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify({ rootThreadId: ROOT, notifications: [] }));
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-close-drain"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      yield* runtime.start();
+
+      // Nothing is consuming `events` yet: the same window the adapter's
+      // forwarder can be in when a session is torn down. Ending the queue
+      // (instead of shutting it down) keeps the buffered exit readable.
+      yield* runtime.close;
+
+      const sessionEvents = Array.from(yield* Stream.runCollect(runtime.events))
+        .filter((event) => event.kind === "session")
+        .map((event) => event.method);
+      assert.deepEqual(sessionEvents, ["session/connecting", "session/ready", "session/closed"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("CodexSessionRuntime compaction", () => {

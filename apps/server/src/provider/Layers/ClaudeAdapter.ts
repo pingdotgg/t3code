@@ -2133,7 +2133,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent, Cause.Done>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const randomUUIDv4 = crypto.randomUUIDv4.pipe(
@@ -5611,7 +5611,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.catch((cause) =>
         Effect.logError("Failed to emit Claude session shutdown event.", { cause }),
       ),
-      Effect.tap(() => Queue.shutdown(runtimeEventQueue)),
+      // Keep already-emitted exit events readable for the provider service.
+      Effect.tap(() => Queue.end(runtimeEventQueue)),
       Effect.tap(() => managedNativeEventLogger?.close() ?? Effect.void),
     ),
   );

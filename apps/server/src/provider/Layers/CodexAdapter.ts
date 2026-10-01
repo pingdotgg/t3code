@@ -32,6 +32,7 @@ import {
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
@@ -2259,7 +2260,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent, Cause.Done>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
@@ -2762,6 +2763,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     session.stopped = true;
     sessions.delete(session.threadId);
     yield* session.runtime.close.pipe(Effect.ignore);
+    // `close` ends the runtime event stream after emitting `session/closed`.
+    // Let the forwarder drain it before its scope is closed, so the exit
+    // reaches the orchestrator and the thread does not stay "running".
+    yield* Fiber.join(session.eventFiber).pipe(Effect.timeoutOption("5 seconds"), Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
@@ -2793,7 +2798,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
   yield* Effect.acquireRelease(Effect.void, () =>
     stopAll().pipe(
-      Effect.andThen(Queue.shutdown(runtimeEventQueue)),
+      // Keep already-emitted exit events readable for the provider service.
+      Effect.andThen(Queue.end(runtimeEventQueue)),
       Effect.andThen(managedNativeEventLogger?.close() ?? Effect.void),
       Effect.ignore,
     ),

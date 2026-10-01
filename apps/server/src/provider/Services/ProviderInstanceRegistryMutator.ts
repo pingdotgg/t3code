@@ -12,10 +12,11 @@
  * The mutator exposes a single entry point, `reconcile(configMap)`, which:
  *
  *   1. Diffs the incoming map against the live one keyed by instance id.
- *   2. Closes the per-instance `Scope` of every removed or replaced entry
- *      (tearing down adapter processes, refresh fibres, temp files) BEFORE
- *      creating the replacement — `reconcile` guarantees "at most one live
- *      instance per id" at all times.
+ *   2. Stops every live session of each removed or replaced entry (so the
+ *      orchestrator sees `session.exited` for threads mid-turn), then closes
+ *      its per-instance `Scope` (tearing down adapter processes, refresh
+ *      fibres, temp files) BEFORE creating the replacement — `reconcile`
+ *      guarantees "at most one live instance per id" at all times.
  *   3. Opens a fresh child `Scope` for every added or replaced entry, runs
  *      the driver's `create`, and stores the resulting `ProviderInstance`
  *      plus its scope.

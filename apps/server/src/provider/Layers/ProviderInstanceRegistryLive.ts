@@ -248,9 +248,21 @@ const makeReconcile = <R>(input: {
       }
       for (const id of [...removedIds, ...replacedIds]) {
         const live = previousEntries.get(id);
-        if (live) {
-          yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
-        }
+        if (!live) continue;
+        // Stop sessions explicitly before the scope teardown. Adapter
+        // finalizers stop sessions silently (server shutdown keeps threads
+        // resumable); a settings edit is not a shutdown, and threads with
+        // an active turn must learn their provider is gone or they stay
+        // "running" forever.
+        yield* live.instance.adapter.stopAll().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to stop provider instance sessions before teardown", {
+              instanceId: id,
+              cause,
+            }),
+          ),
+        );
+        yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
       }
 
       // 2. Build additions and replacements. Walk `nextRaw` so the final

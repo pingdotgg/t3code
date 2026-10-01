@@ -22,6 +22,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -60,7 +61,7 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
-  private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
+  private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent, Cause.Done>());
   private readonly now = "2026-01-01T00:00:00.000Z";
 
   public readonly startImpl = vi.fn(() =>
@@ -119,6 +120,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   );
 
   public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+  /** Mirror the real runtime: `close` emits `session/closed` before ending `events`. */
+  public closeEmitsSessionClosed = false;
 
   readonly options: CodexSessionRuntimeOptions;
 
@@ -162,7 +165,26 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Stream.fromQueue(this.eventQueue);
   }
 
-  close = Effect.promise(() => this.closeImpl());
+  get close() {
+    return Effect.promise(() => this.closeImpl()).pipe(
+      Effect.andThen(() =>
+        this.closeEmitsSessionClosed
+          ? this.emit({
+              id: asEventId(`evt-${this.options.threadId}-closed`),
+              kind: "session",
+              provider: ProviderDriverKind.make("codex"),
+              threadId: this.options.threadId,
+              createdAt: this.now,
+              method: "session/closed",
+              message: "Session stopped",
+            })
+          : Effect.void,
+      ),
+      // The real runtime ends (not shuts down) its event queue on close.
+      Effect.andThen(() => Queue.end(this.eventQueue)),
+      Effect.asVoid,
+    );
+  }
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
@@ -1789,6 +1811,38 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.threadId, "thread-1");
       NodeAssert.equal(firstEvent.value.payload.reason, "Session stopped");
+    }),
+  );
+
+  it.effect("delivers the runtime's session/closed emitted during stopSession", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-stop-drain");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.closeEmitsSessionClosed = true;
+      const exitedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited" && event.threadId === threadId),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      // Tearing the session down (settings reconcile, stopAll) must not lose
+      // the exit the runtime emits on close, or the thread stays "running".
+      yield* adapter.stopSession(threadId);
+
+      const exited = yield* Fiber.join(exitedFiber);
+      NodeAssert.equal(exited._tag, "Some");
+      if (exited._tag !== "Some" || exited.value.type !== "session.exited") {
+        return;
+      }
+      NodeAssert.equal(exited.value.payload.exitKind, "graceful");
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 
