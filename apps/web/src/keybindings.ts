@@ -453,14 +453,20 @@ export function listNavigationKeyFromEvent(
  * Replays Ctrl+J / Ctrl+K as the matching arrow key on the same element, so
  * a list input's own arrow handling moves the highlight. Returns whether it
  * replayed, so callers can skip their handler for the original chord.
+ * A combobox input with its popup closed (`aria-expanded="false"`) keeps the
+ * native chord, such as Ctrl+K deleting to the end of the line.
  */
-export function redirectListNavigationKey(event: {
-  nativeEvent: KeyboardEvent;
-  currentTarget: EventTarget;
-  preventDefault: () => void;
-}): boolean {
-  const key = listNavigationKeyFromEvent(event.nativeEvent);
+export function redirectListNavigationKey(
+  event: {
+    nativeEvent: ShortcutEventLike;
+    currentTarget: Pick<Element, "getAttribute" | "dispatchEvent">;
+    preventDefault: () => void;
+  },
+  platform = navigator.platform,
+): boolean {
+  const key = listNavigationKeyFromEvent(event.nativeEvent, platform);
   if (!key) return false;
+  if (event.currentTarget.getAttribute("aria-expanded") === "false") return false;
   event.preventDefault();
   event.currentTarget.dispatchEvent(
     new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }),

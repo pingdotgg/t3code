@@ -4020,8 +4020,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       }
     }
-    // Ctrl+J / Ctrl+K only move a menu highlight; with no menu they stay text editing.
-    if ((key === "ArrowUp" || key === "ArrowDown") && event.key === key) {
+    if (key === "ArrowUp" || key === "ArrowDown") {
+      // Ctrl+J / Ctrl+K belong to an open menu even while it has no items;
+      // with no menu they keep their native editing action.
+      if (event.key !== key) return menuIsActive;
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
     }
     const submissionIntent =
