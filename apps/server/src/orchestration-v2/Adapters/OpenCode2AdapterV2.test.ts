@@ -765,7 +765,11 @@ describe("OpenCode2 adapter", () => {
         reply("agent.list", agentList),
         out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
         reply("session.update", null),
-        out("session.update", { sessionID: CHILD, permissions: supervisedRules.slice(0, 3) }),
+        // A subagent's session may use its thread's T3 MCP server.
+        out("session.update", {
+          sessionID: CHILD,
+          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
+        }),
         reply("session.update", null),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
@@ -1975,7 +1979,7 @@ describe("OpenCode2 adapter", () => {
         // The subagent gets them too before its execution runs anything.
         out("session.update", {
           sessionID: CHILD,
-          permissions: supervisedRules.slice(0, 3),
+          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
         }),
         reply("session.update", null),
         event("session.execution.started", { sessionID: CHILD }),
@@ -2520,7 +2524,7 @@ describe("OpenCode2 adapter", () => {
       // 2.0.18 lists big-pickle at 48k input for a project whose opencode.json
       // sets that limit, and at its catalog 160k everywhere else.
       const custom = "/work/opencode2-custom";
-      const runtime = yield* openCode2ReplayRuntime([
+      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
         ...opening,
         out("model.list", { "location[directory]": custom }),
         reply("model.list", {
@@ -2762,6 +2766,9 @@ describe("OpenCode2 adapter", () => {
         replyData("session.form.list", []),
         ...promptInto(SESSION, "msg_recorded_turn_a"),
         ...steerInto(SESSION, "msg_recorded_steer_a"),
+        // The other session gets its own instructions entry before its first prompt.
+        out("session.instructions.entry.put", { sessionID: OTHER, key: "t3-code", value: "<any>" }),
+        reply("session.instructions.entry.put", null),
         ...promptInto(OTHER, "msg_recorded_turn_b"),
         ...steerInto(OTHER, "msg_recorded_steer_b"),
       ]);
@@ -3298,6 +3305,16 @@ describe("OpenCode2 adapter", () => {
       const { runtime, thread } = yield* resumed([
         out("session.fork", { sessionID: SESSION }),
         replyData("session.fork", sessionInfo({ id: FORK })),
+        // The fork's T3 MCP server is the target thread's.
+        out("session.update", {
+          sessionID: FORK,
+          permissions: [
+            { action: "*", resource: "*", effect: "allow" },
+            { action: "t3-code-*", resource: "*", effect: "deny" },
+            { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
+          ],
+        }),
+        reply("session.update", null),
         // OpenCode makes the fork where its source runs; the target thread runs elsewhere.
         out("session.move", { sessionID: FORK, directory: target }),
         reply("session.move", null),
