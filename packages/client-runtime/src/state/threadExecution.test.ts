@@ -188,6 +188,15 @@ describe("thread execution presentation", () => {
     // Resuming clears the hold, and the run reads as queued until it starts.
     const resumed = { ...projection, runs: [interrupted, { ...held, queueHeld: false }] };
     expect(deriveThreadRuntime(resumed)).toMatchObject({ status: "queued" });
+
+    // Recovery can hold a first message before any run executed; it is not work.
+    const onlyHeld = {
+      ...projection,
+      runs: [held],
+      thread: { ...projection.thread, activeProviderThreadId: null },
+    };
+    expect(deriveLatestThreadRun(onlyHeld)).toBeNull();
+    expect(deriveThreadRuntime(onlyHeld)).toBeNull();
   });
 
   it("does not expose a queued-only run as interruptible", () => {

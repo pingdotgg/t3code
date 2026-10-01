@@ -1,6 +1,6 @@
 import {
-  heldQueueRunPresentedAsLatest,
   latestRootProviderFailure,
+  latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -1303,10 +1303,7 @@ export function threadShellFromProjection(
       projection.runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
-    ) ??
-    heldQueueRunPresentedAsLatest(projection.runs) ??
-    projection.runs.at(-1) ??
-    null;
+    ) ?? latestUnheldRun(projection.runs);
   const activeRun =
     projection.runs
       .filter(isInterruptibleRunForShell)
@@ -4866,27 +4863,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND i.run_id IS NULL
               ) AS runless_item_count
             FROM orchestration_v2_projection_threads t
-            -- The newest run, unless it waits in a held queue: then the newest run
-            -- outside that queue, matching heldQueueRunPresentedAsLatest.
-            LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = COALESCE(
-              (
-                SELECT candidate.run_id
-                FROM orchestration_v2_projection_runs candidate
-                WHERE candidate.thread_id = t.thread_id
-                  AND NOT (
-                    candidate.status = 'queued'
-                    AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
-                  )
-                ORDER BY candidate.ordinal DESC, candidate.run_id DESC
-                LIMIT 1
-              ),
-              (
-                SELECT candidate.run_id
-                FROM orchestration_v2_projection_runs candidate
-                WHERE candidate.thread_id = t.thread_id
-                ORDER BY candidate.ordinal DESC, candidate.run_id DESC
-                LIMIT 1
-              )
+            -- The newest run not waiting in a held queue, matching latestUnheldRun.
+            LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
+              SELECT candidate.run_id
+              FROM orchestration_v2_projection_runs candidate
+              WHERE candidate.thread_id = t.thread_id
+                AND NOT (
+                  candidate.status = 'queued'
+                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                )
+              ORDER BY candidate.ordinal DESC, candidate.run_id DESC
+              LIMIT 1
             )
             LEFT JOIN orchestration_v2_projection_runs blocked ON blocked.run_id = (
               SELECT candidate.run_id

@@ -1959,6 +1959,29 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         assert.equal(heldShell.latestRunId, runId);
         assert.equal(heldShell.status, "completed");
       }
+
+      // With only held runs, nothing has executed: both shells read idle.
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-shell-interruptible:held-first"),
+        type: "run.updated",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: later,
+        payload: { ...run, status: "queued", queueHeld: true, startedAt: null, completedAt: null },
+      });
+      const onlyHeldProjection = yield* projectionStore.getThreadProjection(threadId);
+      const onlyHeldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (row) => row.id === threadId,
+      )!;
+      for (const onlyHeldShell of [
+        onlyHeldSqlShell,
+        ProjectionStore.threadShellFromProjection(onlyHeldProjection),
+      ]) {
+        assert.isNull(onlyHeldShell.latestRunId);
+        assert.equal(onlyHeldShell.status, "idle");
+      }
     }),
   );
 

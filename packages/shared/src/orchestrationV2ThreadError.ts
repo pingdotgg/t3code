@@ -91,19 +91,17 @@ export function usageLimitRunPresentedAsLatest(
 }
 
 /**
- * The newest run outside a held queue, when the newest run waits in one. A held
- * queue waits for the user, so the thread reads as the run before it instead of
- * as queued work. The SQL thread shell orders runs the same way.
+ * The newest run that is not waiting in a held queue, or null when only held
+ * runs exist. A held queue waits for the user, so its runs never stand for the
+ * thread's outcome. The SQL thread shell selects the same run.
  */
-export function heldQueueRunPresentedAsLatest(
+export function latestUnheldRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
-  let newest: OrchestrationV2Run | null = null;
-  let presented: OrchestrationV2Run | null = null;
+  let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
-    if (newest === null || run.ordinal > newest.ordinal) newest = run;
     if (run.status === "queued" && run.queueHeld === true) continue;
-    if (presented === null || run.ordinal > presented.ordinal) presented = run;
+    if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
-  return newest?.status === "queued" && newest.queueHeld === true ? presented : null;
+  return latest;
 }
