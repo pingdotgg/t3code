@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
+  canComposerRest,
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   COMPOSER_RESTING_EXPANSION_MIN_PX,
@@ -523,5 +524,18 @@ describe("progressive composer controls", () => {
         previous = next;
       }
     }
+  });
+});
+
+describe("canComposerRest", () => {
+  it("rests existing threads whatever the preview", () => {
+    expect(canComposerRest({ isExistingThread: true, composerPreview: "live" })).toBe(true);
+    expect(canComposerRest({ isExistingThread: true, composerPreview: "expanded" })).toBe(true);
+  });
+
+  it("keeps a live draft expanded but lets a forced Collapsed preview rest it", () => {
+    expect(canComposerRest({ isExistingThread: false, composerPreview: "live" })).toBe(false);
+    expect(canComposerRest({ isExistingThread: false, composerPreview: "expanded" })).toBe(false);
+    expect(canComposerRest({ isExistingThread: false, composerPreview: "collapsed" })).toBe(true);
   });
 });

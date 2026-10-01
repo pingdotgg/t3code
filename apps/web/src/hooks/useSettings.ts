@@ -59,6 +59,7 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+let deferredClientSettingsPatchWaiters: Array<() => void> = [];
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -192,6 +193,11 @@ export function persistClientSettingsPatch(
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
         deferredClientSettingsPatchCount -= 1;
+        if (deferredClientSettingsPatchCount === 0) {
+          const waiters = deferredClientSettingsPatchWaiters;
+          deferredClientSettingsPatchWaiters = [];
+          for (const resolve of waiters) resolve();
+        }
       }
     }
     await persist(getClientSettingsSnapshot());
@@ -200,6 +206,26 @@ export function persistClientSettingsPatch(
       operation: "persist",
       ...safeErrorLogAttributes(error),
     });
+  });
+}
+
+/**
+ * Whether a client-settings patch written now publishes synchronously: settings
+ * have hydrated and no earlier patch is still waiting to publish.
+ */
+export function clientSettingsPatchesPublishImmediately(): boolean {
+  return clientSettingsHydrationStatus === "ready" && deferredClientSettingsPatchCount === 0;
+}
+
+/**
+ * Resolves once no deferred patch is waiting to publish. Recheck
+ * `clientSettingsPatchesPublishImmediately` afterwards: hydration may still be
+ * pending, or a new patch may have deferred in between.
+ */
+export function whenClientSettingsPatchesPublished(): Promise<void> {
+  if (deferredClientSettingsPatchCount === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    deferredClientSettingsPatchWaiters.push(resolve);
   });
 }
 
@@ -525,6 +551,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  deferredClientSettingsPatchWaiters = [];
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

@@ -63,6 +63,46 @@ async function settled() {
   await customizeActionsSettled();
   await Promise.all(writes);
 }
+/**
+ * Lets every queued microtask run, so actions that are free to run have run.
+ * Actions held back on purpose stay held; this is a drain, not a timeout.
+ */
+function drainMicrotasks() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+function stall() {
+  let release = () => {};
+  const stalled = new Promise<void>((done) => {
+    release = done;
+  });
+  return { stalled, release };
+}
+/**
+ * Holds the queue the way a slow startup does: one write still saving and
+ * another waiting behind it, so new writes defer instead of publishing.
+ * Resolves once that state is reached, with a way to let the save finish.
+ */
+async function blockStartupWrites() {
+  __resetClientSettingsPersistenceForTests();
+  persisted.load = () => Promise.resolve(null);
+  let release = () => {};
+  const blocked = new Promise<void>((done) => {
+    release = done;
+  });
+  let saving = () => {};
+  const startupSaving = new Promise<void>((done) => {
+    saving = done;
+  });
+  writes.push(
+    persistClientSettingsPatch({ fontFamilySans: "Inter" }, () => {
+      saving();
+      return blocked;
+    }),
+    persistClientSettingsPatch({ fontFamilyCode: "Mono" }, async () => undefined),
+  );
+  await startupSaving;
+  return release;
+}
 function deferHydration() {
   __resetClientSettingsPersistenceForTests();
   let resolve: (settings: Partial<ClientSettings>) => void = () => {};
@@ -217,30 +257,44 @@ describe("Customize interface history", () => {
   });
 
   it("builds each edit on the last while settings writes are deferred", async () => {
-    __resetClientSettingsPersistenceForTests();
-    persisted.load = () => Promise.resolve(null);
-    let release = () => {};
-    const blocked = new Promise<void>((done) => {
-      release = done;
-    });
-    // A startup write still persisting, and another queued behind it.
-    const startup = [
-      persistClientSettingsPatch({ fontFamilySans: "Inter" }, () => blocked),
-      persistClientSettingsPatch({ fontFamilyCode: "Mono" }, async () => undefined),
-    ];
+    const release = await blockStartupWrites();
 
     actions.commitLayout(hide("terminal"));
     actions.commitLayout(hide("branch"));
-    await customizeActionsSettled();
-    expect(getClientSettings().interfaceLayout).toEqual({});
-
+    await drainMicrotasks();
     release();
-    await Promise.all([...startup, ...writes]);
+    await settled();
     expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal", "branch"]);
 
     actions.undo();
     await settled();
     expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["terminal"]);
+  });
+
+  it("does not bring back an undone edit while settings writes are deferred", async () => {
+    const release = await blockStartupWrites();
+
+    // The hide publishes, then its save stalls with the Undo queued behind it.
+    const save = stall();
+    let saving = () => {};
+    const hideSaving = new Promise<void>((done) => {
+      saving = done;
+    });
+    persist = () => {
+      saving();
+      return save.stalled;
+    };
+    actions.commitLayout(hide("terminal"));
+    actions.undo();
+    await drainMicrotasks();
+    release();
+    await hideSaving;
+
+    actions.commitLayout(hide("branch"));
+    await drainMicrotasks();
+    save.release();
+    await settled();
+    expect(getClientSettings().interfaceLayout.threadRow?.hidden).toEqual(["branch"]);
   });
 
   it("drops settings changes while settings fail to load, then recovers", async () => {
@@ -276,23 +330,15 @@ describe("Customize interface history", () => {
     expect(store().history).toEqual([]);
   });
 
-  it("reads a value changed elsewhere once the mode's own write has published", async () => {
-    let saveWidth = () => {};
-    const widthSaved = new Promise<void>((done) => {
-      saveWidth = done;
-    });
-    let release = () => {};
-    const blocked = new Promise<void>((done) => {
-      release = done;
-    });
-    // The width saves only after the layout edit is made; that edit stalls.
-    let saves = 0;
-    persist = () => (++saves === 1 ? widthSaved : blocked);
+  it("reads a value changed elsewhere after the mode's write publishes but stalls", async () => {
+    const release = await blockStartupWrites();
+    const save = stall();
+    persist = () => save.stalled;
     actions.commit({ chatWidth: "wide" });
-    actions.commitLayout(hide("terminal"));
+    await drainMicrotasks();
+    release();
     await customizeActionsSettled();
-    saveWidth();
-    await writes[0];
+    expect(getClientSettings().chatWidth).toBe("wide");
 
     store().close();
     // Settings publishes at once; its save queues behind the stalled one.
@@ -305,7 +351,7 @@ describe("Customize interface history", () => {
     actions.undo();
     await customizeActionsSettled();
     expect(getClientSettings().chatWidth).toBe("full");
-    release();
+    save.release();
     await settled();
   });
 });

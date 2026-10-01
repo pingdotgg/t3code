@@ -1,13 +1,14 @@
-import type { ClientSettings, ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
+import type { ClientSettingsPatch, InterfaceLayout } from "@t3tools/contracts";
 import * as Struct from "effect/Struct";
-import type { Mutable } from "effect/Types";
 import { useMemo } from "react";
 
 import {
+  clientSettingsPatchesPublishImmediately,
   ensureClientSettingsHydrated,
   getClientSettings,
   useClientSettings,
   useUpdateClientSettings,
+  whenClientSettingsPatchesPublished,
 } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import {
@@ -21,68 +22,35 @@ import {
 
 // Before client settings hydrate, the live snapshot is only the defaults:
 // recording against it would make Undo restore defaults over saved values.
-// Every action waits for hydration on one shared chain, so actions from the
-// popover and the edit layer still land in the order they were made. An
-// action queued in one session of the mode never runs in a later one.
+// And while an earlier patch waits to publish, a new one defers behind it, so
+// the snapshot would not show the mode's last write to the next action. Every
+// action therefore waits on one shared chain until a write publishes at once,
+// then reads, records and writes in that same turn. Actions from the popover
+// and the edit layer still land in the order they were made, and an action
+// queued in one session of the mode never runs in a later one.
 let pendingActions: Promise<void> = Promise.resolve();
 
 function afterHydration(run: (settingsLoaded: boolean) => void): void {
   const session = useCustomizeInterfaceStore.getState().session;
+  const runInSession = (settingsLoaded: boolean) => {
+    if (useCustomizeInterfaceStore.getState().session === session) run(settingsLoaded);
+  };
   pendingActions = pendingActions
-    .then(ensureClientSettingsHydrated)
-    // Hydration logs its own failure, and the next action retries it.
-    .then(
-      () => true,
-      () => false,
-    )
-    .then((settingsLoaded) => {
-      if (useCustomizeInterfaceStore.getState().session === session) run(settingsLoaded);
+    .then(async () => {
+      while (!clientSettingsPatchesPublishImmediately()) {
+        try {
+          await ensureClientSettingsHydrated();
+        } catch {
+          // Hydration logs its own failure, and the next action retries it.
+          return runInSession(false);
+        }
+        await whenClientSettingsPatchesPublished();
+      }
+      runInSession(true);
     })
     .catch((error: unknown) => {
       console.error("[CUSTOMIZE_INTERFACE] action failed", error);
     });
-}
-
-// A write can sit deferred behind an earlier one that is still persisting, so
-// the snapshot may not show it yet. Reads overlay the mode's own unpublished
-// writes, so the next action builds on them rather than on a stale value.
-// Each key is owned by the write that set it and leaves the overlay when that
-// write settles, or at once if the write published synchronously.
-const unpublished: Mutable<ClientSettingsPatch> = {};
-const unpublishedOwners = new Map<keyof ClientSettingsPatch, object>();
-
-function currentSettings(): ClientSettings {
-  return { ...getClientSettings(), ...unpublished };
-}
-
-function copyPatchValue<K extends keyof ClientSettingsPatch>(
-  to: Mutable<ClientSettingsPatch>,
-  from: ClientSettingsPatch,
-  key: K,
-) {
-  const value = from[key];
-  if (value !== undefined) to[key] = value;
-}
-
-function trackWrite(patch: ClientSettingsPatch, written: Promise<void>): void {
-  const owner = {};
-  const published = getClientSettings();
-  for (const key of Struct.keys(patch)) {
-    if (JSON.stringify(patch[key]) === JSON.stringify(published[key])) {
-      delete unpublished[key];
-      unpublishedOwners.delete(key);
-    } else {
-      copyPatchValue(unpublished, patch, key);
-      unpublishedOwners.set(key, owner);
-    }
-  }
-  void written.finally(() => {
-    for (const key of Struct.keys(patch)) {
-      if (unpublishedOwners.get(key) !== owner) continue;
-      delete unpublished[key];
-      unpublishedOwners.delete(key);
-    }
-  });
 }
 
 function settingsNotLoaded(): void {
@@ -103,11 +71,9 @@ export function createCustomizeActions(deps: {
 }) {
   const store = () => useCustomizeInterfaceStore.getState();
 
-  const write = (patch: ClientSettingsPatch) => trackWrite(patch, deps.updateSettings(patch));
-
   // Writes a step's values back, touching only the keys it holds.
   const restore = (step: CustomizeStep) => {
-    if (Struct.keys(step.settings).length > 0) write(step.settings);
+    if (Struct.keys(step.settings).length > 0) void deps.updateSettings(step.settings);
     let themeChanged = false;
     for (const key of Struct.keys(step.theme)) {
       const value = step.theme[key] ?? null;
@@ -124,10 +90,10 @@ export function createCustomizeActions(deps: {
   };
 
   const applySettings = (patch: ClientSettingsPatch, key?: string) => {
-    const replaced = settingsReplacedBy(patch, currentSettings());
+    const replaced = settingsReplacedBy(patch, getClientSettings());
     if (Struct.keys(replaced).length === 0) return;
     store().record({ settings: replaced, theme: {} }, key);
-    write(patch);
+    void deps.updateSettings(patch);
   };
 
   return {
@@ -143,7 +109,7 @@ export function createCustomizeActions(deps: {
     commitLayout: (edit: (current: InterfaceLayout) => InterfaceLayout) =>
       afterHydration((settingsLoaded) => {
         if (!settingsLoaded) return settingsNotLoaded();
-        const current = currentSettings().interfaceLayout;
+        const current = getClientSettings().interfaceLayout;
         const next = edit(current);
         if (next !== current) applySettings({ interfaceLayout: next });
       }),
@@ -173,7 +139,7 @@ export function createCustomizeActions(deps: {
       afterHydration(() => {
         const { baseline } = store();
         const step: CustomizeStep = {
-          settings: settingsReplacedBy(baseline.settings, currentSettings()),
+          settings: settingsReplacedBy(baseline.settings, getClientSettings()),
           theme: themeReplacedBy(baseline.theme, readThemeStorageSnapshot()),
         };
         if (isEmptyStep(step)) return;

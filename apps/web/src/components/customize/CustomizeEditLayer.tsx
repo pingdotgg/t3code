@@ -50,6 +50,7 @@ import {
   isMovable,
   moveCustomizeElementByKeyboard,
   readingOrder,
+  resolveCustomizeMoveOrder,
   resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
@@ -247,22 +248,25 @@ export function CustomizeEditLayer({
   // Keep focus on editing controls when a handle disappears or becomes disabled.
   useLayoutEffect(() => {
     const layer = layerRef.current;
-    if (!layer || isCustomizeAboveModeTarget(document.activeElement) || hasOpenCustomizePopup())
-      return;
-    if (
+    const focusLost =
       !lastFocusRef.current ||
       !lastFocusRef.current.isConnected ||
       document.activeElement === document.body ||
-      lastFocusRef.current.matches(":disabled")
-    ) {
-      const first = handles[0];
-      const target =
-        lastFocusRef.current?.isConnected && !lastFocusRef.current.matches(":disabled")
-          ? lastFocusRef.current
-          : ((first ? handleFor(`${first.surface}:${first.id}`) : null) ??
-            layer.querySelector<HTMLElement>("[data-customize-back]"));
-      target?.focus({ preventScroll: true });
-    }
+      lastFocusRef.current.matches(":disabled");
+    if (
+      !layer ||
+      !focusLost ||
+      isCustomizeAboveModeTarget(document.activeElement) ||
+      hasOpenCustomizePopup()
+    )
+      return;
+    const first = handles[0];
+    const target =
+      lastFocusRef.current?.isConnected && !lastFocusRef.current.matches(":disabled")
+        ? lastFocusRef.current
+        : ((first ? handleFor(`${first.surface}:${first.id}`) : null) ??
+          layer.querySelector<HTMLElement>("[data-customize-back]"));
+    target?.focus({ preventScroll: true });
   }, [handles, handleFor]);
 
   useEffect(() => {
@@ -338,28 +342,29 @@ export function CustomizeEditLayer({
     hidden: boolean,
     fromHandle = false,
   ) => {
-    const current = getClientSettings().interfaceLayout;
-    const next = setSurfaceElementHidden(current, layoutSurface, id, hidden);
-    if (next === current) return;
-    if (fromHandle && hidden) {
-      const index = handles.findIndex(
-        (element) => element.surface === layoutSurface && element.id === id,
+    commitLayout((current) => {
+      if (resolveSurfaceLayout(layoutSurface, current).hidden.has(id) === hidden) return current;
+      const next = setSurfaceElementHidden(current, layoutSurface, id, hidden);
+      if (fromHandle && hidden) {
+        const index = handles.findIndex(
+          (element) => element.surface === layoutSurface && element.id === id,
+        );
+        const neighbour = handles[index + 1] ?? handles[index - 1];
+        const target = neighbour
+          ? handleFor(`${neighbour.surface}:${neighbour.id}`)
+          : layerRef.current?.querySelector<HTMLElement>("[data-customize-back]");
+        if (index >= 0) target?.focus({ preventScroll: true });
+      }
+      const resolved = resolveSurfaceLayout(layoutSurface, next);
+      const enabled = resolved.order.filter((item) => !resolved.hidden.has(item));
+      const label = definitionOf(layoutSurface, id)?.label ?? id;
+      announce(
+        hidden
+          ? `Hidden ${label}`
+          : `Restored ${label} to position ${enabled.indexOf(id) + 1} of ${enabled.length}`,
       );
-      const neighbour = handles[index + 1] ?? handles[index - 1];
-      const target = neighbour
-        ? handleFor(`${neighbour.surface}:${neighbour.id}`)
-        : layerRef.current?.querySelector<HTMLElement>("[data-customize-back]");
-      if (index >= 0) target?.focus({ preventScroll: true });
-    }
-    commitLayout((current) => setSurfaceElementHidden(current, layoutSurface, id, hidden));
-    const resolved = resolveSurfaceLayout(layoutSurface, next);
-    const enabled = resolved.order.filter((item) => !resolved.hidden.has(item));
-    const label = definitionOf(layoutSurface, id)?.label ?? id;
-    announce(
-      hidden
-        ? `Hidden ${label}`
-        : `Restored ${label} to position ${enabled.indexOf(id) + 1} of ${enabled.length}`,
-    );
+      return next;
+    });
   };
   const announceMove = (
     layoutSurface: InterfaceSurfaceId,
@@ -383,6 +388,39 @@ export function CustomizeEditLayer({
     commitLayout((current) => {
       const next = moveSurfaceElementBefore(current, layoutSurface, id, beforeId);
       if (next !== current) announceMove(layoutSurface, id, next);
+      return next;
+    });
+  };
+
+  const moveStep = (
+    layoutSurface: InterfaceSurfaceId,
+    id: InterfaceElementId<InterfaceSurfaceId>,
+    direction: "left" | "right",
+    measuredIds: ReadonlySet<string> | null = null,
+  ) => {
+    // Resolve every step after earlier queued edits, even before their writes persist.
+    commitLayout((current) => {
+      const next = moveCustomizeElementByKeyboard(
+        current,
+        layoutSurface,
+        id,
+        direction,
+        measuredIds,
+        legacySidebar,
+      );
+      const label = definitionOf(layoutSurface, id)?.label ?? id;
+      if (next !== current) {
+        if (measuredIds === null) {
+          const resolved = resolveSurfaceLayout(layoutSurface, next);
+          announce(
+            `Moved ${label} to list position ${resolved.order.indexOf(id) + 1} of ${resolved.order.length}, including hidden items and items outside this view.${resolved.hidden.has(id) ? " Item remains hidden." : ""}`,
+          );
+        } else announceMove(layoutSurface, id, next);
+      } else if (
+        resolveCustomizeMoveOrder(current, layoutSurface, measuredIds, legacySidebar).includes(id)
+      ) {
+        announce(`${label} is already ${direction === "left" ? "first" : "last"}`);
+      }
       return next;
     });
   };
@@ -473,20 +511,7 @@ export function CustomizeEditLayer({
           .map((candidate) => candidate.id),
       );
       const direction = event.key === "ArrowLeft" ? "left" : "right";
-      // Resolve the destination inside the queue, after earlier edits, even
-      // while their settings writes are still waiting to persist.
-      commitLayout((current) => {
-        const next = moveCustomizeElementByKeyboard(
-          current,
-          element.surface,
-          element.id,
-          direction,
-          measuredIds,
-          legacySidebar,
-        );
-        if (next !== current) announceMove(element.surface, element.id, next);
-        return next;
-      });
+      moveStep(element.surface, element.id, direction, measuredIds);
     }
   };
 
@@ -730,7 +755,7 @@ export function CustomizeEditLayer({
           layoutSurfaces={config.layoutSurfaces}
           measuredKeys={handleKeys}
           legacySidebar={legacySidebar}
-          onMove={moveBefore}
+          onMove={moveStep}
           onHiddenChange={setHidden}
         />
         {surface === "composer" ? <ComposerExtras onChange={commit} /> : null}
@@ -839,7 +864,7 @@ function FallbackList({
   onMove: (
     surface: InterfaceSurfaceId,
     id: InterfaceElementId<InterfaceSurfaceId>,
-    beforeId: string | null,
+    direction: "left" | "right",
   ) => void;
   onHiddenChange: (
     surface: InterfaceSurfaceId,
@@ -852,7 +877,7 @@ function FallbackList({
     <div className="mt-1.5">
       <p className="text-xs text-muted-foreground">
         {measuredKeys.size === 0 ? `${FALLBACK_REASONS[surface]} ` : ""}
-        Arrange all items here, including those absent from this view.
+        Arrange all items here. List positions include hidden items and items outside this view.
       </p>
       <ul className="mt-2 space-y-0.5">
         {layoutSurfaces.flatMap((layoutSurface) => {
@@ -864,7 +889,7 @@ function FallbackList({
               definitionOf(layoutSurface, id)?.sortable === true,
               legacySidebar,
             );
-          const sortable = resolved.order.filter(canMove);
+          const sortable = resolveCustomizeMoveOrder(layout, layoutSurface, null, legacySidebar);
           return resolved.order.map((id) => {
             const definition = definitionOf(layoutSurface, id);
             if (!definition) return null;
@@ -891,7 +916,7 @@ function FallbackList({
                       variant="ghost"
                       aria-label={`Move ${definition.label} earlier`}
                       disabled={index === 0}
-                      onClick={() => onMove(layoutSurface, id, sortable[index - 1] ?? null)}
+                      onClick={() => onMove(layoutSurface, id, "left")}
                     >
                       <ChevronLeftIcon />
                     </Button>
@@ -900,7 +925,7 @@ function FallbackList({
                       variant="ghost"
                       aria-label={`Move ${definition.label} later`}
                       disabled={index === sortable.length - 1}
-                      onClick={() => onMove(layoutSurface, id, sortable[index + 2] ?? null)}
+                      onClick={() => onMove(layoutSurface, id, "right")}
                     >
                       <ChevronRightIcon />
                     </Button>

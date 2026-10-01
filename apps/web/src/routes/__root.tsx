@@ -1,4 +1,3 @@
-import { usePreviewedLayoutSetting } from "../hooks/useInterfaceLayout";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -38,6 +37,7 @@ import { CustomizeInterfaceHost } from "../components/customize/CustomizeInterfa
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
 import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
+import { usePreviewedLayoutSetting } from "../hooks/useInterfaceLayout";
 import { Button } from "../components/ui/button";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import {

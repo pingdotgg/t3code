@@ -83,21 +83,18 @@ export function resolveKeyboardMove(
   return { beforeId: order[index + 2] ?? null };
 }
 
-/** Apply one key press to the latest queued layout, among visible movable controls. */
-export function moveCustomizeElementByKeyboard(
+/** Movable controls on the canvas, or every list item when measuredIds is null. */
+export function resolveCustomizeMoveOrder(
   layout: InterfaceLayout,
   surface: InterfaceSurfaceId,
-  activeId: string,
-  direction: "left" | "right",
-  measuredIds: ReadonlySet<string>,
+  measuredIds: ReadonlySet<string> | null,
   legacySidebar: boolean,
-): InterfaceLayout {
+) {
   const resolved = resolveSurfaceLayout(surface, layout);
   const definitions: ReadonlyArray<InterfaceElementDefinition> = INTERFACE_SURFACES[surface];
-  const order = resolved.order.filter(
+  return resolved.order.filter(
     (id) =>
-      measuredIds.has(id) &&
-      !resolved.hidden.has(id) &&
+      (measuredIds === null || (measuredIds.has(id) && !resolved.hidden.has(id))) &&
       isMovable(
         surface,
         id,
@@ -105,6 +102,18 @@ export function moveCustomizeElementByKeyboard(
         legacySidebar,
       ),
   );
+}
+
+/** Apply a keyboard or list step to the latest queued layout. */
+export function moveCustomizeElementByKeyboard(
+  layout: InterfaceLayout,
+  surface: InterfaceSurfaceId,
+  activeId: string,
+  direction: "left" | "right",
+  measuredIds: ReadonlySet<string> | null,
+  legacySidebar: boolean,
+): InterfaceLayout {
+  const order = resolveCustomizeMoveOrder(layout, surface, measuredIds, legacySidebar);
   const move = resolveKeyboardMove(order, activeId, direction);
   return move ? moveSurfaceElementBefore(layout, surface, activeId, move.beforeId) : layout;
 }
@@ -177,7 +186,10 @@ export function resolveCustomizeTabTarget(
 /** App fields retain native editing shortcuts, including inherited contenteditable. */
 export function isCustomizeEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-  if (target.closest("input:not([type=range]), textarea, select")) return true;
+  if (target.closest("textarea, select")) return true;
+  const input = target.closest("input");
+  if (input && ["text", "search", "email", "url", "tel", "password", "number"].includes(input.type))
+    return true;
   if (target instanceof HTMLElement && typeof target.isContentEditable === "boolean")
     return target.isContentEditable;
   const editor = target.closest<HTMLElement>("[contenteditable]");

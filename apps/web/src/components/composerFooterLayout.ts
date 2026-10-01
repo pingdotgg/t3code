@@ -13,6 +13,19 @@ export function getRestingComposerImagePreviewCounts(imageCount: number): {
   };
 }
 
+/**
+ * Whether the composer may collapse into its resting layout, which moves the
+ * model and mode controls into the context strip. Only existing threads rest
+ * on their own; Customize interface's forced Collapsed preview applies on a
+ * draft too, so that layout can be arranged from any thread.
+ */
+export function canComposerRest(input: {
+  isExistingThread: boolean;
+  composerPreview: "live" | "expanded" | "collapsed";
+}): boolean {
+  return input.isExistingThread || input.composerPreview === "collapsed";
+}
+
 export function shouldUseCompactComposerFooter(
   width: number | null,
   options?: { hasWideActions?: boolean },

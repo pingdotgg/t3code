@@ -186,6 +186,7 @@ import {
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
+  canComposerRest,
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
   shouldAnimateComposerRestingTransition,
@@ -4740,10 +4741,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerInputSubmissionError !== null ||
     hasImageAttachmentAttention;
   const isComposerResting = shouldUseRestingComposerLayout({
-    // A forced Collapsed preview also applies on a draft, so the collapsed
-    // layout can be customized from any thread.
-    isExistingThread:
-      (routeKind === "server" && activeThreadId !== null) || composerPreview === "collapsed",
+    isExistingThread: canComposerRest({
+      isExistingThread: routeKind === "server" && activeThreadId !== null,
+      composerPreview,
+    }),
     isMobileViewport,
     isScrollCollapsed:
       composerPreview === "live" ? isComposerScrollCollapsed : composerPreview === "collapsed",

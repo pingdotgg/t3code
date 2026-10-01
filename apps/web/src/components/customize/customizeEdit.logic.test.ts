@@ -11,6 +11,7 @@ import {
   moveCustomizeElementByKeyboard,
   preservesNativeCustomizeEscape,
   readingOrder,
+  resolveCustomizeMoveOrder,
   resolveCustomizeRowTarget,
   resolveCustomizeTabTarget,
   resolveDropTarget,
@@ -98,6 +99,73 @@ describe("moveCustomizeElementByKeyboard", () => {
     expect(resolveSurfaceLayout("threadRow", second).order).toEqual(
       resolveSurfaceLayout("threadRow", {}).order,
     );
+  });
+
+  it("resolves repeated list steps against the latest order, including hidden and unmeasured items", () => {
+    const layout = { threadRow: { order: [], hidden: ["terminal"] } };
+    const first = moveCustomizeElementByKeyboard(
+      layout,
+      "threadRow",
+      "branch",
+      "right",
+      null,
+      false,
+    );
+    const second = moveCustomizeElementByKeyboard(
+      first,
+      "threadRow",
+      "branch",
+      "right",
+      null,
+      false,
+    );
+    const firstOrder = resolveSurfaceLayout("threadRow", first).order;
+    const secondOrder = resolveSurfaceLayout("threadRow", second).order;
+    expect(firstOrder.indexOf("branch") + 1).toBe(4);
+    expect(secondOrder.indexOf("branch") + 1).toBe(5);
+    expect(secondOrder).toEqual([
+      "project",
+      "status",
+      "terminal",
+      "pullRequest",
+      "branch",
+      "environment",
+      "provider",
+    ]);
+    expect(resolveSurfaceLayout("threadRow", second).hidden.has("terminal")).toBe(true);
+  });
+
+  it("can arrange a hidden item from the list while the canvas leaves it alone", () => {
+    const layout = { threadRow: { order: [], hidden: ["branch"] } };
+    const next = moveCustomizeElementByKeyboard(
+      layout,
+      "threadRow",
+      "branch",
+      "right",
+      null,
+      false,
+    );
+    expect(resolveSurfaceLayout("threadRow", next).order.indexOf("branch") + 1).toBe(4);
+    expect(resolveSurfaceLayout("threadRow", next).hidden.has("branch")).toBe(true);
+    expect(move(layout, "right")).toBe(layout);
+  });
+
+  it("identifies the current movable edges after queued moves", () => {
+    expect(resolveCustomizeMoveOrder({}, "threadRow", measuredIds, false)[0]).toBe("branch");
+    expect(move({}, "left")).toEqual({});
+    const first = moveCustomizeElementByKeyboard({}, "chatHeader", "scripts", "right", null, false);
+    const last = moveCustomizeElementByKeyboard(
+      first,
+      "chatHeader",
+      "scripts",
+      "right",
+      null,
+      false,
+    );
+    expect(resolveCustomizeMoveOrder(last, "chatHeader", null, false).at(-1)).toBe("scripts");
+    expect(
+      moveCustomizeElementByKeyboard(last, "chatHeader", "scripts", "right", null, false),
+    ).toBe(last);
   });
 
   it("filters fixed, unmeasured, hidden and legacy-fixed controls using the current layout", () => {
@@ -408,13 +476,41 @@ describe("isCustomizeEditableTarget", () => {
     expect(isCustomizeEditableTarget(editor)).toBe(true);
   });
 
-  it("preserves field shortcuts but allows mode undo from range controls", () => {
+  it("preserves shortcuts in text fields, textareas and selects", () => {
     for (const tag of ["input", "textarea", "select"]) {
       expect(isCustomizeEditableTarget(document.createElement(tag))).toBe(true);
     }
-    const range = document.createElement("input");
-    range.type = "range";
-    expect(isCustomizeEditableTarget(range)).toBe(false);
+  });
+
+  it.each(["text", "search", "email", "url", "tel", "password", "number"])(
+    "preserves native editing shortcuts in %s inputs",
+    (type) => {
+      const input = document.createElement("input");
+      input.type = type;
+      expect(isCustomizeEditableTarget(input)).toBe(true);
+    },
+  );
+
+  it.each([
+    "checkbox",
+    "radio",
+    "button",
+    "submit",
+    "reset",
+    "range",
+    "color",
+    "file",
+    "hidden",
+    "image",
+    "date",
+    "datetime-local",
+    "month",
+    "time",
+    "week",
+  ])("allows mode undo from %s inputs", (type) => {
+    const input = document.createElement("input");
+    input.type = type;
+    expect(isCustomizeEditableTarget(input)).toBe(false);
   });
 });
 
