@@ -31,6 +31,20 @@ describe("settings search", () => {
     expect(searchSettings("devices").some((item) => item.title === "Device support")).toBe(true);
   });
 
+  it("routes storage and keybindings settings to their dedicated pages", () => {
+    expect(
+      searchSettings("keybindings").find((item) => item.to === "/settings/keybindings"),
+    ).toMatchObject({
+      title: "Keybindings",
+      to: "/settings/keybindings",
+      id: "section-shortcuts",
+    });
+    expect(searchSettings("delete merged worktrees")[0]).toMatchObject({
+      title: "Delete merged worktrees",
+      to: "/settings/storage",
+    });
+  });
+
   it("routes appearance and provider settings to their dedicated pages", () => {
     expect(searchSettings("theme")[0]).toMatchObject({
       title: "Theme",
@@ -42,6 +56,10 @@ describe("settings search", () => {
     });
     expect(searchSettings("delegated thread model")[0]).toMatchObject({
       title: "Delegated thread model",
+      to: "/settings/providers",
+    });
+    expect(searchSettings("default model")[0]).toMatchObject({
+      title: "Default model",
       to: "/settings/providers",
     });
     expect(searchSettings("providers")[0]).toMatchObject({

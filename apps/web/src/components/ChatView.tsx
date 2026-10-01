@@ -1116,14 +1116,21 @@ function ChatViewBody(
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
-              model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
-            },
+            fallbackDraftProject?.defaultModelSelection ??
+              settings.defaultModelSelection ?? {
+                instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
+                model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
+              },
             localDraftError,
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
+    [
+      draftThread,
+      fallbackDraftProject?.defaultModelSelection,
+      settings.defaultModelSelection,
+      localDraftError,
+      threadId,
+    ],
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
@@ -1450,6 +1457,7 @@ function ChatViewBody(
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
+    settings.defaultModelSelection?.instanceId ??
     null;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
@@ -1730,6 +1738,7 @@ function ChatViewBody(
     activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
+    settings.defaultModelSelection?.instanceId ??
     null;
   const activeProviderStatus = useMemo(() => {
     if (activeProviderInstanceId) {
@@ -4919,7 +4928,8 @@ function ChatViewBody(
       settings.agentWorkflows.reviewChanges.modelSelection ??
       sendCtx?.selectedModelSelection ??
       activeProject?.defaultModelSelection ??
-      activeThread?.modelSelection
+      activeThread?.modelSelection ??
+      settings.defaultModelSelection
     )?.instanceId;
     if (!instanceId) {
       return;
@@ -4935,6 +4945,7 @@ function ChatViewBody(
     environmentId,
     gitCwd,
     settings.agentWorkflows.reviewChanges.modelSelection,
+    settings.defaultModelSelection,
     activeProject?.defaultModelSelection,
     activeThread?.modelSelection,
   ]);
@@ -4948,7 +4959,8 @@ function ChatViewBody(
     const instanceId = (
       sendCtx?.selectedModelSelection ??
       activeProject?.defaultModelSelection ??
-      activeThread?.modelSelection
+      activeThread?.modelSelection ??
+      settings.defaultModelSelection
     )?.instanceId;
     if (!instanceId) {
       return;
@@ -4963,6 +4975,7 @@ function ChatViewBody(
   }, [
     activeProject?.defaultModelSelection,
     activeThread?.modelSelection,
+    settings.defaultModelSelection,
     environmentId,
     gitCwd,
     runtimeMode,

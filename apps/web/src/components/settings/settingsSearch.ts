@@ -4,6 +4,8 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/providers"
+  | "/settings/keybindings"
+  | "/settings/storage"
   | "/settings/connections"
   | "/settings/workflows"
   | "/settings/pull-request-collaboration"
@@ -117,7 +119,21 @@ const settingsByPage: ReadonlyArray<{
   },
   {
     to: "/settings/providers",
-    rows: ["Text generation model", "Delegated thread model", "Providers"],
+    rows: ["Default model", "Text generation model", "Delegated thread model", "Providers"],
+  },
+  {
+    to: "/settings/keybindings",
+    rows: ["Keybindings", "Shortcuts", "Keybindings file"],
+  },
+  {
+    to: "/settings/storage",
+    rows: [
+      "Delete worktrees with deleted threads",
+      "Delete merged worktrees",
+      "Project checkout",
+      "Shared worktrees",
+      "Worktrees with local changes",
+    ],
   },
   {
     to: "/settings/connections",
@@ -159,7 +175,12 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     rows.map((title) => ({
       title,
       to,
-      id: title === "Providers" ? "section-providers" : settingsSearchId(title),
+      id:
+        title === "Providers"
+          ? "section-providers"
+          : title === "Keybindings" || title === "Shortcuts"
+            ? "section-shortcuts"
+            : settingsSearchId(title),
       ...(relatedTerms[title] ? { terms: relatedTerms[title] } : {}),
     })),
   ),

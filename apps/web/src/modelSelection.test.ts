@@ -6,6 +6,7 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolveDefaultModelSelectionState,
   resolveDelegatedThreadModelSelectionState,
 } from "./modelSelection";
 
@@ -316,6 +317,89 @@ describe("delegated thread model selection", () => {
     expect(resolveDelegatedThreadModelSelectionState(settings, copilotProviders)).toEqual({
       instanceId: ProviderInstanceId.make("copilot"),
       model: "gpt-6-luna",
+    });
+  });
+});
+
+describe("default model selection", () => {
+  const chatProviders = [
+    provider({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: "codex",
+      models: ["gpt-5.4", "gpt-5.5"],
+    }),
+    provider({
+      provider: ProviderDriverKind.make("copilot"),
+      instanceId: "copilot",
+      models: ["gpt-6-luna", "gpt-6-sol"],
+    }),
+  ];
+  const copilotOnlyProviders = [
+    provider({
+      provider: ProviderDriverKind.make("copilot"),
+      instanceId: "copilot",
+      models: ["gpt-6-luna", "gpt-6-sol"],
+    }),
+  ];
+
+  it("returns null when no global default is saved", () => {
+    expect(resolveDefaultModelSelectionState(DEFAULT_UNIFIED_SETTINGS, chatProviders)).toBeNull();
+  });
+
+  it("keeps an explicit saved selection", () => {
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("copilot"),
+        model: "gpt-6-sol",
+      },
+    };
+
+    expect(resolveDefaultModelSelectionState(settings, chatProviders)).toEqual({
+      instanceId: ProviderInstanceId.make("copilot"),
+      model: "gpt-6-sol",
+    });
+  });
+
+  it("falls back when the saved instance is unavailable", () => {
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "cursor-1",
+      },
+    };
+
+    expect(resolveDefaultModelSelectionState(settings, copilotOnlyProviders)).toEqual({
+      instanceId: ProviderInstanceId.make("copilot"),
+      model: "gpt-6-luna",
+    });
+  });
+
+  it("returns null when no provider can serve the saved selection", () => {
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+    };
+
+    expect(resolveDefaultModelSelectionState(settings, [])).toBeNull();
+  });
+
+  it("falls back within the saved instance when the model is unknown", () => {
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "no-such-model",
+      },
+    };
+
+    expect(resolveDefaultModelSelectionState(settings, chatProviders)).toEqual({
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
     });
   });
 });
