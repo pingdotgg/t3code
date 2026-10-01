@@ -401,6 +401,9 @@ const config: ExpoConfig = {
         android: {
           // Keep the supported floor explicit and covered by native notification tests.
           minSdkVersion: 24,
+          // kotlinx-io uses Kotlin 2.3's return-value checker annotation, while
+          // SDK 58 builds with Kotlin 2.2. It has no runtime behavior.
+          extraProguardRules: "-dontwarn kotlin.MustUseReturnValues",
         },
         ios: {
           deploymentTarget: "18.0",
@@ -419,7 +422,6 @@ const config: ExpoConfig = {
     // would delete the asset catalog) and its xcodeproj mod creates the widget
     // target (which must exist before the compile phase can be attached).
     ...(!isIosPersonalTeamBuild ? ["./plugins/withWidgetLogoAsset.cjs", widgetsPlugin] : []),
-    "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
     "./plugins/withAndroidInputBackground.cjs",

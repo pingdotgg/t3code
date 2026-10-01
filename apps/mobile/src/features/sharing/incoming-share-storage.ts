@@ -68,7 +68,7 @@ export async function writeIncomingShareDraft(draft: IncomingShareDraft): Promis
     if (!file.exists) {
       file.create({ intermediates: true, overwrite: true });
     }
-    file.write(JSON.stringify(draft));
+    await file.write(JSON.stringify(draft));
   } catch (cause) {
     throw new IncomingShareStorageError({ operation: "write", shareId: draft.id, cause });
   }

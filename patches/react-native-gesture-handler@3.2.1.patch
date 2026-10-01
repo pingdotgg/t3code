@@ -1,0 +1,151 @@
+diff --git a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+index 4ab38424d1f5fc8b2686dd4a0a8058c454a9874d..0c5e0eaa995af50e5f8c02909dc6825121cc61af 100644
+--- a/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
++++ b/lib/module/components/ReanimatedSwipeable/ReanimatedSwipeable.js
+@@ -31,11 +31,13 @@ const Swipeable = props => {
+     enableTrackpadTwoFingerGesture = DEFAULT_ENABLE_TRACKING_TWO_FINGER_GESTURE,
+     dragOffsetFromLeft = DEFAULT_DRAG_OFFSET,
+     dragOffsetFromRight = -DEFAULT_DRAG_OFFSET,
++    failOffsetY,
+     friction = DEFAULT_FRICTION,
+     overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
+     onSwipeableOpenStartDrag,
+     onSwipeableCloseStartDrag,
+     onSwipeableWillOpen,
++    onSwipeableRelease,
+     onSwipeableWillClose,
+     onSwipeableOpen,
+     onSwipeableClose,
+@@ -276,8 +278,12 @@ const Swipeable = props => {
+         toValue = -rightWidth.value;
+       }
+     }
++    // Let a UI-thread full-swipe commit take over before the return spring.
++    if (onSwipeableRelease?.(appliedTranslation)) {
++      return;
++    }
+     animateRow(toValue, velocityX / friction);
+-  }, [animateRow, friction, leftThreshold, leftWidth, rightThreshold, rightWidth, rowState, userDrag]);
++  }, [animateRow, friction, leftThreshold, leftWidth, rightThreshold, rightWidth, rowState, userDrag, onSwipeableRelease, appliedTranslation]);
+   const close = useCallback(() => {
+     'worklet';
+ 
+@@ -302,6 +308,7 @@ const Swipeable = props => {
+     enabled: enabled ?? true,
+     enableTrackpadTwoFingerGesture: enableTrackpadTwoFingerGesture,
+     activeOffsetX: [dragOffsetFromRight, dragOffsetFromLeft],
++    failOffsetY,
+     simultaneousWith,
+     requireToFail,
+     block,
+diff --git a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
+index e97b6dbbced1bcbd359cf35293b7f10cbf13b0e7..de07f26423bee66ecd7d0f9bb33233bcb3215751 100644
+--- a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
++++ b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
+@@ -59,6 +59,12 @@ export type SwipeableProps = {
+      * Called when action panel is closed.
+      */
+     onSwipeableClose?: (direction: SwipeDirection.LEFT | SwipeDirection.RIGHT) => void;
++    /**
++     * UI-thread worklet called on release before the built-in spring starts.
++     * Return true to consume the release and take ownership of translation.
++     * The caller must reset or remove the row after its custom animation.
++     */
++    onSwipeableRelease?: (translation: SharedValue<number>) => boolean;
+     /**
+      * Called when action panel starts animating on open (either right or left).
+      */
+@@ -150,6 +156,13 @@ export type SwipeableProps = {
+      * The horizontal offset from the starting point required to trigger a left-swipe gesture. Defaults to -10.
+      */
+     dragOffsetFromRight?: number;
++    /**
++     * Range along the Y axis (in points) that, once exceeded before the swipe
++     * activates, makes the pan fail. Lets vertically-dominant pans (list
++     * scrolling, especially trackpad two-finger pans) skip the swipe entirely.
++     * Passed straight to the underlying Pan gesture's `failOffsetY`.
++     */
++    failOffsetY?: number | [start: number, end: number];
+ }>;
+ export interface SwipeableMethods {
+     close: () => void;
+diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
+index 4881db1dc7575adc6610569035a8990cee414f3e..8431b738a9ffd09df48e1106b2bd5b62251d536c 100644
+--- a/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
++++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeable.tsx
+@@ -61,11 +61,13 @@ const Swipeable = (props: SwipeableProps) => {
+     enableTrackpadTwoFingerGesture = DEFAULT_ENABLE_TRACKING_TWO_FINGER_GESTURE,
+     dragOffsetFromLeft = DEFAULT_DRAG_OFFSET,
+     dragOffsetFromRight = -DEFAULT_DRAG_OFFSET,
++    failOffsetY,
+     friction = DEFAULT_FRICTION,
+     overshootFriction = DEFAULT_OVERSHOOT_FRICTION,
+     onSwipeableOpenStartDrag,
+     onSwipeableCloseStartDrag,
+     onSwipeableWillOpen,
++    onSwipeableRelease,
+     onSwipeableWillClose,
+     onSwipeableOpen,
+     onSwipeableClose,
+@@ -491,6 +493,11 @@ const Swipeable = (props: SwipeableProps) => {
+         }
+       }
+ 
++      // Let a UI-thread full-swipe commit take over before the return spring.
++      if (onSwipeableRelease?.(appliedTranslation)) {
++        return;
++      }
++
+       animateRow(toValue, velocityX / friction);
+     },
+     [
+@@ -502,6 +509,8 @@ const Swipeable = (props: SwipeableProps) => {
+       rightWidth,
+       rowState,
+       userDrag,
++      onSwipeableRelease,
++      appliedTranslation,
+     ]
+   );
+ 
+@@ -530,6 +539,7 @@ const Swipeable = (props: SwipeableProps) => {
+     enabled: enabled ?? true,
+     enableTrackpadTwoFingerGesture: enableTrackpadTwoFingerGesture,
+     activeOffsetX: [dragOffsetFromRight, dragOffsetFromLeft],
++    failOffsetY,
+     simultaneousWith,
+     requireToFail,
+     block,
+diff --git a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
+index 1e1246f709feb04c01cf3221472cc1219a8fffac..f526d4fe2d2738becbe8d29c59d1105afa11ae60 100644
+--- a/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
++++ b/src/components/ReanimatedSwipeable/ReanimatedSwipeableProps.ts
+@@ -77,6 +77,13 @@ export type SwipeableProps = {
+     direction: SwipeDirection.LEFT | SwipeDirection.RIGHT
+   ) => void;
+ 
++  /**
++   * UI-thread worklet called on release before the built-in spring starts.
++   * Return true to consume the release and take ownership of translation.
++   * The caller must reset or remove the row after its custom animation.
++   */
++  onSwipeableRelease?: (translation: SharedValue<number>) => boolean;
++
+   /**
+    * Called when action panel starts animating on open (either right or left).
+    */
+@@ -196,6 +203,14 @@ export type SwipeableProps = {
+    * The horizontal offset from the starting point required to trigger a left-swipe gesture. Defaults to -10.
+    */
+   dragOffsetFromRight?: number;
++
++  /**
++   * Range along the Y axis (in points) that, once exceeded before the swipe
++   * activates, makes the pan fail. Lets vertically-dominant pans (list
++   * scrolling, especially trackpad two-finger pans) skip the swipe entirely.
++   * Passed straight to the underlying Pan gesture's `failOffsetY`.
++   */
++  failOffsetY?: number | [start: number, end: number];
+ }>;
+ 
+ export interface SwipeableMethods {

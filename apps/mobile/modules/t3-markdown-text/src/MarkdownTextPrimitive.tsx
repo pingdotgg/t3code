@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text as RNText,
   type ColorValue,
+  type TextInstance,
   type TextProps,
   type ViewStyle,
 } from "react-native";
@@ -43,7 +44,7 @@ export type ContextMenuActionEvent = {
  * while the React Native Text fallback reports measured `TextLayoutLine`s.
  */
 export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
-  nativeTextRef?: Ref<RNText>;
+  nativeTextRef?: Ref<TextInstance>;
   selectionHandleColor?: ColorValue;
   uiTextView?: boolean;
   contextMenuConfig?: string;
@@ -134,13 +135,17 @@ function AndroidMarkdownText({
   contextClipboardConfig: _contextClipboardConfig,
   ...props
 }: MarkdownTextPrimitiveProps) {
-  const textRef = React.useRef<RNText | null>(null);
-  React.useImperativeHandle<RNText | null, RNText | null>(nativeTextRef, () => textRef.current, []);
+  const textRef = React.useRef<TextInstance | null>(null);
+  React.useImperativeHandle<TextInstance | null, TextInstance | null>(
+    nativeTextRef,
+    () => textRef.current,
+    [],
+  );
   const color = processColor(selectionHandleColor);
   const applyHandleColor = React.useCallback(() => {
     if (!textRef.current || typeof color !== "number") return;
     const reactTag = findNodeHandle(textRef.current);
-    if (reactTag !== null) setMarkdownSelectionHandleColor(reactTag, color);
+    if (reactTag != null) setMarkdownSelectionHandleColor(reactTag, color);
   }, [color]);
 
   // RN's selectionColor only sets the highlight. Retint mounted handles when

@@ -2,6 +2,7 @@ import {
   Platform,
   Text as RNText,
   TextInput as RNTextInput,
+  type TextInputInstance,
   type TextInputProps as RNTextInputProps,
   type TextProps as RNTextProps,
 } from "react-native";
@@ -26,7 +27,7 @@ export function AppText({ className, ...props }: AppTextProps) {
 
 export type AppTextInputProps = Omit<RNTextInputProps, "placeholderTextColor"> & {
   readonly className?: string;
-  readonly ref?: React.Ref<RNTextInput>;
+  readonly ref?: React.Ref<TextInputInstance>;
 };
 
 /**

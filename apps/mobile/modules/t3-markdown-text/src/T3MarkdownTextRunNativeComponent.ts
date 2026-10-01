@@ -1,14 +1,12 @@
-import type { ColorValue, ViewProps } from "react-native";
-import type {
-  BubblingEventHandler,
-  Float,
-  Int32,
-  WithDefault,
-} from "react-native/Libraries/Types/CodegenTypes";
-import codegenNativeComponent from "react-native/Libraries/Utilities/codegenNativeComponent";
+import {
+  codegenNativeComponent,
+  type CodegenTypes,
+  type ColorValue,
+  type ViewProps,
+} from "react-native";
 
 interface TargetedEvent {
-  target: Int32;
+  target: CodegenTypes.Int32;
 }
 
 interface ContextMenuActionEvent extends TargetedEvent {
@@ -35,21 +33,21 @@ type TextAlign = "auto" | "left" | "right" | "center" | "justify";
 interface NativeProps extends ViewProps {
   text: string;
   color?: ColorValue;
-  fontSize?: Float;
-  fontStyle?: WithDefault<FontStyle, "normal">;
-  fontWeight?: WithDefault<NativeFontWeight, "normal">;
+  fontSize?: CodegenTypes.Float;
+  fontStyle?: CodegenTypes.WithDefault<FontStyle, "normal">;
+  fontWeight?: CodegenTypes.WithDefault<NativeFontWeight, "normal">;
   fontFamily?: string;
-  letterSpacing?: Float;
-  lineHeight?: Float;
-  textDecorationLine?: WithDefault<TextDecorationLine, "none">;
-  textDecorationStyle?: WithDefault<TextDecorationStyle, "solid">;
+  letterSpacing?: CodegenTypes.Float;
+  lineHeight?: CodegenTypes.Float;
+  textDecorationLine?: CodegenTypes.WithDefault<TextDecorationLine, "none">;
+  textDecorationStyle?: CodegenTypes.WithDefault<TextDecorationStyle, "solid">;
   textDecorationColor?: ColorValue;
-  textAlign?: WithDefault<TextAlign, "auto">;
-  shadowRadius?: WithDefault<Float, 0>;
+  textAlign?: CodegenTypes.WithDefault<TextAlign, "auto">;
+  shadowRadius?: CodegenTypes.WithDefault<CodegenTypes.Float, 0>;
   contextMenuConfig?: string;
-  onPress?: BubblingEventHandler<TargetedEvent>;
-  onLongPress?: BubblingEventHandler<TargetedEvent>;
-  onContextMenuAction?: BubblingEventHandler<ContextMenuActionEvent>;
+  onPress?: CodegenTypes.BubblingEventHandler<TargetedEvent>;
+  onLongPress?: CodegenTypes.BubblingEventHandler<TargetedEvent>;
+  onContextMenuAction?: CodegenTypes.BubblingEventHandler<ContextMenuActionEvent>;
 }
 
 export default codegenNativeComponent<NativeProps>("T3MarkdownTextRun", {

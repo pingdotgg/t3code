@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BackHandler, Keyboard, Pressable, TextInput, View } from "react-native";
+import {
+  BackHandler,
+  Keyboard,
+  Pressable,
+  TextInput,
+  type TextInputInstance,
+  View,
+} from "react-native";
 import { useMaterialToolbarLayout } from "./useMaterialToolbarLayout";
 import { NativeStackScreenOptions } from "../native/StackHeader";
 import { AndroidWorkspaceSidebarButton } from "../features/layout/workspace-sidebar-toolbar";
@@ -18,7 +25,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
   const { paddingTop, paddingBottom } = useMaterialToolbarLayout();
   const { scale, buttonSize, iconSize, smallIconSize } = useAndroidControlSizing();
   const { themeVariables } = useAppearancePreferences();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const searching = search !== undefined && (searchOpen || search.value.length > 0);
   const onSearchChange = search?.onChangeText;

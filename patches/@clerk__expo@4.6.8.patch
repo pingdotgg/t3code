@@ -1,3 +1,20 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 6bd6d5acf6ac3da78232170a6ea8c2b0f6e5504e..a827dad53dcd8c1b2f47fce30ea8bf9140787f38 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -146,6 +146,12 @@ dependencies {
+   implementation "androidx.activity:activity-compose:$activityComposeVersion"
+   implementation "androidx.lifecycle:lifecycle-runtime-compose:$lifecycleVersion"
+   implementation "androidx.lifecycle:lifecycle-viewmodel-compose:$lifecycleVersion"
++  // ClerkComposeNativeViewHost imports LocalSavedStateRegistryOwner and
++  // LocalLifecycleOwner from these artifacts. Earlier SDKs leaked them onto
++  // the compile classpath through clerk-android-ui's navigation3 runtime
++  // dependency; AGP 9 resolves the compile classpath on its own.
++  implementation "androidx.savedstate:savedstate-compose:1.4.0"
++  implementation "androidx.lifecycle:lifecycle-runtime-compose:2.10.0"
+ 
+   testImplementation "junit:junit:4.13.2"
+ }
 diff --git a/ios/ClerkAuthNativeView.swift b/ios/ClerkAuthNativeView.swift
 index 5f8d2ba66d5b232890af75c22b173c86d2ef546b..b170304cbf2fbaae8032db8dd6f89b6a59c6e3fe 100644
 --- a/ios/ClerkAuthNativeView.swift

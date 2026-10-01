@@ -139,7 +139,7 @@ export function CustomSnoozeSheet(props: {
                     modifiers={[
                       datePickerStyle("wheel"),
                       labelsHidden(),
-                      frame({ maxWidth: Infinity, height: 180 }),
+                      frame({ maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                     ]}
                   />
                 ) : (
@@ -154,7 +154,7 @@ export function CustomSnoozeSheet(props: {
                       modifiers={[
                         pickerStyle("wheel"),
                         labelsHidden(),
-                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        frame({ minWidth: 0, maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                         clipped(),
                       ]}
                     >
@@ -177,7 +177,7 @@ export function CustomSnoozeSheet(props: {
                       modifiers={[
                         pickerStyle("wheel"),
                         labelsHidden(),
-                        frame({ minWidth: 0, maxWidth: Infinity, height: 180 }),
+                        frame({ minWidth: 0, maxWidth: Infinity, minHeight: 180, maxHeight: 180 }),
                         clipped(),
                       ]}
                     >

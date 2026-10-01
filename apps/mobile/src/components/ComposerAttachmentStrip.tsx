@@ -127,7 +127,7 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
   const file = new File(directory, `${id}.${extension}`);
   if (!file.exists) {
     file.create();
-    file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
+    await file.write(dataUrl.slice(comma + 1), { encoding: "base64" });
   }
   return file.uri;
 }

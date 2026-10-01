@@ -10,7 +10,7 @@
 #import <react/renderer/components/T3MarkdownTextSpec/EventEmitters.h>
 #import <react/renderer/components/T3MarkdownTextSpec/Props.h>
 #import <react/renderer/components/T3MarkdownTextSpec/RCTComponentViewHelpers.h>
-#import "RCTFabricComponentsPlugins.h"
+#import <React/RCTFabricComponentsPlugins.h>
 
 using namespace facebook::react;
 
