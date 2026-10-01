@@ -27,7 +27,10 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
@@ -2132,6 +2135,35 @@ describe("OpenCode2 adapter", () => {
       assert.equal(refused._tag, "ProviderAdapterEventStreamError");
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
+
+  it.effect("logs why reconnecting to a lost event stream gave up", () => {
+    const logs: Array<{
+      readonly message: unknown;
+      readonly cause: Cause.Cause<unknown>;
+      readonly annotations: Readonly<Record<string, unknown>>;
+    }> = [];
+    const logger = Logger.make(({ fiber, message, cause }) => {
+      logs.push({ message, cause, annotations: fiber.getRef(References.CurrentLogAnnotations) });
+    });
+    return Effect.gen(function* () {
+      const { runtime } = yield* resumed([{ type: "runtime_exit", status: "success" }]);
+      const drained = yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(drained);
+      const gaveUp = logs.find((entry) =>
+        JSON.stringify(entry.message).includes("Could not reconnect to the OpenCode event stream"),
+      );
+      assert.isDefined(gaveUp);
+      // The failure travels with the log entry as its cause, annotated by its tag only.
+      assert.isTrue(gaveUp !== undefined && gaveUp.cause.reasons.length > 0);
+      assert.isString(gaveUp?.annotations.errorTag);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.merge(TestClock.layer(), Logger.layer([logger], { mergeWithExisting: false })),
+      ),
+    );
+  });
 
   it.effect("fails the session once reconnecting to a lost event stream has given up", () =>
     Effect.gen(function* () {

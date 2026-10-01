@@ -2758,7 +2758,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.gen(function* () {
             streamFailure = "The OpenCode event stream was lost. Reconnecting.";
             yield* Effect.logWarning("Lost the OpenCode event stream; reconnecting.");
-            const next = yield* reconnect.pipe(Effect.option);
+            // The last failure is kept for the log: it can carry the server's
+            // URL or response text, so only its tag is annotated and the full
+            // failure stays in the log's cause.
+            const next = yield* reconnect.pipe(
+              Effect.tapCause((cause) =>
+                Effect.logWarning(
+                  "Could not reconnect to the OpenCode event stream; failing the session.",
+                  cause,
+                ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
+              ),
+              Effect.option,
+            );
             if (next._tag === "None") {
               return yield* failAll("The OpenCode event stream was lost and could not reconnect.");
             }
