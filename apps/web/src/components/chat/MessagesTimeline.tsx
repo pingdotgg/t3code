@@ -2133,20 +2133,22 @@ const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
         </button>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground" role="status">
+          <p className="text-[length:inherit] text-muted-foreground" role="status">
             Evidence: {evidence.evidenceStatus}
             {evidence.redacted ? " · credentials redacted" : ""}
           </p>
           {evidence.warning ? (
-            <p className="text-xs text-amber-700 dark:text-amber-400">{evidence.warning}</p>
+            <p className="text-[length:inherit] text-amber-700 dark:text-amber-400">
+              {evidence.warning}
+            </p>
           ) : null}
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[length:inherit] text-muted-foreground">
             {JSON.stringify(evidence.payload, null, 2)}
           </pre>
         </>
       )}
       {error ? (
-        <p className="text-xs text-destructive" role="alert">
+        <p className="text-[length:inherit] text-destructive" role="alert">
           Audit evidence could not be loaded: {error}
         </p>
       ) : null}
@@ -2216,14 +2218,14 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
   return (
     <div className="mt-2 space-y-2">
       {turnId === null || toolCallId === null ? (
-        <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+        <p className="text-[length:inherit] text-amber-700 dark:text-amber-400" role="status">
           Delegation audit cannot be linked to this activity because its turn or tool-call
           correlation is unavailable.
         </p>
       ) : page === null ? (
         <button
           type="button"
-          className="text-xs text-muted-foreground underline underline-offset-2"
+          className="text-[length:inherit] text-muted-foreground underline underline-offset-2"
           disabled={loading}
           onClick={() => void loadPage(null)}
         >
@@ -2232,7 +2234,7 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
       ) : (
         <>
           {operationSummary ? (
-            <p className="text-xs font-medium text-muted-foreground" role="status">
+            <p className="text-[length:inherit] font-medium text-muted-foreground" role="status">
               Delegation operation{" "}
               {operationSummary.operationStatus === "failed-with-unresolved"
                 ? "failed with unresolved attempts"
@@ -2242,31 +2244,31 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
               {operationSummary.toolTransport}
             </p>
           ) : (
-            <p className="text-xs text-amber-700 dark:text-amber-400" role="status">
+            <p className="text-[length:inherit] text-amber-700 dark:text-amber-400" role="status">
               No delegation audit evidence is linked to this tool call.
             </p>
           )}
           {page.warnings.map((warning) => (
-            <p key={warning} className="text-xs text-amber-700 dark:text-amber-400">
+            <p key={warning} className="text-[length:inherit] text-amber-700 dark:text-amber-400">
               {warning}
             </p>
           ))}
           {page.events.map((event) => (
             <details
               key={event.eventId}
-              className="rounded border border-border/50 px-2 py-1 text-xs"
+              className="rounded border border-border/50 px-2 py-1 text-[length:inherit]"
             >
               <summary className="cursor-pointer">
                 {event.eventType} · operation {event.operationId}
                 {event.attemptId ? ` · attempt ${event.attemptId}` : ""}
               </summary>
-              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">
+              <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[length:inherit] text-muted-foreground">
                 {JSON.stringify(event, null, 2)}
               </pre>
             </details>
           ))}
           {page.cleanupStates.map((cleanup) => (
-            <p key={cleanup.attemptId} className="text-xs text-muted-foreground">
+            <p key={cleanup.attemptId} className="text-[length:inherit] text-muted-foreground">
               Cleanup for child {cleanup.childThreadId}: {cleanup.status}
               {cleanup.jobId ? ` · job ${cleanup.jobId}` : ""}
               {cleanup.error ? ` · ${cleanup.error}` : ""}
@@ -2275,7 +2277,7 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
           {page.hasMore ? (
             <button
               type="button"
-              className="text-xs text-muted-foreground underline underline-offset-2"
+              className="text-[length:inherit] text-muted-foreground underline underline-offset-2"
               disabled={loading}
               onClick={() => void loadPage(page.nextBeforeSequence)}
             >
@@ -2285,7 +2287,7 @@ const DelegationAuditDetails = memo(function DelegationAuditDetails({
         </>
       )}
       {error ? (
-        <p className="text-xs text-destructive" role="alert">
+        <p className="text-[length:inherit] text-destructive" role="alert">
           Delegation audit evidence could not be loaded: {error}
         </p>
       ) : null}
