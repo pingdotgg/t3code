@@ -334,8 +334,8 @@ it.effect("implements a proposed plan that the command projection leaves out", (
 
 it.effect("links a side chat under its parent without claiming a fork, and promotes it", () =>
   Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
-    const projections = yield* ProjectionStoreV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const projectId = ProjectId.make("project:side-chat");
     const parentId = ThreadId.make("thread:side-chat-parent");
     const sideChatId = ThreadId.make("thread:side-chat-child");
@@ -404,8 +404,8 @@ it.effect("links a side chat under its parent without claiming a fork, and promo
 
 it.effect("forks a side chat from the last finished run while the source is mid-run", () =>
   Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
-    const projections = yield* ProjectionStoreV2;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const projectId = ProjectId.make("project:side-chat-active");
     const sourceId = ThreadId.make("thread:side-chat-active-source");
     const targetId = ThreadId.make("thread:side-chat-active-target");
