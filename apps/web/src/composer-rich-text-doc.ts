@@ -1,4 +1,5 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Plugin } from "@tiptap/pm/state";
 import { Code } from "@tiptap/extension-code";
 import { TaskItem } from "@tiptap/extension-task-item";
 
@@ -619,6 +620,28 @@ export function skillChipReplacements(
     });
   }
   return replacements.sort((left, right) => right.from - left.from);
+}
+
+/**
+ * Keeps skill chips in step with the text as it is edited, so a `$name` typed
+ * by hand becomes a chip at the keystroke that completes it. The replacement
+ * rides on the edit's own transaction: one undo restores the text as typed.
+ */
+export function skillChipPlugin(skillLabelFor: (name: string) => SkillMeta | null) {
+  return new Plugin({
+    appendTransaction(transactions, _oldState, state) {
+      if (!transactions.some((transaction) => transaction.docChanged)) return null;
+      // Replacing text under an active IME composition would cancel it.
+      if (transactions.some((transaction) => transaction.getMeta("composition") !== undefined)) {
+        return null;
+      }
+      const replacements = skillChipReplacements(state.doc, skillLabelFor);
+      if (replacements.length === 0) return null;
+      const transaction = state.tr;
+      for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
+      return transaction;
+    },
+  });
 }
 
 export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {

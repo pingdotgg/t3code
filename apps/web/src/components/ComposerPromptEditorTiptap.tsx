@@ -53,6 +53,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  skillChipPlugin,
   skillChipReplacements,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
@@ -1041,6 +1042,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           return true;
         },
+      },
+      // Registered once the editor exists, not as an extension, so the plugin
+      // can look names up in the live skill list.
+      onCreate: ({ editor: created }) => {
+        created.registerPlugin(skillChipPlugin(skillLabelFor));
       },
       onUpdate: ({ editor: updated }) => {
         handleEditorChange(updated);

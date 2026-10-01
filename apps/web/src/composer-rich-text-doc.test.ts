@@ -1,7 +1,9 @@
 import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
+import { closeHistory, history, undo } from "@tiptap/pm/history";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { EditorState } from "@tiptap/pm/state";
 import { Transform } from "@tiptap/pm/transform";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,6 +16,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  skillChipPlugin,
   skillChipReplacements,
 } from "./composer-rich-text-doc";
 
@@ -419,5 +422,69 @@ describe("composer rich text document model", () => {
     const none = reconcile(claude, []);
     expect(chipNames(none)).toEqual([]);
     expect(serializeEditorDoc(none).value).toBe(value);
+  });
+});
+
+describe("skillChipPlugin", () => {
+  const known = (name: string) =>
+    name === "babysit" ? { label: "Babysit", description: null } : null;
+  const emptyEditor = () =>
+    EditorState.create({ schema, plugins: [history(), skillChipPlugin(known)] });
+  const type = (state: EditorState, text: string) => {
+    let next = state;
+    for (const char of text) next = next.applyTransaction(next.tr.insertText(char)).state;
+    return next;
+  };
+  const nodeNames = (doc: ProseMirrorNode) => {
+    const names: string[] = [];
+    doc.descendants((node) => {
+      if (!node.isBlock) names.push(node.isText ? node.text! : node.type.name);
+    });
+    return names;
+  };
+
+  it("chips a known skill at the keystroke that completes it", () => {
+    const named = type(emptyEditor(), "$babysit");
+    expect(nodeNames(named.doc)).toEqual(["$babysit"]);
+
+    const completed = type(named, " ");
+    expect(nodeNames(completed.doc)).toEqual(["composer-skill", " "]);
+    expect(serializeEditorDoc(completed.doc).value).toBe("$babysit ");
+    // The caret stays after the space, so typing carries on past the chip.
+    expect(completed.selection.from).toBe(completed.doc.content.size - 1);
+    expect(nodeNames(type(completed, "fix").doc)).toEqual(["composer-skill", " fix"]);
+  });
+
+  it("leaves a $name the provider lacks as text", () => {
+    const state = type(emptyEditor(), "echo $HOME and $babysitter now");
+    expect(nodeNames(state.doc)).toEqual(["echo $HOME and $babysitter now"]);
+  });
+
+  it("chips a name that an edit elsewhere in the word completes", () => {
+    const typo = type(emptyEditor(), "$babysitx now");
+    const afterTypo = 1 + "$babysitx".length;
+    const fixed = typo.applyTransaction(typo.tr.delete(afterTypo - 1, afterTypo)).state;
+    expect(nodeNames(fixed.doc)).toEqual(["composer-skill", " now"]);
+    expect(serializeEditorDoc(fixed.doc).value).toBe("$babysit now");
+  });
+
+  it("undoes the chip together with the keystroke that made it", () => {
+    let state = type(emptyEditor(), "$babysit");
+    // Close the history group, as a pause in typing would.
+    state = state.apply(closeHistory(state.tr));
+    state = type(state, " ");
+    undo(state, (transaction) => {
+      state = state.applyTransaction(transaction).state;
+    });
+    expect(nodeNames(state.doc)).toEqual(["$babysit"]);
+  });
+
+  it("waits for an IME composition to finish", () => {
+    const named = type(emptyEditor(), "$babysit");
+    const composing = named.applyTransaction(
+      named.tr.insertText(" ").setMeta("composition", 1),
+    ).state;
+    expect(nodeNames(composing.doc)).toEqual(["$babysit "]);
+    expect(nodeNames(type(composing, "f").doc)).toEqual(["composer-skill", " f"]);
   });
 });
