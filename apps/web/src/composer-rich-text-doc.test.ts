@@ -2,6 +2,7 @@ import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Transform } from "@tiptap/pm/transform";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -13,6 +14,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  skillChipReplacements,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -378,5 +380,44 @@ describe("composer rich text document model", () => {
     expect(doc.textBetween(flatToPm(map, flat) - 5, flatToPm(map, flat))).toBe("$HOME");
     // Any offset inside the chip source lands after the chip.
     expect(markdownToFlat(map, value.indexOf("$babysit") + 3)).toBe("run ".length + 1);
+  });
+
+  it("re-chips for a new skill list by replacing only the affected nodes", () => {
+    const value = "run $babysit then **echo $HOME now** and $deploy done";
+    const metaFor = (known: ReadonlyArray<string>) => (name: string) =>
+      known.includes(name) ? { label: name, description: null } : null;
+    const chipNames = (doc: ProseMirrorNode) => {
+      const names: string[] = [];
+      doc.descendants((node) => {
+        if (node.type.name === "composer-skill") names.push(node.attrs.skillName);
+      });
+      return names;
+    };
+    const reconcile = (doc: ProseMirrorNode, known: ReadonlyArray<string>) => {
+      const transform = new Transform(doc);
+      for (const { from, to, node } of skillChipReplacements(doc, metaFor(known))) {
+        transform.replaceWith(from, to, node);
+      }
+      transform.doc.check();
+      return transform.doc;
+    };
+
+    const codex = ProseMirrorNode.fromJSON(schema, buildDocJson(value, metaFor(["babysit"])));
+    expect(chipNames(codex)).toEqual(["babysit"]);
+    expect(skillChipReplacements(codex, metaFor(["babysit"]))).toEqual([]);
+
+    // The next provider has $deploy and $HOME but not $babysit.
+    const claude = reconcile(codex, ["deploy", "HOME"]);
+    expect(chipNames(claude)).toEqual(["HOME", "deploy"]);
+    expect(serializeEditorDoc(claude).value).toBe(value);
+    // The new chip keeps the formatting of the text it replaced.
+    const home = claude.nodeAt(
+      serializeEditorDoc(claude).runs.find((run) => run.kind === "token")!.pmPos,
+    )!;
+    expect(home.marks.map((mark) => mark.type.name)).toEqual(["bold"]);
+
+    const none = reconcile(claude, []);
+    expect(chipNames(none)).toEqual([]);
+    expect(serializeEditorDoc(none).value).toBe(value);
   });
 });

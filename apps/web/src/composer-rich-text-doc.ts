@@ -558,6 +558,69 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
   };
 }
 
+export interface SkillChipReplacement {
+  from: number;
+  to: number;
+  node: ProseMirrorNode;
+}
+
+/**
+ * The edits that bring a document's skill chips in line with the provider's
+ * skills: a chip for a skill the provider lacks becomes its `$name` text, and
+ * `$name` text for a skill it has becomes a chip. The skill list loads after
+ * the editor opens and differs per provider, so the same prompt can need
+ * different chips without its text changing. Ordered last-first, so applying
+ * them in order keeps every position valid.
+ */
+export function skillChipReplacements(
+  doc: ProseMirrorNode,
+  skillLabelFor: (name: string) => SkillMeta | null,
+): SkillChipReplacement[] {
+  const schema = doc.type.schema;
+  const skillType = schema.nodes["composer-skill"];
+  if (!skillType) return [];
+  const replacements: SkillChipReplacement[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type !== skillType) return;
+    const name = typeof node.attrs.skillName === "string" ? node.attrs.skillName : "";
+    if (name && !skillLabelFor(name)) {
+      replacements.push({
+        from: pos,
+        to: pos + node.nodeSize,
+        node: schema.text(readAtomSource(node), node.marks),
+      });
+    }
+  });
+  const map = serializeEditorDoc(doc);
+  let end = 0;
+  for (const segment of splitPromptIntoComposerSegments(map.value)) {
+    const start = end;
+    end += segment.type === "text" ? segment.text.length : segment.source.length;
+    if (segment.type !== "skill") continue;
+    const meta = skillLabelFor(segment.name);
+    if (!meta) continue;
+    // Only text needs converting; an existing chip is a token run.
+    const run = map.runs.find(
+      (candidate) =>
+        candidate.kind === "text" &&
+        start >= candidate.mdStart + candidate.openLen &&
+        end <= candidate.mdStart + candidate.openLen + candidate.docLen,
+    );
+    if (!run) continue;
+    const from = run.pmPos + (start - run.mdStart - run.openLen);
+    replacements.push({
+      from,
+      to: from + segment.source.length,
+      node: skillType.create(
+        { skillName: segment.name, skillLabel: meta.label, skillDescription: meta.description },
+        null,
+        doc.nodeAt(from)?.marks,
+      ),
+    });
+  }
+  return replacements.sort((left, right) => right.from - left.from);
+}
+
 export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
   const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
   for (const run of map.runs) {

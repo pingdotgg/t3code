@@ -42,7 +42,6 @@ import {
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
-  splitPromptIntoComposerSegments,
 } from "~/composer-editor-mentions";
 import {
   buildDocJson,
@@ -54,6 +53,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  skillChipReplacements,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
@@ -1160,49 +1160,25 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     });
   }, [cursor, editor, richText, skillLabelFor, value]);
 
-  // The skill list loads after the editor opens and differs per provider, so
-  // the same prompt can gain or lose skill chips without its text changing.
-  // Rebuilding gives citations new keys, which would close an open citation
-  // comment and drop its draft, so the rebuild waits until that comment closes.
-  const chippedSkillsRef = useRef(skills);
-  const citationCommentOpen = openCitation !== null;
+  // Skill chips follow the provider's skill list. Only the affected nodes are
+  // replaced, outside undo history, so undo cannot bring back a stale chip and
+  // citation chips keep the keys their open comment editors are bound to.
   useEffect(() => {
+    const previousSkills = skillsRef.current;
     skillsRef.current = skills;
-    if (!editor || citationCommentOpen) return;
-    const previousSkills = chippedSkillsRef.current;
-    chippedSkillsRef.current = skills;
-    if (previousSkills === skills) return;
+    if (!editor || previousSkills === skills) return;
     if (previousSkills.length === 0 && skills.length === 0) return;
-    const map = serializeEditorDoc(editor.state.doc);
-    const wanted = splitPromptIntoComposerSegments(map.value).flatMap((segment) =>
-      segment.type === "skill" && composerSkillMeta(skills, segment.name) ? [segment.name] : [],
+    const replacements = skillChipReplacements(editor.state.doc, (name) =>
+      composerSkillMeta(skills, name),
     );
-    const chipped: string[] = [];
-    editor.state.doc.descendants((node) => {
-      if (node.type.name === "composer-skill") chipped.push(String(node.attrs.skillName));
-    });
-    if (wanted.length === chipped.length && wanted.every((name, index) => name === chipped[index]))
-      return;
-    const { from, to } = editor.state.selection;
-    const fromMarkdown = flatToMarkdown(map, pmToFlat(map, from));
-    const toMarkdown = flatToMarkdown(map, pmToFlat(map, to));
-    isApplyingControlledUpdateRef.current = true;
-    editor.commands.setContent(
-      buildDocJson(map.value, (name) => composerSkillMeta(skills, name), { styling: richText }),
-      { emitUpdate: false },
-    );
-    const nextMap = serializeEditorDoc(editor.state.doc);
-    editor.commands.setTextSelection({
-      from: flatToPm(nextMap, markdownToFlat(nextMap, fromMarkdown)),
-      to: flatToPm(nextMap, markdownToFlat(nextMap, toMarkdown)),
-    });
-    queueMicrotask(() => {
-      isApplyingControlledUpdateRef.current = false;
-    });
-  }, [citationCommentOpen, editor, richText, skills]);
+    if (replacements.length === 0) return;
+    const transaction = editor.state.tr.setMeta("addToHistory", false);
+    for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
+    editor.view.dispatch(transaction);
+  }, [editor, skills]);
 
   const focusAt = useCallback(
-    (nextCursor: number) => {
+    (nextCursor: number, exactExpandedCursor?: number) => {
       if (!editor) return;
       editor.view.dom.focus({ preventScroll: true });
       // A newer prompt is waiting to be applied (a chip was just inserted
@@ -1210,12 +1186,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       // overwrite that prompt; the pending rewrite places the caret instead.
       if (snapshotRef.current.value !== latestValueRef.current) return;
       const boundedCursor = clampCollapsedComposerCursor(snapshotRef.current.value, nextCursor);
-      // The collapsed cursor cannot say where inside `$name` text a caret sits,
-      // so restoring the caret the editor already holds reuses its exact offset.
       const expandedCursor =
-        boundedCursor === snapshotRef.current.cursor
-          ? snapshotRef.current.expandedCursor
-          : expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor);
+        exactExpandedCursor ??
+        expandCollapsedComposerCursor(snapshotRef.current.value, boundedCursor);
       const map = serializeEditorDoc(editor.state.doc);
       editor.commands.setTextSelection(flatToPm(map, markdownToFlat(map, expandedCursor)));
       scrollTiptapCaretIntoView(editor);
@@ -1245,9 +1218,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editorRef,
     () => ({
       focus: () => {
-        focusAt(snapshotRef.current.cursor);
+        // The collapsed cursor cannot say where inside `$name` text a caret
+        // sits, so restoring the caret passes along its exact offset.
+        focusAt(snapshotRef.current.cursor, snapshotRef.current.expandedCursor);
       },
-      focusAt,
+      focusAt: (cursor) => focusAt(cursor),
       focusAtEnd: () => {
         focusAt(
           collapseExpandedComposerCursor(
