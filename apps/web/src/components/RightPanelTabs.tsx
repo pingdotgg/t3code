@@ -83,6 +83,8 @@ interface RightPanelTabsProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
+  /** False while a kept-mounted panel is closed, so its launcher letters stay inert. */
+  launcherShortcutsEnabled?: boolean;
   /** Forwarded to PreviewPanelShell so this surface persists its own width. */
   widthStorageKey?: string;
   /** Forwarded to PreviewPanelShell as the initial width before a user resize. */
@@ -335,6 +337,7 @@ function RightPanelEmptyState(props: {
   agentsAvailable: boolean;
   deviceAvailable: boolean;
   liveAgentCount: number;
+  shortcutsEnabled: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -426,11 +429,14 @@ function RightPanelEmptyState(props: {
   // Capture phase so app-level key handlers cannot swallow the event first;
   // typing contexts and already-handled events are left alone.
   const shortcutActionsRef = useRef(availableActions);
+  const shortcutsEnabledRef = useRef(props.shortcutsEnabled);
   useEffect(() => {
     shortcutActionsRef.current = availableActions;
+    shortcutsEnabledRef.current = props.shortcutsEnabled;
   });
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (!shortcutsEnabledRef.current) return;
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
       if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
@@ -1425,6 +1431,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
             liveAgentCount={props.liveAgentCount}
+            shortcutsEnabled={props.launcherShortcutsEnabled ?? true}
           />
         ) : (
           props.children

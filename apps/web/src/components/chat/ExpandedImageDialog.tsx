@@ -146,14 +146,14 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   useEffect(() => {
     const onEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || isContextMenuOpen()) return;
+      if (!open || event.key !== "Escape" || isContextMenuOpen()) return;
       event.preventDefault();
       event.stopPropagation();
       onOpenChange(false);
     };
     window.addEventListener("keydown", onEscape, { capture: true });
     return () => window.removeEventListener("keydown", onEscape, { capture: true });
-  }, [onOpenChange]);
+  }, [onOpenChange, open]);
 
   if (!item) return null;
   const mediaLabel = item.type === "video" ? "video" : "image";

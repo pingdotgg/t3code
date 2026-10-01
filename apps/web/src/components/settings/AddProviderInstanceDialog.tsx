@@ -228,11 +228,25 @@ export function AddProviderInstanceDialog({
     }
   };
 
+  const resetState = () => {
+    setAddingChatGptAccount(false);
+    setWizardStep(0);
+    setDriver(DEFAULT_DRIVER_KIND);
+    setLabel("");
+    setAccentColor("");
+    setInstanceIdOverride(null);
+    setConfigByDriver({});
+    setHasAttemptedSubmit(false);
+  };
+
   if (addingChatGptAccount) {
     return (
       <AddManagedCodexAccountDialog
         environmentId={environmentId}
-        onClose={() => onOpenChange(false)}
+        onClose={() => {
+          resetState();
+          onOpenChange(false);
+        }}
       />
     );
   }
@@ -242,14 +256,7 @@ export function AddProviderInstanceDialog({
       open={open}
       onOpenChange={onOpenChange}
       onOpenChangeComplete={(nextOpen) => {
-        if (nextOpen) return;
-        setWizardStep(0);
-        setDriver(DEFAULT_DRIVER_KIND);
-        setLabel("");
-        setAccentColor("");
-        setInstanceIdOverride(null);
-        setConfigByDriver({});
-        setHasAttemptedSubmit(false);
+        if (!nextOpen) resetState();
       }}
     >
       <WizardPopup size="wide">

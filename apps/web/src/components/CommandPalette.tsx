@@ -573,6 +573,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
+        setDialogContentMounted(true);
         dispatch({ _tag: "OpenChangeTheme" });
         return;
       }
@@ -625,6 +626,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         } else if (detail.open === "add-project") {
           openAddProject();
         } else if (detail.query !== undefined) {
+          setDialogContentMounted(true);
           dispatch({
             _tag: "OpenSearch",
             query: detail.query,
