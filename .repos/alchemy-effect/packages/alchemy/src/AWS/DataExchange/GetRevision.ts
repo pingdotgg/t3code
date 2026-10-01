@@ -11,9 +11,8 @@ import type { Revision } from "./Revision.ts";
  * the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.GetRevisionHttp)`.
- * @binding
- * @section Reading Revisions & Assets
- * @example Check A Revision's State
+ * ### Reading Revisions & Assets
+ * **Example:** Check A Revision's State
  * ```typescript
  * const getRevision = yield* AWS.DataExchange.GetRevision(revision);
  *
@@ -21,6 +20,8 @@ import type { Revision } from "./Revision.ts";
  * const detail = yield* getRevision();
  * yield* Effect.log(`finalized: ${detail.Finalized}`);
  * ```
+ *
+ * @binding
  */
 export interface GetRevision extends Binding.Service<
   GetRevision,

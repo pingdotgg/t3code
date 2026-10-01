@@ -10,9 +10,8 @@ import type { EnabledBaseline } from "./EnabledBaseline.ts";
  * enablement's live status, drift status, and parameters from inside a
  * function runtime. Provide the implementation with
  * `Effect.provide(AWS.ControlTower.GetEnabledBaselineHttp)`.
- * @binding
- * @section Inspecting an Enabled Baseline
- * @example Read the Enabled Baseline's Status
+ * ### Inspecting an Enabled Baseline
+ * **Example:** Read the Enabled Baseline's Status
  * ```typescript
  * // init — bind the operation to the enabled baseline
  * const getEnabledBaseline = yield* AWS.ControlTower.GetEnabledBaseline(ouBaseline);
@@ -21,6 +20,8 @@ import type { EnabledBaseline } from "./EnabledBaseline.ts";
  * const { enabledBaselineDetails } = yield* getEnabledBaseline();
  * console.log(enabledBaselineDetails?.statusSummary.status);
  * ```
+ *
+ * @binding
  */
 export interface GetEnabledBaseline extends Binding.Service<
   GetEnabledBaseline,

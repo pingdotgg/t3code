@@ -18,9 +18,8 @@ export interface BatchAddChannelRoleToAccessorsRequest extends Omit<
  * `errors` list rather than failing the whole call.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.BatchAddChannelRoleToAccessorsHttp)`.
- * @binding
- * @section Managing Roles
- * @example Grant a channel role to users
+ * ### Managing Roles
+ * **Example:** Grant a channel role to users
  * ```typescript
  * const addChannelRole =
  *   yield* AWS.RePostSpace.BatchAddChannelRoleToAccessors(space);
@@ -31,6 +30,8 @@ export interface BatchAddChannelRoleToAccessorsRequest extends Omit<
  *   channelRole: "EXPERT",
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchAddChannelRoleToAccessors extends Binding.Service<
   BatchAddChannelRoleToAccessors,

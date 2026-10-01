@@ -293,9 +293,8 @@ export interface ExperimentTemplate extends Resource<
  * Creating a template is free and does not disrupt any resources — faults
  * are only injected when an experiment is explicitly started from the
  * template.
- * @resource
- * @section Creating Experiment Templates
- * @example Stop EC2 instances selected by tag
+ * ### Creating Experiment Templates
+ * **Example:** Stop EC2 instances selected by tag
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -333,7 +332,7 @@ export interface ExperimentTemplate extends Resource<
  * });
  * ```
  *
- * @example Stop condition backed by a CloudWatch alarm
+ * **Example:** Stop condition backed by a CloudWatch alarm
  * ```typescript
  * const template = yield* AWS.FIS.ExperimentTemplate("GuardedExperiment", {
  *   roleArn: role.roleArn,
@@ -359,7 +358,7 @@ export interface ExperimentTemplate extends Resource<
  * });
  * ```
  *
- * @example Wait action sequenced after a fault
+ * **Example:** Wait action sequenced after a fault
  * ```typescript
  * const template = yield* AWS.FIS.ExperimentTemplate("SequencedExperiment", {
  *   roleArn: role.roleArn,
@@ -376,6 +375,8 @@ export interface ExperimentTemplate extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ExperimentTemplate = Resource<ExperimentTemplate>(
   "AWS.FIS.ExperimentTemplate",

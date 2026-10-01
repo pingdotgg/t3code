@@ -12,9 +12,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  * handler with the caller's credentials, pass the handler's underlying
  * permissions via
  * {@link CloudControlBindingOptions.handlerPolicyStatements}.
- * @binding
- * @section Provisioning Resources
- * @example Delete an SSM Parameter at runtime
+ * ### Provisioning Resources
+ * **Example:** Delete an SSM Parameter at runtime
  * ```typescript
  * const deleteResource = yield* CloudControl.DeleteResource({
  *   handlerPolicyStatements: [
@@ -28,6 +27,8 @@ import type { CloudControlBindingOptions } from "./BindingOptions.ts";
  *   Identifier: "/tenants/acme/greeting",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteResource extends Binding.Service<
   DeleteResource,

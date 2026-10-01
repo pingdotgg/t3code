@@ -225,7 +225,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
-  getBinding: () => Effect.succeed(Option.none()),
+  getBinding: () => Effect.succeedNone,
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
 });
@@ -445,6 +445,54 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         effort: "high",
         serviceTier: "priority",
       });
+    }),
+  );
+
+  it.effect("passes image attachments to Codex by path instead of base64", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-image-attachment");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.sendTurnImpl.mockClear();
+
+      const serverConfig = yield* ServerConfig;
+      const attachmentsDir = serverConfig.attachmentsDir;
+      const attachmentId = "attachment-local-image-1";
+      const attachmentPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
+      NodeFS.writeFileSync(attachmentPath, Buffer.alloc(4, 0x89));
+
+      try {
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Use this image.",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "generated.png",
+              mimeType: "image/png",
+              sizeBytes: NodeFS.statSync(attachmentPath).size,
+            },
+          ],
+        });
+
+        const input = runtime.sendTurnImpl.mock.calls[0]?.[0];
+        NodeAssert.ok(input);
+        NodeAssert.deepStrictEqual(input.attachments, [
+          {
+            type: "localImage",
+            path: attachmentPath,
+          },
+        ]);
+      } finally {
+        NodeFS.rmSync(attachmentPath, { force: true });
+      }
     }),
   );
 
@@ -1671,6 +1719,48 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps app permission approval requests to permission_approval request types", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-app-permission-request"),
+        kind: "request",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/permissions/requestApproval",
+        requestId: ApprovalRequestId.make("req-perm-1"),
+        requestKind: "permission",
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("app_1"),
+        payload: {
+          cwd: "/tmp/project",
+          itemId: "app_1",
+          permissions: { network: { enabled: true } },
+          reason: "Fetch data from api.example.com",
+          startedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.type, "request.opened");
+      if (firstEvent.value.type !== "request.opened") {
+        return;
+      }
+      NodeAssert.equal(firstEvent.value.payload.requestType, "permission_approval");
+      NodeAssert.equal(firstEvent.value.payload.detail, "Fetch data from api.example.com");
+    }),
+  );
+
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -2293,6 +2383,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           method: "item/tool/requestUserInput",
           requestId: ApprovalRequestId.make("req-user-input-1"),
           payload: {
+            isBlocking: true,
             itemId: "item-user-input-1",
             threadId: "thread-1",
             turnId: "turn-1",
@@ -2694,3 +2785,411 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
     }
   }),
 );
+
+const usageLimitRuntimeFactory = makeRuntimeFactory();
+const usageLimitLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: usageLimitRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+const USAGE_LIMIT_NOW = "2026-01-01T00:00:00.000Z";
+const USAGE_LIMIT_NOW_SECONDS = Date.parse(USAGE_LIMIT_NOW) / 1000;
+const CODEX_OUT_OF_CREDITS =
+  "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.";
+
+function startUsageLimitRuntime() {
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      runtimeMode: "full-access",
+    });
+    const runtime = usageLimitRuntimeFactory.lastRuntime;
+    NodeAssert.ok(runtime);
+    return { adapter, runtime };
+  });
+}
+
+function codexErrorNotification(input: {
+  readonly id: string;
+  readonly message: string;
+  readonly codexErrorInfo?: string;
+}): ProviderEvent {
+  return {
+    id: asEventId(input.id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-limit"),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "error",
+    payload: {
+      threadId: "thread-1",
+      turnId: "turn-limit",
+      willRetry: false,
+      error: {
+        message: input.message,
+        ...(input.codexErrorInfo ? { codexErrorInfo: input.codexErrorInfo } : {}),
+      },
+    },
+  };
+}
+
+function codexRateLimitsNotification(input: {
+  readonly id: string;
+  readonly rateLimitReachedType?: string;
+  readonly primary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
+  readonly secondary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
+}): ProviderEvent {
+  return {
+    id: asEventId(input.id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId("turn-limit"),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "account/rateLimits/updated",
+    payload: {
+      rateLimits: {
+        limitId: "codex",
+        ...(input.rateLimitReachedType ? { rateLimitReachedType: input.rateLimitReachedType } : {}),
+        ...(input.primary
+          ? {
+              primary: {
+                usedPercent: input.primary.usedPercent,
+                resetsAt: USAGE_LIMIT_NOW_SECONDS + input.primary.resetsInSeconds,
+                windowDurationMins: 300,
+              },
+            }
+          : {}),
+        ...(input.secondary
+          ? {
+              secondary: {
+                usedPercent: input.secondary.usedPercent,
+                resetsAt: USAGE_LIMIT_NOW_SECONDS + input.secondary.resetsInSeconds,
+                windowDurationMins: 10_080,
+              },
+            }
+          : {}),
+      },
+    },
+  };
+}
+
+function codexUsageLimitTurnFailed(id: string, turnId = "turn-limit"): ProviderEvent {
+  return {
+    id: asEventId(id),
+    kind: "notification",
+    provider: ProviderDriverKind.make("codex"),
+    threadId: asThreadId("thread-1"),
+    turnId: asTurnId(turnId),
+    createdAt: USAGE_LIMIT_NOW,
+    method: "turn/completed",
+    payload: {
+      threadId: "thread-1",
+      turn: {
+        id: turnId,
+        items: [],
+        status: "failed",
+        error: { message: CODEX_OUT_OF_CREDITS, codexErrorInfo: "usageLimitExceeded" },
+      },
+    },
+  };
+}
+
+usageLimitLayer("CodexAdapterLive usage limits", (it) => {
+  it.effect("names the exhausted window and the workspace's missing credits", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-limit-error",
+          message: CODEX_OUT_OF_CREDITS,
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-limit-rate-limits",
+          rateLimitReachedType: "workspace_owner_credits_depleted",
+          primary: { usedPercent: 40, resetsInSeconds: 3_600 },
+          secondary: { usedPercent: 100, resetsInSeconds: 5 * 86_400 + 5 * 3_600 },
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-limit-turn"));
+      // A second turn stopping on the same limit says as much as the first.
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-limit-turn-2", "turn-limit-2"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const expected =
+        "Codex usage limit reached. The weekly limit resets in 5d 5h. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.";
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        [
+          "account.rate-limits.updated",
+          "runtime.error",
+          "turn.completed",
+          "runtime.error",
+          "turn.completed",
+        ],
+      );
+      for (const event of events) {
+        if (event.type === "runtime.error") {
+          NodeAssert.equal(event.payload.message, expected);
+          NodeAssert.equal(event.payload.detail, CODEX_OUT_OF_CREDITS);
+        }
+        if (event.type === "turn.completed") {
+          NodeAssert.equal(event.payload.errorMessage, expected);
+        }
+      }
+    }),
+  );
+
+  it.effect("names the session window for a plan limit", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-plan-error",
+          message: "You've hit your usage limit.",
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-plan-rate-limits",
+          rateLimitReachedType: "rate_limit_reached",
+          primary: { usedPercent: 100, resetsInSeconds: 3 * 3_600 + 20 * 60 },
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-plan-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(
+        completed?.payload.errorMessage,
+        "Codex usage limit reached. The session limit resets in 3h 20m. Send the message again once the limit resets.",
+      );
+    }),
+  );
+
+  it.effect("reads a rate-limit snapshot seen earlier in the session", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // The window arrives long before the stop, and the update that reports the
+      // limit as reached carries no windows of its own.
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-early-rate-limits",
+          primary: { usedPercent: 100, resetsInSeconds: 3 * 3_600 + 20 * 60 },
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-sparse-rate-limits",
+          rateLimitReachedType: "rate_limit_reached",
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-early-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(
+        completed?.payload.errorMessage,
+        "Codex usage limit reached. The session limit resets in 3h 20m. Send the message again once the limit resets.",
+      );
+    }),
+  );
+
+  it.effect("falls back to the short message without a rate-limit snapshot", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-bare-error",
+          message: CODEX_OUT_OF_CREDITS,
+          codexErrorInfo: "usageLimitExceeded",
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-bare-turn"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const expected = "Codex usage limit reached. Send the message again once the limit resets.";
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["runtime.error", "turn.completed"],
+      );
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      NodeAssert.equal(runtimeError?.payload.message, expected);
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(completed?.payload.errorMessage, expected);
+    }),
+  );
+
+  it.effect("still relays other provider errors as they arrive", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit(
+        codexErrorNotification({
+          id: "evt-other-error",
+          message: "Codex is temporarily unavailable.",
+          codexErrorInfo: "internalServerError",
+        }),
+      );
+
+      const first = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(first._tag, "Some");
+      if (first._tag !== "Some" || first.value.type !== "runtime.error") return;
+      NodeAssert.equal(first.value.payload.message, "Codex is temporarily unavailable.");
+      NodeAssert.equal(first.value.payload.class, "provider_error");
+    }),
+  );
+});
+
+it.effect("managed runtime rotation restarts app-server and resumes the same native thread", () => {
+  const runtimes: FakeCodexRuntime[] = [];
+  let revision = "first";
+  const layer = Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      return yield* makeCodexAdapter(decodeCodexSettings({}), {
+        resolveRuntime: Effect.sync(() => ({
+          config: decodeCodexSettings({
+            binaryPath: "/t3/tools/codex/0.155.1/bin/codex",
+            homePath: "/t3/caches/codex/home",
+            launchArgs: "-c 'model_provider=managed'",
+          }),
+          environment: { ACCESS_TOKEN: `dummy-${revision}` },
+          revision,
+        })),
+        makeRuntime: (options) => {
+          const runtime = new FakeCodexRuntime(options);
+          runtime.startImpl.mockImplementation(() =>
+            Promise.resolve({
+              provider: ProviderDriverKind.make("codex"),
+              threadId: options.threadId,
+              runtimeMode: options.runtimeMode,
+              cwd: options.cwd,
+              status: "ready",
+              createdAt: "2026-01-01T00:00:00Z",
+              updatedAt: "2026-01-01T00:00:00Z",
+              resumeCursor: { threadId: "native-managed-thread" },
+            }),
+          );
+          runtimes.push(runtime);
+          return Effect.succeed(runtime);
+        },
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    const threadId = asThreadId("managed-token-rotation");
+    yield* adapter.startSession({ threadId, runtimeMode: "full-access" });
+    yield* adapter.sendTurn({ threadId, input: "first" });
+    NodeAssert.equal(runtimes.length, 1);
+    revision = "rotated";
+    yield* adapter.sendTurn({ threadId, input: "second" });
+    NodeAssert.equal(runtimes.length, 2);
+    NodeAssert.equal(runtimes[0]?.closeImpl.mock.calls.length, 1);
+    NodeAssert.deepEqual(runtimes[1]?.options.resumeCursor, { threadId: "native-managed-thread" });
+    NodeAssert.equal(runtimes[1]?.options.environment?.ACCESS_TOKEN, "dummy-rotated");
+    NodeAssert.equal(runtimes[1]?.options.binaryPath, "/t3/tools/codex/0.155.1/bin/codex");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("managed turn failures preserve the sharing-limit code for client notices", () => {
+  const factory = makeRuntimeFactory();
+  const layer = Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      return yield* makeCodexAdapter(decodeCodexSettings({}), {
+        makeRuntime: factory.factory,
+        resolveRuntime: Effect.succeed({
+          config: decodeCodexSettings({}),
+          environment: {},
+          revision: "managed",
+        }),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({ threadId: asThreadId("thread-1"), runtimeMode: "full-access" });
+    const eventsFiber = yield* adapter.streamEvents.pipe(
+      Stream.take(2),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+    const notification = codexUsageLimitTurnFailed("managed-sharing-limit");
+    yield* factory.lastRuntime!.emit({
+      ...notification,
+      payload: {
+        threadId: "thread-1",
+        turn: {
+          id: "turn-limit",
+          items: [],
+          status: "failed",
+          error: { message: "subscription_sharing_usage_limit_exceeded", codexErrorInfo: "other" },
+        },
+      },
+    });
+    const events = Array.from(yield* Fiber.join(eventsFiber));
+    NodeAssert.equal(events[0]?.type, "runtime.error");
+    if (events[0]?.type === "runtime.error") {
+      NodeAssert.equal(events[0].payload.code, "subscription_sharing_usage_limit_exceeded");
+      NodeAssert.match(events[0].payload.message, /ChatGPT usage limit/);
+    }
+    NodeAssert.equal(events[1]?.type, "turn.completed");
+    if (events[1]?.type === "turn.completed") NodeAssert.equal(events[1].payload.state, "failed");
+  }).pipe(Effect.provide(layer));
+});

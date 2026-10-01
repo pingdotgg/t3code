@@ -62,13 +62,16 @@ New here? [Set up your account](/cloudflare/setup), then start the
 
 - [Secrets & env](/cloudflare/security/secrets-env) — bind `.env` values and
   secrets into your Workers.
+- [Protect a Worker with Access](/cloudflare/security/access) — put a login
+  wall in front of a Worker and read the authenticated identity from
+  `ctx.access`.
 
 ## What are you building?
 
 | App shape | Stack |
 | --- | --- |
 | HTTP API | [Worker](/cloudflare/compute/workers) + [D1](/cloudflare/data/d1) — see [Effect HTTP API](/cloudflare/apis/effect-http-api) |
-| Call one Worker from another (internal RPC) | [Worker](/cloudflare/compute/workers) — see [Schemaless RPC](/cloudflare/compute/workers#schemaless-rpc) and the [concept](/apis/schemaless) |
+| Call one Worker from another (internal RPC) | [Worker](/cloudflare/compute/workers) — see [Schemaless RPC](/cloudflare/compute/workers#call-another-worker) and the [concept](/apis/schemaless) |
 | Typed API for external clients | [Effect RPC](/cloudflare/apis/effect-rpc) for Effect clients, [Effect HTTP API](/cloudflare/apis/effect-http-api) for plain HTTP |
 | Real-time / WebSockets | [Durable Objects](/cloudflare/compute/durable-objects) — see [Accept WebSockets](/cloudflare/compute/hibernatable-websockets) |
 | Full-stack app | [Worker](/cloudflare/compute/workers) + a React SPA — see [Add a React SPA](/cloudflare/frontend/vite-spa) or [Frontend frameworks](/cloudflare/frontend/frontends) |

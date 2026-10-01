@@ -16,9 +16,12 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@distilled.cloud/aws": "catalog:",
+    "@distilled.cloud/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "alchemy-test": "workspace:*"
   }
 }

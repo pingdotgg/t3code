@@ -1,0 +1,5 @@
+.alchemy
+.output
+dist
+node_modules
+tsconfig.tsbuildinfo

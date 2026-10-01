@@ -21,9 +21,8 @@ export interface CreateUserRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.CreateUserHttp)`.
  *
- * @binding
- * @section User Management
- * @example Create a User with Aliases
+ * ### User Management
+ * **Example:** Create a User with Aliases
  * ```typescript
  * const createUser = yield* AWS.QBusiness.CreateUser(app);
  *
@@ -32,6 +31,8 @@ export interface CreateUserRequest extends Omit<
  *   userAliases: [{ userId: "corp\\user" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateUser extends Binding.Service<
   CreateUser,

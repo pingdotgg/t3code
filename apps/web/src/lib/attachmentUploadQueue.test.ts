@@ -1,5 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { Atom, AsyncResult } from "effect/unstable/reactivity";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 
 import {
   composerFileNeedsReattach,
@@ -10,6 +12,7 @@ import {
 } from "../composerDraftStore";
 
 const mocks = vi.hoisted(() => ({
+  connectionStateAtom: vi.fn(),
   createAssetUrl: vi.fn(),
   createUploadUrl: Symbol("create-upload-url"),
   executeAtomQuery: vi.fn(),
@@ -24,7 +27,14 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
 
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("../rpc/atomRegistry", async () => {
+  const { AtomRegistry } = await import("effect/unstable/reactivity");
+  return { appAtomRegistry: AtomRegistry.make() };
+});
+
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: { stateAtom: mocks.connectionStateAtom },
+}));
 
 vi.mock("../state/assets", () => ({
   assetEnvironment: { createUrl: mocks.createAssetUrl },
@@ -140,8 +150,22 @@ function makeFile(id: string): ComposerFileAttachment {
   };
 }
 
+const connectionStates = Atom.family((_environmentId: EnvironmentId) =>
+  Atom.make(AsyncResult.success({ phase: "connected" })),
+);
+
+function setConnected(environmentId: EnvironmentId, connected: boolean) {
+  appAtomRegistry.set(
+    connectionStates(environmentId),
+    AsyncResult.success({ phase: connected ? "connected" : "backoff" }),
+  );
+}
+
 describe("attachmentUploadQueue", () => {
   beforeEach(() => {
+    mocks.connectionStateAtom.mockImplementation(connectionStates);
+    setConnected(firstEnvironment, true);
+    setConnected(secondEnvironment, true);
     TestXmlHttpRequest.requests = [];
     mocks.createAssetUrl.mockReset();
     mocks.createAssetUrl.mockImplementation((target: unknown) => target);
@@ -183,8 +207,75 @@ describe("attachmentUploadQueue", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([false, true])(
+    "retries a failed file once after reconnect, including a late HTTP failure: %s",
+    async (lateFailure) => {
+      const image = makeFile("reconnect");
+      startAttachmentUpload({ environmentId: firstEnvironment, image });
+      await Promise.resolve();
+      const firstSettled = awaitAttachmentUploads([image.id]);
+      setConnected(firstEnvironment, false);
+      if (lateFailure) setConnected(firstEnvironment, true);
+      TestXmlHttpRequest.requests[0]!.complete(503);
+      await firstSettled;
+      if (!lateFailure) setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(2);
+      const retrySettled = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[1]!.complete(503);
+      await retrySettled;
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(2);
+      expect(readAttachmentUpload(image.id)?.status).toBe("failed");
+
+      setConnected(firstEnvironment, false);
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      await Promise.resolve();
+      const finalSettled = awaitAttachmentUploads([image.id]);
+      TestXmlHttpRequest.requests[2]!.complete();
+      await finalSettled;
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).not.toBeNull();
+      setConnected(firstEnvironment, false);
+      setConnected(firstEnvironment, true);
+      await Promise.resolve();
+      expect(TestXmlHttpRequest.requests).toHaveLength(3);
+    },
+  );
+
+  it("does not retry for another environment or after the attachment is removed", async () => {
+    const image = makeFile("removed");
+    startAttachmentUpload({ environmentId: firstEnvironment, image });
+    await Promise.resolve();
+    const settled = awaitAttachmentUploads([image.id]);
+    TestXmlHttpRequest.requests[0]!.complete(503);
+    await settled;
+    setConnected(secondEnvironment, false);
+    setConnected(secondEnvironment, true);
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    setConnected(firstEnvironment, false);
+    setConnected(firstEnvironment, true);
+    releaseAttachmentUpload(image.id);
+    await Promise.resolve();
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    expect(readAttachmentUpload(image.id)).toBeUndefined();
+  });
+
   it("uploads images immediately and sends attachment references", async () => {
-    const image = makeImage("image-1");
+    const image = {
+      ...makeImage("image-1"),
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-08-24T11:00:00.000Z",
+        appName: "Terminal",
+        windowTitle: "Tests",
+      },
+    };
     startAttachmentUpload({ environmentId: firstEnvironment, image });
     await Promise.resolve();
 
@@ -207,6 +298,12 @@ describe("attachmentUploadQueue", () => {
         name: "image-1.png",
         mimeType: "image/png",
         sizeBytes: 3,
+        source: {
+          kind: "snap-shot",
+          capturedAt: "2026-08-24T11:00:00.000Z",
+          appName: "Terminal",
+          windowTitle: "Tests",
+        },
       },
     ]);
 
@@ -224,7 +321,10 @@ describe("attachmentUploadQueue", () => {
   });
 
   it("uploads generic files and sends file attachment references", async () => {
-    const file = makeFile("report");
+    const file = {
+      ...makeFile("report"),
+      source: { _tag: "pasted-text" as const },
+    };
     startAttachmentUpload({ environmentId: firstEnvironment, image: file });
     await Promise.resolve();
 
@@ -254,6 +354,7 @@ describe("attachmentUploadQueue", () => {
         name: "report.pdf",
         mimeType: "application/pdf",
         sizeBytes: 3,
+        source: { _tag: "pasted-text" },
       },
     ]);
   });
@@ -322,6 +423,32 @@ describe("attachmentUploadQueue", () => {
       ]);
     } finally {
       useComposerDraftStore.getState().clearComposerContent(draftId);
+    }
+  });
+
+  it("persists a retried question upload without a mounted composer", async () => {
+    const draftId = DraftId.make("question-retry-upload");
+    const file = makeFile("question-retry");
+    const store = useComposerDraftStore.getState();
+    store.addFiles(draftId, [file]);
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      let settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete(500);
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
+      retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[1]!.complete();
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]).toMatchObject({
+        uploadedAttachmentId: "pending-environment-1-question-retry.pdf",
+        uploadEnvironmentId: firstEnvironment,
+      });
+    } finally {
+      store.clearComposerContent(draftId);
     }
   });
 

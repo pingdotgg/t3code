@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * by state, container provider, or creation time. Account-level — no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.EMRContainers.ListVirtualClustersHttp)`.
- * @binding
- * @section Virtual Clusters
- * @example List Running Virtual Clusters
+ * ### Virtual Clusters
+ * **Example:** List Running Virtual Clusters
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listVirtualClusters = yield* AWS.EMRContainers.ListVirtualClusters();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`${virtualClusters?.length ?? 0} running virtual clusters`);
  * ```
+ *
+ * @binding
  */
 export interface ListVirtualClusters extends Binding.Service<
   ListVirtualClusters,

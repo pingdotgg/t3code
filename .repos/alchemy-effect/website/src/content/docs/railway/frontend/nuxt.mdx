@@ -1,0 +1,197 @@
+---
+title: Nuxt
+description: Deploy a Nuxt app to Railway with Railway.Website.Nuxt — nitro's node preset on a Service, and Nuxt's own dev server under alchemy dev.
+sidebar:
+  order: 10
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Railway.Website.Nuxt` deploys a [Nuxt](https://nuxt.com) app to
+Railway. It builds the app through your project's own `@nuxt/kit`
+with nitro's `node` preset: the nitro Node server plus prerendered
+assets run on one `Railway.Service`. Omit
+`project` to create a `Railway.Project`. The URL is
+`https://{name}.up.railway.app` unless you set `domain`. There is
+no `nitro.preset` to edit and no build command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/nuxt`
+and `/nuxt/node` exports from your project at deploy time. It is
+only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Nuxt
+
+Your `nuxt.config.ts` loads natively — modules, layers, and all —
+so configure Nuxt exactly as you would outside Alchemy:
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  modules: ["@nuxtjs/tailwindcss"],
+  routeRules: {
+    "/about": { prerender: true },
+  },
+});
+```
+
+Deploy-specific overrides are merged over it via the `nuxt` prop
+(the override wins) — see [Prerendering](#prerendering) below for an
+example.
+
+Don't set `nitro.preset` — the Node deploy target owns the preset
+(`"node"`), and a foreign preset is a hard error.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Railway from "alchemy/Railway";
+
+export const Website = Railway.Website.Nuxt("Website");
+```
+
+Pass `rootDir` if `package.json` is not at `.`. Pass `project` to
+put the Service in a Project you already declared; otherwise the
+site creates `Railway.Project("Project")` under its namespace.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyNuxtSite",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+On deploy `site.url` is the generated `*.up.railway.app` hostname
+(or `https://{domain}` when you set `domain`). `site.service` and
+`site.project` are undefined under `alchemy dev`.
+
+## Add environment variables
+
+Process environment is the top-level `env` prop — plain strings, or
+`Redacted` values. They are copied onto `process.env` before build
+and `alchemy dev`, and onto the Service at deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Railway.Website.Nuxt("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    NUXT_PUBLIC_API_BASE: "https://api.example.com",
++  },
+});
+```
+
+This is the hosted Node process, not Worker bindings.
+`NUXT_`-prefixed keys override Nuxt `runtimeConfig` the usual way;
+`NUXT_PUBLIC_` values are inlined into the client at build time.
+
+## Read the environment in server code
+
+The nitro server is a plain Node process, so server routes and SSR
+read the environment from `process.env`:
+
+```typescript
+// server/api/hello.ts
+export default defineEventHandler(() => {
+  return { greeting: process.env.GREETING ?? "hello" };
+});
+```
+
+## Prerendering
+
+Routes marked for prerendering in `routeRules` (or via
+`nitro.prerender`) render at build time into `.output/public` and
+are baked into the image, served as static files before the nitro
+handler:
+
+```typescript
+export const Website = Railway.Website.Nuxt("Website", {
+  nuxt: {
+    routeRules: {
+      "/about": { prerender: true },
+    },
+  },
+});
+```
+
+Nitro's `isr` route rule is implemented only by the Vercel and
+Netlify presets. On the Node preset it is silently ignored at build
+time, and the route renders on demand like any other SSR route. Use
+`prerender` for build-time static routes, or `cache` route rules for
+runtime caching.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Nuxt's own dev server (nitro dev, full HMR)
+instead of deploying; `site.url` is the local address and no
+Railway resources are created. Wrap the site in `Alchemy.remote()` to deploy the live Project and
+Service even during dev.
+
+## Custom domain
+
+`domain` is a hostname string. The site attaches a
+[`Railway.CustomDomain`](/railway/networking#custom-domains)
+(`targetPort` 3000) and `url` becomes `https://{domain}` instead of
+the generated `*.up.railway.app`:
+
+```typescript
+export const Website = Railway.Website.Nuxt("Website", {
+  domain: "app.example.com",
+});
+```
+
+Point DNS at Railway's verification records on the CustomDomain.
+
+## Where next
+
+- [`Railway.Website.Nuxt` reference](/providers/railway/website/nuxt)
+  — every prop and attribute.
+- [Services](/railway/compute/services) and
+  [Projects](/railway/compute/projects) — the Service and Project
+  the site creates.
+- [Custom domains](/railway/networking#custom-domains) — hostnames
+  on a Service.
+- [Setup](/railway/setup) — workspace, API token, and alchemy
+  login.

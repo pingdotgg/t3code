@@ -5,6 +5,7 @@ export interface FileTreeNode {
   readonly path: string;
   readonly name: string;
   readonly kind: ProjectEntry["kind"];
+  readonly ignored?: boolean;
   readonly children: ReadonlyArray<FileTreeNode>;
   readonly searchSegments: ReadonlyArray<string>;
   readonly searchWords: ReadonlyArray<string>;
@@ -19,6 +20,7 @@ interface MutableFileTreeNode {
   path: string;
   name: string;
   kind: ProjectEntry["kind"];
+  ignored?: boolean;
   children: Map<string, MutableFileTreeNode>;
 }
 
@@ -68,6 +70,7 @@ function freezeNode(node: MutableFileTreeNode): FileTreeNode {
     path: node.path,
     name: node.name,
     kind: node.kind,
+    ...(node.ignored ? { ignored: true } : {}),
     children: [...node.children.values()].sort(compareNodes).map(freezeNode),
     searchSegments: searchTerms.segments,
     searchWords: searchTerms.words,
@@ -110,6 +113,7 @@ export function buildFileTree(entries: ReadonlyArray<ProjectEntry>): ReadonlyArr
       } else if (isLeaf) {
         child.kind = entry.kind;
       }
+      if (isLeaf && entry.ignored) child.ignored = true;
       current = child;
     }
   }

@@ -22,23 +22,23 @@
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
-    "@tanstack/react-router": "^1.167.4",
-    "@tanstack/react-start": "^1.166.15",
+    "@tanstack/react-router": "catalog:",
+    "@tanstack/react-start": "catalog:",
     "alchemy": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",
-    "pg": "^8.13.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
-    "@types/pg": "^8.11.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
     "drizzle-kit": "catalog:",
-    "typescript": "^5.9.3",
+    "typescript": "catalog:",
     "vite": "catalog:"
   }
 }

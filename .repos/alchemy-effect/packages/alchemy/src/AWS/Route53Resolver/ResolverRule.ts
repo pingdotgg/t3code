@@ -106,9 +106,8 @@ export interface ResolverRule extends Resource<
  * `ResolverEndpoint` to the DNS resolvers on your network listed in
  * `targetIps`. The rule takes effect in a VPC once attached with a
  * `ResolverRuleAssociation`.
- * @resource
- * @section Forwarding Rules
- * @example Forward a Domain to On-Prem Resolvers
+ * ### Forwarding Rules
+ * **Example:** Forward a Domain to On-Prem Resolvers
  * ```typescript
  * import * as Route53Resolver from "alchemy/AWS/Route53Resolver";
  *
@@ -119,8 +118,8 @@ export interface ResolverRule extends Resource<
  * });
  * ```
  *
- * @section Attaching to VPCs
- * @example Associate the Rule with a VPC
+ * ### Attaching to VPCs
+ * **Example:** Associate the Rule with a VPC
  * ```typescript
  * const association = yield* Route53Resolver.ResolverRuleAssociation(
  *   "CorpForwardAssoc",
@@ -130,6 +129,8 @@ export interface ResolverRule extends Resource<
  *   },
  * );
  * ```
+ *
+ * @resource
  */
 export const ResolverRule = Resource<ResolverRule>(
   "AWS.Route53Resolver.ResolverRule",

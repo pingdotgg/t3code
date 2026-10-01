@@ -82,11 +82,8 @@ export type SendingSubdomain = Resource<
  * prior state, `read` scans the zone for an existing subdomain with the
  * same name and reports it as `Unowned`, so the engine refuses to take it
  * over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Email
- * @category Email
- * @section Registering a sending subdomain
- * @example Send mail from `mail.example.com`
+ * ### Registering a sending subdomain
+ * **Example:** Send mail from `mail.example.com`
  * ```typescript
  * const sending = yield* Cloudflare.Email.SendingSubdomain("Mail", {
  *   zoneId: zone.zoneId,
@@ -96,8 +93,8 @@ export type SendingSubdomain = Resource<
  * // sending.dkimSelector / sending.returnPathDomain — provisioned config
  * ```
  *
- * @section Externally-hosted zones
- * @example Look up the DNS records to create manually
+ * ### Externally-hosted zones
+ * **Example:** Look up the DNS records to create manually
  * ```typescript
  * import * as emailSending from "@distilled.cloud/cloudflare/email-sending";
  *
@@ -110,6 +107,10 @@ export type SendingSubdomain = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/email-sending/
+ *
+ * @resource
+ * @product Email
+ * @category Email
  */
 export const SendingSubdomain = Resource<SendingSubdomain>(
   SendingSubdomainTypeId,

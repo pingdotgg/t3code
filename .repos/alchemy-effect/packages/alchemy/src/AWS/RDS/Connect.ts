@@ -1,4 +1,4 @@
-import type * as Credentials from "@distilled.cloud/aws/Credentials";
+import type * as Presign from "@distilled.cloud/aws/Presign";
 import type * as secretsmanager from "@distilled.cloud/aws/secrets-manager";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
@@ -40,7 +40,7 @@ export interface ConnectionInfo {
    */
   refreshPassword?: Effect.Effect<
     Redacted.Redacted<string>,
-    Credentials.CredentialsError
+    Presign.PresignError
   >;
 }
 
@@ -101,12 +101,11 @@ export type ConnectOptions = SecretConnectOptions | IamConnectOptions;
  * fresh on every execution. No socket is opened; feed the result into your
  * database driver. Provide the implementation with
  * `Effect.provide(AWS.RDS.ConnectHttp)`.
- * @binding
- * @section Connecting to a Database
- * @example Resolve Credentials from a Secret
+ * ### Connecting to a Database
+ * **Example:** Resolve Credentials from a Secret
  * ```typescript
  * export default MyFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const db = yield* AWS.RDS.Aurora("AppDb", {
  *       subnetIds: [subnetA.subnetId, subnetB.subnetId],
@@ -138,7 +137,7 @@ export type ConnectOptions = SecretConnectOptions | IamConnectOptions;
  * );
  * ```
  *
- * @example IAM Database Authentication
+ * **Example:** IAM Database Authentication
  * ```typescript
  * // init — grants rds-db:connect for the `app_iam` user; the runtime half
  * // presigns a short-lived (15 minute) auth token as the password
@@ -152,6 +151,8 @@ export type ConnectOptions = SecretConnectOptions | IamConnectOptions;
  * // driver's lazy-password hook so each new connection gets a fresh token
  * const info = yield* connect;
  * ```
+ *
+ * @binding
  */
 export interface Connect extends Binding.Service<
   Connect,
@@ -162,7 +163,7 @@ export interface Connect extends Binding.Service<
   ) => Effect.Effect<
     Effect.Effect<
       ConnectionInfo,
-      secretsmanager.GetSecretValueError | Credentials.CredentialsError,
+      secretsmanager.GetSecretValueError | Presign.PresignError,
       RuntimeContext
     >
   >

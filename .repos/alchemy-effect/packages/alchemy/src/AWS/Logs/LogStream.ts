@@ -39,14 +39,15 @@ export interface LogStream extends Resource<
  * Most log streams are created automatically by the emitting service (Lambda
  * creates its own streams under `/aws/lambda/...`); declare one explicitly
  * only when writing custom log events via `putLogEvents`.
- * @resource
- * @section Creating Log Streams
- * @example Custom Audit Stream
+ * ### Creating Log Streams
+ * **Example:** Custom Audit Stream
  * ```typescript
  * const stream = yield* LogStream("AuditStream", {
  *   logGroupName: logGroup.logGroupName,
  * });
  * ```
+ *
+ * @resource
  */
 export const LogStream = Resource<LogStream>("AWS.Logs.LogStream");
 

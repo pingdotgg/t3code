@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ModelSelection,
+  ProjectId,
+  ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -31,6 +34,20 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3code-server-settings-test-",
+        }),
+      ),
+    ),
+  );
+
+/** Like `makeServerSettingsLayer`, but also exposes the secret store for assertions. */
+const makeServerSettingsLayerWithSecrets = () =>
+  ServerSettingsModule.layer.pipe(
+    Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -966,6 +983,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         observability: {
           otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
           otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+          otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
         },
       });
 
@@ -973,6 +991,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        otlpLogsUrl: "http://localhost:4318/v1/logs",
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -1181,6 +1200,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
+  for (const sensitiveLast of [true, false]) {
+    it.effect(`preserves duplicate secret operation order (sensitive last: ${sensitiveLast})`, () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_duplicate");
+        const secret = { name: "API_TOKEN", value: "secret-last", sensitive: true };
+        const plain = { name: "API_TOKEN", value: "plain-last", sensitive: false };
+        const next = yield* service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: sensitiveLast ? [plain, secret] : [secret, plain],
+              config: {},
+            },
+          },
+        });
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.at(-1)?.value,
+          sensitiveLast ? "secret-last" : "plain-last",
+        );
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.find((v) => v.sensitive)?.value,
+          sensitiveLast ? "secret-last" : "",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1245,6 +1292,128 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect(
+    "keeps Bitbucket tokens in the secret store and tells clients only that one is set",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const saved = yield* serverSettings.updateSettings({
+          bitbucket: { email: "me@example.com", accessToken: "bb-access", apiToken: "bb-api" },
+        });
+        assert.deepEqual(saved.bitbucket, {
+          email: "me@example.com",
+          accessToken: "bb-access",
+          apiToken: "bb-api",
+        });
+
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "bb-access");
+        assert.notInclude(raw, "bb-api");
+        assert.include(raw, "me@example.com");
+
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved).bitbucket;
+        assert.equal(forClient.email, "me@example.com");
+        assert.notInclude(forClient.accessToken, "bb-access");
+        assert.notInclude(forClient.apiToken, "bb-api");
+        assert.isAbove(forClient.accessToken.length, 0);
+        assert.isAbove(forClient.apiToken.length, 0);
+
+        // A client echoing the redacted values back, or omitting them, keeps the saved tokens.
+        yield* serverSettings.updateSettings({ bitbucket: forClient });
+        yield* serverSettings.updateSettings({ bitbucket: { email: "other@example.com" } });
+        assert.deepEqual((yield* serverSettings.getSettings).bitbucket, {
+          email: "other@example.com",
+          accessToken: "bb-access",
+          apiToken: "bb-api",
+        });
+
+        const cleared = yield* serverSettings.updateSettings({ bitbucket: { accessToken: "" } });
+        assert.equal(cleared.bitbucket.accessToken, "");
+        assert.equal(cleared.bitbucket.apiToken, "bb-api");
+        assert.isTrue(Option.isNone(yield* secrets.get("bitbucket-access-token")));
+        assert.equal(
+          ServerSettingsModule.redactServerSettingsForClient(cleared).bitbucket.accessToken,
+          "",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
+  it.effect("removes a Bitbucket secret once its token is cleared by hand in settings.json", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // A token was saved, then the user deleted it from settings.json directly.
+      yield* secrets.set("bitbucket-access-token", new TextEncoder().encode("stale-token"));
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}");
+
+      yield* serverSettings.updateSettings({ cursorKeychainUsageEnabled: true });
+
+      assert.isTrue(Option.isNone(yield* secrets.get("bitbucket-access-token")));
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
+  it.effect("moves a hand-edited Bitbucket token into the secret store when settings load", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"bitbucket":{"accessToken":"hand-edited-token"}}',
+      );
+
+      // Loading alone moves it: no settings update is needed.
+      const loaded = yield* serverSettings.getSettings;
+
+      assert.equal(loaded.bitbucket.accessToken, "hand-edited-token");
+      assert.notInclude(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        "hand-edited-token",
+      );
+      const stored = yield* secrets.get("bitbucket-access-token");
+      assert.equal(
+        Option.isSome(stored) ? new TextDecoder().decode(stored.value) : null,
+        "hand-edited-token",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
+  it.effect(
+    "moves a hand-edited Bitbucket token into the secret store when a client echoes the marker",
+    () =>
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          '{"bitbucket":{"email":"me@example.com","apiToken":"hand-edited-token"}}',
+        );
+
+        // The form resends the redacted token when only the email changes.
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(
+          yield* serverSettings.getSettings,
+        ).bitbucket;
+        const updated = yield* serverSettings.updateSettings({
+          bitbucket: { email: "new@example.com", apiToken: forClient.apiToken },
+        });
+
+        assert.equal(updated.bitbucket.apiToken, "hand-edited-token");
+        assert.equal((yield* serverSettings.getSettings).bitbucket.apiToken, "hand-edited-token");
+        assert.notInclude(
+          yield* fileSystem.readFileString(serverConfig.settingsPath),
+          "hand-edited-token",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("materializes provider secrets for terminal environment resolution", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1277,6 +1446,290 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
       assert.notInclude(persisted, "sk-terminal-secret");
       assert.include(persisted, '"valueRedacted": true');
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("rolls back provider secret changes when the settings file commit fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let failRename = false;
+      let settingsPathToFail: string | undefined;
+      const writeFailure = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "rename",
+        description: "Forced settings write failure.",
+      });
+      const failingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        rename: (fromPath, toPath) =>
+          failRename && toPath === settingsPathToFail
+            ? Effect.fail(writeFailure)
+            : fileSystem.rename(fromPath, toPath),
+      });
+      const instanceId = ProviderInstanceId.make("codex_write_failure");
+      const settingsLayer = makeServerSettingsLayer().pipe(
+        Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+      );
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        settingsPathToFail = (yield* ServerConfig.ServerConfig).settingsPath;
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        failRename = true;
+        const failedUpdate = yield* serverSettings
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+                config: {},
+              },
+            },
+          })
+          .pipe(Effect.result);
+        assert.equal(failedUpdate._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+
+        const failed = yield* serverSettings
+          .updateSettings({ providerInstances: {} })
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+      }).pipe(Effect.provide(settingsLayer));
+    }),
+  );
+
+  for (const failure of ["response materialization", "partially committed write"] as const) {
+    it.effect(`rolls back provider secret changes after ${failure} fails`, () => {
+      const textDecoder = new TextDecoder();
+      const secrets = new Map<string, Uint8Array>();
+      let rejectNewSecret = false;
+      const secretStoreLayer = Layer.succeed(
+        ServerSecretStore.ServerSecretStore,
+        ServerSecretStore.ServerSecretStore.of({
+          get: (name) =>
+            Effect.suspend(() => {
+              const value = secrets.get(name);
+              if (
+                failure === "response materialization" &&
+                rejectNewSecret &&
+                value !== undefined &&
+                textDecoder.decode(value) === "sk-new"
+              ) {
+                return Effect.fail(
+                  new ServerSecretStore.SecretStoreReadError({
+                    resource: `secret ${name}`,
+                    cause: "Forced response materialization failure.",
+                  }),
+                );
+              }
+              return Effect.succeed(
+                value === undefined ? Option.none() : Option.some(Uint8Array.from(value)),
+              );
+            }),
+          set: (name, value) =>
+            Effect.suspend(() => {
+              secrets.set(name, Uint8Array.from(value));
+              return failure === "partially committed write" &&
+                rejectNewSecret &&
+                textDecoder.decode(value) === "sk-new"
+                ? Effect.fail(
+                    new ServerSecretStore.SecretStorePersistError({
+                      resource: `secret ${name}`,
+                      cause: "chmod failed after rename",
+                    }),
+                  )
+                : Effect.void;
+            }),
+          create: (name, value) =>
+            Effect.sync(() => {
+              secrets.set(name, Uint8Array.from(value));
+            }),
+          getOrCreateRandom: (name, bytes) =>
+            Effect.sync(() => {
+              const value = secrets.get(name) ?? new Uint8Array(bytes);
+              secrets.set(name, value);
+              return Uint8Array.from(value);
+            }),
+          remove: (name) =>
+            Effect.sync(() => {
+              secrets.delete(name);
+            }),
+        }),
+      );
+      const settingsLayer = ServerSettingsModule.layer.pipe(
+        Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+        Layer.provide(secretStoreLayer),
+        Layer.provideMerge(
+          Layer.fresh(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "t3code-server-settings-materialization-failure-test-",
+            }),
+          ),
+        ),
+      );
+      const instanceId = ProviderInstanceId.make("codex_materialization_failure");
+
+      return Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "OPENROUTER_API_KEY", value: "sk-kept", sensitive: true }],
+              config: {},
+            },
+          },
+        });
+
+        rejectNewSecret = true;
+        const failedUpdate = yield* serverSettings
+          .updateSettings({
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                environment: [{ name: "OPENROUTER_API_KEY", value: "sk-new", sensitive: true }],
+                config: {},
+              },
+            },
+          })
+          .pipe(Effect.result);
+
+        assert.equal(failedUpdate._tag, "Failure");
+        rejectNewSecret = false;
+        assert.equal(
+          (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]
+            ?.value,
+          "sk-kept",
+        );
+      }).pipe(Effect.provide(settingsLayer));
+    });
+  }
+
+  it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const legacyProject = ProjectId.make("project-legacy");
+      const scriptedProject = ProjectId.make("project-scripted");
+      const script: ProjectScript = {
+        id: "check",
+        name: "Check",
+        command: "npm test",
+        icon: "play",
+        runOnWorktreeCreate: false,
+      };
+      const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
+      const modelJson = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelection))(model);
+      const scriptsJson = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Array(ProjectScript)),
+      )([script]);
+      for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
+        // The legacy project also carries aggregate scripts, but its stored
+        // null override reset them; the fold must not bring them back.
+        [legacyProject, modelJson, "worktree", 1, scriptsJson],
+        [scriptedProject, null, null, 0, scriptsJson],
+      ] as const) {
+        yield* sql`
+          INSERT INTO projection_projects (
+            project_id, title, workspace_root, default_model_selection_json,
+            default_thread_env_mode, auto_pull, scripts_json, created_at, updated_at
+          )
+          VALUES (
+            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelColumn},
+            ${envMode}, ${autoPull}, ${scripts},
+            ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+          )
+        `;
+      }
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{"projectAgentBrowserAccessOverrides":{"${legacyProject}":false},"projectAutoPullOverrides":{"${scriptedProject}":true},"projectScriptOverrides":{"${legacyProject}":null}}`,
+      );
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isTrue(settings.projectSettingsFolded);
+      assert.deepEqual<ServerSettings["projectSettingsOverrides"]>(
+        settings.projectSettingsOverrides,
+        {
+          [legacyProject]: {
+            enableAgentBrowserAccess: false,
+            defaultModelSelection: model,
+            defaultThreadEnvMode: "worktree",
+            defaultAutoPull: true,
+          },
+          [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },
+        },
+      );
+      // Derived legacy views keep older clients reading the same values.
+      assert.deepEqual<ServerSettings["projectAutoPullOverrides"]>(
+        settings.projectAutoPullOverrides,
+        {
+          [legacyProject]: true,
+          [scriptedProject]: true,
+        },
+      );
+      assert.deepEqual<ServerSettings["projectScriptOverrides"]>(settings.projectScriptOverrides, {
+        [scriptedProject]: [script],
+      });
+
+      // A reset survives the next load: the fold does not run again.
+      yield* serverSettings.updateSettings({
+        projectSettingsOverrides: { [legacyProject]: null },
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      const persisted = yield* decodeServerSettings(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.parse(raw),
+      );
+      assert.isTrue(persisted.projectSettingsFolded);
+      assert.isUndefined(persisted.projectSettingsOverrides[legacyProject]);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("leaves an unreadable settings.json untouched instead of folding over it", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sql = yield* SqlClient.SqlClient;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, auto_pull, scripts_json, created_at, updated_at
+        )
+        VALUES (
+          ${"project-broken"}, ${"Project"}, ${"/tmp/project-broken"}, ${1}, ${"[]"},
+          ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
+        )
+      `;
+      const broken = '{"defaultAutoPull": tru';
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, broken);
+
+      const settings = yield* serverSettings.getSettings;
+      assert.isFalse(settings.projectSettingsFolded);
+      assert.deepEqual(settings.projectSettingsOverrides, {});
+      // The user's file is still there to repair; nothing was written over it.
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), broken);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

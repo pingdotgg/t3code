@@ -17,15 +17,21 @@
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeStringDecoder from "node:string_decoder";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
+
+import { createTranscriptJsonReader } from "../project/AgentSessionJson.ts";
 
 import {
   initialCodexScanState,
   mightCarryUsage,
   parseClaudeLine,
+  parseClaudeRecord,
   parseCodexLine,
+  parseCodexRecord,
   parseGrokLine,
+  parseGrokRecord,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -74,8 +80,61 @@ export interface TranscriptParseResult {
 
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
 export const GUARD_LENGTH = 64;
+// Native parsing is faster for common 1–4 MiB context/tool records. Above
+// 8 MiB, project usage without allocating the whole record. This switches
+// readers; it never discards a record because of its size.
+const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
 const NEWLINE = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
+
+type SelectedFields = { readonly [key: string]: true | SelectedFields };
+
+// Keep the fields consumed by usageTranscripts, including reducer state and
+// dedupe/cost metadata. A selected subtree (usage) keeps future token fields.
+const USAGE_FIELDS: Record<"claude" | "codex" | "grok", SelectedFields> = {
+  claude: {
+    type: true,
+    timestamp: true,
+    requestId: true,
+    sessionId: true,
+    costUSD: true,
+    message: { id: true, model: true, usage: true },
+  },
+  codex: {
+    type: true,
+    timestamp: true,
+    payload: {
+      type: true,
+      id: true,
+      session_id: true,
+      model: true,
+      forked_from_id: true,
+      source: { subagent: { thread_spawn: { parent_thread_id: true } } },
+      info: { last_token_usage: true },
+    },
+  },
+  grok: {
+    timestamp: true,
+    params: {
+      sessionId: true,
+      _meta: { agentTimestampMs: true },
+      update: { sessionUpdate: true, prompt_id: true, usage: true },
+    },
+  },
+};
+
+function selectUsageFields(provider: UsageProviderKind) {
+  const fields = USAGE_FIELDS[provider === "codex" || provider === "grok" ? provider : "claude"];
+  return (path: ReadonlyArray<string | number | null>): boolean => {
+    let selected: true | SelectedFields = fields;
+    for (const key of path) {
+      if (selected === true) return true;
+      if (typeof key !== "string" || !Object.hasOwn(selected, key)) return false;
+      selected = selected[key]!;
+    }
+    return true;
+  };
+}
 
 function fnv1a(buffer: Buffer): number {
   let hash = 0x811c9dc5;
@@ -194,7 +253,9 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
+  options?: { readonly streamingThresholdBytes?: number },
 ): Promise<TranscriptParseResult | null> {
+  const streamingThresholdBytes = options?.streamingThresholdBytes ?? STREAMING_THRESHOLD_BYTES;
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
@@ -248,43 +309,87 @@ export async function readTranscriptRecords(
     };
 
     const records: UsageRecord[] = [];
-    // Buffer-level line splitting rather than `readline`, because resuming
-    // needs byte-exact offsets and decoded strings cannot provide them.
-    // Newline-free chunks are collected rather than concatenated as they
-    // arrive, so a single huge line costs one copy instead of one per chunk.
+    // Byte offsets remain independent of UTF-8 decoding. Only complete lines
+    // commit the resume point; an unfinished tail is replayed on the next scan.
     let resumeOffset = start;
+    let scanOffset = start;
     let pendingChunks: Buffer[] = [];
+    let pendingBytes = 0;
+    let streaming: ReturnType<typeof createTranscriptJsonReader> | undefined;
+    let decoder: NodeStringDecoder.StringDecoder | undefined;
+    const selectPath = selectUsageFields(provider);
+
+    const append = (segment: Buffer) => {
+      if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
+        if (segment.length > 0) pendingChunks.push(segment);
+        pendingBytes += segment.length;
+        return;
+      }
+      if (!streaming) {
+        // Usage has no import-history budget: retain all selected usage fields,
+        // regardless of the size of the surrounding unselected tool content.
+        streaming = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
+        decoder = new NodeStringDecoder.StringDecoder("utf8");
+        for (const pending of pendingChunks) streaming.write(decoder.write(pending));
+        pendingChunks = [];
+        pendingBytes = 0;
+      }
+      streaming.write(decoder!.write(segment));
+    };
+    const finish = (state: CodexScanState, out: UsageRecord[]) => {
+      if (streaming) {
+        streaming.write(decoder!.end());
+        const projected = streaming.finish();
+        if (provider === "grok") {
+          out.push(...parseGrokRecord(projected));
+        } else {
+          const record =
+            provider === "codex"
+              ? parseCodexRecord(projected, state)
+              : parseClaudeRecord(projected);
+          if (record !== null) out.push(record);
+        }
+      } else if (pendingBytes > 0) {
+        const line =
+          pendingChunks.length === 1
+            ? pendingChunks[0]!
+            : Buffer.concat(pendingChunks, pendingBytes);
+        parseLine(toLineString(line), state, out);
+      }
+      pendingChunks = [];
+      pendingBytes = 0;
+      streaming = undefined;
+      decoder = undefined;
+    };
     const stream = handle.createReadStream({
       start,
       autoClose: false,
+      highWaterMark: 256 * 1024,
     }) as AsyncIterable<Buffer>;
     for await (const chunk of stream) {
-      if (!chunk.includes(NEWLINE)) {
-        pendingChunks.push(chunk);
-        continue;
-      }
-      const buffer: Buffer =
-        pendingChunks.length === 0 ? chunk : Buffer.concat([...pendingChunks, chunk]);
-      pendingChunks = [];
       let lineStart = 0;
-      for (;;) {
-        const newlineIndex = buffer.indexOf(NEWLINE, lineStart);
-        if (newlineIndex === -1) break;
-        parseLine(toLineString(buffer.subarray(lineStart, newlineIndex)), codexState, records);
+      while (lineStart < chunk.length) {
+        const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
+        if (newlineIndex === -1) {
+          append(chunk.subarray(lineStart));
+          break;
+        }
+        // Most lines fit in the current chunk. Avoid buffering/streaming
+        // machinery on this hot path.
+        if (!streaming && pendingBytes === 0) {
+          parseLine(toLineString(chunk.subarray(lineStart, newlineIndex)), codexState, records);
+        } else {
+          append(chunk.subarray(lineStart, newlineIndex));
+          finish(codexState, records);
+        }
         lineStart = newlineIndex + 1;
+        resumeOffset = scanOffset + lineStart;
       }
-      resumeOffset += lineStart;
-      if (lineStart < buffer.length) pendingChunks.push(buffer.subarray(lineStart));
+      scanOffset += chunk.length;
     }
 
-    // A trailing segment without its newline is parsed for this result but not
-    // consumed: a writer may still be appending to it, and counting a half
-    // record now and its full form later would double count.
     const tailRecords: UsageRecord[] = [];
-    if (pendingChunks.length > 0) {
-      const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
-      if (pending.length > 0) parseLine(toLineString(pending), { ...codexState }, tailRecords);
-    }
+    finish({ ...codexState }, tailRecords);
 
     const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
     let guardHash = 0;

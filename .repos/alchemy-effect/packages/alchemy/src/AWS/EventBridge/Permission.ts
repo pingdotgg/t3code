@@ -36,15 +36,16 @@ export interface PermissionProps {
  * `Permission` manages a single `PutPermission` / `RemovePermission` lifecycle
  * entry on an event bus so helper surfaces can safely grant publishers access
  * without requiring callers to hand-write raw bus policies.
- * @resource
- * @section Granting Access
- * @example Allow Another Account To Publish
+ * ### Granting Access
+ * **Example:** Allow Another Account To Publish
  * ```typescript
  * const permission = yield* Permission("PartnerPublish", {
  *   eventBusName: bus.eventBusName,
  *   principal: "123456789012",
  * });
  * ```
+ *
+ * @resource
  */
 export interface Permission extends Resource<
   "AWS.EventBridge.Permission",
@@ -127,12 +128,10 @@ export const PermissionProvider = () =>
                     .filter(
                       (s): s is { Sid: string } => typeof s.Sid === "string",
                     )
-                    .map(
-                      (s): PermissionAttrs => ({
-                        statementId: s.Sid,
-                        eventBusName: busName,
-                      }),
-                    );
+                    .map((s): PermissionAttrs => ({
+                      statementId: s.Sid,
+                      eventBusName: busName,
+                    }));
                 }).pipe(
                   // Bus removed out of band between list and describe — skip.
                   Effect.catchTag("ResourceNotFoundException", () =>

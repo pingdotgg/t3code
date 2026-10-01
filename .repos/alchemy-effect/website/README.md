@@ -6,10 +6,10 @@ This workspace contains the customer-facing docs site for Alchemy Effect.
 
 The site is intentionally split into independent steps:
 
-1. `bun run build:reference` generates Zola-compatible API reference pages from the TypeScript source tree.
-2. `bun run build:assets` compiles the shared Tailwind CSS and the custom browser JavaScript bundle.
-3. `bun run build:site` renders the site with Zola.
-4. `bun run build:search` indexes the built HTML with Pagefind.
+1. `pnpm build:reference` generates Zola-compatible API reference pages from the TypeScript source tree.
+2. `pnpm build:assets` compiles the shared Tailwind CSS and the custom browser JavaScript bundle.
+3. `pnpm build:site` renders the site with Zola.
+4. `pnpm build:search` indexes the built HTML with Pagefind.
 5. `alchemy.run.ts` deploys the final `dist/` directory through `Cloudflare.Website.StaticSite(...)`.
 
 This keeps the large markdown corpus on a Rust-first rendering path while still
@@ -17,10 +17,10 @@ allowing a modern custom UI.
 
 ## Local Commands
 
-- `bun run build`
-- `bun run dev:site`
-- `bun run deploy`
-- `bun run destroy`
+- `pnpm build`
+- `pnpm dev:site`
+- `pnpm deploy`
+- `pnpm destroy`
 
 ## Benchmark Snapshot
 

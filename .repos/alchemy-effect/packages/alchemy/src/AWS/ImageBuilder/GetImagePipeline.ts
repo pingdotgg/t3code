@@ -11,9 +11,8 @@ import type { ImagePipeline } from "./ImagePipeline.ts";
  * latest and next scheduled runs. The pipeline's ARN is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.GetImagePipelineHttp)`.
- * @binding
- * @section Observing Pipelines
- * @example Read the Bound Pipeline's State
+ * ### Observing Pipelines
+ * **Example:** Read the Bound Pipeline's State
  * ```typescript
  * // init — bind the operation to the pipeline
  * const getPipeline = yield* AWS.ImageBuilder.GetImagePipeline(pipeline);
@@ -24,6 +23,8 @@ import type { ImagePipeline } from "./ImagePipeline.ts";
  *   `${imagePipeline?.name}: ${imagePipeline?.status}, last run ${imagePipeline?.dateLastRun}`,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetImagePipeline extends Binding.Service<
   GetImagePipeline,

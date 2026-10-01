@@ -8,6 +8,7 @@ import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 import { resolveZoneId, type Reference } from "../Zone/index.ts";
 import { listAllZones } from "../Zone/lookup.ts";
+import { retryWorkerScriptNotFound } from "./retry.ts";
 
 export type Matcher =
   | { type: "all" }
@@ -71,11 +72,8 @@ export type Rule = Resource<
  *
  * Rules forward inbound mail matching `matchers` to the listed actions
  * (forward to a verified destination, drop, or hand off to a Worker).
- * @resource
- * @product Email
- * @category Email
- * @section Forwarding Mail
- * @example Forward `info@` to a verified destination
+ * ### Forwarding Mail
+ * **Example:** Forward `info@` to a verified destination
  * ```typescript
  * const rule = yield* Cloudflare.Email.Rule("InfoForward", {
  *   zone: "example.com",
@@ -83,6 +81,10 @@ export type Rule = Resource<
  *   actions: [{ type: "forward", value: ["ops@example.com"] }],
  * });
  * ```
+ *
+ * @resource
+ * @product Email
+ * @category Email
  */
 export const Rule = Resource<Rule>("Cloudflare.Email.Rule", {
   aliases: ["Cloudflare.EmailRule"],
@@ -173,16 +175,19 @@ export const RuleProvider = () =>
             ...body,
           })
           .pipe(
+            retryWorkerScriptNotFound,
             Effect.catch(() =>
               emailRouting
                 .createRule({ zoneId, ...body })
-                .pipe(Effect.map((r) => r)),
+                .pipe(retryWorkerScriptNotFound),
             ),
           );
         return normalize(result, zoneId);
       }
 
-      const result = yield* emailRouting.createRule({ zoneId, ...body });
+      const result = yield* emailRouting
+        .createRule({ zoneId, ...body })
+        .pipe(retryWorkerScriptNotFound);
       return normalize(result, zoneId);
     }),
     delete: Effect.fn(function* ({ output }) {
@@ -234,19 +239,17 @@ const normalize = (
   name: rule.name ?? "",
   enabled: rule.enabled ?? true,
   priority: rule.priority ?? 0,
-  matchers: (rule.matchers ?? []).map(
-    (m): Matcher =>
-      m.type === "all"
-        ? { type: "all" }
-        : { type: "literal", field: "to", value: m.value ?? "" },
+  matchers: (rule.matchers ?? []).map((m): Matcher =>
+    m.type === "all"
+      ? { type: "all" }
+      : { type: "literal", field: "to", value: m.value ?? "" },
   ),
-  actions: (rule.actions ?? []).map(
-    (a): Action =>
-      a.type === "drop"
-        ? { type: "drop" }
-        : a.type === "forward"
-          ? { type: "forward", value: a.value ?? [] }
-          : { type: "worker", value: a.value ?? [] },
+  actions: (rule.actions ?? []).map((a): Action =>
+    a.type === "drop"
+      ? { type: "drop" }
+      : a.type === "forward"
+        ? { type: "forward", value: a.value ?? [] }
+        : { type: "worker", value: a.value ?? [] },
   ),
 });
 

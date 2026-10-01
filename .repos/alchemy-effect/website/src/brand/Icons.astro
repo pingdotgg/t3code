@@ -1,0 +1,55 @@
+---
+/**
+ * The complete `<link rel="icon">` set, shared by every layout so the tags
+ * can't drift apart. All of these files are emitted by
+ * `scripts/generate-brand-assets.ts`.
+ *
+ * `favicon.svg` carries both themes in one file and scales to any surface;
+ * modern browsers pick it and ignore the rest. The PNGs are per-theme
+ * fallbacks selected with `media`, since a media query can't survive
+ * rasterization. 512 is listed so hi-DPI surfaces (retina bookmark bars,
+ * install prompts, Android home screens) have a large source rather than an
+ * upscaled 32. `apple-touch-icon` is opaque and light-only — iOS web clips
+ * have no dark variant and ignore `media`.
+ */
+
+interface Props {
+  /**
+   * Emit the SVG link. Starlight already injects one from its own `favicon`
+   * config, so the docs layout passes `false` to avoid a duplicate tag.
+   */
+  svg?: boolean;
+}
+
+const { svg = true } = Astro.props;
+
+/** [size, light href, dark href] — each expands into a media-switched pair. */
+const RASTERS = [
+  [16, "/favicon-16.png", "/favicon-16-dark.png"],
+  [32, "/favicon-32.png", "/favicon-32-dark.png"],
+  [512, "/icon-512.png", "/icon-512-dark.png"],
+] as const;
+---
+
+{svg && <link rel="icon" type="image/svg+xml" href="/favicon.svg" />}
+{
+  RASTERS.map(([size, light, dark]) => (
+    <>
+      <link
+        rel="icon"
+        type="image/png"
+        sizes={`${size}x${size}`}
+        href={light}
+        media="(prefers-color-scheme: light)"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes={`${size}x${size}`}
+        href={dark}
+        media="(prefers-color-scheme: dark)"
+      />
+    </>
+  ))
+}
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />

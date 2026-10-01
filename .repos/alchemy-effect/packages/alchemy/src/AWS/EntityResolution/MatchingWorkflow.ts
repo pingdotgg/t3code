@@ -84,9 +84,8 @@ export interface MatchingWorkflow extends Resource<
  * The workflow definition itself is cheap and instant; a matching RUN
  * (`StartMatchingJob`) processes the full input and takes many minutes.
  *
- * @resource
- * @section Creating Workflows
- * @example Rule-based matching over a Glue table
+ * ### Creating Workflows
+ * **Example:** Rule-based matching over a Glue table
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -111,7 +110,7 @@ export interface MatchingWorkflow extends Resource<
  * });
  * ```
  *
- * @example ML-powered matching
+ * **Example:** ML-powered matching
  * ```typescript
  * const workflow = yield* AWS.EntityResolution.MatchingWorkflow("MlDedupe", {
  *   inputSourceConfig: [
@@ -127,6 +126,8 @@ export interface MatchingWorkflow extends Resource<
  *   roleArn: role.roleArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const MatchingWorkflow = Resource<MatchingWorkflow>(
   "AWS.EntityResolution.MatchingWorkflow",

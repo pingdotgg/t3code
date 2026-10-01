@@ -1,0 +1,66 @@
+---
+title: Registry
+description: The registry resolves owner/name to a repository and serves listings. Keep it in a Durable Object or move it to a D1 database.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+The registry is the index. It maps `owner/name` to a repository id,
+enforces that names are unique, and answers listings. Two
+implementations ship, and the rest of the graph cannot tell them
+apart.
+
+## Durable Object
+
+```typescript
+Layer.provide(Git.RegistryDurableObject)
+```
+
+One singleton Durable Object for the whole service. Uniqueness comes
+from its single-threaded transactions, and listings render from
+denormalized columns so listing a thousand repositories touches one
+object rather than a thousand.
+
+The Worker caches resolutions in-isolate for a minute. A stale hit
+fails safe: each repository's Durable Object stores its own
+`owner/name` and rejects a request addressed to a different one.
+
+## D1
+
+```typescript
+const RepoIndex = Cloudflare.D1.Database("RepoIndex");
+
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryD1(RepoIndex)),
+  Layer.provide(Git.HasherInline),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+Same contract, different scaling shape. D1 replicates reads, and
+`owner/name` resolution plus `WHERE owner = ?` listing are what a
+relational store is built for. Writes are rare by comparison: a create,
+a delete, a summary refresh after a push.
+
+Uniqueness moves with it. `PRIMARY KEY (owner, name)` and an insert
+guarded by `WHERE NOT EXISTS` make the create atomic inside SQLite, so
+a losing racer sees `RepoAlreadyExists` exactly as it does on the
+Durable Object. The table is created on first use from the same DDL
+the Durable Object applies.
+
+## Choosing
+
+| | `RegistryDurableObject` | `RegistryD1` |
+| --- | --- | --- |
+| Resolution reads | one object, one region, cached a minute at the Worker | replicated |
+| Listings | denormalized columns in the object | SQL over the table |
+| Creates per second | hundreds | hundreds |
+| Extra resources | none | a D1 database you declare |
+
+Start with the Durable Object. Move to D1 when the registry's single
+region shows up in resolution latency for users far from it, or when
+you want to query the index with SQL from elsewhere.
