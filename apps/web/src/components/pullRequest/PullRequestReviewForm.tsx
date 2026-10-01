@@ -160,9 +160,12 @@ export function PullRequestReviewForm({
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
-      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={pending} />
-        {offered.length > 1 ? (
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          <TextFieldSpeechControls speech={speech} disabled={pending} />
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {offered.length > 1 ? (
           <Select
             value={selectedVerdict?.value ?? null}
             disabled={pending}
@@ -170,7 +173,7 @@ export function PullRequestReviewForm({
               if (value !== null) setRequestedVerdict(value);
             }}
           >
-            <SelectTrigger size="xs" className="mr-auto w-auto min-w-0" aria-label="Review verdict">
+            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
               <span className="flex items-center gap-1.5">
                 {selectedVerdict?.icon}
                 {selectedVerdict?.label}
@@ -199,6 +202,7 @@ export function PullRequestReviewForm({
         >
           {pending ? "Submitting..." : "Submit review"}
         </Button>
+        </div>
       </div>
     </>
   );

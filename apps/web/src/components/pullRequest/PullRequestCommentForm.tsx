@@ -129,7 +129,12 @@ export function PullRequestCommentForm({
         }}
       />
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={submitting !== null || actionPending} />
+        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
+          <TextFieldSpeechControls
+            speech={speech}
+            disabled={submitting !== null || actionPending}
+          />
+        </div>
         {followUpAction === null ? null : (
           <Button
             size="xs"
