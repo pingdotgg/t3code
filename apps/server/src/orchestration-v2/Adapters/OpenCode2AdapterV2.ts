@@ -228,6 +228,12 @@ interface ActiveTurn {
   compactions: number;
   interrupted: boolean;
   /**
+   * Set until the turn's prompt, command or compaction is sent. A Stop before
+   * then has nothing on the server to stop, so it ends the turn here and the
+   * request is never sent.
+   */
+  unsent: boolean;
+  /**
    * Steers sent into this turn that OpenCode has not delivered yet, by inbox
    * id. Each one wakes the session, so an execution that ends before reading
    * one is followed by another that does, and the turn spans both.
@@ -1144,6 +1150,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       compaction: undefined,
       compactions: 0,
       interrupted: false,
+      unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
       heldEnd: undefined,
@@ -2982,18 +2989,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * What a turn sends: `/compact` compacts, `/name args` naming a workspace
      * command runs it, and anything else is a prompt with the `$skill`s it
      * names attached. Commands and skills are read from the session's
-     * directory only when the text could use them.
+     * directory only when the text could use them. A turn stopped meanwhile
+     * sends nothing.
      */
     const submit = Effect.fnUntraced(function* (
       sessionId: string,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+      state: ThreadState,
+      turn: ActiveTurn,
     ) {
       const sessionID = Session.ID.make(sessionId);
+      /** Whether the turn still sends; past this point a Stop goes to the server. */
+      const sending = () => {
+        if (state.active !== turn || turn.interrupted) return false;
+        turn.unsent = false;
+        return true;
+      };
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       // The turn's own id, so fork and rollback cut before this turn's item.
       const id = turnPromptId(sessionId, turnInput.attemptId);
       if (bare && text === "/compact") {
+        if (!sending()) return;
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
       }
       const location = { directory: turnInput.runtimePolicy.cwd ?? serverConfig.cwd };
@@ -3005,6 +3022,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.orElseSucceed(() => []),
         );
         if (commands.some((entry) => entry.name === command.name)) {
+          if (!sending()) return;
           return yield* client.session.command({ sessionID, ...command });
         }
       }
@@ -3018,6 +3036,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           )
         : [];
+      if (!sending()) return;
       return yield* client.session
         .prompt({
           sessionID,
@@ -3264,6 +3283,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               yield* cancelStrandedSteers(state);
               if (stagedReverts.has(sessionId)) yield* clearRevert(sessionId);
               const turn = yield* begin;
+              turn.unsent = true;
               // An execution OpenCode is running on its own takes this prompt at
               // its next step, so this turn is that execution from here on.
               yield* lock.withPermit(takeRunningWake(state));
@@ -3272,7 +3292,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
           if (started === undefined) return;
           const { state, sessionId, turn } = started;
-          yield* submit(sessionId, turnInput).pipe(
+          yield* submit(sessionId, turnInput, state, turn).pipe(
             // Deleted outside T3: the thread is broken, and forgetting it makes
             // the next turn resume, fail, and recreate it with a handoff.
             Effect.catchTags({
@@ -3412,6 +3432,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             state.unsettled = true;
             yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
             return yield* cancelStrandedSteers(state);
+          }
+          // Nothing was running because the turn has not sent its request yet
+          // (it is reading the workspace's commands or skills): it ends here,
+          // and never sends it.
+          if (!reply.value.interrupted && state.active === turn && turn.unsent) {
+            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
           }
           // Nothing was running. Unless the execution already ended (its event
           // is on the way), the turn is still open and nothing stopped.

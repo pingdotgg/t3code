@@ -445,6 +445,37 @@ describe("OpenCode2 adapter", () => {
     }),
   );
 
+  it.effect("sends nothing for a turn stopped while it reads the workspace's commands", () =>
+    Effect.gen(function* () {
+      // The command list never answers; the Stop lands while the turn waits
+      // on it, before anything was sent, so OpenCode has nothing running. The
+      // replay fails on any prompt or command sent after the Stop.
+      const { runtime, thread } = yield* resumed([
+        out("command.list", "<any>"),
+        reply("command.list", "<hang>"),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: false }),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const started = yield* runtime
+        .startTurn({
+          ...turnInput(thread),
+          message: { ...turnInput(thread).message, text: "/hello WORLD" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 second");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      // The command list times out; the stopped turn must not go on to prompt.
+      yield* TestClock.adjust("6 seconds");
+      yield* Fiber.join(started);
+      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("ends a turn locally when a stuck server never answers Stop", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
