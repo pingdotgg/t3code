@@ -12,6 +12,7 @@ import android.os.Build
 import android.view.View
 import android.widget.RemoteViews
 import org.json.JSONObject
+import java.time.Instant
 import java.text.DateFormat
 import java.util.Date
 
@@ -94,7 +95,7 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       }
       val items = RemoteViews.RemoteCollectionItems.Builder()
       rows.forEachIndexed { index, (provider, window) ->
-        items.addItem(index.toLong(), rowView(context, provider, window))
+        items.addItem(index.toLong(), rowView(context, provider, window, now))
       }
       views.setRemoteAdapter(R.id.t3_widget_rows, items.build())
       views.setEmptyView(R.id.t3_widget_rows, R.id.t3_widget_empty)
@@ -113,7 +114,8 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       alarms.cancel(expiryIntent(context))
       // Inexact and non-wakeup: the timestamp remains visible if Android delays expiry.
       if (nextExpiry != Long.MAX_VALUE) {
-        alarms.set(AlarmManager.RTC, nextExpiry, expiryIntent(context))
+        // Refresh countdowns without waking the device or requesting exact alarms.
+        alarms.set(AlarmManager.RTC, minOf(nextExpiry, now + 60_000), expiryIntent(context))
       }
       manager.updateAppWidget(id, views)
     }
@@ -145,7 +147,29 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       )
     }
 
-    private fun rowView(context: Context, provider: JSONObject, window: JSONObject?): RemoteViews {
+    // Match packages/shared usageLimits.formatResetsIn for native widget renders.
+    internal fun formatResetsIn(resetsAt: Long?, now: Long): String = when {
+      resetsAt == null -> "Reset time unavailable"
+      resetsAt <= now -> "resets now"
+      else -> {
+        val minutes = (resetsAt - now) / 60_000
+        val hours = minutes / 60
+        val days = hours / 24
+        val duration = when {
+          days > 0 -> "${days}d ${hours % 24}h"
+          hours > 0 -> "${hours}h ${minutes % 60}m"
+          else -> "${minutes}m"
+        }
+        "resets in $duration"
+      }
+    }
+
+    private fun rowView(
+      context: Context,
+      provider: JSONObject,
+      window: JSONObject?,
+      now: Long
+    ): RemoteViews {
       val child = RemoteViews(context.packageName, R.layout.t3_subscription_widget_row)
       val remaining = window?.optInt("remaining")?.coerceIn(0, 100)
       val detail = provider.optString("detail")
@@ -160,8 +184,14 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
       val visibility = if (remaining == null) View.GONE else View.VISIBLE
       child.setViewVisibility(R.id.t3_widget_progress, visibility)
       if (remaining != null) child.setProgressBar(R.id.t3_widget_progress, 100, remaining, false)
-      val reset = window?.optString("reset")
-        ?: context.getString(R.string.t3_subscription_widget_refresh)
+      val reset = if (window == null) {
+        context.getString(R.string.t3_subscription_widget_refresh)
+      } else {
+        val resetsAt = runCatching {
+          Instant.parse(window.optString("resetsAt")).toEpochMilli()
+        }.getOrNull()
+        formatResetsIn(resetsAt, now)
+      }
       child.setTextViewText(R.id.t3_widget_reset, reset)
       child.setOnClickFillInIntent(R.id.t3_widget_row, Intent())
       child.setContentDescription(

@@ -514,7 +514,7 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
-function resetMillis(window: ServerProviderUsageWindow): number | null {
+function resetMillis(window: Pick<ServerProviderUsageWindow, "resetsAt">): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
   return Number.isFinite(at) ? at : null;
@@ -560,7 +560,10 @@ export function formatDuration(ms: number): string {
 }
 
 /** `resets in 2h 13m`, or null when the window has no reset. */
-export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
+export function formatResetsIn(
+  window: Pick<ServerProviderUsageWindow, "resetsAt">,
+  now: number,
+): string | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
