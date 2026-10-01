@@ -413,17 +413,19 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 }
 
 let authenticatedWaiters: Array<() => void> = [];
+let initialBootstrapTriggered = false;
 
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
   authenticatedWaiters = [];
+  initialBootstrapTriggered = false;
 }
 
-// How often a still-unauthenticated waiter re-checks the session: pairing in
-// another tab lands a cookie this tab never submitted for, and the re-check
-// picks that up without any further user action.
-const AUTH_RECHECK_INTERVAL_MS = 10_000;
+// Backstop for pairing that completes without this tab regaining focus
+// (e.g. side-by-side windows): re-check on a slow cadence instead of polling
+// hot. Submit success and focus/visibility wake waiters immediately.
+const AUTH_RECHECK_INTERVAL_MS = 60_000;
 
 const flushAuthenticatedWaiters = () => {
   const waiters = authenticatedWaiters;
@@ -438,35 +440,56 @@ const waitForAuthProgress = (): Promise<void> =>
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", settle);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+      }
       authenticatedWaiters = authenticatedWaiters.filter((waiter) => waiter !== settle);
       resolve();
     };
+    const onVisibilityChange = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") settle();
+    };
     const timeout = setTimeout(settle, AUTH_RECHECK_INTERVAL_MS);
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", settle);
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
     authenticatedWaiters.push(settle);
   });
 
 /**
- * Resolves once the primary session exists. Joins (and triggers, if needed)
+ * Whether the primary session already exists. The first call also triggers
  * the initial bootstrap attempt so desktop-managed environments connect with
- * no manual pairing; while pairing is still required, waits for a future
- * successful submit instead of dialing a socket the server must reject.
- * Falls through immediately when the check itself is unreachable, preserving
- * today's dial behavior for outages.
+ * no manual pairing; later calls only re-check the session, so a consumed
+ * bootstrap credential is never exchanged twice.
+ */
+async function isPrimarySessionEstablished(triggerBootstrap: boolean): Promise<boolean> {
+  try {
+    if (triggerBootstrap) {
+      return (await resolveInitialServerAuthGateState()).status === "authenticated";
+    }
+    return (await fetchSessionState()).authenticated;
+  } catch {
+    // The check itself is unreachable: dial anyway, preserving today's
+    // behavior for outages instead of hanging the transport.
+    return true;
+  }
+}
+
+/**
+ * Resolves once the primary session exists. Every socket dial waits through
+ * here (not just the first), so no dial ever 401-storms: while pairing is
+ * still required, the transport waits for a future successful submit, a
+ * return to the tab, or the re-check cadence instead of dialing a socket the
+ * server must reject.
  */
 export async function waitForPrimaryAuthentication(): Promise<void> {
-  try {
-    const gate = await resolveInitialServerAuthGateState();
-    if (gate.status === "authenticated") return;
-  } catch {
-    return;
-  }
+  const triggerBootstrap = !initialBootstrapTriggered;
+  initialBootstrapTriggered = true;
+  if (await isPrimarySessionEstablished(triggerBootstrap)) return;
   for (;;) {
     await waitForAuthProgress();
-    try {
-      const session = await fetchSessionState();
-      if (session.authenticated) return;
-    } catch {
-      return;
-    }
+    if (await isPrimarySessionEstablished(false)) return;
   }
 }

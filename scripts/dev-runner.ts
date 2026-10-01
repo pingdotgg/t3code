@@ -546,15 +546,6 @@ export function parseDevRunnerPidFile(text: string): DevRunnerPidRecord | null {
   return { pid, serverPort, webPort, baseDir, startedAt };
 }
 
-/**
- * Identity check before killing anything: the recorded pid must still belong
- * to a dev-runner command carrying the same home directory. Pids get reused,
- * so killing on pid alone could terminate an unrelated process.
- */
-export function devRunnerCommandMatchesHome(command: string, baseDir: string): boolean {
-  return command.includes("dev-runner") && command.includes(baseDir);
-}
-
 export interface DevRunnerProcessEntry {
   readonly pid: number;
   readonly ppid: number;

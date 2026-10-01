@@ -1039,7 +1039,7 @@ function createPrimaryEnvironmentClient(
   }
 
   return createWsRpcClient(
-    new WsTransport(createGatedFirstDialUrlProvider(wsBaseUrl, waitForPrimaryAuthentication), {
+    new WsTransport(createPrimarySocketUrlProvider(wsBaseUrl, waitForPrimaryAuthentication), {
       onProtocolConnected: () => {
         repairRetainedThreadDetailSubscriptionsAfterReconnect();
       },
@@ -1048,22 +1048,19 @@ function createPrimaryEnvironmentClient(
 }
 
 /**
- * Defers the primary socket's first dial until the session exists. Pre-auth
- * dials are rejected with 401s that Chromium logs as console errors and the
- * transport retries loudly, all before the user could possibly be paired.
- * Only the first dial waits: reconnects keep today's immediate behavior so
- * post-auth recovery (including session-expiry flows) is unchanged.
+ * Defers every primary socket dial until the session exists, so no dial ever
+ * 401-storms: pre-auth dials are rejected with 401s that Chromium logs as
+ * console errors and the transport retries loudly, all before the user could
+ * possibly be paired. Waiting (rather than failing) preserves recovery: once
+ * a session exists again — submit, refocus, re-check — the pending dial
+ * proceeds without any page action.
  */
-export function createGatedFirstDialUrlProvider(
+export function createPrimarySocketUrlProvider(
   wsBaseUrl: string,
   waitForAuthentication: () => Promise<void>,
 ): () => Promise<string> {
-  let firstDialPending = true;
   return async () => {
-    if (firstDialPending) {
-      firstDialPending = false;
-      await waitForAuthentication();
-    }
+    await waitForAuthentication();
     return wsBaseUrl;
   };
 }

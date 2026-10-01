@@ -9,7 +9,6 @@ import {
   classifyPidfileOwner,
   computeProcessTreeKillOrder,
   createDevRunnerEnv,
-  devRunnerCommandMatchesHome,
   devRunnerPidFileName,
   findFirstAvailableOffset,
   isBrowserAllowedPort,
@@ -737,7 +736,20 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       assert.deepStrictEqual(
         classifyPidfileOwner(
           record,
-          { command: "node apps/server/src/bin.ts", startedAtMs: Date.now() - 90_000 },
+          { command: "node apps/server/src/bin.ts", startedAtMs: Date.now() },
+          homes,
+        ),
+        { status: "foreign-live" },
+      );
+      // A dev-runner for another home, started long ago: neither the home
+      // spelling nor the start time corroborates this record.
+      assert.deepStrictEqual(
+        classifyPidfileOwner(
+          record,
+          {
+            command: "node scripts/dev-runner.ts dev --home-dir /tmp/other-home",
+            startedAtMs: Date.now() - 600_000,
+          },
           homes,
         ),
         { status: "foreign-live" },
@@ -753,27 +765,6 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
   });
 
   describe("dev-runner process identity", () => {
-    it("matches only dev-runner commands carrying the same home directory", () => {
-      assert.strictEqual(
-        devRunnerCommandMatchesHome(
-          "node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-a",
-          "/tmp/t3code-test-a",
-        ),
-        true,
-      );
-      assert.strictEqual(
-        devRunnerCommandMatchesHome(
-          "node scripts/dev-runner.ts dev --home-dir /tmp/t3code-test-a",
-          "/tmp/t3code-test-b",
-        ),
-        false,
-      );
-      assert.strictEqual(
-        devRunnerCommandMatchesHome("node apps/server/src/bin.ts", "/tmp/x"),
-        false,
-      );
-    });
-
     it("orders kills leaves-first and tolerates cycles", () => {
       assert.deepStrictEqual(
         computeProcessTreeKillOrder(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  createGatedFirstDialUrlProvider,
+  createPrimarySocketUrlProvider,
   shouldApplyProjectionEvent,
   shouldApplyProjectionSnapshot,
   shouldApplyTerminalEvent,
@@ -148,17 +148,18 @@ describe("shouldApplyProjectionEvent", () => {
   });
 });
 
-describe("createGatedFirstDialUrlProvider", () => {
-  it("waits for authentication only on the first dial", async () => {
+describe("createPrimarySocketUrlProvider", () => {
+  it("waits for authentication on every dial", async () => {
     let waits = 0;
-    const provider = createGatedFirstDialUrlProvider("ws://127.0.0.1:3000/", async () => {
+    const provider = createPrimarySocketUrlProvider("ws://127.0.0.1:3000/", async () => {
       waits += 1;
     });
 
     await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
     await expect(provider()).resolves.toBe("ws://127.0.0.1:3000/");
-    // Reconnects must not re-gate: post-auth recovery (including session
-    // expiry flows) keeps today's immediate-dial behavior.
-    expect(waits).toBe(1);
+    // Uniform gating (no first-dial special case): a reconnect while the
+    // session is gone waits instead of 401-storming, and proceeds as soon as
+    // the session exists again.
+    expect(waits).toBe(2);
   });
 });
