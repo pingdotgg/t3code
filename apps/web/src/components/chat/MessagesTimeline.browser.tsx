@@ -1,6 +1,12 @@
 import "../../index.css";
 
-import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ThreadId,
+  TurnId,
+  type TerminalMetadataStreamEvent,
+} from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";
@@ -93,6 +99,10 @@ vi.mock("@legendapp/list/react", async () => {
 
 import { MessagesTimeline } from "./MessagesTimeline";
 import type { TimelineEntry } from "../../session-logic";
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { terminalSessionManager } from "../../terminalSessionState";
+import { scopeThreadRef } from "@t3tools/client-runtime";
+import { selectThreadTerminalState, useTerminalStateStore } from "../../terminalStateStore";
 
 function buildProps() {
   return {
@@ -122,6 +132,134 @@ function buildProps() {
 }
 
 describe("MessagesTimeline", () => {
+  it("opens only a live, owned terminal from a text-sized worklog shortcut without expanding details", async () => {
+    const props = buildProps();
+    const threadRef = scopeThreadRef(props.activeThreadEnvironmentId, props.activeThreadId);
+    const terminalId = "agent-live-command";
+    let metadata!: (event: TerminalMetadataStreamEvent) => void;
+    const unsubscribe = terminalSessionManager.subscribeMetadata({
+      environmentId: props.activeThreadEnvironmentId,
+      client: {
+        terminal: {
+          onMetadata: (listener) => {
+            metadata = listener;
+            return () => {};
+          },
+        },
+      },
+    });
+    const summary = {
+      threadId: props.activeThreadId,
+      terminalId,
+      cwd: "/workspace",
+      worktreePath: null,
+      status: "running" as const,
+      pid: 123,
+      exitCode: null,
+      exitSignal: null,
+      hasRunningSubprocess: true,
+      label: "pnpm dev",
+      updatedAt: "2026-04-13T12:00:00.000Z",
+    };
+    const entry = (id: string, toolData: unknown): TimelineEntry => ({
+      id,
+      kind: "work",
+      createdAt: summary.updatedAt,
+      entry: {
+        id,
+        createdAt: summary.updatedAt,
+        label: "terminal_start",
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        isComplete: true,
+        toolData,
+      },
+    });
+    useTerminalStateStore.getState().removeTerminalState(threadRef);
+    metadata({ type: "snapshot", terminals: [summary] });
+    const screen = await render(
+      <AppAtomRegistryProvider>
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[
+            entry("live", {
+              toolName: "mcp__t3-code__terminal_start",
+              input: { command: "pnpm dev" },
+              result: JSON.stringify({ terminalId }),
+            }),
+            entry("missing", {
+              toolName: "terminal_read",
+              rawInput: { terminalId: "agent-missing" },
+            }),
+            entry("unrelated", { toolName: "read_file", result: JSON.stringify({ terminalId }) }),
+          ]}
+        />
+      </AppAtomRegistryProvider>,
+    );
+    try {
+      await page.getByRole("button", { name: "Expand Tool Calls (3)" }).click();
+      const shortcut = page.getByRole("button", {
+        name: "Open running terminal: pnpm dev",
+        exact: true,
+      });
+      await expect.element(shortcut).toBeVisible();
+      expect(shortcut.elements()).toHaveLength(1);
+      // Managed foreground commands can be the PTY root process, with no child subprocess.
+      metadata({ type: "upsert", terminal: { ...summary, hasRunningSubprocess: false } });
+      await expect.element(shortcut).toBeVisible();
+      const icon = shortcut.element().querySelector("svg")!;
+      expect(icon.getBoundingClientRect().width).toBeCloseTo(
+        parseFloat(getComputedStyle(shortcut.element()).fontSize),
+      );
+      const state = () =>
+        selectThreadTerminalState(
+          useTerminalStateStore.getState().terminalStateByThreadKey,
+          threadRef,
+        );
+      expect(state().terminalOpen).toBe(false);
+      await shortcut.click();
+      expect(state().terminalOpen).toBe(true);
+      expect(state().activeTerminalId).toBe(terminalId);
+      await expect
+        .element(page.getByRole("button", { name: /^Collapse details:/ }))
+        .not.toBeInTheDocument();
+      for (const toolData of [
+        {
+          copilotToolName: "t3-code.terminal_start",
+          rawOutput: { content: JSON.stringify({ terminalId }) },
+        },
+        { toolName: "terminal_start", rawOutput: { terminalId } },
+        { toolName: "terminal_read", rawInput: { terminalId } },
+      ]) {
+        await screen.rerender(
+          <AppAtomRegistryProvider>
+            <MessagesTimeline {...props} timelineEntries={[entry("live", toolData)]} />
+          </AppAtomRegistryProvider>,
+        );
+        await expect.element(shortcut).toBeVisible();
+      }
+      metadata({
+        type: "upsert",
+        terminal: { ...summary, status: "exited", hasRunningSubprocess: false },
+      });
+      await expect.element(shortcut).not.toBeInTheDocument();
+      metadata({ type: "upsert", terminal: { ...summary, threadId: "other-thread" } });
+      await expect.element(shortcut).not.toBeInTheDocument();
+      metadata({ type: "snapshot", terminals: [summary] });
+      await expect.element(shortcut).toBeVisible();
+      terminalSessionManager.invalidateEnvironment(props.activeThreadEnvironmentId);
+      await expect.element(shortcut).not.toBeInTheDocument();
+      metadata({ type: "snapshot", terminals: [summary] });
+      await expect.element(shortcut).toBeVisible();
+      metadata({ type: "remove", threadId: summary.threadId, terminalId });
+      await expect.element(shortcut).not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      unsubscribe();
+      terminalSessionManager.reset();
+      useTerminalStateStore.getState().removeTerminalState(threadRef);
+    }
+  });
   afterEach(() => {
     scrollToEndSpy.mockReset();
     getStateSpy.mockClear();

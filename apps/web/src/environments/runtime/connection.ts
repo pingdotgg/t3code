@@ -13,6 +13,7 @@ import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAcc
 
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 import { registerSidebarStateClient } from "~/sidebarStateSync";
+import { terminalSessionManager } from "~/terminalSessionState";
 
 export interface EnvironmentConnection {
   readonly kind: "primary" | "saved";
@@ -129,6 +130,7 @@ export function createEnvironmentConnection(
       unsubscribe();
     }
     unsubscribers.length = 0;
+    terminalSessionManager.invalidateEnvironment(environmentId);
   };
 
   const failConnection = (error: Error) => {
@@ -239,6 +241,15 @@ export function createEnvironmentConnection(
     },
   );
   unsubscribers.push(unsubTerminalEvent);
+  unsubscribers.push(
+    terminalSessionManager.subscribeMetadata({
+      environmentId,
+      client: input.client,
+      options: {
+        onResubscribe: () => terminalSessionManager.invalidateEnvironment(environmentId),
+      },
+    }),
+  );
 
   return {
     kind: input.kind,

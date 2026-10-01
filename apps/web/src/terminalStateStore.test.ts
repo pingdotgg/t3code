@@ -332,6 +332,37 @@ describe("terminalStateStore actions", () => {
     expect(entries[0]?.event.type).toBe("started");
   });
 
+  // Failure modes: starting/restarting background work opens a hidden drawer,
+  // steals an existing selection, or loses registration/output needed on demand.
+  it.each(["started", "restarted"] as const)(
+    "registers agent %s events without opening or changing the selected terminal",
+    (type) => {
+      const store = useTerminalStateStore.getState();
+      for (const open of [false, true]) {
+        store.setTerminalOpen(THREAD_REF, open);
+        store.applyTerminalEvent(
+          THREAD_REF,
+          makeTerminalEvent(type, { terminalId: "agent-background" }),
+        );
+        const state = selectThreadTerminalState(
+          useTerminalStateStore.getState().terminalStateByThreadKey,
+          THREAD_REF,
+        );
+        expect(state.terminalOpen).toBe(open);
+        expect(state.activeTerminalId).toBe("default");
+        expect(state.terminalIds).toContain("agent-background");
+        expect(state.activeTerminalGroupId).toBe("group-default");
+      }
+      store.ensureTerminal(THREAD_REF, "agent-background", { open: true, active: true });
+      expect(
+        selectThreadTerminalState(
+          useTerminalStateStore.getState().terminalStateByThreadKey,
+          THREAD_REF,
+        ).activeTerminalId,
+      ).toBe("agent-background");
+    },
+  );
+
   it("applies activity and exited terminal events to subprocess state while buffering events", () => {
     const store = useTerminalStateStore.getState();
     store.ensureTerminal(THREAD_REF, "terminal-2", { open: true, active: true });

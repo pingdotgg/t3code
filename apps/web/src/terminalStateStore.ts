@@ -700,6 +700,14 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
                   if (!current.terminalIds.includes(event.terminalId)) {
                     nextState = newThreadTerminal(nextState, event.terminalId);
                   }
+                  if (event.terminalId.startsWith("agent-")) {
+                    return normalizeThreadTerminalState({
+                      ...nextState,
+                      terminalOpen: current.terminalOpen,
+                      activeTerminalId: current.activeTerminalId,
+                      activeTerminalGroupId: current.activeTerminalGroupId,
+                    });
+                  }
                   nextState = setThreadActiveTerminal(nextState, event.terminalId);
                   nextState = setThreadTerminalOpen(nextState, true);
                   return normalizeThreadTerminalState(nextState);

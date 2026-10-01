@@ -933,6 +933,16 @@ label:has(> select#reasoning-effort) select {
   outline-offset: 2px;
 }
 
+.chat-work-terminal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: inherit;
+  min-height: 1.75em;
+  padding-inline: 0.25em;
+  border-radius: 0.125rem;
+}
+
 .chat-work-label {
   min-width: 0;
   overflow-wrap: anywhere;

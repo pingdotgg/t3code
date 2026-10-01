@@ -54,6 +54,8 @@
 
 ## Desktop packaging and React state
 
+- Agent-managed terminal starts/restarts must register without opening the drawer or stealing selection. Worklog shortcuts must resolve explicit IDs against live metadata scoped to the environment and thread, not persisted UI IDs; retained foreground commands can run as the PTY root with no child subprocess, so use session status rather than child activity to determine whether their terminal is live.
+
 - `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; disable ref mapping, tags, submodules, and `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
 - Chat thread URLs can outlive a desktop backend port or advertise a LAN address while the client uses loopback. Resolve private-network aliases by their explicitly registered environment ID and protocol without contacting the alias; preserve exact-origin environment bindings and keep public websites and pairing URLs external.
 - Work-log display paths must use verbatim provider candidates, not Git-normalized changed paths: absolute patch paths are rejected without a cwd. Prefer raw input/ACP locations over shortened previews, and never treat JSON output as a filename.
