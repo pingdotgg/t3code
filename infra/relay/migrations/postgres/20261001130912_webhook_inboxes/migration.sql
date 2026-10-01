@@ -9,6 +9,7 @@ CREATE TABLE "relay_webhook_deliveries" (
 --> statement-breakpoint
 CREATE TABLE "relay_webhook_inboxes" (
 	"inbox_id" varchar(64) PRIMARY KEY,
+	"user_id" varchar(191) NOT NULL,
 	"environment_id" varchar(191) NOT NULL,
 	"environment_public_key" text NOT NULL,
 	"created_at" varchar(64) NOT NULL

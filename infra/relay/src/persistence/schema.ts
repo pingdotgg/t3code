@@ -188,6 +188,7 @@ export const relayWebhookInboxes = pgTable(
   "relay_webhook_inboxes",
   {
     inboxId: varchar("inbox_id", { length: 64 }).primaryKey(),
+    userId: varchar("user_id", { length: 191 }).notNull(),
     environmentId: varchar("environment_id", { length: 191 }).notNull(),
     environmentPublicKey: text("environment_public_key").notNull(),
     createdAt: varchar("created_at", { length: 64 }).notNull(),

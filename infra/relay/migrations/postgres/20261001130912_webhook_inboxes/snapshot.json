@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "ae073041-9a79-4fe5-86f4-f26903e57307",
+  "id": "413e3f6e-7759-49f4-b1ff-dd91eeff1a87",
   "prevIds": [
     "3809c51e-3821-4a08-818d-e5d28dd3e9b4"
   ],
@@ -1277,6 +1277,19 @@
       "generated": null,
       "identity": null,
       "name": "inbox_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_webhook_inboxes"
+    },
+    {
+      "type": "varchar(191)",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "user_id",
       "entityType": "columns",
       "schema": "public",
       "table": "relay_webhook_inboxes"

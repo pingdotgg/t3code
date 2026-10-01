@@ -964,6 +964,12 @@ export const RelayWebhookInbox = Schema.Struct({
 });
 export type RelayWebhookInbox = typeof RelayWebhookInbox.Type;
 
+/** The environment names its linked user, so deliveries use that user's link and tunnel. */
+export const RelayCreateWebhookInboxRequest = Schema.Struct({
+  cloudUserId: TrimmedNonEmptyString,
+});
+export type RelayCreateWebhookInboxRequest = typeof RelayCreateWebhookInboxRequest.Type;
+
 export const RelayWebhookDelivery = Schema.Struct({
   deliveryId: TrimmedNonEmptyString,
   inboxId: RelayWebhookInboxId,
@@ -1238,6 +1244,7 @@ const RelayServerGroup = HttpApiGroup.make("server")
       params: Schema.Struct({
         environmentId: EnvironmentId,
       }),
+      payload: RelayCreateWebhookInboxRequest,
       success: RelayWebhookInbox,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "Create a webhook inbox"),

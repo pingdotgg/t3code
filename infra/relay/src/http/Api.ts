@@ -1296,9 +1296,13 @@ export const serverApi = HttpApiBuilder.group(
       .handle(
         "createWebhookInbox",
         Effect.fn("relay.api.server.createWebhookInbox")(
-          function* ({ params }) {
+          function* ({ params, payload }) {
             const owner = yield* webhookInboxOwner(params.environmentId);
-            return yield* webhookInboxes.create(owner);
+            const inbox = yield* webhookInboxes.create({ ...owner, userId: payload.cloudUserId });
+            if (inbox === null) {
+              return yield* new HttpApiError.Unauthorized({});
+            }
+            return inbox;
           },
           Effect.catchTag("WebhookInboxPersistenceError", () =>
             relayInternalErrorResponse("persistence_failed"),

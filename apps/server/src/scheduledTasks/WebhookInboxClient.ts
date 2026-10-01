@@ -12,6 +12,7 @@ import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
@@ -55,13 +56,14 @@ const make = Effect.gen(function* () {
 
   // Read per call: linking, relinking and unlinking all happen while the server runs.
   const relay = Effect.gen(function* () {
-    const [url, credential, endpointRuntimeConfig] = yield* Effect.all([
+    const [url, credential, endpointRuntimeConfig, cloudUserId] = yield* Effect.all([
       readSecretString(RELAY_URL_SECRET),
       readSecretString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
       readSecretString(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      readSecretString(CLOUD_LINKED_USER_ID),
     ]);
     // Deliveries arrive over the managed tunnel, so a publish-only link cannot receive them.
-    if (!url || !credential || !endpointRuntimeConfig) {
+    if (!url || !credential || !endpointRuntimeConfig || !cloudUserId) {
       return yield* new WebhookInboxClientError({ reason: "not_linked" });
     }
     const client = yield* HttpApiClient.make(RelayApi, {
@@ -71,7 +73,7 @@ const make = Effect.gen(function* () {
       ),
     }).pipe(Effect.provide(FetchHttpClient.layer));
     const environmentId = yield* serverEnvironment.getEnvironmentId;
-    return { server: client.server, params: { environmentId } };
+    return { server: client.server, params: { environmentId }, cloudUserId };
   });
 
   const requestFailed = (cause: unknown) =>
@@ -79,8 +81,10 @@ const make = Effect.gen(function* () {
 
   return WebhookInboxClient.of({
     create: relay.pipe(
-      Effect.flatMap(({ server, params }) =>
-        server.createWebhookInbox({ params }).pipe(Effect.mapError(requestFailed)),
+      Effect.flatMap(({ server, params, cloudUserId }) =>
+        server
+          .createWebhookInbox({ params, payload: { cloudUserId } })
+          .pipe(Effect.mapError(requestFailed)),
       ),
     ),
     remove: (inboxId) =>

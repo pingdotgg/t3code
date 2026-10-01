@@ -130,6 +130,47 @@ describe("webhook inbox route", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("stops reading a chunked body without Content-Length once it passes the cap", () =>
+    Effect.gen(function* () {
+      const { received, routes } = receiveWith({ status: "stored", deliveryId: "delivery-1" });
+      const chunk = new Uint8Array(64 * 1024).fill(120);
+      let pulled = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(chunk);
+        },
+      });
+      const response = yield* runRequest(
+        routes,
+        new Request("https://relay.example.test/v1/inbox/inbox-1", {
+          method: "POST",
+          body,
+          duplex: "half",
+        } as RequestInit),
+      );
+      expect(response.status).toBe(413);
+      expect(received).toHaveLength(0);
+      // An endless body is abandoned after a handful of chunks past the cap.
+      expect(pulled).toBeLessThan(RELAY_WEBHOOK_MAX_BODY_BYTES / chunk.byteLength + 4);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("rejects bodies that are not UTF-8 instead of storing mangled text", () =>
+    Effect.gen(function* () {
+      const { received, routes } = receiveWith({ status: "stored", deliveryId: "delivery-1" });
+      const response = yield* runRequest(
+        routes,
+        new Request("https://relay.example.test/v1/inbox/inbox-1", {
+          method: "POST",
+          body: new Uint8Array([0xff, 0xfe, 0x00, 0x81]),
+        }),
+      );
+      expect(response.status).toBe(415);
+      expect(received).toHaveLength(0);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("rejects bodies over the size cap without storing them", () =>
     Effect.gen(function* () {
       const { received, routes } = receiveWith({ status: "stored", deliveryId: "delivery-1" });
@@ -152,7 +193,8 @@ describe("webhook inbox environment endpoints", () => {
 
   it.effect("creates inboxes only for the authenticated environment", () =>
     Effect.gen(function* () {
-      const createdFor: Array<WebhookInboxes.WebhookInboxOwner> = [];
+      const createdFor: Array<Parameters<WebhookInboxes.WebhookInboxes["Service"]["create"]>[0]> =
+        [];
       const routes = HttpApiBuilder.layer(
         HttpApi.make("RelayApi").add(RelayApi.groups.server),
       ).pipe(
@@ -196,12 +238,19 @@ describe("webhook inbox environment endpoints", () => {
           routes,
           new Request(
             `https://relay.example.test/v1/environments/${environmentId}/webhook-inboxes`,
-            { method: "POST", headers: { authorization: "Bearer environment-credential" } },
+            {
+              method: "POST",
+              headers: {
+                authorization: "Bearer environment-credential",
+                "content-type": "application/json",
+              },
+              body: '{"cloudUserId":"user-1"}',
+            },
           ),
         );
 
       expect((yield* create("environment-1")).status).toBe(200);
-      expect(createdFor).toEqual([owner]);
+      expect(createdFor).toEqual([{ ...owner, userId: "user-1" }]);
       expect((yield* create("environment-2")).status).toBe(401);
       expect(createdFor).toHaveLength(1);
     }).pipe(Effect.scoped),
@@ -311,25 +360,53 @@ describe("WebhookInboxes", () => {
     }).pipe(withDb(db));
   });
 
-  it.effect("creates unguessable inbox URLs under the relay origin", () => {
-    const inserted: Array<{ readonly inboxId: string }> = [];
+  const createDb = (linkActive: boolean) => {
+    const inserted: Array<{ readonly inboxId: string; readonly userId: string }> = [];
     const db = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Effect.succeed(linkActive ? [{ userId: "user-1" }] : []),
+          }),
+        }),
+      }),
       insert: () => ({
-        values: (values: { readonly inboxId: string }) => {
+        values: (values: { readonly inboxId: string; readonly userId: string }) => {
           inserted.push(values);
           return Effect.void;
         },
       }),
     };
+    return { db, inserted };
+  };
+  const owner = {
+    userId: "user-1",
+    environmentId: "environment-1",
+    environmentPublicKey: "environment-key",
+  };
+
+  it.effect("creates unguessable inbox URLs owned by the linked user", () => {
+    const { db, inserted } = createDb(true);
     return Effect.gen(function* () {
       const inboxes = yield* WebhookInboxes.WebhookInboxes;
-      const owner = { environmentId: "environment-1", environmentPublicKey: "environment-key" };
       const first = yield* inboxes.create(owner);
       const second = yield* inboxes.create(owner);
-      expect(first.inboxId).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(first.inboxId).not.toBe(second.inboxId);
-      expect(first.url).toBe(`https://relay.example.test/v1/inbox/${first.inboxId}`);
-      expect(inserted.map((row) => row.inboxId)).toEqual([first.inboxId, second.inboxId]);
+      expect(first?.inboxId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(first?.inboxId).not.toBe(second?.inboxId);
+      expect(first?.url).toBe(`https://relay.example.test/v1/inbox/${first?.inboxId}`);
+      expect(inserted.map((row) => [row.inboxId, row.userId])).toEqual([
+        [first?.inboxId, "user-1"],
+        [second?.inboxId, "user-1"],
+      ]);
+    }).pipe(withDb(db));
+  });
+
+  it.effect("refuses an inbox for a user without an active link to the environment", () => {
+    const { db, inserted } = createDb(false);
+    return Effect.gen(function* () {
+      const inboxes = yield* WebhookInboxes.WebhookInboxes;
+      expect(yield* inboxes.create(owner)).toBeNull();
+      expect(inserted).toEqual([]);
     }).pipe(withDb(db));
   });
 });

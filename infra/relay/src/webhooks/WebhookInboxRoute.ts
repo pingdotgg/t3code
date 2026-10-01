@@ -3,6 +3,7 @@ import {
   RELAY_WEBHOOK_MAX_BODY_BYTES,
 } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -45,6 +46,41 @@ export function webhookDeliveryHeaders(
   return kept;
 }
 
+/**
+ * Reads the body while counting bytes, so a sender that omits Content-Length
+ * cannot make the Worker buffer more than `limit` bytes. Null means too large.
+ */
+const readBodyWithin = <E>(stream: Stream.Stream<Uint8Array, E>, limit: number) =>
+  Effect.gen(function* () {
+    const chunks: Array<Uint8Array> = [];
+    let size = 0;
+    yield* Stream.runForEachWhile(stream, (chunk) =>
+      Effect.sync(() => {
+        size += chunk.byteLength;
+        if (size > limit) return false;
+        chunks.push(chunk);
+        return true;
+      }),
+    );
+    if (size > limit) return null;
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  });
+
+const utf8 = new TextDecoder("utf-8", { fatal: true });
+const decodeUtf8 = (bytes: Uint8Array): string | null => {
+  try {
+    return utf8.decode(bytes);
+  } catch {
+    return null;
+  }
+};
+
 const status = (code: number, error?: string) =>
   HttpServerResponse.jsonUnsafe(error ? { ok: false, error } : { ok: true }, { status: code });
 
@@ -62,14 +98,19 @@ const receiveWebhook = (
     if (Number.isFinite(declaredLength) && declaredLength > RELAY_WEBHOOK_MAX_BODY_BYTES) {
       return status(413, "body_too_large");
     }
-    const body = yield* request.arrayBuffer;
-    if (body.byteLength > RELAY_WEBHOOK_MAX_BODY_BYTES) {
+    const bytes = yield* readBodyWithin(request.stream, RELAY_WEBHOOK_MAX_BODY_BYTES);
+    if (bytes === null) {
       return status(413, "body_too_large");
+    }
+    const body = decodeUtf8(bytes);
+    // The body is stored and handed to an agent as text; binary would arrive mangled.
+    if (body === null) {
+      return status(415, "body_not_utf8");
     }
     const result = yield* inboxes.receive({
       inboxId,
       headers: webhookDeliveryHeaders(request.headers),
-      body: new TextDecoder().decode(body),
+      body,
     });
     switch (result.status) {
       case "stored":

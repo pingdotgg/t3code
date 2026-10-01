@@ -103,6 +103,36 @@ it.effect("keeps one webhook URL per task across edits and removes it when no lo
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("creates one webhook URL when the same task is saved twice at once", () =>
+  Effect.gen(function* () {
+    const relay = yield* makeRelay;
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = yield* taskInput({ commandId: "cmd-concurrent-create" });
+      const [first, second] = yield* Effect.all([service.upsert(input), service.upsert(input)], {
+        concurrency: 2,
+      });
+      expect(first.task.schedule).toEqual(second.task.schedule);
+      expect(yield* Ref.get(relay.created)).toBe(1);
+      expect(yield* Ref.get(relay.removed)).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeCrypto.layer,
+              Scheduler.layer,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+              Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+              relay.layer,
+            ),
+          ),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 const insertWebhookTask = (
   sql: SqlClient.SqlClient,
   task: { readonly id: string; readonly inboxId: string; readonly enabled: boolean },

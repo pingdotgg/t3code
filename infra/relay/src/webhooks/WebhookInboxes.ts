@@ -63,9 +63,10 @@ export interface WebhookDeliveryTarget {
 export class WebhookInboxes extends Context.Service<
   WebhookInboxes,
   {
+    /** Null when `userId` has no active link to the environment. */
     readonly create: (
-      owner: WebhookInboxOwner,
-    ) => Effect.Effect<RelayWebhookInbox, WebhookInboxPersistenceError>;
+      owner: WebhookInboxOwner & { readonly userId: string },
+    ) => Effect.Effect<RelayWebhookInbox | null, WebhookInboxPersistenceError>;
     readonly remove: (
       input: WebhookInboxOwner & { readonly inboxId: string },
     ) => Effect.Effect<void, WebhookInboxPersistenceError>;
@@ -103,6 +104,14 @@ const persistenceError =
 // Inbox ids are the only credential a sender needs, so they carry 256 bits.
 const INBOX_ID_BYTES = 32;
 
+// Deliveries follow the inbox owner's own link, never another user's link to the same machine.
+const activeOwnerLink = and(
+  eq(relayEnvironmentLinks.userId, relayWebhookInboxes.userId),
+  eq(relayEnvironmentLinks.environmentId, relayWebhookInboxes.environmentId),
+  eq(relayEnvironmentLinks.environmentPublicKey, relayWebhookInboxes.environmentPublicKey),
+  isNull(relayEnvironmentLinks.revokedAt),
+);
+
 const ownedInbox = (owner: WebhookInboxOwner) =>
   and(
     eq(relayWebhookInboxes.environmentId, owner.environmentId),
@@ -123,6 +132,22 @@ export const make = Effect.gen(function* () {
         .randomBytes(INBOX_ID_BYTES)
         .pipe(Effect.map(Encoding.encodeBase64Url), Effect.mapError(persistenceError("create")));
       const createdAt = DateTime.formatIso(yield* DateTime.now);
+      const [link] = yield* db
+        .select({ userId: relayEnvironmentLinks.userId })
+        .from(relayEnvironmentLinks)
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, owner.userId),
+            eq(relayEnvironmentLinks.environmentId, owner.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, owner.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .limit(1)
+        .pipe(Effect.mapError(persistenceError("create")));
+      if (!link) {
+        return null;
+      }
       yield* db
         .insert(relayWebhookInboxes)
         .values({ inboxId, createdAt, ...owner })
@@ -150,17 +175,7 @@ export const make = Effect.gen(function* () {
         const [inbox] = yield* db
           .select({ inboxId: relayWebhookInboxes.inboxId })
           .from(relayWebhookInboxes)
-          .innerJoin(
-            relayEnvironmentLinks,
-            and(
-              eq(relayEnvironmentLinks.environmentId, relayWebhookInboxes.environmentId),
-              eq(
-                relayEnvironmentLinks.environmentPublicKey,
-                relayWebhookInboxes.environmentPublicKey,
-              ),
-              isNull(relayEnvironmentLinks.revokedAt),
-            ),
-          )
+          .innerJoin(relayEnvironmentLinks, activeOwnerLink)
           .where(eq(relayWebhookInboxes.inboxId, input.inboxId))
           .limit(1)
           .for("update", { of: relayWebhookInboxes });
@@ -197,7 +212,7 @@ export const make = Effect.gen(function* () {
           receivedAt: relayWebhookDeliveries.receivedAt,
           headers: relayWebhookDeliveries.headers,
           body: relayWebhookDeliveries.body,
-          userId: relayEnvironmentLinks.userId,
+          userId: relayWebhookInboxes.userId,
           environmentId: relayWebhookInboxes.environmentId,
         })
         .from(relayWebhookDeliveries)
@@ -205,17 +220,7 @@ export const make = Effect.gen(function* () {
           relayWebhookInboxes,
           eq(relayWebhookInboxes.inboxId, relayWebhookDeliveries.inboxId),
         )
-        .innerJoin(
-          relayEnvironmentLinks,
-          and(
-            eq(relayEnvironmentLinks.environmentId, relayWebhookInboxes.environmentId),
-            eq(
-              relayEnvironmentLinks.environmentPublicKey,
-              relayWebhookInboxes.environmentPublicKey,
-            ),
-            isNull(relayEnvironmentLinks.revokedAt),
-          ),
-        )
+        .innerJoin(relayEnvironmentLinks, activeOwnerLink)
         .where(eq(relayWebhookDeliveries.deliveryId, deliveryId))
         .limit(1)
         .pipe(Effect.mapError(persistenceError("lookup")));

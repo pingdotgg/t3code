@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -223,6 +224,10 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const webhookInboxes = yield* WebhookInboxClient.WebhookInboxClient;
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
+    // Saves and deletes run one at a time: each reads the stored task, may
+    // create or remove its webhook inbox, then writes. Interleaving two of
+    // them could orphan an inbox or delete one the other just kept.
+    const taskMutations = yield* Semaphore.make(1);
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
     // latest signal — an unbounded backlog would just grow memory.
@@ -505,6 +510,17 @@ export const layer = Layer.effect(
         // state. The task may have been deleted, paused, or postponed since
         // the poll loaded it — none of those may fire.
         const active = yield* findTask(task.id);
+        // A delivery only runs a task that, as of now, is enabled and still
+        // listening on the delivery's inbox. Null tells the caller to drop it.
+        if (
+          delivery !== null &&
+          (active === null ||
+            !active.enabled ||
+            active.schedule.type !== "webhook" ||
+            active.schedule.inboxId !== delivery.inboxId)
+        ) {
+          return null;
+        }
         if (active === null) {
           // A manual run on a just-deleted task must fail loudly, not report
           // a successful run that never dispatched.
@@ -744,8 +760,8 @@ export const layer = Layer.effect(
         );
         // A paused or deleted task ignores what arrives for it.
         if (task === undefined || !task.enabled) return "dropped" as const;
-        yield* runTask(task, { delivery });
-        return "started" as const;
+        const ran = yield* runTask(task, { delivery });
+        return ran === null ? ("dropped" as const) : ("started" as const);
       });
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
@@ -851,7 +867,7 @@ export const layer = Layer.effect(
           yield* removeInboxQuietly(existingInboxId);
         }
         return { task };
-      });
+      }).pipe(taskMutations.withPermits(1));
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
       Effect.gen(function* () {
@@ -892,7 +908,7 @@ export const layer = Layer.effect(
           yield* removeInboxQuietly(existing.schedule.inboxId);
         }
         return { id: input.id };
-      });
+      }).pipe(taskMutations.withPermits(1));
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {
@@ -902,7 +918,8 @@ export const layer = Layer.effect(
             taskError("Could not run schedule task.", { taskId: input.id, cause }),
           ),
         );
-        return { task: next };
+        // Only webhook deliveries can be skipped; a manual run always resolves a task.
+        return { task: next ?? task };
       });
 
     return ScheduledTaskService.of({
