@@ -609,7 +609,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   let voiceAvailable = false;
   let voiceKeyCode: string | null = null;
   const microphoneIcon =
-    '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    '<svg class="size-4.5 shrink-0 text-muted-foreground sm:size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19v3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><rect x="9" y="2" width="6" height="13" rx="3"/></svg>';
   const voiceButton = createButton("", "Start voice input");
   voiceButton.innerHTML = microphoneIcon;
   voiceButton.className += " size-8 shrink-0 p-0 sm:size-7";
