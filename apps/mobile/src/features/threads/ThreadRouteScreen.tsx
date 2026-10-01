@@ -161,23 +161,30 @@ function ThreadUnavailableScreen(props: {
   readonly onAction: () => void;
 }) {
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{
-        flexGrow: 1,
-        justifyContent: "center",
-        paddingHorizontal: 24,
-        paddingVertical: 32,
-      }}
-      className="bg-screen flex-1"
-    >
-      <EmptyState
-        title="Thread unavailable"
-        detail="This thread is not available in the current mobile snapshot."
-        actionLabel={props.actionLabel}
-        onAction={props.onAction}
-      />
-    </ScrollView>
+    <>
+      {Platform.OS === "android" ? (
+        <NativeStackScreenOptions
+          options={{ headerShown: true, title: undefined, contentStyle: undefined }}
+        />
+      ) : null}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: "center",
+          paddingHorizontal: 24,
+          paddingVertical: 32,
+        }}
+        className="bg-screen flex-1"
+      >
+        <EmptyState
+          title="Thread unavailable"
+          detail="This thread is not available in the current mobile snapshot."
+          actionLabel={props.actionLabel}
+          onAction={props.onAction}
+        />
+      </ScrollView>
+    </>
   );
 }
 
