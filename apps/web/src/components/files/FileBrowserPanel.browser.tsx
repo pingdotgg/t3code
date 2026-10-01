@@ -115,6 +115,11 @@ describe("FileBrowserPanel", () => {
         },
         { timeout: 10000 },
       );
+      await page.getByRole("button", { name: "Clear file filter" }).click();
+      await vi.waitFor(() => {
+        expect(treeRowPaths()).toContain("src/");
+        expect(treeRowPaths().some((path) => path.includes("creation-examples"))).toBe(false);
+      });
     } finally {
       await screen.unmount();
     }

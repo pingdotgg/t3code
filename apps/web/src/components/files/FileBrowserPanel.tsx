@@ -208,7 +208,7 @@ export default function FileBrowserPanel({
       .sort((a, b) => a.length - b.length);
     if (removed.length === 0 && added.length === 0) return;
     model.batch([
-      ...removalRoots.map((path) => ({ type: "remove" as const, path })),
+      ...removalRoots.map((path) => ({ type: "remove" as const, path, recursive: true })),
       ...added.map((path) => ({ type: "add" as const, path })),
     ]);
   }, [entryKinds, model, treePaths]);
