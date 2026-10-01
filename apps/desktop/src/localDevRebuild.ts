@@ -131,7 +131,7 @@ function unavailableStaleness(reason: string): DesktopLocalRebuildStaleness {
 
 /**
  * Check whether the remote default branch moved past the running build.
- * Read-only: `ls-remote` never fetches and no local ref is mutated.
+ * Missing history is fetched without changing refs, FETCH_HEAD, or local work.
  */
 export async function checkLocalDevRebuildStaleness(input: {
   readonly enabled: boolean;
@@ -214,6 +214,26 @@ export async function checkLocalDevRebuildStaleness(input: {
   let mergeBase: GitRunResult;
   try {
     mergeBase = await runGit(["merge-base", "--is-ancestor", baseSha, parsed.sha], cwd);
+    if (mergeBase.exitCode !== 0 && mergeBase.exitCode !== 1) {
+      // ls-remote advertises IDs, not objects. Fetch the observed tip without
+      // advancing configured tracking refs or disturbing a user's FETCH_HEAD.
+      const fetched = await runGit(
+        [
+          "fetch",
+          "--no-write-fetch-head",
+          "--no-tags",
+          "--no-recurse-submodules",
+          "--refmap=",
+          "origin",
+          parsed.sha,
+        ],
+        cwd,
+      );
+      if (fetched.exitCode !== 0) {
+        return complete({ error: "Could not fetch the remote commit for comparison." });
+      }
+      mergeBase = await runGit(["merge-base", "--is-ancestor", baseSha, parsed.sha], cwd);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return complete({ error: `Could not compare commits: ${message}` });

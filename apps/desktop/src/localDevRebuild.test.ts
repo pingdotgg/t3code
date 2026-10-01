@@ -2,6 +2,7 @@ import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
 import { EventEmitter } from "node:events";
+import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -156,6 +157,65 @@ const LOCAL_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const REMOTE_SHA = "cccccccccccccccccccccccccccccccccccccccc";
 
 describe("local Dev rebuild staleness", () => {
+  it("detects unfetched source updates without changing refs or local work", async () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-staleness-"));
+    const origin = Path.join(root, "origin");
+    const checkout = Path.join(root, "checkout");
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    try {
+      git(root, "init", "--initial-branch=main", origin);
+      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "build");
+      const buildSha = git(origin, "rev-parse", "HEAD");
+      git(root, "clone", "--no-local", origin, checkout);
+      git(checkout, "fetch", "origin");
+      const fetchHeadPath = Path.join(checkout, ".git", "FETCH_HEAD");
+      const fetchHead = FS.readFileSync(fetchHeadPath, "utf8");
+      const refs = git(checkout, "show-ref");
+      FS.writeFileSync(Path.join(checkout, "local-work.txt"), "keep me");
+      const status = git(checkout, "status", "--porcelain");
+
+      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "merged PR");
+      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "another PR");
+      const remoteSha = git(origin, "rev-parse", "HEAD");
+      expect(() => git(checkout, "cat-file", "-e", remoteSha)).toThrow();
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: checkout,
+        buildSha,
+      });
+
+      expect(result).toMatchObject({
+        behind: true,
+        behindBy: 2,
+        buildSha,
+        localSha: buildSha,
+        remoteSha,
+        remoteBranch: "main",
+        error: null,
+      });
+      expect(git(checkout, "show-ref")).toBe(refs);
+      expect(git(checkout, "rev-parse", "HEAD")).toBe(buildSha);
+      expect(FS.readFileSync(fetchHeadPath, "utf8")).toBe(fetchHead);
+      expect(git(checkout, "status", "--porcelain")).toBe(status);
+      expect(FS.readFileSync(Path.join(checkout, "local-work.txt"), "utf8")).toBe("keep me");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("parses ls-remote symref output for the default branch tip", () => {
     expect(parseLsRemoteSymrefHead(`ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`)).toEqual({
       sha: REMOTE_SHA,
@@ -255,6 +315,28 @@ describe("local Dev rebuild staleness", () => {
     expect(result.checkedAt).toEqual(expect.any(String));
     expect(calls[0]?.[0]).toBe("rev-parse");
   });
+
+  it.each([
+    { exitCode: 128, error: "Could not fetch the remote commit for comparison." },
+    { exitCode: 0, error: "Could not compare the running build with the remote tip." },
+  ])(
+    "keeps a failed comparison unknown after fetch exits $exitCode",
+    async ({ exitCode, error }) => {
+      const { runner } = stubRunner({
+        ...behindScenario(),
+        [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 128 },
+        [`fetch --no-write-fetch-head --no-tags --no-recurse-submodules --refmap= origin ${REMOTE_SHA}`]:
+          { stdout: "", exitCode },
+      });
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: "/repo/t3code",
+        buildSha: BUILD_SHA,
+        runGit: runner,
+      });
+      expect(result).toMatchObject({ behind: false, behindBy: null, error });
+    },
+  );
 
   it("falls back to the checkout HEAD when the build carries no commit", async () => {
     const scenario = behindScenario();
