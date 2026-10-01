@@ -1042,6 +1042,37 @@ importers:
         specifier: 7.8.5
         version: 7.8.5
 
+  packages/first-party-extensions/diff:
+    dependencies:
+      '@pierre/diffs':
+        specifier: 'catalog:'
+        version: 1.3.0-beta.10(patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4)(@shikijs/themes@4.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@t3tools/extension-sdk':
+        specifier: workspace:*
+        version: link:../../extension-sdk
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.3.0
+      '@types/react-test-renderer':
+        specifier: 19.1.0
+        version: 19.1.0
+      react:
+        specifier: ^19.0.0
+        version: 19.3.0
+      react-test-renderer:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.3.0)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/shared:
     dependencies:
       '@noble/curves':
@@ -14445,6 +14476,20 @@ snapshots:
     transitivePeerDependencies:
       - '@shikijs/themes'
 
+  '@pierre/diffs@1.3.0-beta.10(patch_hash=0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4)(@shikijs/themes@4.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@pierre/theme': 1.1.0
+      '@pierre/theming': 0.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
+      '@shikijs/transformers': 4.2.0
+      diff: 9.0.0
+      hast-util-to-html: 9.0.5
+      lru_map: 0.4.1
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+      shiki: 4.2.0
+    transitivePeerDependencies:
+      - '@shikijs/themes'
+
   '@pierre/theme@1.1.0': {}
 
   '@pierre/theming@0.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
@@ -14461,6 +14506,14 @@ snapshots:
       '@shikijs/themes': 4.3.0
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
+      shiki: 4.2.0
+
+  '@pierre/theming@0.0.2(@pierre/theme@1.1.0)(@shikijs/themes@4.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)':
+    optionalDependencies:
+      '@pierre/theme': 1.1.0
+      '@shikijs/themes': 4.3.0
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
       shiki: 4.2.0
 
   '@pierre/trees@1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
@@ -20328,6 +20381,12 @@ snapshots:
   react-test-renderer@19.2.6(react@19.2.6):
     dependencies:
       react: 19.2.6
+      react-is: 19.2.7
+      scheduler: 0.27.0
+
+  react-test-renderer@19.2.6(react@19.3.0):
+    dependencies:
+      react: 19.3.0
       react-is: 19.2.7
       scheduler: 0.27.0
 

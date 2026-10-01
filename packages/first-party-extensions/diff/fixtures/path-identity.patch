@@ -1,0 +1,24 @@
+diff --git a/top.txt b/top.txt
+--- a/top.txt
++++ b/top.txt
+@@ -3 +3 @@
+-old top.txt
++new top.txt
+diff --git a/a/top.txt b/a/top.txt
+--- a/a/top.txt
++++ b/a/top.txt
+@@ -3 +3 @@
+-old a/top.txt
++new a/top.txt
+diff --git a/b/top.txt b/b/top.txt
+--- a/b/top.txt
++++ b/b/top.txt
+@@ -3 +3 @@
+-old b/top.txt
++new b/top.txt
+diff --git "a/a/\346\227\245\346\234\254\350\252\236 space.txt" "b/a/\346\227\245\346\234\254\350\252\236 space.txt"
+--- "a/a/\346\227\245\346\234\254\350\252\236 space.txt"
++++ "b/a/\346\227\245\346\234\254\350\252\236 space.txt"
+@@ -3 +3 @@
+-old a/日本語 space.txt
++new a/日本語 space.txt
