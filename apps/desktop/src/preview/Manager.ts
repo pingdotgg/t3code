@@ -520,6 +520,9 @@ interface ExpectedAgentInput {
  */
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
+/** Control actions that only read the page, so they do not make it agent-driven. */
+const READ_ONLY_CONTROL_ACTIONS = new Set(["snapshot", "waitFor"]);
+
 const isPopupUrl = (rawUrl: string): boolean => {
   try {
     return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
@@ -1504,7 +1507,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // A human who took over while this action waited for the permit owns
       // the page; marking it agent-driven would hide their Save dialog.
       yield* checkControl;
-      agentDrivenWebContents.add(wc);
+      if (!READ_ONLY_CONTROL_ACTIONS.has(action)) agentDrivenWebContents.add(wc);
       yield* update(tabId, { controller: "agent" });
       const send: SendCommand = Effect.fn("PreviewManager.sendCommand")(
         function* (method, commandParams, sessionId) {

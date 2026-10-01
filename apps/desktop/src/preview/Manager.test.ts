@@ -4557,8 +4557,10 @@ describe("PreviewManager", () => {
         let holdEvaluate = false;
         let releaseEvaluate: (() => void) | undefined;
         Object.assign(wc.debugger, {
-          sendCommand: vi.fn(async (method: string) => {
+          sendCommand: vi.fn(async (method: string, params?: { expression?: string }) => {
             if (method !== "Runtime.evaluate") return undefined;
+            if (params?.expression?.includes("matched"))
+              return { result: { value: { matched: true } } };
             if (holdEvaluate) {
               holdEvaluate = false;
               await new Promise<void>((resolve) => {
@@ -4644,6 +4646,10 @@ describe("PreviewManager", () => {
         yield* manager.automationEvaluate("tab_1", { expression: "42" });
         expect(download()).toHaveBeenCalled();
         yield* manager.navigate("tab_1", "https://example.com/report.csv");
+        expect(download()).not.toHaveBeenCalled();
+
+        // Reading the page does not make it agent-driven.
+        yield* manager.automationWaitFor("tab_1", { text: "Example" });
         expect(download()).not.toHaveBeenCalled();
       }),
     ),
