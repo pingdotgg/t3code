@@ -56,7 +56,6 @@ export function useCopyToClipboard<TContext = void>({
     );
   }, []);
 
-  // Cleanup timeout on unmount
   React.useEffect(() => {
     return (): void => {
       if (timeoutIdRef.current) {

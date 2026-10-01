@@ -89,6 +89,7 @@ import {
   DEFAULT_WORKFLOW_RUNS_SHOW_BADGE,
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
+  DEFAULT_SIDEBAR_ICON_SIZE,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
@@ -115,7 +116,7 @@ import {
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
-import { isElectron } from "../../env";
+import { isElectronRuntime } from "../../env";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { DeviceSettings } from "./DeviceSettings";
 import { GitHubApiUsagePanel } from "./GitHubApiUsagePanel";
@@ -775,6 +776,13 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     serverPasswordDescription:
       "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
   },
+  {
+    provider: ProviderDriverKind.make("pi"),
+    title: "Pi",
+    badgeLabel: "Early Access",
+    binaryPlaceholder: "Pi binary path",
+    binaryDescription: "Path to the Pi coding agent binary",
+  },
 ] as const;
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
@@ -813,13 +821,29 @@ function AboutVersionSection() {
   const updateStateQuery = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const localRebuildState = useLocalRebuildState();
-  const { requestLocalRebuild, isStartingLocalRebuild } = useRequestLocalRebuild();
+  const {
+    requestLocalRebuild,
+    isStartingLocalRebuild,
+    lifecycle: localRebuildLifecycle,
+  } = useRequestLocalRebuild();
   const checkMinutes = useSettings((settings) => settings.localRebuildStalenessCheckMinutes);
   const { updateSettings } = useUpdateSettings();
 
   const updateState = updateStateQuery.data ?? null;
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
+  const rebuildLifecycleMessage =
+    localRebuildLifecycle?.phase === "running"
+      ? `Build and install in progress.${localRebuildLifecycle.logPath ? ` Log: ${localRebuildLifecycle.logPath}` : ""}`
+      : localRebuildLifecycle?.phase === "failed"
+        ? `Last rebuild failed: ${localRebuildLifecycle.message ?? "Installer did not complete."}${
+            localRebuildLifecycle.logPath
+              ? ` Log: ${localRebuildLifecycle.logPath}`
+              : " No installer log was created."
+          }`
+        : localRebuildLifecycle?.phase === "completed"
+          ? "The last rebuild completed."
+          : null;
 
   const handleUpdateChannelChange = useCallback(
     (channel: DesktopUpdateChannel) => {
@@ -977,9 +1001,16 @@ function AboutVersionSection() {
           title="Local source"
           description="Build and install the current checkout, then restart T3 Code."
           status={
-            <span className="block break-all font-mono text-[11px] text-foreground">
-              {localRebuildState.sourceRoot}
-            </span>
+            <div className="space-y-1">
+              <span className="block break-all font-mono text-[11px] text-foreground">
+                {localRebuildState.sourceRoot}
+              </span>
+              {rebuildLifecycleMessage ? (
+                <span className="block break-all text-[11px] text-muted-foreground" role="status">
+                  {rebuildLifecycleMessage}
+                </span>
+              ) : null}
+            </div>
           }
           control={
             <Button
@@ -989,7 +1020,7 @@ function AboutVersionSection() {
               onClick={() => requestLocalRebuild()}
             >
               <RefreshCwIcon className={isStartingLocalRebuild ? "animate-spin" : undefined} />
-              {isStartingLocalRebuild ? "Starting..." : "Rebuild and restart"}
+              {isStartingLocalRebuild ? "Building..." : "Rebuild and restart"}
             </Button>
           }
         />
@@ -997,7 +1028,7 @@ function AboutVersionSection() {
       {localRebuildState?.enabled ? (
         <SettingsRow
           title="Check for source updates"
-          description="Check whether the remote default branch moved past the running build. The sidebar refresh icon lights up when a rebuild would bring in newer changes. Set 0 to turn the check off."
+          description="Check whether the remote default branch moved past the running build. The sidebar refresh icon lights up when the source checkout is clean and can safely pull newer changes. Set 0 to disable periodic checks; an initial check still runs."
           resetAction={
             checkMinutes !== DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES ? (
               <SettingResetButton
@@ -1141,6 +1172,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
+        : []),
+      ...(settings.sidebarIconSize !== DEFAULT_UNIFIED_SETTINGS.sidebarIconSize
+        ? ["Sidebar icon size"]
         : []),
       ...(settings.sidebarMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarMetaFontSize
         ? ["Sidebar metadata font size"]
@@ -1329,6 +1363,7 @@ function HeaderSidebarToggleRows({
 }
 
 export function GeneralSettingsPanel() {
+  const isDesktopRuntime = isElectronRuntime();
   const browserEnvironmentId = usePrimaryEnvironmentId();
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
@@ -2031,54 +2066,56 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <SettingsRow
-          title="Sidebar translucency"
-          description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available; browsers fall back to CSS blur."
-          resetAction={
-            settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
-              <SettingResetButton
-                label="sidebar translucency"
-                onClick={() =>
-                  updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.sidebarTranslucency}
-              onValueChange={(value) => {
-                if (
-                  value === "off" ||
-                  value === "subtle" ||
-                  value === "medium" ||
-                  value === "strong" ||
-                  value === "liquid-glass"
-                ) {
-                  updateSettings({ sidebarTranslucency: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
-                <SelectValue>
-                  {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
-                    (option) => option.value === settings.sidebarTranslucency,
-                  )?.label ?? "Off"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    <div>
-                      <span className="font-medium">{option.label}</span>
-                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+        {isDesktopRuntime && (
+          <SettingsRow
+            title="Sidebar translucency"
+            description="Control the sidebar's frosted tint. Desktop builds use native vibrancy when available, with CSS blur as a fallback."
+            resetAction={
+              settings.sidebarTranslucency !== DEFAULT_SIDEBAR_TRANSLUCENCY ? (
+                <SettingResetButton
+                  label="sidebar translucency"
+                  onClick={() =>
+                    updateSettings({ sidebarTranslucency: DEFAULT_SIDEBAR_TRANSLUCENCY })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.sidebarTranslucency}
+                onValueChange={(value) => {
+                  if (
+                    value === "off" ||
+                    value === "subtle" ||
+                    value === "medium" ||
+                    value === "strong" ||
+                    value === "liquid-glass"
+                  ) {
+                    updateSettings({ sidebarTranslucency: value });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar translucency">
+                  <SelectValue>
+                    {SIDEBAR_TRANSLUCENCY_OPTIONS.find(
+                      (option) => option.value === settings.sidebarTranslucency,
+                    )?.label ?? "Off"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SIDEBAR_TRANSLUCENCY_OPTIONS.map((option) => (
+                    <SelectItem hideIndicator key={option.value} value={option.value}>
+                      <div>
+                        <span className="font-medium">{option.label}</span>
+                        <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        )}
       </SettingsSection>
 
       <SettingsSection title="Sidebar">
@@ -2469,6 +2506,47 @@ export function GeneralSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarFontSize)
                     ?.label ?? `${DEFAULT_SIDEBAR_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Sidebar icon size"
+          description="Icon size for action and row icons across the sidebar. Status glyphs stay on their own smaller tier."
+          resetAction={
+            settings.sidebarIconSize !== recommendedFontSizes.sidebarIconSize ? (
+              <SettingResetButton
+                label="sidebar icon size"
+                onClick={() =>
+                  updateSettings({
+                    sidebarIconSize: recommendedFontSizes.sidebarIconSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.sidebarIconSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ sidebarIconSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Sidebar icon size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.sidebarIconSize)
+                    ?.label ?? `${DEFAULT_SIDEBAR_ICON_SIZE}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -3974,7 +4052,7 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="About">
-        {isElectron ? (
+        {isDesktopRuntime ? (
           <AboutVersionSection />
         ) : (
           <SettingsRow

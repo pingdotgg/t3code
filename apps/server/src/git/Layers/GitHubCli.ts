@@ -1,4 +1,4 @@
-import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
+import { Data, Effect, Layer, Result, Schema, SchemaIssue } from "effect";
 import {
   isGitHubRateLimitMessage,
   rewriteGitHubRateLimitDetail,
@@ -28,6 +28,11 @@ import {
 } from "../githubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+class GitHubCliProcessError extends Data.TaggedError("GitHubCliProcessError")<{
+  readonly message: string;
+  readonly cause: unknown;
+}> {}
 
 /**
  * The process runner joins a failure's stderr onto one `<argv> <reason>.`
@@ -330,10 +335,15 @@ const makeGitHubCli = Effect.sync(() => {
                   outputMode: input.truncateOutputAtMaxBytes === true ? "truncate" : "error",
                 }),
           }),
-        catch: (error: unknown) => error,
+        catch: (cause: unknown) =>
+          new GitHubCliProcessError({
+            message:
+              cause instanceof Error ? cause.message : "GitHub CLI command failed with no detail.",
+            cause,
+          }),
       }).pipe(
         Effect.map((result) => ({ status: "ok" as const, result })),
-        Effect.catch((raw: unknown) => Effect.succeed({ status: "failed" as const, raw })),
+        Effect.catch((error: Error) => Effect.succeed({ status: "failed" as const, error })),
       );
       const latencyMs = Date.now() - startedAt;
       const usage = yield* Effect.serviceOption(GitHubApiUsage);
@@ -373,15 +383,12 @@ const makeGitHubCli = Effect.sync(() => {
         return result;
       }
 
-      const raw = attempt.raw;
-      const failure =
-        raw instanceof Error ? raw : new Error("GitHub CLI command failed with no detail.");
       // The runner embeds stderr in the failure message behind an
       // `<argv> <reason>.` prefix; recover the raw stderr first so the
       // first request's trace line and rate-limit headers parse exactly.
-      const { stderr } = splitRunnerMessage(failure.message, input.args);
+      const { stderr } = splitRunnerMessage(attempt.error.message, input.args);
       const telemetry = parseGhDebugTelemetry(stderr);
-      const normalized = normalizeGitHubCliError("execute", failure, input.args);
+      const normalized = normalizeGitHubCliError("execute", attempt.error, input.args);
       if (usage._tag === "Some") {
         const outcome = isGitHubRateLimitMessage(normalized.detail) ? "rate-limited" : "failure";
         const cooldown = parseGhCooldown(stderr);

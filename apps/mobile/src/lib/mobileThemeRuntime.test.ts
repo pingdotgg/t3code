@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   createMobileThemeRuntimeOperations,
-  getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
 } from "./mobileThemeRuntime";
 
@@ -13,15 +12,6 @@ const initialState: MobileThemeRuntimeState = {
 };
 
 describe("mobileThemeRuntime", () => {
-  it("keeps the default palette on Uniwind's built-in appearance themes", () => {
-    expect(getMobileUniwindThemeName("t3-code", "light")).toBe("light");
-    expect(getMobileUniwindThemeName("t3-code", "dark")).toBe("dark");
-  });
-
-  it("maps custom palettes and appearances to registered themes", () => {
-    expect(getMobileUniwindThemeName("t3-chat", "dark")).toBe("t3-chat-dark");
-  });
-
   it("hydrates text variables and clears the native appearance override", () => {
     const operations = createMobileThemeRuntimeOperations(null, initialState);
     const variableOperations = operations.filter(

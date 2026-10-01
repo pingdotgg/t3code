@@ -232,7 +232,11 @@ import {
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
+import {
+  type HostDeadlineMs,
+  resolveHostDeadlineMs,
+  waitForHostReadiness,
+} from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import {
   beginPreviewViewportMutation,
@@ -267,7 +271,7 @@ const waitForDesktopOverlay = async (
   tabId: string,
   runtimeTabId: string,
   operation: PreviewAutomationRequest["operation"],
-  deadlineMs: number,
+  deadlineMs: HostDeadlineMs,
 ): Promise<void> => {
   const waitBudgetMs = Math.max(0, deadlineMs - Date.now());
   const ready = await waitForHostReadiness(deadlineMs, async () => {
@@ -528,7 +532,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
       // Session sync and tab creation consume the same budget as overlay registration.
-      const hostDeadlineMs = Date.now() + resolveHostWaitBudgetMs(request.timeoutMs);
+      const hostDeadlineMs = resolveHostDeadlineMs(request.timeoutMs);
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -1039,7 +1043,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 activeTabId,
                 activeRuntimeTabId,
                 request.operation,
-                request.timeoutMs,
+                hostDeadlineMs,
               );
             }
             if (shouldPresent) {
@@ -1368,7 +1372,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                 activeTabId,
                 activeRuntimeTabId,
                 request.operation,
-                request.timeoutMs,
+                hostDeadlineMs,
               );
             }
             if (shouldPresent) {
@@ -1424,7 +1428,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               activeTabId,
               activeRuntimeTabId,
               request.operation,
-              request.timeoutMs,
+              hostDeadlineMs,
             );
             if (managedTarget) {
               await waitForManagedPreviewReadiness({

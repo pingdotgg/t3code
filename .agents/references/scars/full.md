@@ -43,6 +43,8 @@
 - History pagination availability must follow the rendered turn, not total thread activity; during live caps, mark history only when an activity from that turn is actually evicted.
 - `provider_session_runtime.status = running` means the provider runtime is alive, not that a turn is active; clear `runtime_payload_json.activeTurnId` after `ProviderService.sendTurn` settles and retain a Copilot smoke test that starts, selects a model, sends, observes, and stops.
 - Before a Copilot session exits, emit `task.completed` with `status = stopped` for every running background agent, and reconcile unmatched starts on server startup so crashes cannot leave sidebar runs permanently active.
+- Copilot ACP can withhold prompt completion while an attached dev server is running, even after a native final answer. Put retained servers in T3-managed thread terminals, or stop task-only provider shells before finalizing. Tool-launch completion is not process exit; never repair this by inferring successful turn completion from silence or native-history files.
+- Managed server terminals must share the client's project/worktree environment and run non-interactively. Environment mismatch restarts the PTY on client attachment; interactive shell startup can move the server into tmux and escape terminal cleanup. Reattaching an exited command must not rerun it.
 - Copilot ACP `end_turn` can precede attached-shell completion and autonomous follow-up edits. Keep automatic PR feedback opt-in, surface unowned activity without reassigning it, and never use quiet time or log-file tailing as completion authority. This is containment, not a checkpoint/completion fix; track upstream [completion](https://github.com/github/copilot-cli/issues/4743) and [follow-up abort](https://github.com/github/copilot-cli/issues/4555).
 - Copilot ACP events do not reliably identify their originating prompt. Once a follow-up is active, old continuation events can still be attributed to it by existing handlers; no-active-turn warnings do not solve that ambiguity. Do not claim cross-turn attribution safety without an upstream correlation/completion contract.
 - Automatic PR fallback bypasses the owner-thread queue. Gate both the existing Copilot session and destination before automatic takeover, even when switching to another provider. Keep explicit requests distinct; policy-disabled feedback remains pending, not failed.
@@ -51,7 +53,7 @@
 
 ## Desktop packaging and React state
 
-- `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; fetch the observed SHA with no ref mapping, tags, submodules, or `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
+- `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; disable ref mapping, tags, submodules, and `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
 - Chat thread URLs can outlive a desktop backend port or advertise a LAN address while the client uses loopback. Resolve private-network aliases by their explicitly registered environment ID and protocol without contacting the alias; preserve exact-origin environment bindings and keep public websites and pairing URLs external.
 - Work-log display paths must use verbatim provider candidates, not Git-normalized changed paths: absolute patch paths are rejected without a cwd. Prefer raw input/ACP locations over shortened previews, and never treat JSON output as a filename.
 - Keep visited work-log bodies local to their virtual timeline row, lazy before first expansion, and hidden after collapse. Preserve mounted details through closing/reversal so output parsing and DOM reconstruction do not interrupt the animation.
@@ -74,6 +76,8 @@
 - Packaged Dev builds must write their flavor-specific `productName` into ASAR metadata; Electron derives `app.getName()` from it, and a stale Alpha name makes Dev reuse Alpha's Chromium profile.
 - Desktop staging must install optional native dependencies for the target architecture and key its cache by install policy; `--no-optional` omits keyring bindings. Load feature-only native modules inside the feature's typed error boundary, never during app startup.
 - Filter archived sidebar hierarchies before tree normalization; archived parents must suppress both real and virtual descendants or stale children are resurrected as roots.
+- Dev rebuild checks must canonicalize abbreviated build SHAs before ancestry tests, fetch missing history into a disposable private ref without moving checkout/tracking refs, distinguish remote update availability from clean default-branch pull readiness, and include the remote default branch in readiness-cache identity.
+- Stage and validate desktop replacements before quitting or swapping; retain the prior bundle until the replacement is verified, and persist installer completion so a deliberate app quit does not erase a later failure. Restore rebuild admission from persisted running state and release it when reconciliation observes a terminal state. Reserve renderer admission synchronously until the shared running lifecycle arrives. Treat a pre-spawn process error as terminal even if an exit event follows. Trust an installer exit marker only after the running lifecycle records that install's log path; a null path means rebuild setup or pull has not launched an installer.
 
 ## Provider tools and workspace ownership
 
@@ -217,6 +221,7 @@
 - A retained floating-preview preference is not surface ownership: the visible panel must present its browser while the matching mini-player is suppressed, then return it to the mini-player when closed.
 - Persisted floating-preview state must survive the empty pre-snapshot render after refresh; only prune a missing tab after `serverEpoch` proves an authoritative preview list has arrived.
 - Desktop zoom menu accelerators must route through the renderer without changing focus: preview chrome and its `<webview>` zoom the active browser tab, while all other focus targets zoom only the sender's T3 window.
+- Portaled preview menus must count as preview focus too; their controls live outside the panel DOM, otherwise zoom menu accelerators target the T3 window instead of the browser tab.
 - Preview zoom is manager-owned state; reapply it after webview registration and navigation, and keep same-origin tabs in one shared factor because Chromium propagates zoom within a session partition.
 - Desktop preview load events must capture their phase before forking async state updates, and `did-finish-load` must terminate the main-frame loading state; re-reading `webContents.isLoading()` later can observe a different phase and strand the progress UI.
 - Host popovers over a `<webview>` must consume forwarded guest interaction events because guest clicks never reach the host DOM's outside-press handlers.
@@ -238,6 +243,8 @@
 
 ## Pairing and environment recovery
 
+- The shared WebSocket transport normalizes its endpoint pathname to `/ws`. Native proxy gateways must bind environment identity to single-use tickets, not rely on a URL path prefix surviving that normalization.
+- `/api/auth/session` can report revoked credentials with HTTP 200 and `authenticated: false`; native account HTTP renewal must handle that response as well as HTTP 401.
 - SSH device startup must lock per host, not across the service; keep settings revocation coordinated with those locks so a slow remote install cannot block healthy hosts or publish readiness after access is disabled.
 - Persist agent endpoints under the adapter's reconnect lock using its current endpoint; a service-only lock cannot prevent a stale readiness snapshot from overwriting a new tunnel configuration.
 - Host IDs are environment-local. Cross-environment edits and removals must confirm the SSH destination before trusting an ID, and must not append a duplicate ID belonging to an unrelated host.
@@ -385,6 +392,7 @@
 
 ## UI discovery and browser capture
 
+- Settings rows without search IDs must not match an empty URL hash; ref-driven focus/scroll otherwise jumps to the last ID-less row when Settings opens.
 - Composer-triggered provider discovery must use the route's environment connection; the primary environment cannot safely resolve remote workspace paths or update a remote provider snapshot.
 - Sidebar device markers belong in trailing metadata, not title text: omit primary-machine markers and raw IDs, keep remote names in tooltips, and cover hosted clients with no primary environment in both sidebar layouts.
 - Diff route search is thread-local UI state: clear it when sidebar navigation changes threads, but preserve it for the active thread so the split-layout store can restore each chat independently.
@@ -403,7 +411,8 @@
 - `CheckpointReactor.ts` carries `// @ts-nocheck`, so Effect API renames (e.g. `tapErrorCause` → `tapCause`) fail only at runtime; verify changes against its test suite, not typecheck.
 - Worse, a nonexistent Effect API inside a `// @ts-nocheck` file (fork beta vs upstream rc drift, e.g. `catchAllCause`) silently widens that file's inferred layer requirements to `unknown`, so typecheck breaks in dozens of unrelated test files with no error at the source. When porting upstream code, confirm every Effect combinator exists in the fork's effect version, and treat a sudden `unknown`-context cascade as a poisoned nocheck inference before touching the reporters.
 - Completion ingestion and checkpointing must share one provider subscription with an owned queue handoff; independent hot subscribers lose startup-gap events. Release checkout exclusions on failed handoff and worker cancellation, including queued completions.
-- `NodeSqliteClient` is one `DatabaseSync` connection behind `Semaphore(1)`: `Effect.all` concurrency cannot overlap SQLite SELECTs, and shell/full snapshot row reads must stay in one read transaction with `projection_state` or `subscribeShell` drops buffered live events through a mismatched `snapshotSequence`; regression tests must pause at the row/cursor boundary and queue a writer while that transaction is open, because whole-snapshot races do not prove atomicity.
+- Disk-backed `NodeSqliteClient` owns SQLite in workers: one semaphore-reserved writer preserves transaction affinity while WAL read workers serve independent SELECTs; `:memory:` stays on one synchronous connection. Wait for the writer to enable WAL before attaching readers, and keep shell/full snapshot rows plus `projection_state` in one writer transaction or `subscribeShell` can drop buffered events through a mismatched `snapshotSequence`.
+- Multi-gigabyte JSON deduplication must not rewrite the event store in a startup migration. Add schema only, then compact bounded batches behind a durable sequence cursor; keep event/projection reads backward-compatible with inline JSON while the compactor converges.
 - Revert projection commits precede Git ref pruning; integration assertions must wait for the final revert-guard deletion before checking pruned refs. Session readiness alone does not prove a turn's checkpoint is finalized.
 
 ## MCP schemas and auth bootstrap

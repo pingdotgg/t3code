@@ -74,8 +74,23 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  /** Omitted for providers that do not publish argument rules. */
+  argumentMode: Schema.optional(Schema.Literals(["none", "optional", "required"])),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
+
+export function providerSlashCommandArgumentError(
+  command: Pick<ServerProviderSlashCommand, "name" | "argumentMode">,
+  args: string,
+) {
+  if (command.argumentMode === "none" && args.trim()) {
+    return `/${command.name} does not accept arguments.`;
+  }
+  if (command.argumentMode === "required" && !args.trim()) {
+    return `/${command.name} requires arguments.`;
+  }
+  return null;
+}
 
 export const ServerProviderListCommandsInput = Schema.Struct({
   provider: ProviderDriverKind,
@@ -172,6 +187,9 @@ export const ServerProvider = Schema.Struct({
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
+  reportsContextWindow: Schema.optional(Schema.Boolean),
+  requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
+  supportsConversationRollback: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),

@@ -1,8 +1,10 @@
 import * as ChildProcess from "node:child_process";
+import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as Path from "node:path";
 
 import type {
+  DesktopLocalRebuildLifecycle,
   DesktopLocalRebuildResult,
   DesktopLocalRebuildStaleness,
   DesktopLocalRebuildState,
@@ -12,9 +14,20 @@ const INSTALL_SCRIPT_RELATIVE_PATH = Path.join("scripts", "install-t3-dev.sh");
 
 /** Per-command cap for the staleness check so an offline origin cannot hang it. */
 const STALENESS_GIT_TIMEOUT_MS = 30_000;
+const FETCH_GIT_TIMEOUT_MS = 120_000;
 /** Pulls fetch before merging, so they get a longer leash than read-only checks. */
 const PULL_GIT_TIMEOUT_MS = 120_000;
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const COMMIT_REFERENCE_PATTERN = /^[0-9a-f]{7,40}$/i;
+const ancestryCache = new Map<
+  string,
+  {
+    behind: boolean;
+    behindBy: number | null;
+    readyToPull: boolean;
+    readinessReason: string | null;
+  }
+>();
 
 export interface GitRunResult {
   readonly stdout: string;
@@ -69,6 +82,11 @@ function normalizeSha(value: string): string | null {
   return FULL_SHA_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 }
 
+function normalizeCommitReference(value: string | null): string | null {
+  const trimmed = value?.trim() ?? "";
+  return COMMIT_REFERENCE_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
 /**
  * Parse `git ls-remote --symref origin HEAD`. The symref line names the
  * remote default branch; without it only the tip SHA is known.
@@ -119,6 +137,8 @@ function unavailableStaleness(reason: string): DesktopLocalRebuildStaleness {
     available: false,
     behind: false,
     behindBy: null,
+    readyToPull: false,
+    readinessReason: reason,
     localBranch: null,
     localSha: null,
     remoteBranch: null,
@@ -130,8 +150,9 @@ function unavailableStaleness(reason: string): DesktopLocalRebuildStaleness {
 }
 
 /**
- * Check whether the remote default branch moved past the running build.
- * Missing history is fetched without changing refs, FETCH_HEAD, or local work.
+ * Compare the build and source checkout with the remote default branch. Fetch
+ * uses a temporary private ref, which is deleted after the object transfer;
+ * no local branch, worktree, FETCH_HEAD, or remote-tracking ref is changed.
  */
 export async function checkLocalDevRebuildStaleness(input: {
   readonly enabled: boolean;
@@ -151,6 +172,8 @@ export async function checkLocalDevRebuildStaleness(input: {
     available: true,
     behind: false,
     behindBy: null,
+    readyToPull: false,
+    readinessReason: partial?.readinessReason ?? message,
     localBranch: null,
     localSha: null,
     remoteBranch: null,
@@ -163,11 +186,13 @@ export async function checkLocalDevRebuildStaleness(input: {
 
   let head: GitRunResult;
   let branch: GitRunResult;
+  let workingTree: GitRunResult;
   let lsRemote: GitRunResult;
   try {
-    [head, branch, lsRemote] = await Promise.all([
+    [head, branch, workingTree, lsRemote] = await Promise.all([
       runGit(["rev-parse", "HEAD"], cwd),
       runGit(["branch", "--show-current"], cwd),
+      runGit(["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], cwd),
       runGit(["ls-remote", "--symref", "origin", "HEAD"], cwd),
     ]);
   } catch (error) {
@@ -179,24 +204,59 @@ export async function checkLocalDevRebuildStaleness(input: {
   if (!localSha) {
     return failed("The source checkout is not a git repository.");
   }
+  const localBranch = branch.exitCode === 0 ? branch.stdout.trim() || null : null;
   const parsed = lsRemote.exitCode === 0 ? parseLsRemoteSymrefHead(lsRemote.stdout) : null;
   if (!parsed) {
     return failed("Could not read the remote default branch.", {
-      localBranch: branch.exitCode === 0 ? branch.stdout.trim() || null : null,
+      localBranch,
       localSha,
     });
   }
 
+  let readinessReason: string | null = null;
+  if (!parsed.branch) {
+    readinessReason = "Could not determine the remote default branch.";
+  } else if (localBranch === null) {
+    readinessReason = `Checkout is detached; switch to '${parsed.branch}' to pull its latest changes.`;
+  } else if (localBranch !== parsed.branch) {
+    readinessReason = `Checkout is on '${localBranch}'; switch to '${parsed.branch}' to pull its latest changes.`;
+  } else if (workingTree.exitCode !== 0) {
+    readinessReason = "Could not inspect the working tree.";
+  } else if (workingTree.stdout.trim().length > 0) {
+    readinessReason = `Checkout has local changes; stash, commit, or discard them before pulling origin/${parsed.branch}.`;
+  }
+
+  const canCompareSource = readinessReason === null;
+  const buildReference = normalizeCommitReference(input.buildSha);
+  if (input.buildSha && !buildReference) {
+    return failed("The running build commit metadata is invalid.", {
+      localBranch,
+      localSha,
+      remoteBranch: parsed.branch,
+      remoteSha: parsed.sha,
+    });
+  }
   // The running build's commit is the honest base; without embedded metadata
   // the checkout HEAD is the closest observable proxy.
-  const baseSha = input.buildSha ?? localSha;
-  const localBranch = branch.exitCode === 0 ? branch.stdout.trim() || null : null;
+  let baseSha = buildReference && FULL_SHA_PATTERN.test(buildReference) ? buildReference : null;
+  if (!baseSha && buildReference) {
+    try {
+      const resolved = await runGit(["rev-parse", "--verify", `${buildReference}^{commit}`], cwd);
+      baseSha = resolved.exitCode === 0 ? normalizeSha(resolved.stdout) : null;
+    } catch {
+      baseSha = null;
+    }
+  }
+  baseSha ??= input.buildSha ? null : localSha;
+
   const complete = (
     extra: Partial<DesktopLocalRebuildStaleness>,
   ): DesktopLocalRebuildStaleness => ({
     available: true,
     behind: false,
     behindBy: null,
+    readyToPull: false,
+    readinessReason,
     localBranch,
     localSha,
     remoteBranch: parsed.branch,
@@ -207,62 +267,209 @@ export async function checkLocalDevRebuildStaleness(input: {
     ...extra,
   });
 
-  if (parsed.sha === baseSha) {
-    return complete({});
+  let remoteHistoryFetched = false;
+  if (!baseSha) {
+    const fetched = await fetchRemoteDefaultBranch(runGit, cwd, parsed.branch);
+    if (!fetched.ok) {
+      return complete({
+        error: `Could not obtain remote history: ${fetched.message}`,
+        readinessReason:
+          readinessReason ??
+          "Could not compare the source checkout with the remote default branch.",
+      });
+    }
+    remoteHistoryFetched = true;
+    if (buildReference) {
+      try {
+        const resolved = await runGit(["rev-parse", "--verify", `${buildReference}^{commit}`], cwd);
+        baseSha = resolved.exitCode === 0 ? normalizeSha(resolved.stdout) : null;
+      } catch {
+        baseSha = null;
+      }
+    }
+    if (!baseSha) {
+      return complete({
+        error: "Could not resolve the running build commit in the source checkout.",
+        readinessReason:
+          readinessReason ??
+          "Could not compare the source checkout with the remote default branch.",
+      });
+    }
   }
 
-  let mergeBase: GitRunResult;
-  try {
-    mergeBase = await runGit(["merge-base", "--is-ancestor", baseSha, parsed.sha], cwd);
-    if (mergeBase.exitCode !== 0 && mergeBase.exitCode !== 1) {
-      // ls-remote advertises IDs, not objects. Fetch the observed tip without
-      // advancing configured tracking refs or disturbing a user's FETCH_HEAD.
-      const fetched = await runGit(
-        [
-          "fetch",
-          "--no-write-fetch-head",
-          "--no-tags",
-          "--no-recurse-submodules",
-          "--refmap=",
-          "origin",
-          parsed.sha,
-        ],
-        cwd,
-      );
-      if (fetched.exitCode !== 0) {
-        return complete({ error: "Could not fetch the remote commit for comparison." });
+  const needsHistory = baseSha !== parsed.sha || (canCompareSource && localSha !== parsed.sha);
+  const useCache = input.runGit === undefined;
+  const cacheKey = JSON.stringify([
+    cwd,
+    baseSha,
+    parsed.sha,
+    parsed.branch,
+    localSha,
+    localBranch,
+    workingTree.exitCode === 0 ? workingTree.stdout : null,
+  ]);
+  const cached = useCache ? ancestryCache.get(cacheKey) : undefined;
+  if (needsHistory && !cached && !remoteHistoryFetched) {
+    const fetched = await fetchRemoteDefaultBranch(runGit, cwd, parsed.branch);
+    if (!fetched.ok) {
+      return complete({
+        error: `Could not obtain remote history: ${fetched.message}`,
+        readinessReason:
+          readinessReason ??
+          "Could not compare the source checkout with the remote default branch.",
+      });
+    }
+  }
+
+  if (cached) {
+    return complete(cached);
+  }
+
+  let behind = false;
+  let behindBy: number | null = null;
+  let error: string | null = null;
+  if (parsed.sha !== baseSha) {
+    const buildAncestor = await isAncestor(runGit, cwd, baseSha, parsed.sha);
+    const decision = decideRebuildStaleness({
+      baseSha,
+      remoteSha: parsed.sha,
+      mergeBaseIsAncestor: buildAncestor,
+      behindBy: null,
+    });
+    behind = decision.behind;
+    error = decision.error;
+
+    if (behind) {
+      try {
+        const count = await runGit(["rev-list", "--count", `${baseSha}..${parsed.sha}`], cwd);
+        if (count.exitCode === 0) {
+          const parsedCount = Number.parseInt(count.stdout.trim(), 10);
+          behindBy = Number.isFinite(parsedCount) && parsedCount > 0 ? parsedCount : null;
+        }
+      } catch {
+        behindBy = null;
       }
-      mergeBase = await runGit(["merge-base", "--is-ancestor", baseSha, parsed.sha], cwd);
+    }
+  }
+
+  let readyToPull = false;
+  if (canCompareSource) {
+    if (localSha === parsed.sha) {
+      readyToPull = true;
+    } else {
+      const sourceAncestor = await isAncestor(runGit, cwd, localSha, parsed.sha);
+      if (sourceAncestor === true) {
+        readyToPull = true;
+      } else if (sourceAncestor === false) {
+        const remoteAncestor = await isAncestor(runGit, cwd, parsed.sha, localSha);
+        if (remoteAncestor === true) {
+          readyToPull = true;
+        } else if (remoteAncestor === false) {
+          readinessReason =
+            "The source checkout and remote default branch have diverged; reconcile them before pulling.";
+        } else {
+          readinessReason = "Could not compare the source checkout with the remote default branch.";
+        }
+      } else {
+        readinessReason = "Could not compare the source checkout with the remote default branch.";
+      }
+    }
+  }
+
+  const result = {
+    behind,
+    behindBy,
+    readyToPull,
+    readinessReason,
+  };
+  if (useCache && error === null && (readyToPull || readinessReason !== null)) {
+    ancestryCache.set(cacheKey, result);
+    if (ancestryCache.size > 64) {
+      const oldest = ancestryCache.keys().next().value;
+      if (oldest !== undefined) ancestryCache.delete(oldest);
+    }
+  }
+  return complete({ ...result, error });
+}
+
+async function fetchRemoteDefaultBranch(
+  runGit: GitRunner,
+  cwd: string,
+  branch: string | null,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!branch) {
+    return { ok: false, message: "the remote default branch name is unavailable." };
+  }
+  const ref = `refs/heads/${branch}:`;
+  const temporaryRef = `refs/t3code/local-rebuild-check/${process.pid}-${Crypto.randomUUID()}`;
+  let shallow = false;
+  try {
+    const shallowResult = await runGit(["rev-parse", "--is-shallow-repository"], cwd);
+    shallow = shallowResult.exitCode === 0 && shallowResult.stdout.trim() === "true";
+  } catch {
+    // A later ancestry error reports missing history when this check is unavailable.
+  }
+
+  let fetched: GitRunResult | null = null;
+  let fetchError: string | null = null;
+  try {
+    fetched = await runGit(
+      [
+        "fetch",
+        ...(shallow ? ["--unshallow"] : []),
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--no-write-fetch-head",
+        "--refmap=",
+        "origin",
+        `${ref}${temporaryRef}`,
+      ],
+      cwd,
+      { timeoutMs: FETCH_GIT_TIMEOUT_MS },
+    );
+    if (fetched.exitCode !== 0) {
+      fetchError =
+        [fetched.stderr, fetched.stdout]
+          .map((output) => output?.trim())
+          .find((output) => output && output.length > 0) ?? "git fetch failed.";
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return complete({ error: `Could not compare commits: ${message}` });
-  }
-  // Exit 0 means ancestor (behind); 1 means not. Anything else (e.g. 128 for
-  // objects missing from a shallow clone) leaves the answer unknown.
-  const mergeBaseIsAncestor =
-    mergeBase.exitCode === 0 ? true : mergeBase.exitCode === 1 ? false : null;
-  const decision = decideRebuildStaleness({
-    baseSha,
-    remoteSha: parsed.sha,
-    mergeBaseIsAncestor,
-    behindBy: null,
-  });
-  if (!decision.behind) {
-    return complete({ error: decision.error });
+    fetchError = error instanceof Error ? error.message : String(error);
   }
 
-  let behindBy: number | null = null;
+  let cleanupError: string | null = null;
   try {
-    const count = await runGit(["rev-list", "--count", `${baseSha}..${parsed.sha}`], cwd);
-    if (count.exitCode === 0) {
-      const parsed_count = Number.parseInt(count.stdout.trim(), 10);
-      behindBy = Number.isFinite(parsed_count) && parsed_count > 0 ? parsed_count : null;
+    const cleanup = await runGit(["update-ref", "-d", temporaryRef], cwd);
+    if (cleanup.exitCode !== 0) {
+      cleanupError = cleanup.stderr?.trim() || "git could not remove the temporary ref.";
     }
-  } catch {
-    behindBy = null;
+  } catch (error) {
+    cleanupError = error instanceof Error ? error.message : String(error);
   }
-  return complete({ behind: true, behindBy });
+  if (cleanupError) {
+    return {
+      ok: false,
+      message: `Could not remove temporary remote-history ref ${temporaryRef}: ${cleanupError}`,
+    };
+  }
+  if (fetchError) {
+    return { ok: false, message: fetchError };
+  }
+  return fetched?.exitCode === 0 ? { ok: true } : { ok: false, message: "git fetch failed." };
+}
+
+async function isAncestor(
+  runGit: GitRunner,
+  cwd: string,
+  possibleAncestor: string,
+  descendant: string,
+): Promise<boolean | null> {
+  try {
+    const result = await runGit(["merge-base", "--is-ancestor", possibleAncestor, descendant], cwd);
+    return result.exitCode === 0 ? true : result.exitCode === 1 ? false : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -375,8 +582,9 @@ export interface LocalRebuildStartDeps {
   readonly pullLatest: (sourceRoot: string) => Promise<{ ok: boolean; message: string | null }>;
   readonly launch: (
     state: DesktopLocalRebuildState,
-    onExit: () => void,
+    onExit: (exitCode: number | null, signal: NodeJS.Signals | null) => void,
   ) => Promise<DesktopLocalRebuildResult>;
+  readonly onLifecycle?: (state: Omit<DesktopLocalRebuildLifecycle, "revision">) => void;
   readonly alreadyStartedLogPath: string;
   readonly options: { readonly pullLatest?: unknown } | undefined;
 }
@@ -385,9 +593,8 @@ export interface LocalRebuildStartDeps {
  * Single-rebuild gate around an optional pull plus the installer spawn. The
  * guard is set synchronously before the first await so concurrent invokes —
  * double-clicks, two windows, a slow fetch — serialize on it instead of
- * running overlapping pulls and installs. Every early return after the guard
- * clears it; a launched rebuild clears it on child exit (via onExit) or when
- * the launch itself is rejected.
+ * running overlapping pulls and installs. The shared lifecycle remains
+ * running until the detached installer exits.
  */
 export async function runLocalRebuildStart(
   deps: LocalRebuildStartDeps,
@@ -400,27 +607,249 @@ export async function runLocalRebuildStart(
     };
   }
   deps.setStarted(true);
+  deps.onLifecycle?.({ phase: "running", logPath: null, message: null });
+  const fail = (result: DesktopLocalRebuildResult): DesktopLocalRebuildResult => {
+    deps.setStarted(false);
+    deps.onLifecycle?.({
+      phase: "failed",
+      logPath: result.logPath,
+      message: result.message ?? "Local rebuild failed before the installer completed.",
+    });
+    return result;
+  };
   const state = deps.getState();
   if (deps.options?.pullLatest === true) {
     if (!state.enabled || !state.sourceRoot) {
-      deps.setStarted(false);
-      return {
+      return fail({
         accepted: false,
         logPath: null,
         message: state.reason ?? "Local rebuilds are unavailable.",
-      };
+      });
     }
-    const pull = await deps.pullLatest(state.sourceRoot);
+    let pull: { ok: boolean; message: string | null };
+    try {
+      pull = await deps.pullLatest(state.sourceRoot);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return fail({ accepted: false, logPath: null, message });
+    }
     if (!pull.ok) {
-      deps.setStarted(false);
-      return { accepted: false, logPath: null, message: pull.message };
+      return fail({ accepted: false, logPath: null, message: pull.message });
     }
   }
-  const result = await deps.launch(state, () => deps.setStarted(false));
+  let result: DesktopLocalRebuildResult;
+  try {
+    result = await deps.launch(state, (exitCode, signal) => {
+      deps.setStarted(false);
+      const completed = exitCode === 0 && signal === null;
+      deps.onLifecycle?.({
+        phase: completed ? "completed" : "failed",
+        logPath: Path.join(Path.dirname(deps.alreadyStartedLogPath), "dev-rebuild.log"),
+        message: completed
+          ? null
+          : signal
+            ? `The installer was terminated by ${signal}.`
+            : exitCode === null
+              ? "The installer could not be started; inspect the rebuild log."
+              : `The installer exited with code ${exitCode}.`,
+      });
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return fail({ accepted: false, logPath: null, message });
+  }
   if (!result.accepted) {
-    deps.setStarted(false);
+    return fail(result);
+  }
+  if (deps.isStarted()) {
+    deps.onLifecycle?.({ phase: "running", logPath: result.logPath, message: null });
   }
   return result;
+}
+
+export function persistLocalDevRebuildLifecycle(
+  path: string,
+  lifecycle: DesktopLocalRebuildLifecycle,
+  processId: number | null,
+): void {
+  const temporaryPath = `${path}.${process.pid}.tmp`;
+  FS.mkdirSync(Path.dirname(path), { recursive: true });
+  FS.writeFileSync(temporaryPath, JSON.stringify({ lifecycle, processId }), { mode: 0o600 });
+  FS.renameSync(temporaryPath, path);
+}
+
+export function restoreLocalDevRebuildLifecycle(
+  path: string,
+  fallbackLogPath: string,
+): {
+  readonly lifecycle: DesktopLocalRebuildLifecycle;
+  readonly processId: number | null;
+  readonly error: string | null;
+} {
+  const idle: DesktopLocalRebuildLifecycle = {
+    revision: 0,
+    phase: "idle",
+    logPath: null,
+    message: null,
+  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(FS.readFileSync(path, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { lifecycle: idle, processId: null, error: null };
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      lifecycle: {
+        revision: 1,
+        phase: "failed",
+        logPath: fallbackLogPath,
+        message: "Could not restore the previous rebuild status. Inspect the local rebuild log.",
+      },
+      processId: null,
+      error: message,
+    };
+  }
+
+  if (typeof parsed !== "object" || parsed === null || !("lifecycle" in parsed)) {
+    return invalidPersistedLifecycle(
+      "The persisted local rebuild status has an invalid shape.",
+      fallbackLogPath,
+    );
+  }
+  const record = parsed as { lifecycle?: unknown; processId?: unknown };
+  const lifecycle = record.lifecycle;
+  if (!isPersistedLocalRebuildLifecycle(lifecycle)) {
+    return invalidPersistedLifecycle(
+      "The persisted local rebuild lifecycle is invalid.",
+      fallbackLogPath,
+    );
+  }
+
+  const processId =
+    typeof record.processId === "number" &&
+    Number.isInteger(record.processId) &&
+    record.processId > 0
+      ? record.processId
+      : null;
+  if (lifecycle.phase !== "running") {
+    return { lifecycle, processId: null, error: null };
+  }
+
+  const logPath = lifecycle.logPath ?? fallbackLogPath;
+  const exitResult = lifecycle.logPath
+    ? readInstallerExitCode(`${logPath}.exit-code`)
+    : { kind: "missing" as const };
+  if (exitResult.kind === "complete") {
+    return {
+      lifecycle: {
+        revision: lifecycle.revision + 1,
+        phase: exitResult.exitCode === 0 ? "completed" : "failed",
+        logPath,
+        message:
+          exitResult.exitCode === 0
+            ? null
+            : `The installer exited with code ${exitResult.exitCode}.`,
+      },
+      processId: null,
+      error: null,
+    };
+  }
+  if (exitResult.kind === "invalid") {
+    return {
+      lifecycle: {
+        revision: lifecycle.revision + 1,
+        phase: "failed",
+        logPath,
+        message: `Could not read the installer result: ${exitResult.message}`,
+      },
+      processId: null,
+      error: exitResult.message,
+    };
+  }
+  if (processId !== null && isProcessRunning(processId)) {
+    return { lifecycle: { ...lifecycle, logPath }, processId, error: null };
+  }
+  return {
+    lifecycle: {
+      revision: lifecycle.revision + 1,
+      phase: "failed",
+      logPath,
+      message: "The installer stopped before reporting its result. Inspect the local rebuild log.",
+    },
+    processId: null,
+    error: null,
+  };
+}
+
+function invalidPersistedLifecycle(
+  message: string,
+  fallbackLogPath: string,
+): {
+  lifecycle: DesktopLocalRebuildLifecycle;
+  processId: null;
+  error: string;
+} {
+  return {
+    lifecycle: {
+      revision: 1,
+      phase: "failed",
+      logPath: fallbackLogPath,
+      message,
+    },
+    processId: null,
+    error: message,
+  };
+}
+
+function isPersistedLocalRebuildLifecycle(value: unknown): value is DesktopLocalRebuildLifecycle {
+  if (typeof value !== "object" || value === null) return false;
+  const lifecycle = value as Record<string, unknown>;
+  return (
+    typeof lifecycle.revision === "number" &&
+    Number.isInteger(lifecycle.revision) &&
+    (lifecycle.phase === "idle" ||
+      lifecycle.phase === "running" ||
+      lifecycle.phase === "completed" ||
+      lifecycle.phase === "failed") &&
+    (typeof lifecycle.logPath === "string" || lifecycle.logPath === null) &&
+    (typeof lifecycle.message === "string" || lifecycle.message === null)
+  );
+}
+
+function readInstallerExitCode(
+  resultPath: string,
+):
+  | { kind: "missing" }
+  | { kind: "complete"; exitCode: number }
+  | { kind: "invalid"; message: string } {
+  let raw: string;
+  try {
+    raw = FS.readFileSync(resultPath, "utf8").trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
+    return {
+      kind: "invalid",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (!/^\d+$/.test(raw)) {
+    return { kind: "invalid", message: "the exit-code file is malformed." };
+  }
+  const exitCode = Number.parseInt(raw, 10);
+  return Number.isSafeInteger(exitCode) && exitCode <= 255
+    ? { kind: "complete", exitCode }
+    : { kind: "invalid", message: "the exit code is outside the process status range." };
+}
+
+function isProcessRunning(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 export function readEmbeddedDevSourceRoot(appRoot: string): string | null {
@@ -477,42 +906,50 @@ export function launchLocalDevRebuild(
   state: DesktopLocalRebuildState,
   logDirectory: string,
   spawn: typeof ChildProcess.spawn = ChildProcess.spawn,
-  onExit: () => void = () => {},
+  onExit: (exitCode: number | null, signal: NodeJS.Signals | null) => void = () => {},
+  onSpawn: (processId: number | null) => void = () => {},
 ): Promise<DesktopLocalRebuildResult> {
   if (!state.enabled || !state.sourceRoot) {
     return Promise.resolve({ accepted: false, logPath: null, message: state.reason });
   }
 
   const logPath = Path.join(logDirectory, "dev-rebuild.log");
+  const resultPath = `${logPath}.exit-code`;
   try {
     FS.mkdirSync(logDirectory, { recursive: true });
+    FS.rmSync(resultPath, { force: true });
     FS.writeFileSync(logPath, `[${new Date().toISOString()}] Local rebuild requested.\n`);
     const child = spawn("/bin/bash", [Path.join(state.sourceRoot, INSTALL_SCRIPT_RELATIVE_PATH)], {
       cwd: state.sourceRoot,
       detached: true,
-      env: { ...process.env, T3CODE_DEV_REBUILD_LOG_PATH: logPath },
+      env: {
+        ...process.env,
+        T3CODE_DEV_REBUILD_LOG_PATH: logPath,
+        T3CODE_DEV_REBUILD_RESULT_PATH: resultPath,
+      },
       stdio: "ignore",
     });
 
     return new Promise((resolve) => {
       let settled = false;
       let exited = false;
-      const notifyExit = (): void => {
+      const notifyExit = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
         if (exited) return;
         exited = true;
-        onExit();
+        onExit(exitCode, signal);
       };
       child.once("error", (error) => {
         FS.appendFileSync(logPath, `[desktop] Failed to launch local rebuild: ${error.message}\n`);
         if (!settled) {
           settled = true;
+          exited = true;
           resolve({ accepted: false, logPath, message: error.message });
         }
-        notifyExit();
       });
-      child.once("exit", notifyExit);
+      child.once("exit", (exitCode, signal) => notifyExit(exitCode, signal));
       child.once("spawn", () => {
         settled = true;
+        onSpawn(child.pid ?? null);
         child.unref();
         resolve({ accepted: true, logPath, message: null });
       });

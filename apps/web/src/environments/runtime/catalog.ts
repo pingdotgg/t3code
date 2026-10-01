@@ -13,6 +13,7 @@ import { reportClientError } from "../../lib/clientLogger";
 import { getPrimaryKnownEnvironment } from "../primary";
 
 export interface SavedEnvironmentRecord {
+  readonly accountId?: string;
   readonly enabled?: boolean;
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -60,7 +61,7 @@ function toPersistedSavedEnvironmentRecord(
 function valuesOfSavedEnvironmentRegistry(
   byId: Record<EnvironmentId, SavedEnvironmentRecord>,
 ): ReadonlyArray<SavedEnvironmentRecord> {
-  return Object.values(byId) as ReadonlyArray<SavedEnvironmentRecord>;
+  return Object.values(byId).filter((record) => record.accountId === undefined);
 }
 
 function persistSavedEnvironmentRegistryState(): void {
@@ -253,6 +254,7 @@ export async function persistSavedEnvironmentRecord(record: SavedEnvironmentReco
 export async function readSavedEnvironmentBearerToken(
   environmentId: EnvironmentId,
 ): Promise<string | null> {
+  if (getSavedEnvironmentRecord(environmentId)?.accountId) return null;
   return ensureLocalApi().persistence.getSavedEnvironmentSecret(environmentId);
 }
 

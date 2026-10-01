@@ -2,6 +2,8 @@ import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
+  getPaletteMatchSource,
+  splitPaletteHighlightParts,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
   type CommandPaletteSubmenuItem,
@@ -24,6 +26,7 @@ interface CommandPaletteResultsProps {
   isActionsOnly: boolean;
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+  query?: string;
 }
 
 export function CommandPaletteResults(props: CommandPaletteResultsProps) {
@@ -51,6 +54,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
                 keybindings={props.keybindings}
                 isActive={props.highlightedItemValue === item.value}
                 onExecuteItem={props.onExecuteItem}
+                query={props.query ?? ""}
               />
             )}
           </CommandCollection>
@@ -60,15 +64,39 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   );
 }
 
+function HighlightedPaletteText(props: { text: string; query: string }) {
+  const trimmedQuery = props.query.trim();
+  if (trimmedQuery.length === 0) {
+    return <>{props.text}</>;
+  }
+  const parts = splitPaletteHighlightParts(props.text, trimmedQuery);
+  return (
+    <>
+      {parts.map((part) =>
+        part.highlighted ? (
+          <mark key={part.start} className="rounded-[2px] bg-yellow-400/30 text-inherit">
+            {part.text}
+          </mark>
+        ) : (
+          <span key={part.start}>{part.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function CommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+  query: string;
 }) {
   const shortcutLabel = props.item.shortcutCommand
     ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
     : null;
+  const matchSource =
+    props.query.trim().length > 0 ? getPaletteMatchSource(props.item, props.query) : null;
 
   return (
     <CommandItem
@@ -89,20 +117,41 @@ function CommandPaletteResultRow(props: {
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             {props.item.titleLeadingContent}
-            <span className="truncate">{props.item.title}</span>
+            <span className="truncate">
+              {typeof props.item.title === "string" ? (
+                <HighlightedPaletteText text={props.item.title} query={props.query} />
+              ) : (
+                props.item.title
+              )}
+            </span>
             {props.item.titleTrailingContent}
           </span>
           <span className="truncate text-muted-foreground/70 text-xs">
-            {props.item.description}
+            {typeof props.item.description === "string" ? (
+              <HighlightedPaletteText text={props.item.description} query={props.query} />
+            ) : (
+              props.item.description
+            )}
           </span>
         </span>
       ) : (
         <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground">
           {props.item.titleLeadingContent}
-          <span className="truncate">{props.item.title}</span>
+          <span className="truncate">
+            {typeof props.item.title === "string" ? (
+              <HighlightedPaletteText text={props.item.title} query={props.query} />
+            ) : (
+              props.item.title
+            )}
+          </span>
           {props.item.titleTrailingContent}
         </span>
       )}
+      {matchSource ? (
+        <span className="shrink-0 rounded border px-1 text-[10px] text-muted-foreground">
+          {matchSource}
+        </span>
+      ) : null}
       {props.item.environmentId ? (
         <EnvironmentIdentity environmentId={props.item.environmentId} />
       ) : null}

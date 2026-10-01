@@ -80,7 +80,9 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-4-6");
     expect(normalizeModelSlug("opus", copilot)).toBe("claude-opus-5");
     expect(normalizeModelSlug("opus-5.5", copilot)).toBe("claude-opus-5.5");
+    expect(normalizeModelSlug("sonnet-5.5", copilot)).toBe("claude-sonnet-5.5");
     expect(normalizeModelSlug("6-sol", copilot)).toBe("gpt-6-sol");
+    expect(normalizeModelSlug("6.1-sol", copilot)).toBe("gpt-6.1-sol");
     expect(normalizeModelSlug("fable", copilot)).toBe("claude-fable-5.1");
     expect(normalizeModelSlug("grok", copilot)).toBe("grok-4.7");
     expect(normalizeModelSlug("kimi", copilot)).toBe("kimi-k3");

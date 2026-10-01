@@ -48,6 +48,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { parsePiSessionCommand } from "@t3tools/client-runtime/state/threads";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ShimmeringWorkContent } from "./thread-work-log";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
@@ -1008,6 +1009,15 @@ export function NewTaskDraftScreen(props: {
         "Usage limits",
         "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
       );
+      return;
+    }
+    if (
+      selectedEnvironmentServerConfig?.providers.find(
+        (provider) => provider.instanceId === modelSelection.instanceId,
+      )?.driver === "pi" &&
+      parsePiSessionCommand(initialMessageText)
+    ) {
+      Alert.alert("Start a Pi thread first", "Send a message before using session commands.");
       return;
     }
     // A failed-send restore can leave the draft over the cap on purpose (it

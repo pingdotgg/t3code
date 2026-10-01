@@ -210,6 +210,7 @@ export interface WsRpcClient {
     ) => ReturnType<RpcUnaryMethod<typeof WS_METHODS.serverRefreshProviders>>;
     readonly listProviderCommands: RpcUnaryMethod<typeof WS_METHODS.serverListProviderCommands>;
     readonly prewarmProviderSession: RpcUnaryMethod<typeof WS_METHODS.serverPrewarmProviderSession>;
+    readonly sessionCommand: RpcUnaryMethod<typeof WS_METHODS.providerSessionCommand>;
     readonly listSkills: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListSkills>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
@@ -512,6 +513,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.serverListProviderCommands](input)),
       prewarmProviderSession: (input) =>
         transport.request((client) => client[WS_METHODS.serverPrewarmProviderSession](input)),
+      sessionCommand: (input) =>
+        transport.request((client) => client[WS_METHODS.providerSessionCommand](input)),
       listSkills: () => transport.request((client) => client[WS_METHODS.serverListSkills]({})),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),

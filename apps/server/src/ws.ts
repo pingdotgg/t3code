@@ -56,6 +56,7 @@ import {
   FilesystemBrowseError,
   MessageId,
   ProjectId,
+  ProviderSessionCommandError,
   ServerChatArchiveError,
   ServerProviderListCommandsError,
   ServerExportThreadMarkdownError,
@@ -1325,6 +1326,7 @@ const makeWsRpcLayer = (
                           : [
                               {
                                 threadId: match.threadId,
+                                messageId: match.messageId,
                                 projectId,
                                 source: match.role,
                                 snippet: match.excerpt.slice(0, 240),
@@ -1641,6 +1643,30 @@ const makeWsRpcLayer = (
                 }),
             }).pipe(Effect.as({})),
             { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.providerSessionCommand]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.providerSessionCommand,
+            Option.match(providerService, {
+              onNone: () =>
+                Effect.fail(
+                  new ProviderSessionCommandError({
+                    threadId: input.threadId,
+                    detail: "Provider runtime is unavailable in this environment.",
+                  }),
+                ),
+              onSome: (service) =>
+                service.sessionCommand(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderSessionCommandError({
+                        threadId: input.threadId,
+                        detail: cause.message,
+                      }),
+                  ),
+                ),
+            }),
+            { "rpc.aggregate": "provider" },
           ),
         [WS_METHODS.serverListSkills]: (_input) =>
           observeRpcEffect(
@@ -3237,10 +3263,6 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
-
-              yield* providerRegistry
-                .refresh()
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,

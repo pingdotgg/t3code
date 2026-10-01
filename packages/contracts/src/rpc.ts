@@ -32,6 +32,9 @@ import {
   DelegationAuditPageInput,
 } from "./delegationAudit.ts";
 import {
+  ProviderSessionCommandError,
+  ProviderSessionCommandInput,
+  ProviderSessionCommandResult,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   ProviderUploadFeedbackError,
@@ -313,6 +316,7 @@ import { WorkflowRunInput } from "./workflowRuntime.ts";
 export const WS_METHODS = {
   providerConsumeResetCredit: "provider.consumeResetCredit",
   providerUploadFeedback: "provider.uploadFeedback",
+  providerSessionCommand: "provider.sessionCommand",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1476,6 +1480,12 @@ export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
   },
 );
 
+export const WsProviderSessionCommandRpc = Rpc.make(WS_METHODS.providerSessionCommand, {
+  payload: ProviderSessionCommandInput,
+  success: ProviderSessionCommandResult,
+  error: Schema.Union([ProviderSessionCommandError, EnvironmentAuthorizationError]),
+});
+
 export const WsRpcGroup = RpcGroup.make(
   Rpc.make(ORCHESTRATION_WS_METHODS.readThread, {
     payload: OrchestrationRpcSchemas.readThread.input,
@@ -1490,6 +1500,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerListProviderCommandsRpc,
   WsServerPrewarmProviderSessionRpc,
+  WsProviderSessionCommandRpc,
   WsServerListSkillsRpc,
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,

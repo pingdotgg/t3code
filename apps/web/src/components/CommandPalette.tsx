@@ -216,6 +216,7 @@ function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const openIntent = useCommandPaletteStore((store) => store.openIntent);
+  const projectSelection = useRef(openIntent?.onProjectSelected);
   const clearOpenIntent = useCommandPaletteStore((store) => store.clearOpenIntent);
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
@@ -700,9 +701,14 @@ function OpenCommandPaletteDialog() {
     if (openIntent?.kind !== "add-project") {
       return;
     }
+    projectSelection.current = openIntent.onProjectSelected;
     clearOpenIntent();
-    openAddProjectFlow();
-  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+    if (openIntent.environmentId) {
+      startAddProjectBrowse(openIntent.environmentId);
+    } else {
+      openAddProjectFlow();
+    }
+  }, [clearOpenIntent, openAddProjectFlow, openIntent, startAddProjectBrowse]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -821,7 +827,11 @@ function OpenCommandPaletteDialog() {
       metadataGroups: filteredGroups,
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
       runThread: async (ref) => {
-        await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(ref),
+          search: (previous) => ({ ...previous, message: ref.messageId }),
+        });
       },
     });
     return items.length > 0
@@ -865,6 +875,11 @@ function OpenCommandPaletteDialog() {
         cwd,
       );
       if (existing) {
+        if (projectSelection.current) {
+          projectSelection.current(scopeProjectRef(existing.environmentId, existing.id));
+          setOpen(false);
+          return;
+        }
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
@@ -901,9 +916,13 @@ function OpenCommandPaletteDialog() {
           },
           createdAt: new Date().toISOString(),
         });
-        await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
-          ...DEFAULT_NEW_THREAD_WORKSPACE,
-        }).catch(() => undefined);
+        if (projectSelection.current) {
+          projectSelection.current(scopeProjectRef(browseEnvironmentId, projectId));
+        } else {
+          await handleNewThread(scopeProjectRef(browseEnvironmentId, projectId), {
+            ...DEFAULT_NEW_THREAD_WORKSPACE,
+          }).catch(() => undefined);
+        }
         setOpen(false);
       } catch (error) {
         toastManager.add(
@@ -1183,6 +1202,7 @@ function OpenCommandPaletteDialog() {
             isActionsOnly={isActionsOnly}
             keybindings={keybindings}
             onExecuteItem={executeItem}
+            query={deferredQuery}
             {...(relativePathNeedsActiveProject
               ? { emptyStateMessage: "Relative paths require an active project." }
               : willCreateProjectPath

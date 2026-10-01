@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Project, Thread } from "../types";
 import {
   buildCommandPaletteSearchIndex,
@@ -7,6 +13,8 @@ import {
   buildThreadActionItems,
   buildTranscriptActionItems,
   filterCommandPaletteGroups,
+  getPaletteMatchSource,
+  splitPaletteHighlightParts,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -58,7 +66,6 @@ describe("buildCommandPaletteSearchIndex", () => {
   it("normalizes terms once for filtering and ranking", () => {
     expect(buildCommandPaletteSearchIndex(["  Fix   Navbar  ", "", "Feature/Branch"])).toEqual({
       normalizedTerms: ["fix navbar", "feature/branch"],
-      haystack: "fix navbar feature/branch",
     });
   });
 });
@@ -71,6 +78,7 @@ describe("transcript search identity", () => {
       environmentId,
       match: {
         threadId: sharedThreadId,
+        messageId: MessageId.make("message-1"),
         title: "Matching thread",
         projectTitle: "Project",
         branch: null,
@@ -99,7 +107,11 @@ describe("transcript search identity", () => {
       value: `transcript:${remote}:${sharedThreadId}`,
     });
     await items[0]!.run();
-    expect(runThread).toHaveBeenCalledWith({ environmentId: remote, threadId: sharedThreadId });
+    expect(runThread).toHaveBeenCalledWith({
+      environmentId: remote,
+      threadId: sharedThreadId,
+      messageId: MessageId.make("message-1"),
+    });
     expect(
       buildTranscriptActionItems({ matches, metadataGroups: [], icon: null, runThread }).map(
         (item) => item.environmentId,
@@ -124,7 +136,6 @@ describe("buildProjectActionItems", () => {
 
     expect(items[0]?.searchIndex).toEqual({
       normalizedTerms: ["web app", "/users/example/large project", "environment-local"],
-      haystack: "web app /users/example/large project environment-local",
     });
 
     const groups = filterCommandPaletteGroups({
@@ -313,4 +324,131 @@ it.each([
   expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
     "Implementation",
   ]);
+});
+
+describe("fuzzy token ranking", () => {
+  it("matches typo queries with fuzzy subsequence scoring", () => {
+    const items = buildThreadActionItems({
+      threads: [makeThread({ title: "Open settings panel" })],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "stngs",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: items,
+    });
+    expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+      "Open settings panel",
+    ]);
+  });
+
+  it("matches multi-token queries out of order", () => {
+    const items = buildProjectActionItems({
+      projects: [makeProject({ name: "Web App", cwd: "/Users/example/large project" })],
+      valuePrefix: "project",
+      icon: () => null,
+      runProject: async () => undefined,
+    });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "project large",
+      isInSubmenu: false,
+      projectSearchItems: items,
+      threadSearchItems: [],
+    });
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "project:environment-local:project-1",
+    ]);
+  });
+});
+
+describe("match source and highlight", () => {
+  it("labels title versus content matches", () => {
+    const threadItems = buildThreadActionItems({
+      threads: [makeThread({ title: "Fix navbar spacing" })],
+      projectTitleById: new Map([[PROJECT_ID, "Project"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(getPaletteMatchSource(threadItems[0]!, "navbar")).toBe("Title");
+    expect(getPaletteMatchSource(threadItems[0]!, "Project")).toBe("Project");
+
+    const transcriptItems = buildTranscriptActionItems({
+      matches: [
+        {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          match: {
+            threadId: ThreadId.make("thread-1"),
+            messageId: MessageId.make("message-1"),
+            title: "Thread",
+            projectTitle: null,
+            branch: null,
+            role: "user" as const,
+            excerpt: "needle in the haystack",
+            updatedAt: "2026-09-10T00:00:00.000Z",
+          },
+        },
+      ],
+      metadataGroups: [],
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(getPaletteMatchSource(transcriptItems[0]!, "needle")).toBe("Content");
+  });
+
+  it("splits highlight parts on case-insensitive substrings", () => {
+    const parts = splitPaletteHighlightParts("Fix Navbar Spacing", "navbar");
+    expect(parts.filter((part) => part.highlighted).map((part) => part.text)).toEqual(["Navbar"]);
+  });
+
+  it("badges the best-scoring term when an early field matches weakly", () => {
+    const items = buildThreadActionItems({
+      threads: [makeThread({ title: "Kickoff notes for the quarterly planning session" })],
+      projectTitleById: new Map([[PROJECT_ID, "Planning"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(getPaletteMatchSource(items[0]!, "planning")).toBe("Project");
+  });
+
+  it("badges PR matches for full PR URLs with query suffixes", () => {
+    const items = buildThreadActionItems({
+      threads: [
+        makeThread({
+          title: "Implementation",
+          pullRequests: [
+            {
+              pullRequest: {
+                number: 10839,
+                url: "https://github.com/pingdotgg/t3code/pull/10839",
+                title: "Find linked PR threads",
+                baseBranch: "main",
+                headBranch: "feat/search",
+                state: "open",
+              },
+              source: "manual",
+              linkedAt: "2026-09-08T00:00:00Z",
+            },
+          ],
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    expect(
+      getPaletteMatchSource(
+        items[0]!,
+        "https://github.com/pingdotgg/t3code/pull/10839?tab=files#diff-123",
+      ),
+    ).toBe("PR");
+  });
 });

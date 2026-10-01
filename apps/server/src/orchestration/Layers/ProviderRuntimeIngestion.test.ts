@@ -138,6 +138,7 @@ function createProviderServiceHarness() {
     steerTurn: () => unsupported(),
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
+    sessionCommand: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
     prewarmSession: () => Effect.void,

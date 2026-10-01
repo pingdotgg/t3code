@@ -162,6 +162,9 @@
      setting rather than a derived size so metadata can stay visibly quieter
      than chat titles at any sidebar font size. */
   --app-sidebar-meta-font-size: 10px;
+  /* Sidebar action/row icon glyphs. Backed by the sidebar icon size setting;
+     status glyphs intentionally stay on their own smaller tier. */
+  --app-sidebar-icon-size: 14px;
   /* Sidebar row rhythm tracks the sidebar font size. Spacing preferences
      adjust these ratios, so denser/lighter rows stay proportional at every
      font size. */
@@ -988,6 +991,16 @@ label:has(> select#reasoning-effort) select {
 .composer-menu-description {
   font-size: 0.75rem;
   line-height: 1.35;
+}
+
+[data-chat-composer-form] {
+  --chat-composer-surface: var(--card);
+  --chat-composer-outline: rgb(0 0 0 / 8%);
+
+  @variant dark {
+    --chat-composer-surface: color-mix(in srgb, var(--chat-background) 97%, var(--color-white));
+    --chat-composer-outline: rgb(255 255 255 / 5%);
+  }
 }
 
 /* Composer footer: scale buttons/icons to match input font size setting */

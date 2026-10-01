@@ -129,7 +129,7 @@ export interface ThreadComposerProps {
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
-  readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onSendMessage: (providerCommand?: string) => Promise<MessageId | null>;
   /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
@@ -409,6 +409,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onProviderCommand:
+      props.draftAttachments.length === 0 ? (name) => void onSendMessage(name) : undefined,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerOwnerKey,

@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./desktopConnect": {
+      "types": "./src/desktopConnect.ts",
+      "import": "./src/desktopConnect.ts"
+    },
     "./connectManagement": {
       "types": "./src/connectManagement.ts",
       "import": "./src/connectManagement.ts"

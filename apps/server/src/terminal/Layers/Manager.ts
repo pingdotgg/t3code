@@ -101,6 +101,7 @@ interface TerminalStartInput {
 interface TerminalSessionState {
   threadId: string;
   terminalId: string;
+  command: string | null;
   cwd: string;
   worktreePath: string | null;
   status: TerminalSessionStatus;
@@ -1515,7 +1516,14 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
           Effect.andThen(
             Effect.gen(function* () {
-              const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+              const shellCandidates =
+                session.command === null
+                  ? resolveShellCandidates(shellResolver, platform, baseEnv)
+                  : [
+                      platform === "win32"
+                        ? { shell: "cmd.exe", args: ["/d", "/s", "/c", session.command] }
+                        : { shell: "/bin/sh", args: ["-c", session.command] },
+                    ];
               const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
               const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
@@ -1755,7 +1763,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       }).pipe(Effect.ignoreCause({ log: true })),
     );
 
-    const open: TerminalManagerShape["open"] = (input) =>
+    const open: TerminalManagerShape["open"] = (input, openOptions) =>
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
@@ -1772,6 +1780,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             const session: TerminalSessionState = {
               threadId: input.threadId,
               terminalId,
+              command: openOptions?.command ?? null,
               cwd: input.cwd,
               worktreePath: input.worktreePath ?? null,
               status: "starting",
@@ -1819,6 +1828,12 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           }
 
           const liveSession = existing.value;
+          if (
+            liveSession.command !== null &&
+            (liveSession.status === "exited" || liveSession.status === "error")
+          ) {
+            return snapshot(liveSession);
+          }
           const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
           const currentRuntimeEnv = liveSession.runtimeEnv;
           const targetCols = input.cols ?? liveSession.cols;
@@ -1955,6 +1970,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             session = {
               threadId: input.threadId,
               terminalId,
+              command: null,
               cwd: input.cwd,
               worktreePath: input.worktreePath ?? null,
               status: "starting",

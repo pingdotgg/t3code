@@ -111,6 +111,8 @@ import Migration0106 from "./Migrations/106_PullRequestCreationIntents.ts";
 import Migration0107 from "./Migrations/107_DelegationAudit.ts";
 import Migration0108 from "./Migrations/108_DelegationAuditLookupIndexes.ts";
 import Migration0109 from "./Migrations/109_DelegationAuditToolCallIndex.ts";
+import Migration0110 from "./Migrations/110_ActivityPayloadBlobs.ts";
+import Migration0111 from "./Migrations/111_RemoveRedundantProjectionIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -221,6 +223,8 @@ export const migrationEntries = [
   [107, "DelegationAudit", Migration0107],
   [108, "DelegationAuditLookupIndexes", Migration0108],
   [109, "DelegationAuditToolCallIndex", Migration0109],
+  [110, "ActivityPayloadBlobs", Migration0110],
+  [111, "RemoveRedundantProjectionIndexes", Migration0111],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

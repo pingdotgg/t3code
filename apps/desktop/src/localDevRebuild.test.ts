@@ -1,18 +1,22 @@
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
-import { EventEmitter } from "node:events";
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
+import type { DesktopLocalRebuildLifecycle } from "@t3tools/contracts";
 
 import {
   checkLocalDevRebuildStaleness,
   decideRebuildStaleness,
   launchLocalDevRebuild,
   parseLsRemoteSymrefHead,
+  persistLocalDevRebuildLifecycle,
   pullLatestCheckoutChanges,
   readEmbeddedDevSourceRoot,
+  restoreLocalDevRebuildLifecycle,
   resolveLocalDevRebuildState,
   runLocalRebuildStart,
   type GitRunner,
@@ -128,7 +132,7 @@ describe("local Dev rebuild", () => {
     });
   });
 
-  it("reports asynchronous launch failures and notifies when the child exits", async () => {
+  it("does not report a child exit after an asynchronous spawn failure", async () => {
     const sourceRoot = makeCheckout();
     const logDirectory = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-log-"));
     const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
@@ -148,7 +152,122 @@ describe("local Dev rebuild", () => {
       message: "async spawn failed",
     });
     child.emit("exit", 1, null);
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("reports the exit of an installer that spawned successfully", async () => {
+    const sourceRoot = makeCheckout();
+    const logDirectory = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-log-"));
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
+    const onExit = vi.fn();
+    const resultPromise = launchLocalDevRebuild(
+      { enabled: true, sourceRoot, reason: null },
+      logDirectory,
+      vi.fn(() => child) as unknown as typeof import("node:child_process").spawn,
+      onExit,
+    );
+
+    child.emit("spawn");
+    await expect(resultPromise).resolves.toMatchObject({ accepted: true });
+    child.emit("exit", 1, null);
     expect(onExit).toHaveBeenCalledOnce();
+    expect(onExit).toHaveBeenCalledWith(1, null);
+  });
+
+  it("restores installer failures and completions after an app relaunch", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    const running: DesktopLocalRebuildLifecycle = {
+      revision: 7,
+      phase: "running",
+      logPath,
+      message: null,
+    };
+    try {
+      persistLocalDevRebuildLifecycle(statePath, running, process.pid);
+      FS.writeFileSync(`${logPath}.exit-code`, "19\n");
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toEqual({
+        lifecycle: {
+          revision: 8,
+          phase: "failed",
+          logPath,
+          message: "The installer exited with code 19.",
+        },
+        processId: null,
+        error: null,
+      });
+
+      FS.writeFileSync(`${logPath}.exit-code`, "0\n");
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: { revision: 8, phase: "completed", logPath, message: null },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not use an unrelated exit marker for a running lifecycle without a log path", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    try {
+      persistLocalDevRebuildLifecycle(
+        statePath,
+        { revision: 4, phase: "running", logPath: null, message: null },
+        Number.MAX_SAFE_INTEGER,
+      );
+      FS.writeFileSync(`${logPath}.exit-code`, "0\n");
+
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: {
+          revision: 5,
+          phase: "failed",
+          logPath,
+          message: expect.stringContaining("stopped before reporting its result"),
+        },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a live installer busy across relaunch and surfaces a missing result for a dead process", () => {
+    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-state-"));
+    const statePath = Path.join(root, "lifecycle.json");
+    const logPath = Path.join(root, "dev-rebuild.log");
+    const running: DesktopLocalRebuildLifecycle = {
+      revision: 3,
+      phase: "running",
+      logPath,
+      message: null,
+    };
+    try {
+      persistLocalDevRebuildLifecycle(statePath, running, process.pid);
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toEqual({
+        lifecycle: running,
+        processId: process.pid,
+        error: null,
+      });
+
+      persistLocalDevRebuildLifecycle(statePath, running, Number.MAX_SAFE_INTEGER);
+      expect(restoreLocalDevRebuildLifecycle(statePath, logPath)).toMatchObject({
+        lifecycle: {
+          revision: 4,
+          phase: "failed",
+          logPath,
+          message: expect.stringContaining("stopped before reporting its result"),
+        },
+        processId: null,
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -157,65 +276,6 @@ const LOCAL_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const REMOTE_SHA = "cccccccccccccccccccccccccccccccccccccccc";
 
 describe("local Dev rebuild staleness", () => {
-  it("detects unfetched source updates without changing refs or local work", async () => {
-    const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-staleness-"));
-    const origin = Path.join(root, "origin");
-    const checkout = Path.join(root, "checkout");
-    const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", args, {
-        cwd,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          GIT_AUTHOR_NAME: "Test",
-          GIT_AUTHOR_EMAIL: "test@example.com",
-          GIT_COMMITTER_NAME: "Test",
-          GIT_COMMITTER_EMAIL: "test@example.com",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
-    try {
-      git(root, "init", "--initial-branch=main", origin);
-      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "build");
-      const buildSha = git(origin, "rev-parse", "HEAD");
-      git(root, "clone", "--no-local", origin, checkout);
-      git(checkout, "fetch", "origin");
-      const fetchHeadPath = Path.join(checkout, ".git", "FETCH_HEAD");
-      const fetchHead = FS.readFileSync(fetchHeadPath, "utf8");
-      const refs = git(checkout, "show-ref");
-      FS.writeFileSync(Path.join(checkout, "local-work.txt"), "keep me");
-      const status = git(checkout, "status", "--porcelain");
-
-      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "merged PR");
-      git(origin, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "another PR");
-      const remoteSha = git(origin, "rev-parse", "HEAD");
-      expect(() => git(checkout, "cat-file", "-e", remoteSha)).toThrow();
-
-      const result = await checkLocalDevRebuildStaleness({
-        enabled: true,
-        sourceRoot: checkout,
-        buildSha,
-      });
-
-      expect(result).toMatchObject({
-        behind: true,
-        behindBy: 2,
-        buildSha,
-        localSha: buildSha,
-        remoteSha,
-        remoteBranch: "main",
-        error: null,
-      });
-      expect(git(checkout, "show-ref")).toBe(refs);
-      expect(git(checkout, "rev-parse", "HEAD")).toBe(buildSha);
-      expect(FS.readFileSync(fetchHeadPath, "utf8")).toBe(fetchHead);
-      expect(git(checkout, "status", "--porcelain")).toBe(status);
-      expect(FS.readFileSync(Path.join(checkout, "local-work.txt"), "utf8")).toBe("keep me");
-    } finally {
-      FS.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it("parses ls-remote symref output for the default branch tip", () => {
     expect(parseLsRemoteSymrefHead(`ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`)).toEqual({
       sha: REMOTE_SHA,
@@ -275,8 +335,14 @@ describe("local Dev rebuild staleness", () => {
       calls.push(args);
       const key = args.join(" ");
       const hit = scenarios[key];
-      if (!hit) throw new Error(`unexpected git invocation: ${key}`);
-      return hit;
+      if (hit) return hit;
+      if (args[0] === "status") return { stdout: "", exitCode: 0 };
+      if (args[0] === "fetch") return { stdout: "", exitCode: 0 };
+      if (args[0] === "update-ref") return { stdout: "", exitCode: 0 };
+      if (args[0] === "rev-parse" && args[1] === "--is-shallow-repository") {
+        return { stdout: "false\n", exitCode: 0 };
+      }
+      throw new Error(`unexpected git invocation: ${key}`);
     };
     return { runner, calls };
   }
@@ -317,7 +383,7 @@ describe("local Dev rebuild staleness", () => {
   });
 
   it.each([
-    { exitCode: 128, error: "Could not fetch the remote commit for comparison." },
+    { exitCode: 128, error: "Could not obtain remote history: git fetch failed." },
     { exitCode: 0, error: "Could not compare the running build with the remote tip." },
   ])(
     "keeps a failed comparison unknown after fetch exits $exitCode",
@@ -325,14 +391,15 @@ describe("local Dev rebuild staleness", () => {
       const { runner } = stubRunner({
         ...behindScenario(),
         [`merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`]: { stdout: "", exitCode: 128 },
-        [`fetch --no-write-fetch-head --no-tags --no-recurse-submodules --refmap= origin ${REMOTE_SHA}`]:
-          { stdout: "", exitCode },
       });
       const result = await checkLocalDevRebuildStaleness({
         enabled: true,
         sourceRoot: "/repo/t3code",
         buildSha: BUILD_SHA,
-        runGit: runner,
+        runGit: (args, cwd, options) =>
+          args[0] === "fetch"
+            ? Promise.resolve({ stdout: "", exitCode })
+            : runner(args, cwd, options),
       });
       expect(result).toMatchObject({ behind: false, behindBy: null, error });
     },
@@ -360,6 +427,55 @@ describe("local Dev rebuild staleness", () => {
     expect(result).toMatchObject({ available: true, behind: true, behindBy: 2, buildSha: null });
   });
 
+  it("does not fetch remote history twice when fetching it resolves an abbreviated build SHA", async () => {
+    const calls: Array<readonly string[]> = [];
+    let buildRefAttempts = 0;
+    const runner: GitRunner = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      if (key === "rev-parse HEAD") return { stdout: `${REMOTE_SHA}\n`, exitCode: 0 };
+      if (key === "branch --show-current") return { stdout: "main\n", exitCode: 0 };
+      if (key === "status --porcelain --untracked-files=all --ignore-submodules=none") {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === "ls-remote --symref origin HEAD") {
+        return {
+          stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
+          exitCode: 0,
+        };
+      }
+      if (key === `rev-parse --verify ${BUILD_SHA.slice(0, 12)}^{commit}`) {
+        buildRefAttempts += 1;
+        return buildRefAttempts === 1
+          ? { stdout: "", exitCode: 128 }
+          : { stdout: `${BUILD_SHA}\n`, exitCode: 0 };
+      }
+      if (key === "rev-parse --is-shallow-repository") {
+        return { stdout: "false\n", exitCode: 0 };
+      }
+      if (args[0] === "fetch" || key.startsWith("update-ref -d ")) {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === `merge-base --is-ancestor ${BUILD_SHA} ${REMOTE_SHA}`) {
+        return { stdout: "", exitCode: 0 };
+      }
+      if (key === `rev-list --count ${BUILD_SHA}..${REMOTE_SHA}`) {
+        return { stdout: "7\n", exitCode: 0 };
+      }
+      throw new Error(`unexpected git invocation: ${key}`);
+    };
+
+    const result = await checkLocalDevRebuildStaleness({
+      enabled: true,
+      sourceRoot: "/repo/t3code",
+      buildSha: BUILD_SHA.slice(0, 12),
+      runGit: runner,
+    });
+
+    expect(result).toMatchObject({ behind: true, behindBy: 7, error: null });
+    expect(calls.filter(([command]) => command === "fetch")).toHaveLength(1);
+  });
+
   it("reports up to date when the remote tip matches the running build", async () => {
     const { runner } = stubRunner({
       "rev-parse HEAD": { stdout: `${BUILD_SHA}\n`, exitCode: 0 },
@@ -378,6 +494,37 @@ describe("local Dev rebuild staleness", () => {
     });
 
     expect(result).toMatchObject({ available: true, behind: false, error: null });
+  });
+
+  it("rechecks pull readiness when the remote default branch changes at the same tip", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      const currentDefault = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+      expect(currentDefault).toMatchObject({ behind: false, readyToPull: true });
+
+      const remoteRoot = Path.join(root, "origin.git");
+      git(sourceRoot, ["--git-dir", remoteRoot, "branch", "next", initialSha]);
+      git(sourceRoot, ["--git-dir", remoteRoot, "symbolic-ref", "HEAD", "refs/heads/next"]);
+
+      const changedDefault = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+      expect(changedDefault).toMatchObject({
+        behind: false,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("switch to 'next'"),
+        remoteBranch: "next",
+        error: null,
+      });
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("never claims behind for ahead or diverged checkouts", async () => {
@@ -451,7 +598,208 @@ describe("local Dev rebuild staleness", () => {
     expect(result.behind).toBe(false);
     expect(result.error).toEqual(expect.any(String));
   });
+
+  it("compares abbreviated build metadata and detects unfetched remote commits without moving local refs", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      for (const buildSha of [initialSha, initialSha.slice(0, 12)]) {
+        const unchanged = await checkLocalDevRebuildStaleness({
+          enabled: true,
+          sourceRoot,
+          buildSha,
+        });
+        expect(unchanged).toMatchObject({ behind: false, error: null });
+      }
+
+      git(sourceRoot, ["fetch", "origin"]);
+      const refsBefore = git(sourceRoot, ["show-ref"]);
+      const fetchHeadPath = Path.join(sourceRoot, ".git", "FETCH_HEAD");
+      const fetchHeadBefore = FS.readFileSync(fetchHeadPath, "utf8");
+      pushRemoteCommit(root);
+
+      const updated = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+
+      expect(updated).toMatchObject({
+        behind: true,
+        behindBy: 1,
+        readyToPull: true,
+        readinessReason: null,
+        error: null,
+      });
+      expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+      expect(git(sourceRoot, ["show-ref"])).toBe(refsBefore);
+      expect(FS.readFileSync(fetchHeadPath, "utf8")).toBe(fetchHeadBefore);
+      expect(git(sourceRoot, ["for-each-ref", "--format=%(refname)", "refs/t3code"])).toBe("");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps update availability separate from source checkout pull readiness", async () => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(root);
+      git(sourceRoot, ["switch", "-c", "feature"]);
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("switch to 'main'"),
+      });
+      expect(git(sourceRoot, ["branch", "--show-current"])).toBe("feature");
+      expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("deepens a shallow checkout to compare a missing build commit", async () => {
+    const { root, initialSha } = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(root);
+      const shallowRoot = Path.join(root, "shallow-source");
+      execFileSync("git", [
+        "clone",
+        "--depth=1",
+        pathToFileURL(Path.join(root, "origin.git")).href,
+        shallowRoot,
+      ]);
+      expect(git(shallowRoot, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: shallowRoot,
+        buildSha: initialSha,
+      });
+
+      expect(result).toMatchObject({ behind: true, behindBy: 1, readyToPull: true, error: null });
+      expect(git(shallowRoot, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+      expect(git(shallowRoot, ["branch", "--show-current"])).toBe("main");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("explains dirty, detached, and diverged source checkouts without changing them", async () => {
+    const dirty = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(dirty.root);
+      FS.writeFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "local data\n");
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: dirty.sourceRoot,
+        buildSha: dirty.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("local changes"),
+      });
+      expect(FS.readFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "utf8")).toBe(
+        "local data\n",
+      );
+    } finally {
+      FS.rmSync(dirty.root, { recursive: true, force: true });
+    }
+
+    const detached = makeRealRemoteCheckout();
+    try {
+      pushRemoteCommit(detached.root);
+      git(detached.sourceRoot, ["checkout", "--detach", "HEAD"]);
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: detached.sourceRoot,
+        buildSha: detached.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("detached"),
+      });
+      expect(git(detached.sourceRoot, ["branch", "--show-current"])).toBe("");
+    } finally {
+      FS.rmSync(detached.root, { recursive: true, force: true });
+    }
+
+    const diverged = makeRealRemoteCheckout();
+    try {
+      git(diverged.sourceRoot, ["config", "user.name", "Rebuild Test"]);
+      git(diverged.sourceRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+      FS.writeFileSync(Path.join(diverged.sourceRoot, "local.txt"), "local\n");
+      git(diverged.sourceRoot, ["add", "local.txt"]);
+      git(diverged.sourceRoot, ["commit", "-m", "local-only"]);
+      pushRemoteCommit(diverged.root);
+
+      const result = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot: diverged.sourceRoot,
+        buildSha: diverged.initialSha,
+      });
+      expect(result).toMatchObject({
+        behind: true,
+        readyToPull: false,
+        readinessReason: expect.stringContaining("diverged"),
+      });
+      expect(git(diverged.sourceRoot, ["log", "-1", "--format=%s"])).toBe("local-only");
+    } finally {
+      FS.rmSync(diverged.root, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
+
+function makeRealRemoteCheckout(): {
+  root: string;
+  sourceRoot: string;
+  initialSha: string;
+} {
+  const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3code-rebuild-git-"));
+  const remoteRoot = Path.join(root, "origin.git");
+  const seedRoot = Path.join(root, "seed");
+  const sourceRoot = Path.join(root, "source");
+  FS.mkdirSync(seedRoot, { recursive: true });
+  execFileSync("git", ["init", "--bare", "--initial-branch=main", remoteRoot]);
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: seedRoot });
+  git(seedRoot, ["config", "user.name", "Rebuild Test"]);
+  git(seedRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+  FS.writeFileSync(Path.join(seedRoot, "README"), "initial\n");
+  git(seedRoot, ["add", "README"]);
+  git(seedRoot, ["commit", "-m", "initial"]);
+  const initialSha = git(seedRoot, ["rev-parse", "HEAD"]);
+  git(seedRoot, ["remote", "add", "origin", remoteRoot]);
+  git(seedRoot, ["push", "-u", "origin", "main"]);
+  execFileSync("git", ["clone", remoteRoot, sourceRoot]);
+  return { root, sourceRoot, initialSha };
+}
+
+function pushRemoteCommit(root: string): void {
+  const remoteRoot = Path.join(root, "origin.git");
+  const writerRoot = Path.join(root, `writer-${Math.random().toString(16).slice(2)}`);
+  execFileSync("git", ["clone", remoteRoot, writerRoot]);
+  git(writerRoot, ["config", "user.name", "Rebuild Test"]);
+  git(writerRoot, ["config", "user.email", "rebuild-test@example.invalid"]);
+  FS.writeFileSync(Path.join(writerRoot, "remote.txt"), "remote update\n");
+  git(writerRoot, ["add", "remote.txt"]);
+  git(writerRoot, ["commit", "-m", "remote-update"]);
+  git(writerRoot, ["push", "origin", "main"]);
+}
+
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync("git", [...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+  }).trim();
+}
 
 describe("local Dev rebuild pull", () => {
   const onDefaultBranch = (): Record<string, { stdout: string; exitCode: number }> => ({

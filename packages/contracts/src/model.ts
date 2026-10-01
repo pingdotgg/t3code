@@ -130,6 +130,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const COPILOT_DRIVER_KIND = ProviderDriverKind.make("copilot");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 
 export const DEFAULT_PROVIDER_DRIVER_KIND = COPILOT_DRIVER_KIND;
 
@@ -142,6 +143,8 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [CURSOR_DRIVER_KIND]: "auto",
   [COPILOT_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // "default" defers to the user's own Pi settings.json model selection.
+  [PI_DRIVER_KIND]: "default",
 };
 
 /** Per-provider text generation model defaults. */
@@ -153,6 +156,9 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CURSOR_DRIVER_KIND]: "composer-2",
   [COPILOT_DRIVER_KIND]: "gpt-6-luna",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // "default" defers to the user's own Pi settings.json model selection;
+  // without this the fallback would hand PiTextGeneration a generic slug it rejects.
+  [PI_DRIVER_KIND]: "default",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -204,12 +210,19 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "claude-opus-5.5": "claude-opus-5.5",
     "opus-5": "claude-opus-5",
     "claude-opus-5": "claude-opus-5",
+    "sonnet-5.5": "claude-sonnet-5.5",
+    "claude-sonnet-5.5": "claude-sonnet-5.5",
+    "sonnet-5": "claude-sonnet-5",
+    "claude-sonnet-5": "claude-sonnet-5",
     "6-luna": "gpt-6-luna",
     "gpt-6-luna": "gpt-6-luna",
     "openai/gpt-6-luna": "gpt-6-luna",
     "6-sol": "gpt-6-sol",
     "gpt-6-sol": "gpt-6-sol",
     "openai/gpt-6-sol": "gpt-6-sol",
+    "6.1-sol": "gpt-6.1-sol",
+    "gpt-6.1-sol": "gpt-6.1-sol",
+    "openai/gpt-6.1-sol": "gpt-6.1-sol",
     "opus-4.8": "claude-opus-4.8",
     "claude-opus-4.8": "claude-opus-4.8",
     "5.5": "gpt-5.5",
@@ -249,4 +262,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [COPILOT_DRIVER_KIND]: "GitHub Copilot",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [PI_DRIVER_KIND]: "Pi",
 };
