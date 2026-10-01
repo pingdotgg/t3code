@@ -213,8 +213,11 @@ jobs:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
 
+      # Only the resource monitor build needs these libraries. With a cached
+      # monitor, the desktop build's preflight skips its MSVC check, and node-pty
+      # ships prebuilt Windows binaries, so the 30-60s install is skipped too.
       - name: Install Spectre-mitigated MSVC libs
-        if: inputs.platform == 'win'
+        if: inputs.platform == 'win' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
