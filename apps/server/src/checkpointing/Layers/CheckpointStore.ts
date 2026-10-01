@@ -49,10 +49,7 @@ class CheckpointDiffFilesCacheKey extends Data.Class<{
   readonly paths: ReadonlyArray<string>;
 }> {}
 
-/** File-stat lists are small (one entry per changed file), so the files cache
- * is bounded by entry count only. Keys use projected commit OIDs, which are
- * immutable, so entries stay valid until evicted.
- */
+/** Bounded by entry count only: file-stat lists are small and keys are immutable projected OIDs. */
 const CHECKPOINT_DIFF_FILES_CACHE_CAPACITY = 128;
 const CHECKPOINT_DIFF_FILES_CACHE_TTL = Duration.minutes(5);
 
@@ -63,20 +60,10 @@ const CHECKPOINT_DIFF_FILES_CACHE_TTL = Duration.minutes(5);
  */
 const BASE_MOVEMENT_MAX_COMMITS = 1000;
 const BASE_PROJECTION_CACHE_MAX_ENTRIES = 128;
-// Short TTL: the projection also reads mutable state outside the cache key
-// (HEAD reflog, ref tips, current branch), so a longer TTL would replay a
-// stale projected base after refs move. Repeat reads stay cheap through the
-// content-addressed diff and file-stats caches below.
+// Short TTL: the projection also reads mutable ref state outside the cache key.
 const BASE_PROJECTION_CACHE_TTL = Duration.seconds(5);
 
-/** Reflog subjects for operations that move a workspace onto history it did not author.
- *
- * Besides rebase/merge/pull, a branch switch (`checkout`) or hard `reset`
- * onto a branch that already contains newer base commits adopts foreign
- * history with no rebase/merge/pull entry in the turn window. Both degrade
- * safely: without an unrelated foreign base the projection is skipped and
- * the plain checkpoint-to-checkpoint diff is kept.
- */
+/** Reflog subjects for operations that move a workspace onto history it did not author (branch switches and hard resets included; both degrade to a plain diff without a foreign base). */
 const BASE_MOVING_REFLOG_OPERATIONS = /^(rebase|merge|pull|checkout|reset)\b/;
 
 class BaseProjectionCacheKey extends Data.Class<{
@@ -580,10 +567,7 @@ const makeCheckpointStore = Effect.gen(function* () {
         fastForwardCandidate = null;
         expectFromBaseAfterPull = false;
       }
-      // A checkout/reset landing exactly on the turn's end commit is the
-      // workspace returning to the turn (e.g. a later turn checking the tip
-      // back out), not adoption of foreign history. Only checkouts inside
-      // the window move onto a new base.
+      // A checkout/reset landing on the turn's end commit returns to the turn; only checkouts inside the window adopt a new base.
       const isReturnToTurnEnd =
         /^(checkout|reset)\b/.test(subject) && commit === input.toBaseCommit;
       if (!isReturnToTurnEnd && BASE_MOVING_REFLOG_OPERATIONS.test(subject)) {
@@ -998,10 +982,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     key: CheckpointDiffFilesCacheKey,
   ) => {
     const pathArgs = key.paths.length > 0 ? ["--", ...key.paths] : [];
-    // File stats keep rename and copy detection like the patch path, but
-    // omit --find-copies-harder: it is quadratic (it also traces copies
-    // from unmodified files) while --find-copies alone classifies pure
-    // copies the same way. The patch path keeps full copy detection.
+    // Like the patch path, minus quadratic --find-copies-harder.
     const similarityArgs = ["--find-renames", "--find-copies"];
     return Effect.all(
       [
