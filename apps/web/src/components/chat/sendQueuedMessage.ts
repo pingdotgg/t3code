@@ -1,7 +1,6 @@
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   runAtomCommand,
-  isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
@@ -146,20 +145,18 @@ export async function sendQueuedMessage(
       const status = await runAtomCommand(
         appAtomRegistry,
         vcsEnvironment.refreshStatus,
-        { environmentId, input: { cwd } },
+        { environmentId, input: { cwd, localOnly: true } },
         { reportFailure: false },
       );
-      if (status._tag === "Failure" && isAtomCommandInterrupted(status)) {
+      if (status._tag === "Failure") {
         throw squashAtomCommandFailure(status);
       }
-      if (status._tag === "Success") {
-        nextBranch = resolveCheckoutBranchMismatch({
-          effectiveEnvMode: shell.worktreePath ? "worktree" : "local",
-          activeWorktreePath: shell.worktreePath,
-          activeThreadBranch: shell.branch,
-          currentGitBranch: status.value.refName,
-        })?.currentBranch;
-      }
+      nextBranch = resolveCheckoutBranchMismatch({
+        effectiveEnvMode: shell.worktreePath ? "worktree" : "local",
+        activeWorktreePath: shell.worktreePath,
+        activeThreadBranch: shell.branch,
+        currentGitBranch: status.value.refName,
+      })?.currentBranch;
     }
     const metadataUpdate = shell
       ? resolveThreadMetadataUpdateForNextTurn({

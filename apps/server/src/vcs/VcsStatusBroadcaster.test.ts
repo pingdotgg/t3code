@@ -523,6 +523,33 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("refreshes checkout status without reading or invalidating remote status", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      // A cold checkout must not wait for remote status just to read HEAD.
+      const cold = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+      assert.equal(cold.refName, baseLocalStatus.refName);
+      assert.equal(state.remoteStatusCalls, 0);
+
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "feature/new-checkout" };
+      const refreshed = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+      assert.equal(refreshed.refName, "feature/new-checkout");
+      assert.deepStrictEqual(refreshed.pr, remoteStatusWithPr.pr);
+      assert.equal(state.remoteStatusCalls, 1);
+      assert.equal(state.remoteInvalidationCalls, 0);
+      assert.equal(state.localInvalidationCalls, 2);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect.skipIf(!symlinksSupported)(
     "normalizes symlinked CWDs before cache lookup and workflow calls",
     () => {

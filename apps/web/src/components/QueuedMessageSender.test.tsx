@@ -196,7 +196,7 @@ describe("sendQueuedMessage", () => {
       expect(commandsRun()).toEqual(["refresh", "metadata", "start"]);
       expect(io.run.mock.calls[0]?.[2]).toMatchObject({
         environmentId: "env-a",
-        input: { cwd: worktreePath ?? "/repo" },
+        input: { cwd: worktreePath ?? "/repo", localOnly: true },
       });
       expect(io.run.mock.calls[1]?.[2]).toMatchObject({
         input: { threadId: "thread-a", branch: "actual-checkout" },
@@ -222,19 +222,21 @@ describe("sendQueuedMessage", () => {
     },
   );
 
-  it("keeps sending available when branch refresh fails", async () => {
+  it("holds the message without changing metadata when local Git refresh fails", async () => {
     io.shell = { ...io.shell, branch: "original", worktreePath: "/shared-worktree" };
     io.run.mockResolvedValueOnce({
       _tag: "Failure",
-      cause: Cause.fail(new Error("PR lookup failed")),
+      cause: Cause.fail(new Error("Cannot read checkout")),
     });
     const message = enqueue();
 
     await sendQueuedMessage(threadRef, message.id);
 
-    expect(commandsRun()).toEqual(["refresh", "start"]);
-    expect(queue()).toBeUndefined();
-    expect(io.toast).not.toHaveBeenCalled();
+    expect(commandsRun()).toEqual(["refresh"]);
+    expect(queue()?.[0]).toMatchObject({ id: message.id, holdUntilUserAction: true });
+    expect(io.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Cannot read checkout" }),
+    );
   });
 
   it("saves a mode changed before queueing, then starts the turn", async () => {
