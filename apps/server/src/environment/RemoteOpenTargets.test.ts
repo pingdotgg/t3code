@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest";
 import { HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { TailscaleIdentityDiscovery, type TailscaleIdentity } from "@t3tools/tailscale";
+import { TailscaleIdentityDiscovery } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { describe, expect } from "vite-plus/test";
@@ -19,7 +19,7 @@ const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
 
 const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
-  readonly tailscale: Effect.Effect<TailscaleIdentity>;
+  readonly tailscale: Effect.Effect<string | null>;
   readonly hostname: string;
 }) =>
   Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
@@ -29,19 +29,15 @@ const resolveTargets = (input: {
         Layer.provide(
           Layer.mergeAll(
             netLayer(input.sshd),
-            Layer.succeed(TailscaleIdentityDiscovery, {
-              discover: input.tailscale,
-            }),
+            Layer.succeed(TailscaleIdentityDiscovery, { magicDnsName: input.tailscale }),
           ),
         ),
       ),
     ),
   );
 
-const TAILSCALE_UP = Effect.succeed({
-  dnsNames: ["bb-1.tail1234.ts.net"],
-} satisfies TailscaleIdentity);
-const TAILSCALE_DOWN = Effect.succeed({ dnsNames: [] } satisfies TailscaleIdentity);
+const TAILSCALE_UP = Effect.succeed("bb-1.tail1234.ts.net");
+const TAILSCALE_DOWN = Effect.succeed(null);
 
 describe("RemoteOpenTargets", () => {
   it.effect("advertises nothing when no sshd accepts on either loopback", () =>

@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import { TailscaleIdentityDiscovery, type TailscaleIdentity } from "@t3tools/tailscale";
+import { TailscaleIdentityDiscovery } from "@t3tools/tailscale";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopNetworkInterfaces from "./DesktopNetworkInterfaces.ts";
@@ -56,7 +56,7 @@ function makeLayer(input: {
   readonly baseDir: string;
   readonly networkInterfaces?: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly env?: Record<string, string | undefined>;
-  readonly tailscaleIdentity?: Effect.Effect<TailscaleIdentity>;
+  readonly tailscaleIdentity?: Effect.Effect<string | null>;
   readonly desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>;
 }) {
   const env = { T3CODE_HOME: input.baseDir, ...input.env };
@@ -65,7 +65,7 @@ function makeLayer(input: {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
   const tailscaleIdentityLayer = Layer.succeed(TailscaleIdentityDiscovery, {
-    discover: input.tailscaleIdentity ?? Effect.succeed({ dnsNames: [] }),
+    magicDnsName: input.tailscaleIdentity ?? Effect.succeed(null),
   });
 
   return DesktopServerExposure.layer.pipe(
@@ -92,7 +92,7 @@ const withHarness = <A, E, R>(
   >,
   env: Record<string, string | undefined> = {},
   desktopSettingsLayer?: Layer.Layer<DesktopAppSettings.DesktopAppSettings>,
-  tailscaleIdentity?: Effect.Effect<TailscaleIdentity>,
+  tailscaleIdentity?: Effect.Effect<string | null>,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

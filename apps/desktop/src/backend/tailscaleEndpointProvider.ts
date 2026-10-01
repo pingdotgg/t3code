@@ -4,7 +4,6 @@ import {
   buildTailscaleHttpsBaseUrl,
   isTailscaleIpv4Address,
   probeTailscaleHttpsEndpoint,
-  type TailscaleIdentity,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -87,26 +86,28 @@ const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
   });
 });
 
-/** Resolves the desktop endpoints for every local Tailscale address and DNS name */
+/** Resolves the desktop endpoints for every local Tailscale address and the MagicDNS name */
 export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAdvertisedEndpoints")(
   function* (input: {
     readonly port: number;
     readonly serveEnabled?: boolean;
     readonly servePort?: number;
     readonly networkInterfaces: NetworkInterfaces;
-    readonly identity: TailscaleIdentity;
+    readonly magicDnsName: string | null;
     readonly probe?: (baseUrl: string) => Effect.Effect<boolean, never, HttpClient.HttpClient>;
   }): Effect.fn.Return<readonly AdvertisedEndpoint[], never, HttpClient.HttpClient> {
     const ipEndpoints = resolveTailscaleIpAdvertisedEndpoints(input);
-    const magicDnsEndpoints = yield* Effect.forEach(input.identity.dnsNames, (dnsName) =>
-      resolveTailscaleMagicDnsAdvertisedEndpoint({
-        dnsName,
-        serveEnabled: input.serveEnabled === true,
-        ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
-        ...(input.probe === undefined ? {} : { probe: input.probe }),
-      }),
-    );
+    if (input.magicDnsName === null) {
+      return ipEndpoints;
+    }
 
-    return [...ipEndpoints, ...magicDnsEndpoints];
+    const magicDnsEndpoint = yield* resolveTailscaleMagicDnsAdvertisedEndpoint({
+      dnsName: input.magicDnsName,
+      serveEnabled: input.serveEnabled === true,
+      ...(input.servePort === undefined ? {} : { servePort: input.servePort }),
+      ...(input.probe === undefined ? {} : { probe: input.probe }),
+    });
+
+    return [...ipEndpoints, magicDnsEndpoint];
   },
 );

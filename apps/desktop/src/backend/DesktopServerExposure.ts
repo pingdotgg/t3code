@@ -531,7 +531,7 @@ export const make = Effect.gen(function* () {
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
-      identity: yield* tailscaleIdentity.discover,
+      magicDnsName: yield* tailscaleIdentity.magicDnsName,
     }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     return [...coreEndpoints, ...tailscaleEndpoints];
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));

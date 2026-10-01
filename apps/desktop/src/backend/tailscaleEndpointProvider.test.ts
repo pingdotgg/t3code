@@ -15,7 +15,7 @@ describe("tailscale endpoint provider", () => {
     Effect.gen(function* () {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
-        identity: { dnsNames: ["desktop.tail.ts.net", "desktop.second-tail.ts.net"] },
+        magicDnsName: "desktop.tail.ts.net",
         networkInterfaces: {
           tailscale0: [
             {
@@ -70,26 +70,6 @@ describe("tailscale endpoint provider", () => {
           status: "unavailable",
           description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
         },
-        {
-          id: "tailscale-magicdns:https://desktop.second-tail.ts.net/",
-          label: "Tailscale HTTPS",
-          provider: {
-            id: "tailscale",
-            label: "Tailscale",
-            kind: "private-network",
-            isAddon: true,
-          },
-          httpBaseUrl: "https://desktop.second-tail.ts.net/",
-          wsBaseUrl: "wss://desktop.second-tail.ts.net/",
-          reachability: "private-network",
-          compatibility: {
-            hostedHttpsApp: "requires-configuration",
-            desktopApp: "compatible",
-          },
-          source: "desktop-addon",
-          status: "unavailable",
-          description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
-        },
       ]);
     }).pipe(Effect.provide(httpClientLayer)),
   );
@@ -101,7 +81,7 @@ describe("tailscale endpoint provider", () => {
         const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
           port: 3773,
           networkInterfaces: {},
-          identity: { dnsNames: ["desktop.tail.ts.net"] },
+          magicDnsName: "desktop.tail.ts.net",
           serveEnabled: true,
           probe: () => Effect.succeed(true),
         });

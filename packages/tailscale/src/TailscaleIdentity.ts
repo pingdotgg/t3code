@@ -1,32 +1,25 @@
 import * as NodeDnsPromises from "node:dns/promises";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
-import * as Clock from "effect/Clock";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Semaphore from "effect/Semaphore";
 
 import { isTailscaleIpv4Address } from "./tailscale.ts";
-
-/** The identity names discovered from the local Tailscale interfaces */
-export interface TailscaleIdentity {
-  readonly dnsNames: readonly string[];
-}
 
 /** The Node OS and DNS boundary used by passive Tailscale discovery */
 export interface TailscaleIdentityNodeService {
   readonly networkInterfaces: Effect.Effect<TailscaleNetworkInterfaces>;
-  readonly reverseLookup: (address: string) => Effect.Effect<readonly string[]>;
+  readonly reverseLookup: (address: string) => Effect.Effect<string | null>;
 }
 
 /** The network interface shape needed by passive Tailscale discovery */
 export interface TailscaleNetworkInterfaceInfo {
   readonly address: string;
   readonly family: string | number;
-  readonly internal: boolean;
 }
 
 /** The network interfaces read by passive Tailscale discovery */
@@ -40,143 +33,84 @@ export class TailscaleIdentityNode extends Context.Service<
   TailscaleIdentityNodeService
 >()("@t3tools/tailscale/TailscaleIdentity/TailscaleIdentityNode") {}
 
-/** A passive, process-free source of the local Tailscale DNS identity */
+/**
+ * A passive, process-free source of the local MagicDNS name. Use it for reads
+ * that happen without a user action, because running the Tailscale CLI on
+ * macOS triggers repeated "access data from other apps" prompts
+ */
 export class TailscaleIdentityDiscovery extends Context.Service<
   TailscaleIdentityDiscovery,
   {
-    readonly discover: Effect.Effect<TailscaleIdentity>;
+    /** Resolves this machine's MagicDNS name, or null when none is discoverable */
+    readonly magicDnsName: Effect.Effect<string | null>;
   }
 >()("@t3tools/tailscale/TailscaleIdentity/TailscaleIdentityDiscovery") {}
 
-/** The cache lifetime for successful and empty identity results */
+/** The cache lifetime for found and missing MagicDNS names */
 export const TAILSCALE_IDENTITY_CACHE_TTL = Duration.seconds(60);
 
-/** The total time allowed for all reverse lookups in one discovery */
+/** The time allowed for one reverse lookup */
 export const TAILSCALE_IDENTITY_LOOKUP_TIMEOUT = Duration.millis(1_500);
 
-const TAILSCALE_LOOKUP_CONCURRENCY = 4;
-const TAILSCALE_DNS_SUFFIX = ".ts.net";
-const TAILSCALE_IDENTITY_CACHE_TTL_MILLIS = Duration.toMillis(TAILSCALE_IDENTITY_CACHE_TTL);
-
-interface CachedIdentity {
-  readonly addressSetKey: string;
-  readonly expiresAt: number;
-  readonly result: Deferred.Deferred<TailscaleIdentity>;
-}
-
-const isValidDnsLabel = (label: string): boolean =>
-  label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label);
-
-/** Normalizes a PTR result when it is a fully-qualified Tailscale name */
-const normalizeTailscaleDnsName = (value: string): string | undefined => {
-  const normalized = value.trim().replace(/\.+$/u, "").toLowerCase();
-  if (!normalized.endsWith(TAILSCALE_DNS_SUFFIX)) {
-    return undefined;
-  }
-
-  const labels = normalized.split(".");
-  if (
-    labels.length < 3 ||
-    normalized.length > 253 ||
-    labels.some((label) => !isValidDnsLabel(label))
-  ) {
-    return undefined;
-  }
-
-  return normalized;
-};
+// every Tailscale node, including Headscale ones on the default config, gets an
+// address in this ULA range on its tunnel interface. 100.64.0.0/10 alone is
+// shared carrier space, so the ULA address is what proves the interface is
+// Tailscale's and lets us trust any PTR name, not only `*.ts.net`
+const TAILSCALE_ULA_PREFIX = "fd7a:115c:a1e0:";
 
 const isIpv4Family = (family: string | number): boolean => family === "IPv4" || family === 4;
+const isIpv6Family = (family: string | number): boolean => family === "IPv6" || family === 6;
 
-const readTailscaleIpv4Addresses = (
-  networkInterfaces: TailscaleNetworkInterfaces,
-): readonly string[] => {
-  const addresses = new Set<string>();
+const isTailscaleInterface = (addresses: readonly TailscaleNetworkInterfaceInfo[]): boolean =>
+  addresses.some(
+    ({ address, family }) =>
+      isIpv6Family(family) && address.toLowerCase().startsWith(TAILSCALE_ULA_PREFIX),
+  );
 
-  for (const interfaceAddresses of Object.values(networkInterfaces)) {
-    if (!interfaceAddresses) continue;
+/** Picks the lowest Tailscale IPv4 address on an interface that Tailscale owns */
+const findTailscaleIpv4Address = (networkInterfaces: TailscaleNetworkInterfaces): string | null => {
+  const candidates = Object.values(networkInterfaces).flatMap((addresses = []) =>
+    isTailscaleInterface(addresses)
+      ? addresses
+          .filter(({ address, family }) => isIpv4Family(family) && isTailscaleIpv4Address(address))
+          .map(({ address }) => address)
+      : [],
+  );
 
-    for (const address of interfaceAddresses) {
-      if (
-        !address.internal &&
-        isIpv4Family(address.family) &&
-        isTailscaleIpv4Address(address.address)
-      ) {
-        addresses.add(address.address);
-      }
-    }
-  }
-
-  return [...addresses].sort();
+  return candidates.sort()[0] ?? null;
 };
 
-const addressSetKey = (addresses: readonly string[]): string => addresses.join("\u0000");
-
-const discoverForAddresses = (
-  node: TailscaleIdentityNodeService,
-  addresses: readonly string[],
-): Effect.Effect<TailscaleIdentity> =>
-  Effect.forEach(addresses, (address) => node.reverseLookup(address), {
-    concurrency: TAILSCALE_LOOKUP_CONCURRENCY,
-  }).pipe(
-    Effect.map((results) => {
-      const names = new Set<string>();
-      for (const result of results) {
-        for (const value of result) {
-          const name = normalizeTailscaleDnsName(value);
-          if (name !== undefined) {
-            names.add(name);
-          }
-        }
-      }
-
-      return { dnsNames: [...names].sort() } satisfies TailscaleIdentity;
-    }),
-    Effect.timeout(TAILSCALE_IDENTITY_LOOKUP_TIMEOUT),
-    Effect.orElseSucceed(() => ({ dnsNames: [] })),
-  );
+// `lookupService` echoes the address back when no PTR record exists, and a
+// single-label name would not resolve from other devices
+const normalizeDnsName = (hostname: string): string | null => {
+  const name = hostname.trim().replace(/\.+$/u, "").toLowerCase();
+  return name.includes(".") && NodeNet.isIP(name) === 0 ? name : null;
+};
 
 /** Builds the process-free Tailscale identity service */
 export const make = Effect.gen(function* () {
   const node = yield* TailscaleIdentityNode;
-  const cacheLock = yield* Semaphore.make(1);
-  let cachedIdentity: CachedIdentity | undefined;
 
-  const discover = Effect.gen(function* () {
-    const networkInterfaces = yield* node.networkInterfaces;
-    const addresses = readTailscaleIpv4Addresses(networkInterfaces);
-    const currentAddressSetKey = addressSetKey(addresses);
-
-    const result = yield* cacheLock.withPermit(
-      Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        if (
-          cachedIdentity !== undefined &&
-          cachedIdentity.addressSetKey === currentAddressSetKey &&
-          cachedIdentity.expiresAt > now
-        ) {
-          return cachedIdentity.result;
-        }
-
-        const result = yield* Deferred.make<TailscaleIdentity>();
-        cachedIdentity = {
-          addressSetKey: currentAddressSetKey,
-          expiresAt: now + TAILSCALE_IDENTITY_CACHE_TTL_MILLIS,
-          result,
-        };
-        yield* discoverForAddresses(node, addresses).pipe(
-          Effect.flatMap((identity) => Deferred.succeed(result, identity)),
-          Effect.forkDetach,
-        );
-
-        return result;
-      }).pipe(Effect.uninterruptible),
-    );
-
-    return yield* Deferred.await(result);
+  // keyed by address so a changed tailnet address skips the stale entry
+  const namesByAddress = yield* Cache.make({
+    capacity: 1,
+    timeToLive: TAILSCALE_IDENTITY_CACHE_TTL,
+    lookup: (address: string) =>
+      node.reverseLookup(address).pipe(
+        Effect.map((hostname) => (hostname === null ? null : normalizeDnsName(hostname))),
+        Effect.timeout(TAILSCALE_IDENTITY_LOOKUP_TIMEOUT),
+        Effect.orElseSucceed(() => null),
+      ),
   });
 
-  return TailscaleIdentityDiscovery.of({ discover });
+  const magicDnsName = Effect.gen(function* () {
+    const address = findTailscaleIpv4Address(yield* node.networkInterfaces);
+    if (address === null) return null;
+
+    return yield* Cache.get(namesByAddress, address);
+  });
+
+  return TailscaleIdentityDiscovery.of({ magicDnsName });
 });
 
 /** Node-backed OS and DNS APIs for standalone Node and desktop runtimes */
@@ -184,10 +118,12 @@ const nodeLayer = Layer.succeed(TailscaleIdentityNode, {
   networkInterfaces: Effect.try(() => NodeOS.networkInterfaces()).pipe(
     Effect.orElseSucceed(() => ({})),
   ),
+  // the OS resolver honors macOS scoped DNS routes, so MagicDNS answers here
+  // without starting the Tailscale app
   reverseLookup: (address) =>
     Effect.tryPromise(() => NodeDnsPromises.lookupService(address, 0)).pipe(
-      Effect.map(({ hostname }) => [hostname]),
-      Effect.orElseSucceed(() => [] as readonly string[]),
+      Effect.map(({ hostname }) => hostname),
+      Effect.orElseSucceed(() => null),
     ),
 });
 
