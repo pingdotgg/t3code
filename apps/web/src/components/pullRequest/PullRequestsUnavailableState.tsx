@@ -2,14 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
@@ -26,7 +19,7 @@ export function PullRequestsUnavailableState({
   gitHubUrl?: string;
 }) {
   return (
-    <Empty className="min-h-0 justify-center-safe overflow-y-auto px-4 py-16 md:px-4 [&>*]:shrink-0">
+    <Empty className="min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
         <PullRequestGlyph.pullRequest />
       </EmptyMedia>
@@ -37,7 +30,7 @@ export function PullRequestsUnavailableState({
         <EmptyDescription>{error}</EmptyDescription>
       </EmptyHeader>
       {onRetry || gitHubUrl ? (
-        <EmptyContent className="flex-row flex-wrap justify-center gap-2">
+        <div className="flex flex-wrap justify-center gap-2">
           {onRetry ? (
             <Button
               size="sm"
@@ -60,7 +53,7 @@ export function PullRequestsUnavailableState({
               Open on GitHub
             </Button>
           ) : null}
-        </EmptyContent>
+        </div>
       ) : null}
     </Empty>
   );

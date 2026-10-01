@@ -46,6 +46,24 @@ describe("KeybindingsSettings.logic", () => {
       );
     },
   );
+  it("orders Usage bindings and command choices like the page", () => {
+    const expected = [
+      "usage.cost",
+      "usage.tokens",
+      "usage.limits",
+      "usage.period.day",
+      "usage.period.week",
+      "usage.period.month",
+      "usage.period.quarter",
+      "usage.open",
+    ];
+    const bindings = DEFAULT_RESOLVED_KEYBINDINGS.toReversed();
+    expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+    expect(
+      buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
+    ).toEqual(expected);
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
@@ -93,6 +111,31 @@ describe("KeybindingsSettings.logic", () => {
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it.each([
+    ["k", "KeyK", "k"],
+    ["Tab", "Tab", "tab"],
+    ["F5", "F5", "f5"],
+  ])("captures %s without a modifier", (key, code, expected) => {
+    const noModifiers = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
+    expect(keybindingFromKeyboardEvent({ key, code, ...noModifiers }, "MacIntel")).toBe(expected);
+  });
+
+  it("waits for a key when only a modifier is pressed", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "Meta",
+          code: "MetaLeft",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBeNull();
   });
 
   it.each([
@@ -243,6 +286,7 @@ describe("KeybindingsSettings.logic", () => {
         "chat.new",
         "rightPanel.toggleMaximized",
         "thread.stop",
+        "usage.open",
         "script.setup-db.run",
       ]),
     );

@@ -1,9 +1,14 @@
 import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+
+const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
 /** Onboarding overlays the workspace. Visiting /welcome reopens setup. */
 export const Route = createFileRoute("/welcome")({
@@ -19,6 +24,10 @@ export const Route = createFileRoute("/welcome")({
 function WelcomeRouteView() {
   const { authGateState } = Route.useRouteContext();
   const navigate = useNavigate();
+  const hash = useLocation({ select: (location) => location.hash });
+  const resumeEnvironmentId = hash.startsWith("agents:")
+    ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
+    : undefined;
   // The root shell can remount this pending outlet after the location changes.
   // Never reopen setup while the destination route is still loading.
   const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
@@ -35,15 +44,16 @@ function WelcomeRouteView() {
       {isWelcomeRoute && !dismissed ? (
         <WelcomeWizard
           localAvailable={localAvailable}
-          onDone={(projectRef) => {
+          resumeEnvironmentId={resumeEnvironmentId}
+          onDone={async (projectRef) => {
             setDismissed(true);
             if (projectRef !== undefined) {
-              void openNewThread(projectRef, { replace: true }).catch(() => {
-                void navigate({ to: "/", replace: true });
-              });
+              await openNewThread(projectRef, { replace: true }).catch(() =>
+                navigate({ to: "/", replace: true }),
+              );
               return;
             }
-            void navigate({ to: "/", replace: true });
+            await navigate({ to: "/", replace: true });
           }}
         />
       ) : null}

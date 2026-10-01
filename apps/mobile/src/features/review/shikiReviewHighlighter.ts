@@ -35,12 +35,9 @@ export class ReviewHighlighterEngineInitializationError extends Schema.TaggedErr
   }
 }
 
-export interface ReviewHighlightedToken {
-  content: string;
-  readonly color: string | null;
-  readonly fontStyle: number | null;
-  readonly diffHighlight?: boolean;
-}
+import type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
+
+export type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
 
 const SHIKI_THEME_NAME_BY_SCHEME = {
   light: "github-light-default",

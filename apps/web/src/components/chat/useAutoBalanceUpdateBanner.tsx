@@ -21,6 +21,7 @@ import {
   ServerUpdateProgress,
   ServerUpdatesAction,
 } from "../ServerUpdateAction";
+import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
@@ -95,12 +96,13 @@ export function useAutoBalanceUpdateBanner(
     title: (
       <Popover>
         <PopoverTrigger
-          className="block max-w-full truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          render={<InlineButton />}
+          className="max-w-full"
           aria-label={`${title}. View machines`}
         >
-          {title}
+          <span className="min-w-0 truncate">{title}</span>
         </PopoverTrigger>
-        <PopoverPopup side="top" align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+        <PopoverPopup side="top" align="start" width="md">
           <div className="space-y-3 text-xs">
             {machines.map((machine) => (
               <div key={machine.environmentId} className="space-y-1">
