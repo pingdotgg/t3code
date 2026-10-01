@@ -1557,6 +1557,73 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps a turn open past the result of a Claude-initiated turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "/compact",
+        attachments: [],
+      });
+
+      // Recorded order after a resume: Claude first reports a background task
+      // the previous process left behind, then runs the queued `/compact`.
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 0,
+        origin: { kind: "task-notification" },
+        session_id: "sdk-session-1",
+        uuid: "result-task-notification",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "manual", pre_tokens: 959489, post_tokens: 10107 },
+        session_id: "sdk-session-1",
+        uuid: "compact-boundary",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 0,
+        user_message_uuid: turn.turnId,
+        user_message_uuids: [turn.turnId],
+        local_command: "compact",
+        session_id: "sdk-session-1",
+        uuid: "result-compact",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const compactedIndex = runtimeEvents.findIndex(
+        (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      const completedIndex = runtimeEvents.findIndex((event) => event.type === "turn.completed");
+      assert.equal(runtimeEvents.filter((event) => event.type === "turn.completed").length, 1);
+      assert.equal(String(runtimeEvents[completedIndex]?.turnId), String(turn.turnId));
+      assert.equal(String(runtimeEvents[compactedIndex]?.turnId), String(turn.turnId));
+      assert.isAbove(completedIndex, compactedIndex);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("steers a running turn instead of opening a new one on mid-turn sendTurn", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
