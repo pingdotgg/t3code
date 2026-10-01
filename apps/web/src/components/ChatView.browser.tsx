@@ -3496,89 +3496,106 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("enables the sidebar footer rebuild icon when main moves past the running build", async () => {
-    const rebuildAndRestart = vi.fn().mockResolvedValue({
-      accepted: true,
-      logPath: "/tmp/t3code/dev-rebuild.log",
-      message: null,
-    });
-    // Stubbed before mount so the footer's mount-time bridge reads see it.
-    // Other shell coordinators call a handful of bridge methods
-    // unconditionally once a bridge exists, so they need no-op stand-ins.
-    window.desktopBridge = {
-      getAppBranding: () => null,
-      getClientSettings: vi.fn().mockResolvedValue(null),
-      setClientSettings: vi.fn().mockResolvedValue(undefined),
-      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
-      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
-      getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
-      setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
-      removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
-      setVibrancy: vi.fn().mockResolvedValue(false),
-      setTheme: vi.fn().mockResolvedValue(undefined),
-      getZoomFactor: () => 1,
-      onMenuAction: () => () => {},
-      onNotificationClick: () => () => {},
-      showNotification: vi.fn().mockResolvedValue(false),
-      onUpdateState: () => () => {},
-      getLocalRebuildState: vi.fn().mockResolvedValue({
-        enabled: true,
-        sourceRoot: "/repo/t3code",
-        reason: null,
-      }),
-      checkLocalRebuildStaleness: vi.fn().mockResolvedValue({
-        available: true,
-        behind: true,
-        behindBy: 3,
-        readyToPull: true,
-        readinessReason: null,
-        localBranch: "main",
-        localSha: "b".repeat(40),
-        remoteBranch: "main",
-        remoteSha: "c".repeat(40),
-        buildSha: "a".repeat(40),
-        checkedAt: new Date().toISOString(),
-        error: null,
-      }),
-      rebuildAndRestart,
-    } as unknown as NonNullable<typeof window.desktopBridge>;
-    vi.stubGlobal(
-      "confirm",
-      vi.fn(() => true),
-    );
-
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-sidebar-footer-rebuild" as MessageId,
-        targetText: "sidebar footer rebuild",
-      }),
-    });
-
-    try {
-      await waitForServerConfigToApply();
-      await expect.element(page.getByTestId("sidebar-footer-rebuild")).toBeInTheDocument();
-      await vi.waitFor(
-        () => {
-          const button = document.querySelector('[data-testid="sidebar-footer-rebuild"]');
-          expect(button?.getAttribute("disabled")).toBeNull();
-          expect(button?.getAttribute("title")).toContain("3 new commits");
-        },
-        { timeout: 8_000, interval: 50 },
+  it.each([
+    { behind: true, readyToPull: true },
+    { behind: true, readyToPull: false },
+    { behind: false, readyToPull: true },
+  ])(
+    "sets the sidebar footer rebuild icon from update availability (behind=$behind, readyToPull=$readyToPull)",
+    async ({ behind, readyToPull }) => {
+      const rebuildAndRestart = vi.fn().mockResolvedValue({
+        accepted: true,
+        logPath: "/tmp/t3code/dev-rebuild.log",
+        message: null,
+      });
+      // Stubbed before mount so the footer's mount-time bridge reads see it.
+      // Other shell coordinators call a handful of bridge methods
+      // unconditionally once a bridge exists, so they need no-op stand-ins.
+      window.desktopBridge = {
+        getAppBranding: () => null,
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+        getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+        setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+        getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
+        setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
+        removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+        setVibrancy: vi.fn().mockResolvedValue(false),
+        setTheme: vi.fn().mockResolvedValue(undefined),
+        getZoomFactor: () => 1,
+        onMenuAction: () => () => {},
+        onNotificationClick: () => () => {},
+        showNotification: vi.fn().mockResolvedValue(false),
+        onUpdateState: () => () => {},
+        getLocalRebuildState: vi.fn().mockResolvedValue({
+          enabled: true,
+          sourceRoot: "/repo/t3code",
+          reason: null,
+        }),
+        checkLocalRebuildStaleness: vi.fn().mockResolvedValue({
+          available: true,
+          behind,
+          behindBy: behind ? 3 : null,
+          readyToPull,
+          readinessReason: readyToPull ? null : "Checkout has local changes.",
+          localBranch: "main",
+          localSha: "b".repeat(40),
+          remoteBranch: "main",
+          remoteSha: "c".repeat(40),
+          buildSha: "a".repeat(40),
+          checkedAt: new Date().toISOString(),
+          error: null,
+        }),
+        rebuildAndRestart,
+      } as unknown as NonNullable<typeof window.desktopBridge>;
+      vi.stubGlobal(
+        "confirm",
+        vi.fn(() => true),
       );
-      await page.getByTestId("sidebar-footer-rebuild").click();
-      await vi.waitFor(
-        () => {
-          expect(rebuildAndRestart).toHaveBeenCalledOnce();
-          expect(rebuildAndRestart).toHaveBeenCalledWith({ pullLatest: true });
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-    } finally {
-      vi.unstubAllGlobals();
-      await mounted.cleanup();
-    }
-  });
+
+      const mounted = await mountChatView({
+        viewport: DEFAULT_VIEWPORT,
+        snapshot: createSnapshotForTargetUser({
+          targetMessageId: "msg-user-sidebar-footer-rebuild" as MessageId,
+          targetText: "sidebar footer rebuild",
+        }),
+      });
+
+      try {
+        await waitForServerConfigToApply();
+        await expect.element(page.getByTestId("sidebar-footer-rebuild")).toBeInTheDocument();
+        await vi.waitFor(
+          () => {
+            const button = document.querySelector<HTMLButtonElement>(
+              '[data-testid="sidebar-footer-rebuild"]',
+            );
+            expect(button).toBeInstanceOf(HTMLButtonElement);
+            expect(button?.disabled).toBe(!behind);
+            expect(button?.classList.contains("bg-accent")).toBe(behind);
+            expect(button?.getAttribute("title")).toContain(
+              behind ? "3 new commits" : "No rebuild needed",
+            );
+          },
+          { timeout: 8_000, interval: 50 },
+        );
+        if (behind) {
+          await page.getByTestId("sidebar-footer-rebuild").click();
+          await vi.waitFor(
+            () => {
+              expect(rebuildAndRestart).toHaveBeenCalledOnce();
+              expect(rebuildAndRestart).toHaveBeenCalledWith({ pullLatest: true });
+            },
+            { timeout: 8_000, interval: 16 },
+          );
+        } else {
+          expect(rebuildAndRestart).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.unstubAllGlobals();
+        await mounted.cleanup();
+      }
+    },
+  );
 
   it("shows the source update check interval when local rebuilds are available", async () => {
     // Same shell stand-ins as above: settings panels assume these exist once

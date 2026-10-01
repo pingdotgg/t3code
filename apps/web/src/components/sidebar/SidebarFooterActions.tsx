@@ -66,7 +66,6 @@ export function SidebarFooterActions() {
   const showRebuild = rebuildState?.enabled === true;
   const rebuildBusy = checking || isStartingLocalRebuild;
   const rebuildBehind = staleness?.behind === true;
-  const canPullLatest = rebuildBehind && staleness?.readyToPull === true;
   const remoteRef =
     staleness?.remoteBranch !== null && staleness?.remoteBranch !== undefined
       ? `origin/${staleness.remoteBranch}`
@@ -85,7 +84,7 @@ export function SidebarFooterActions() {
     ? "Checking for source updates…"
     : rebuildBehind && !staleness.readyToPull
       ? `${updateDescription}, but ${staleness.readinessReason ?? "the source checkout is not ready to pull."}`
-      : canPullLatest
+      : rebuildBehind
         ? `${failureDescription ? `${failureDescription} ` : ""}${updateDescription} — pull, rebuild and restart`
         : rebuildLifecycle?.phase === "running"
           ? "Local rebuild and install are in progress."
@@ -171,13 +170,13 @@ export function SidebarFooterActions() {
                     aria-label="Rebuild and restart"
                     className={cn(
                       "inline-flex size-5 items-center justify-center rounded-md outline-hidden transition-colors focus-visible:ring-1 focus-visible:ring-ring",
-                      canPullLatest
+                      rebuildBehind
                         ? "cursor-pointer text-muted-foreground/65 hover:bg-accent hover:text-foreground"
                         : "cursor-default text-muted-foreground/40",
-                      canPullLatest && FOOTER_ICON_BUTTON_ACTIVE_CLASS,
+                      rebuildBehind && FOOTER_ICON_BUTTON_ACTIVE_CLASS,
                     )}
                     data-testid="sidebar-footer-rebuild"
-                    disabled={!canPullLatest || rebuildBusy}
+                    disabled={!rebuildBehind || rebuildBusy}
                     onClick={() => requestLocalRebuild({ pullLatest: true })}
                     // Native fallback: disabled buttons do not fire the hover
                     // events the popup relies on.

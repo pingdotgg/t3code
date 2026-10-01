@@ -435,7 +435,7 @@ describe("local Dev rebuild staleness", () => {
       const key = args.join(" ");
       if (key === "rev-parse HEAD") return { stdout: `${REMOTE_SHA}\n`, exitCode: 0 };
       if (key === "branch --show-current") return { stdout: "main\n", exitCode: 0 };
-      if (key === "status --porcelain --untracked-files=all --ignore-submodules=none") {
+      if (key === "status --porcelain --untracked-files=no --ignore-submodules=untracked") {
         return { stdout: "", exitCode: 0 };
       }
       if (key === "ls-remote --symref origin HEAD") {
@@ -694,7 +694,7 @@ describe("local Dev rebuild staleness", () => {
     const dirty = makeRealRemoteCheckout();
     try {
       pushRemoteCommit(dirty.root);
-      FS.writeFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "local data\n");
+      FS.writeFileSync(Path.join(dirty.sourceRoot, "README"), "local data\n");
       const result = await checkLocalDevRebuildStaleness({
         enabled: true,
         sourceRoot: dirty.sourceRoot,
@@ -705,9 +705,7 @@ describe("local Dev rebuild staleness", () => {
         readyToPull: false,
         readinessReason: expect.stringContaining("local changes"),
       });
-      expect(FS.readFileSync(Path.join(dirty.sourceRoot, "untracked.txt"), "utf8")).toBe(
-        "local data\n",
-      );
+      expect(FS.readFileSync(Path.join(dirty.sourceRoot, "README"), "utf8")).toBe("local data\n");
     } finally {
       FS.rmSync(dirty.root, { recursive: true, force: true });
     }
@@ -802,6 +800,59 @@ function git(cwd: string, args: readonly string[]): string {
 }
 
 describe("local Dev rebuild pull", () => {
+  it.each([
+    {
+      scenario: "unrelated directories",
+      paths: ["qt-agent-workbench/notes.txt", "worktrees/notes.txt"],
+      canPull: true,
+    },
+    { scenario: "a colliding file", paths: ["remote.txt"], canPull: false },
+  ])("preserves untracked paths when updating with $scenario", async ({ paths, canPull }) => {
+    const { root, sourceRoot, initialSha } = makeRealRemoteCheckout();
+    try {
+      for (const path of paths) {
+        FS.mkdirSync(Path.dirname(Path.join(sourceRoot, path)), { recursive: true });
+        FS.writeFileSync(Path.join(sourceRoot, path), "local data\n");
+      }
+      git(sourceRoot, ["config", "merge.autostash", "true"]);
+      git(sourceRoot, ["config", "rebase.autoStash", "true"]);
+      pushRemoteCommit(root);
+
+      const update = await checkLocalDevRebuildStaleness({
+        enabled: true,
+        sourceRoot,
+        buildSha: initialSha,
+      });
+      expect(update).toMatchObject({
+        behind: true,
+        behindBy: 1,
+        readyToPull: true,
+        readinessReason: null,
+        error: null,
+      });
+      expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+
+      const result = await pullLatestCheckoutChanges(sourceRoot);
+      if (canPull) {
+        expect(result).toEqual({ ok: true, message: null });
+        expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(update.remoteSha);
+        expect(FS.readFileSync(Path.join(sourceRoot, "remote.txt"), "utf8")).toBe(
+          "remote update\n",
+        );
+      } else {
+        expect(result.ok).toBe(false);
+        expect(result.message).toContain("untracked working tree files would be overwritten");
+        expect(git(sourceRoot, ["rev-parse", "HEAD"])).toBe(initialSha);
+      }
+      for (const path of paths) {
+        expect(FS.readFileSync(Path.join(sourceRoot, path), "utf8")).toBe("local data\n");
+      }
+      expect(git(sourceRoot, ["stash", "list"])).toBe("");
+    } finally {
+      FS.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   const onDefaultBranch = (): Record<string, { stdout: string; exitCode: number }> => ({
     "ls-remote --symref origin HEAD": {
       stdout: `ref: refs/heads/main\tHEAD\n${REMOTE_SHA}\tHEAD\n`,
@@ -824,7 +875,7 @@ describe("local Dev rebuild pull", () => {
   }
 
   const cleanTree = {
-    "status --porcelain --untracked-files=all --ignore-submodules=none": {
+    "status --porcelain --untracked-files=no --ignore-submodules=untracked": {
       stdout: "",
       exitCode: 0,
     },
@@ -846,7 +897,7 @@ describe("local Dev rebuild pull", () => {
     expect(calls).toEqual([
       ["ls-remote", "--symref", "origin", "HEAD"],
       ["branch", "--show-current"],
-      ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+      ["status", "--porcelain", "--untracked-files=no", "--ignore-submodules=untracked"],
       [
         "-c",
         "merge.autostash=false",
@@ -884,11 +935,11 @@ describe("local Dev rebuild pull", () => {
     ).toBe(false);
   });
 
-  it("refuses to pull a dirty worktree, including untracked files", async () => {
+  it("refuses to pull a worktree with tracked changes", async () => {
     const { runner, calls } = trackingRunner({
       ...onDefaultBranch(),
-      "status --porcelain --untracked-files=all --ignore-submodules=none": {
-        stdout: " M src/app.ts\n?? scratch-notes.txt\n",
+      "status --porcelain --untracked-files=no --ignore-submodules=untracked": {
+        stdout: " M src/app.ts\n",
         exitCode: 0,
       },
     });
