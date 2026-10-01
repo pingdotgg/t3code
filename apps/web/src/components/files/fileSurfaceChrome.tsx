@@ -18,6 +18,12 @@ export const FILE_SURFACE_SUBHEADER_CLASS =
 
 export const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 
+/** Window geometry for every source file surface: pixels rendered past the viewport, and the visibility margin. */
+export const SOURCE_PREVIEW_VIRTUALIZER_CONFIG = {
+  overscrollSize: 600,
+  intersectionObserverMargin: 1200,
+} as const;
+
 export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
 

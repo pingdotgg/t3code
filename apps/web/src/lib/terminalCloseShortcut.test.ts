@@ -5,6 +5,7 @@ import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
+  suppressNativeTerminalCloseShortcut,
   type TerminalCloseShortcutEvent,
 } from "./terminalCloseShortcut";
 
@@ -89,5 +90,52 @@ describe("terminal close shortcut guards", () => {
       false,
     );
     expect(unrelatedRepeat.defaultPrevented).toBe(false);
+  });
+});
+
+describe("suppressNativeTerminalCloseShortcut", () => {
+  it("suppresses held repeats and pending-confirm closes for native owners", () => {
+    for (const owner of ["drawer", "right-panel", null] as const) {
+      const repeat = keyboardEvent({ repeat: true });
+      expect(
+        suppressNativeTerminalCloseShortcut(repeat, keybindings, owner, false, "Linux x86_64"),
+      ).toBe(true);
+      expect(repeat.defaultPrevented).toBe(true);
+
+      const confirmClose = keyboardEvent();
+      expect(
+        suppressNativeTerminalCloseShortcut(confirmClose, keybindings, owner, true, "Linux x86_64"),
+      ).toBe(true);
+      expect(confirmClose.defaultPrevented).toBe(true);
+
+      const unrelated = keyboardEvent({ key: "q", code: "KeyQ", repeat: true });
+      expect(
+        suppressNativeTerminalCloseShortcut(unrelated, keybindings, owner, true, "Linux x86_64"),
+      ).toBe(false);
+      expect(unrelated.defaultPrevented).toBe(false);
+    }
+  });
+
+  it("leaves first presses, held repeats and pending-confirm closes to an extension's keymap", () => {
+    for (const repeat of [false, true, true]) {
+      const event = keyboardEvent({ repeat });
+      expect(
+        suppressNativeTerminalCloseShortcut(event, keybindings, "extension", false, "Linux x86_64"),
+      ).toBe(false);
+      expect(event.defaultPrevented).toBe(false);
+    }
+
+    // A pending native close confirmation must not swallow the extension's key.
+    const duringConfirm = keyboardEvent();
+    expect(
+      suppressNativeTerminalCloseShortcut(
+        duringConfirm,
+        keybindings,
+        "extension",
+        true,
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(duringConfirm.defaultPrevented).toBe(false);
   });
 });

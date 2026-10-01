@@ -9,6 +9,7 @@ import {
   getThemeModes,
   getThemePreviewSidebarArtwork,
   getThemePreferenceMode,
+  getThemePreviewOwner,
   isKnownThemePreference,
   getCustomThemes,
   getStandardThemeColors,
@@ -21,6 +22,7 @@ import {
   removeCustomTheme,
   removeCustomThemes,
   replaceCustomThemeCollection,
+  restoreThemeAfterPreview,
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
@@ -367,6 +369,96 @@ describe("theme files", () => {
 
     unsubscribe();
     vi.unstubAllGlobals();
+  });
+
+  it("tags the preview writer and clears the tag when a stored theme applies", () => {
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+    try {
+      expect(applyThemeColorPreview(T3_CHAT_THEME.colors, "light")).toBe(true);
+      expect(documentElement.dataset.themeId).toBe("__preview");
+      expect(documentElement.dataset.themePreviewOwner).toBe("t3.theme-editor");
+      expect(getThemePreviewOwner()).toBe("t3.theme-editor");
+      applyThemePalette("system");
+      expect(documentElement.dataset.themeId).toBeUndefined();
+      expect(documentElement.dataset.themePreviewOwner).toBeUndefined();
+      expect(getThemePreviewOwner()).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("refuses a second writer while an owner holds the preview", () => {
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+    try {
+      expect(applyThemeColorPreview(T3_CHAT_THEME.colors, "light")).toBe(true);
+      documentElement.style.setProperty.mockClear();
+
+      // A foreign overlay cannot retag or repaint mid-preview, even with the
+      // same colors.
+      expect(applyThemeColorPreview(T3_CHAT_THEME.colors, "light", "community.overlay")).toBe(
+        false,
+      );
+      expect(documentElement.dataset.themePreviewOwner).toBe("t3.theme-editor");
+      expect(documentElement.style.setProperty).not.toHaveBeenCalled();
+      expect(getThemePreviewSidebarArtwork()).toBe(false);
+
+      // The owning writer may repaint its own draft.
+      expect(applyThemeColorPreview(T3_CHAT_THEME.colors, "dark")).toBe(true);
+      expect(documentElement.dataset.themePreviewOwner).toBe("t3.theme-editor");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lets a writer claim an untagged preview and keeps foreign cleanup out", () => {
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: { themeId: "__preview" } as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+    try {
+      // A preview that predates ownership tagging is claimable by anyone.
+      expect(getThemePreviewOwner()).toBeNull();
+      expect(applyThemeColorPreview(T3_CHAT_THEME.colors, "light", "community.overlay")).toBe(true);
+      expect(documentElement.dataset.themePreviewOwner).toBe("community.overlay");
+
+      const restore = vi.fn();
+      restoreThemeAfterPreview("t3.theme-editor", restore);
+      expect(restore).not.toHaveBeenCalled();
+      expect(documentElement.dataset.themePreviewOwner).toBe("community.overlay");
+
+      restoreThemeAfterPreview("community.overlay", restore);
+      expect(restore).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("restores without an owner check when no preview is active", () => {
+    const documentElement = {
+      classList: { toggle: vi.fn() },
+      dataset: {} as Record<string, string>,
+      style: { removeProperty: vi.fn(), setProperty: vi.fn() },
+    };
+    vi.stubGlobal("document", { documentElement });
+    try {
+      const restore = vi.fn();
+      restoreThemeAfterPreview("community.overlay", restore);
+      expect(restore).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps optional light and dark palettes under one theme id", () => {

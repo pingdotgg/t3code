@@ -9,7 +9,10 @@ import type {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
   type AtomCommandResult,
+  executeAtomQuery,
+  isAtomCommandInterrupted,
   mapAtomCommandResult,
+  runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -22,6 +25,10 @@ import {
   rememberPreviewUrl,
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { assetEnvironment } from "~/state/assets";
+import { previewEnvironment } from "~/state/preview";
+import { readPreparedConnection } from "~/state/session";
 
 import {
   browserDefaultOpenProfileId,
@@ -136,4 +143,34 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     url: assetUrl,
     openPreview: input.openPreview,
   });
+}
+
+/**
+ * `openFileInPreview` for callers outside React (the extension navigation
+ * provider), with the same asset and preview commands the file panel uses.
+ * Answers how it went instead of raising a toast.
+ */
+export async function openWorkspaceFileInPreview(
+  threadRef: ScopedThreadRef,
+  filePath: string,
+  workspaceRoot: string,
+): Promise<"opened" | "browser-unavailable" | "open-failed"> {
+  const httpBaseUrl = readPreparedConnection(threadRef.environmentId)?.httpBaseUrl;
+  if (!isPreviewSupportedInRuntime() || !httpBaseUrl) return "browser-unavailable";
+  const quiet = { reportFailure: false, reportDefect: false } as const;
+  const result = await openFileInPreview({
+    threadRef,
+    filePath,
+    workspaceRoot,
+    httpBaseUrl,
+    createAssetUrl: (input) =>
+      executeAtomQuery(appAtomRegistry, assetEnvironment.createUrl(input), {
+        ...quiet,
+        refresh: true,
+      }),
+    openPreview: (input) => runAtomCommand(appAtomRegistry, previewEnvironment.open, input, quiet),
+  });
+  if (result._tag === "Success") return "opened";
+  if (!isAtomCommandInterrupted(result)) console.error(Cause.squash(result.cause));
+  return "open-failed";
 }

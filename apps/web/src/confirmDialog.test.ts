@@ -51,6 +51,31 @@ describe("confirm dialog coordinator", () => {
     unregister();
   });
 
+  it("a withdrawn request closes if showing and drops out of the queue if not", async () => {
+    const unregister = registerConfirmDialogHost();
+    const showing = new AbortController();
+    const queued = new AbortController();
+    const first = requireConfirmation(
+      requestConfirmDialog("Import cookies?", { signal: showing.signal }),
+    );
+    const second = requireConfirmation(
+      requestConfirmDialog("Import more cookies?", { signal: queued.signal }),
+    );
+
+    queued.abort();
+    await expect(second).resolves.toBe(false);
+    showing.abort();
+    await expect(first).resolves.toBe(false);
+    expect(readConfirmDialogState()).toEqual({
+      status: "closing",
+      message: "Import cookies?",
+      variant: "default",
+    });
+    completeConfirmDialogClose();
+    expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
   it("serializes concurrent confirmations", async () => {
     const unregister = registerConfirmDialogHost();
     const first = requireConfirmation(requestConfirmDialog("Delete the project?"));

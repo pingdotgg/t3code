@@ -31,7 +31,7 @@ import {
   previewMiniPlayerSourceKey,
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore, returnBrowserMiniPlayerToPanel } from "~/rightPanelStore";
 import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
@@ -170,8 +170,7 @@ function BrowserMiniPlayer({
   );
 
   const openInPanel = () => {
-    usePreviewMiniPlayerStore.getState().close(threadRef);
-    useRightPanelStore.getState().openBrowser(threadRef, tabId);
+    returnBrowserMiniPlayerToPanel(threadRef, miniPlayer.source);
   };
 
   const toggleNativePictureInPicture = () => {

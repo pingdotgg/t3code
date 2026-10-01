@@ -14,7 +14,7 @@ export interface PreviewMiniPlayerSize {
 
 /** What the floating player mirrors: a browser tab or a device stream. */
 export type PreviewMiniPlayerSource =
-  | { readonly kind: "browser"; readonly tabId: string }
+  | { readonly kind: "browser"; readonly tabId: string; readonly returnSurfaceId?: string }
   | {
       readonly kind: "device";
       readonly hostId: string;
@@ -50,9 +50,13 @@ export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): str
     : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
 }
 
-export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({
+export const browserMiniPlayerSource = (
+  tabId: string,
+  returnSurfaceId?: string,
+): PreviewMiniPlayerSource => ({
   kind: "browser",
   tabId,
+  ...(returnSurfaceId ? { returnSurfaceId } : {}),
 });
 
 export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((set) => ({
@@ -63,7 +67,11 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
       const current = state.byThreadKey[threadKey];
       if (
         current &&
-        previewMiniPlayerSourceKey(current.source) === previewMiniPlayerSourceKey(source)
+        previewMiniPlayerSourceKey(current.source) === previewMiniPlayerSourceKey(source) &&
+        (source.kind !== "browser" ||
+          !source.returnSurfaceId ||
+          (current.source.kind === "browser" &&
+            current.source.returnSurfaceId === source.returnSurfaceId))
       ) {
         return state;
       }

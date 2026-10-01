@@ -224,8 +224,8 @@ const LabelField = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 /** Built-ins plus the user's own profiles. */
 export const BROWSER_ENGINE_PROFILE_LIST_MAX = BROWSER_PROFILE_MAX_COUNT + 2;
-const BROWSER_ENGINE_IMPORT_SOURCE_MAX = 16;
-const BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX = 32;
+export const BROWSER_ENGINE_IMPORT_SOURCE_MAX = 16;
+export const BROWSER_ENGINE_IMPORT_SOURCE_PROFILE_MAX = 32;
 
 /** The profile list as a host reports it: ids and names only, plus the default. */
 const BrowserEngineProfileListFields = {

@@ -31,6 +31,14 @@
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
     },
+    "./browser-frames/access": {
+      "types": "./src/browser-frames/access.ts",
+      "default": "./src/browser-frames/access.ts"
+    },
+    "./browser-frames/stream": {
+      "types": "./src/browser-frames/stream.ts",
+      "default": "./src/browser-frames/stream.ts"
+    },
     "./authorization": {
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
@@ -262,6 +270,10 @@
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./state/extensions": {
+      "types": "./src/state/extensions.ts",
+      "default": "./src/state/extensions.ts"
     },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",

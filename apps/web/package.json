@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
-    "dev": "vp dev",
-    "build": "vp build",
+    "dev": "vp run --filter @t3tools/extension-sdk build && vp dev",
+    "build": "vp run --filter @t3tools/extension-sdk build && vp build",
     "preview": "vp preview",
-    "typecheck": "tsc --noEmit",
-    "test": "vp test run --passWithNoTests --project unit"
+    "typecheck": "vp run --filter @t3tools/extension-sdk build && tsc --noEmit",
+    "test": "vp run --filter @t3tools/extension-sdk build && vp test run --passWithNoTests --project unit"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -28,6 +28,7 @@
     "@pierre/trees": "1.0.0-beta.4",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/extension-sdk": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",

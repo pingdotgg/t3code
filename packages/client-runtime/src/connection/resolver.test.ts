@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as Tracer from "effect/Tracer";
 
 import * as ConnectionResolver from "./resolver.ts";
+import { clientInstanceId } from "../clientInstance.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
@@ -222,8 +223,7 @@ describe("ConnectionResolver", () => {
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
-        socketUrl:
-          "ws://127.0.0.1:3777/ws?clientSurface=web&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=1",
+        socketUrl: `ws://127.0.0.1:3777/ws?clientInstanceId=${clientInstanceId}&clientSurface=web&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=1`,
         httpAuthorization: null,
         target,
       });

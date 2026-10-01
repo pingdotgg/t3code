@@ -27,7 +27,20 @@ function createBrowserLocalApi(): LocalApi {
           return;
         }
 
-        window.open(url, "_blank", "noopener,noreferrer");
+        // A `noopener` open returns null whether or not the browser allowed
+        // it, so open a blank window whose handle proves it exists, sever its
+        // opener, then navigate it through a noreferrer link. A blocked popup
+        // yields no handle and fails like a declined desktop open.
+        const opened = window.open("about:blank", "_blank");
+        if (!opened) {
+          throw new Error("Unable to open link.");
+        }
+        opened.opener = null;
+        const link = opened.document.createElement("a");
+        link.href = url;
+        link.rel = "noreferrer";
+        opened.document.body.append(link);
+        link.click();
       },
       // Only the desktop shell can reach the OS; the web build (and older
       // desktop shells that predate this method) have nothing to open.

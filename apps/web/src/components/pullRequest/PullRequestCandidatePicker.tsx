@@ -17,7 +17,7 @@ import {
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipControlTrigger, TooltipPopup } from "../ui/tooltip";
 import { PullRequestPeopleGhost } from "./PullRequestGhosts";
 
 export function PullRequestCandidatePicker<T>({
@@ -75,13 +75,11 @@ export function PullRequestCandidatePicker<T>({
   if (!allowed) {
     return (
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" disabled aria-label={label}>
-              {icon}
-            </Button>
-          }
-        />
+        <TooltipControlTrigger disabled>
+          <Button size="icon-xs" variant="ghost" disabled aria-label={label}>
+            {icon}
+          </Button>
+        </TooltipControlTrigger>
         <TooltipPopup side="bottom">{disabledReason}</TooltipPopup>
       </Tooltip>
     );

@@ -101,7 +101,7 @@ describe("ElectronProtocol", () => {
           assert.equal(yield* Effect.promise(() => response.text()), "ok");
           assert.include(
             response.headers.get("content-security-policy") ?? "",
-            "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://clerk.t3.codes https://challenges.cloudflare.com",
+            "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://clerk.t3.codes https://challenges.cloudflare.com",
           );
           assert.include(
             response.headers.get("content-security-policy") ?? "",
@@ -235,7 +235,7 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(protocolLayer)),
   );
 
-  it("keeps executable sources host-restricted while allowing runtime network resources", () => {
+  it("allows authenticated installed modules without permitting arbitrary network scripts", () => {
     const policy = ElectronProtocol.makeDesktopContentSecurityPolicy({
       scheme: "t3code",
       targetOrigin: new URL("http://127.0.0.1:3773/"),
@@ -252,6 +252,7 @@ describe("ElectronProtocol", () => {
       "'self'",
       "'unsafe-inline'",
       "'wasm-unsafe-eval'",
+      "blob:",
       "https://clerk.t3.codes",
       "https://challenges.cloudflare.com",
     ]);

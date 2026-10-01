@@ -314,6 +314,7 @@ describe("previewStateStore (single-tab)", () => {
       snapshot,
     });
     applyPreviewDesktopState(ref, snapshot.tabId, {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: true,
       canGoForward: false,
@@ -335,6 +336,7 @@ describe("previewStateStore (single-tab)", () => {
     const snapshot = makeSnapshot();
     applyPreviewServerSnapshot(ref, snapshot);
     const overlay = {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: true,
       canGoForward: false,
@@ -369,6 +371,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, first);
     applyPreviewServerSnapshot(ref, second);
     applyPreviewDesktopState(ref, first.tabId, {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: true,
       canGoForward: false,
@@ -420,6 +423,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, stale);
     applyPreviewServerSnapshot(ref, active);
     applyPreviewDesktopState(ref, stale.tabId, {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: false,
       canGoForward: false,
@@ -537,6 +541,7 @@ describe("previewStateStore (single-tab)", () => {
     });
     beginPreviewSessionClose(ref, previous.tabId);
     applyPreviewDesktopState(ref, previous.tabId, {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: false,
       canGoForward: false,

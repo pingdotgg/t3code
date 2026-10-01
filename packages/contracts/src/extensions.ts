@@ -10,7 +10,7 @@ export const ExtensionContentHash = Schema.String.check(Schema.isPattern(/^[a-f0
  * extension runtime's grants validator; the largest first-party pack's
  * declared APIs check 19. Raised from 16 to 32 for the browser pack.
  */
-const EXTENSION_GRANT_CAPABILITIES_MAX = 32;
+export const EXTENSION_GRANT_CAPABILITIES_MAX = 32;
 export const ExtensionGrants = Schema.Struct({
   capabilities: Schema.Array(Identity).check(Schema.isMaxLength(EXTENSION_GRANT_CAPABILITIES_MAX)),
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(64)),

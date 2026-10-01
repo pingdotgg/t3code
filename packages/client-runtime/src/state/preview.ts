@@ -23,6 +23,7 @@ export function createPreviewEnvironmentAtoms<R, E>(
   const lifecycleScheduler = createAtomCommandScheduler();
   const statusScheduler = createAtomCommandScheduler();
   const automationScheduler = createAtomCommandScheduler();
+  const engineHostScheduler = createAtomCommandScheduler();
   const lifecycleConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -52,6 +53,41 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // stream immediately with its owner so stale requests cannot replay when
       // a thread remounts and the server can clear disconnected hosts promptly.
       idleTtlMs: 0,
+    }),
+    /**
+     * Desktop-only engine host registration. The server
+     * rejects every other session, and drops the host's guest claims when
+     * this stream ends, so it is disposed with its owner.
+     */
+    engineHostRegistration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:preview:engine-host",
+      tag: WS_METHODS.browserEngineHostRegister,
+      idleTtlMs: 0,
+    }),
+    engineHostClaim: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-claim",
+      tag: WS_METHODS.browserEngineHostClaim,
+      scheduler: engineHostScheduler,
+    }),
+    engineHostRelease: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-release",
+      tag: WS_METHODS.browserEngineHostRelease,
+      scheduler: engineHostScheduler,
+    }),
+    engineHostReport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-report",
+      tag: WS_METHODS.browserEngineHostReport,
+      scheduler: engineHostScheduler,
+    }),
+    engineHostCommandResult: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-command-result",
+      tag: WS_METHODS.browserEngineHostCommandResult,
+      scheduler: engineHostScheduler,
+    }),
+    engineHostProfiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:engine-host-profiles",
+      tag: WS_METHODS.browserEngineHostProfiles,
+      scheduler: engineHostScheduler,
     }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",

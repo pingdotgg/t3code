@@ -32,15 +32,15 @@ export function fnv1a32(
   return hash >>> 0;
 }
 
+/** Cache identity for exact text: every character, including edge whitespace, is significant. */
+export function buildContentCacheKey(contents: string, scope: string): string {
+  const primary = fnv1a32(contents, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(contents, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${contents.length}:${primary}:${secondary}`;
+}
+
 export function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  return buildContentCacheKey(patch.trim(), scope);
 }
 
 export type RenderablePatch =

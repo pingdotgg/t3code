@@ -9,6 +9,8 @@ import { useTheme } from "~/hooks/useTheme";
 import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
+import { BrowserEngineHostConnection } from "./BrowserEngineHostConnection";
+import { BrowserRecordingControls } from "./BrowserRecordingControls";
 import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
@@ -24,6 +26,7 @@ export function ElectronBrowserHost() {
           ? Object.values(previewState.sessions).map((snapshot) => ({
               threadRef,
               snapshot,
+              serverEpoch: previewState.serverEpoch,
               runtimeTabId: previewRuntimeTabId(
                 threadRef,
                 previewState.serverEpoch,
@@ -31,6 +34,8 @@ export function ElectronBrowserHost() {
               ),
               pictureInPicture:
                 previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
+              remoteLive: previewState.desktopByTabId[snapshot.tabId]?.remoteLive ?? false,
+              controller: previewState.desktopByTabId[snapshot.tabId]?.controller ?? "none",
               zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
             }))
           : [];
@@ -82,22 +87,41 @@ export function ElectronBrowserHost() {
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
-        const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-        return (
-          <HostedBrowserWebview
-            key={runtimeTabId}
-            threadRef={threadRef}
-            tabId={snapshot.tabId}
-            runtimeTabId={runtimeTabId}
-            initialUrl={url}
-            viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
-            pictureInPicture={pictureInPicture}
-            profileId={snapshot.profileId}
-            zoomFactor={zoomFactor}
-          />
-        );
-      })}
+      <BrowserEngineHostConnection />
+      <BrowserRecordingControls />
+      {sessions.map(
+        ({
+          threadRef,
+          snapshot,
+          serverEpoch,
+          runtimeTabId,
+          pictureInPicture,
+          remoteLive,
+          controller,
+          zoomFactor,
+        }) => {
+          const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+          return (
+            <HostedBrowserWebview
+              key={runtimeTabId}
+              threadRef={threadRef}
+              tabId={snapshot.tabId}
+              runtimeTabId={runtimeTabId}
+              serverEpoch={serverEpoch}
+              initialUrl={url}
+              viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+              pictureInPicture={pictureInPicture}
+              remoteLive={remoteLive}
+              controller={controller}
+              showAgentCursor={
+                snapshot.navStatus._tag !== "Idle" && snapshot.navStatus._tag !== "LoadFailed"
+              }
+              profileId={snapshot.profileId}
+              zoomFactor={zoomFactor}
+            />
+          );
+        },
+      )}
     </div>
   );
 }

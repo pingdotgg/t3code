@@ -323,13 +323,18 @@ function migratePersistedThreadProjectKeys(
   );
 }
 
+/** The environment's own hostname, folded like loopback when keying visits and titles. */
+export function environmentHostnameFor(ref: ScopedThreadRef): string | null {
+  const connection = readPreparedConnection(ref.environmentId);
+  return connection ? new URL(connection.httpBaseUrl).hostname : null;
+}
+
 export function recordVisitForThread(ref: ScopedThreadRef, url: string, at?: number): void {
   const threadKey = scopedThreadKey(ref);
   const state = useBrowserHistoryStore.getState();
   const projectKey = state.projectKeyByThreadKey[threadKey];
   const visitAt = at ?? Date.now();
-  const connection = readPreparedConnection(ref.environmentId);
-  const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
+  const environmentHostname = environmentHostnameFor(ref);
   if (!projectKey) {
     useBrowserHistoryStore.setState({
       pendingVisitsByThreadKey: addPendingByThread(state.pendingVisitsByThreadKey, threadKey, {
@@ -373,6 +378,13 @@ export function removeUrlForThread(ref: ScopedThreadRef, url: string): void {
 }
 
 const EMPTY_HISTORY: ReadonlyArray<BrowserHistoryEntry> = [];
+
+/** The thread's project history, MRU-first; empty until the thread's project is registered. */
+export function readThreadHistory(ref: ScopedThreadRef): ReadonlyArray<BrowserHistoryEntry> {
+  const state = useBrowserHistoryStore.getState();
+  const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
+  return (projectKey ? state.byProjectKey[projectKey] : undefined) ?? EMPTY_HISTORY;
+}
 
 export function useThreadRecentHistory(
   ref: ScopedThreadRef,

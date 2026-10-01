@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import { FetchHttpClient, type HttpMethod } from "effect/unstable/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import { clientInstanceId } from "../clientInstance.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
@@ -17,6 +18,8 @@ import {
 export interface EnvironmentHttpAuthHeaders {
   readonly authorization?: string;
   readonly dpop?: string;
+  /** This runtime's instance id — the server resolves it to our live socket. */
+  readonly "x-t3-client-instance"?: string;
 }
 
 /**
@@ -53,11 +56,15 @@ const buildEnvironmentAuthHeaders = (
   signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
 ): Effect.Effect<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> =>
   Effect.gen(function* () {
+    // Always echo this runtime's instance id: HTTP carries no socket of its
+    // own, and this is how the server attributes the request to our live ws
+    // connection for connection-scoped mint revocation.
+    const instance = { "x-t3-client-instance": clientInstanceId } as const;
     if (authorization === null) {
-      return {};
+      return { ...instance };
     }
     if (authorization._tag === "Bearer") {
-      return { authorization: `Bearer ${authorization.token}` };
+      return { ...instance, authorization: `Bearer ${authorization.token}` };
     }
     if (Option.isNone(signer)) {
       return yield* new RemoteEnvironmentAuthFetchError({
@@ -76,7 +83,11 @@ const buildEnvironmentAuthHeaders = (
             }),
         ),
       );
-    return { authorization: `DPoP ${authorization.accessToken}`, dpop: proof };
+    return {
+      ...instance,
+      authorization: `DPoP ${authorization.accessToken}`,
+      dpop: proof,
+    };
   });
 
 /**

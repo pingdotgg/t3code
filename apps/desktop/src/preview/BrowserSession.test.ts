@@ -12,6 +12,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     string,
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
+      readonly clearData: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
@@ -38,6 +39,7 @@ describe("BrowserSession", () => {
     fromPartition.mockImplementation((partition: string) => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
+        clearData: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
@@ -118,6 +120,7 @@ describe("BrowserSession", () => {
         let userAgent = nativeUserAgent;
         const browserSession = {
           clearCache: vi.fn(() => Promise.resolve()),
+          clearData: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
           getUserAgent: vi.fn(() => userAgent),
           setPermissionRequestHandler: vi.fn(),
@@ -260,7 +263,28 @@ describe("BrowserSession", () => {
             storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
           },
         ]);
-        assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
+        assert.deepEqual(browserSession.clearData.mock.calls, [[{ dataTypes: ["cache"] }]]);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("clears the named partition's cache through the browsing-data remover", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      yield* browserSessions.getSession("scope-a");
+      yield* browserSessions.getSession("scope-b");
+      const target = yield* browserSessions.getPartition("scope-a");
+
+      yield* browserSessions.clearCache([target]);
+
+      // `Session.clearCache()` leaves a live guest serving its renderer memory
+      // cache (a max-age asset is not refetched); the remover evicts that too.
+      const targetSession = sessions.get(target);
+      assert.isDefined(targetSession);
+      assert.deepEqual(targetSession.clearData.mock.calls, [[{ dataTypes: ["cache"] }]]);
+      assert.strictEqual(targetSession.clearCache.mock.calls.length, 0);
+      for (const [partition, browserSession] of sessions) {
+        if (partition !== target) assert.strictEqual(browserSession.clearData.mock.calls.length, 0);
       }
     }).pipe(Effect.provide(layer)),
   );
@@ -316,7 +340,7 @@ describe("BrowserSession", () => {
       }
 
       const cacheCause = new Error("cache clear failed");
-      firstSession.clearCache.mockImplementationOnce(() => Promise.reject(cacheCause));
+      firstSession.clearData.mockImplementationOnce(() => Promise.reject(cacheCause));
       const cacheError = yield* browserSessions.clearCache().pipe(Effect.flip);
 
       assert.instanceOf(cacheError, BrowserSession.BrowserSessionCacheClearError);
@@ -328,7 +352,7 @@ describe("BrowserSession", () => {
       );
       assert.notInclude(cacheError.message, cacheCause.message);
       for (const browserSession of sessions.values()) {
-        assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
+        assert.strictEqual(browserSession.clearData.mock.calls.length, 1);
       }
     }).pipe(Effect.provide(layer)),
   );

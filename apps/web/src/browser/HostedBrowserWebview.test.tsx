@@ -47,6 +47,7 @@ import {
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { useBrowserPointerStore } from "./browserPointerStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 
@@ -75,6 +76,8 @@ beforeEach(() => {
     webPreferences: "contextIsolation=yes",
     preloadUrl: null,
   });
+  mocks.activeRecordings.clear();
+  useBrowserPointerStore.setState({ byTabId: {} });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", globalThis);
   vi.stubGlobal("navigator", { platform: "Linux" });
@@ -87,7 +90,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await act(() => renderer?.unmount());
   renderer = undefined;
   await vi.advanceTimersByTimeAsync(0);
@@ -99,6 +102,90 @@ afterEach(async () => {
 });
 
 describe("HostedBrowserWebview settings hydration", () => {
+  it("renders the native cursor over an extension surface without taking focus or duplicating recording cursors", async () => {
+    mocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
+    await ensureClientSettingsHydrated();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const runtimeTabId = "extension-presented-tab";
+    const surfaceStore = useBrowserSurfaceStore.getState();
+    const owner = Symbol("extension");
+    surfaceStore.claim(runtimeTabId, owner, false, false, "extension");
+    surfaceStore.present(
+      runtimeTabId,
+      owner,
+      { x: 30, y: 50, width: 900, height: 700 },
+      true,
+      0,
+      30,
+    );
+    surfaceStore.presentContent(runtimeTabId, {
+      x: 10,
+      y: 20,
+      width: 900,
+      height: 700,
+      scale: 0.5,
+      scrollLeft: 3,
+      scrollTop: 4,
+    });
+    useBrowserPointerStore.getState().apply({
+      tabId: runtimeTabId,
+      sequence: 1,
+      x: 100,
+      y: 80,
+      phase: "move",
+      createdAt: "2026-09-30T00:00:00Z",
+    });
+    const render = (controller: "agent" | "human") => (
+      <HostedBrowserWebview
+        threadRef={{ environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") }}
+        tabId="server-tab"
+        runtimeTabId={runtimeTabId}
+        serverEpoch="epoch-1"
+        initialUrl="https://example.com"
+        viewport={FILL_PREVIEW_VIEWPORT}
+        pictureInPicture={false}
+        remoteLive={false}
+        profileId="work"
+        zoomFactor={1.25}
+        controller={controller}
+      />
+    );
+    await act(async () => {
+      renderer = create(render("agent"), {
+        createNodeMock: (element) =>
+          element.type === "webview"
+            ? Object.assign(new EventTarget(), { getWebContentsId: () => 41 })
+            : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+      });
+    });
+    const cursor = () => renderer!.root.findByProps({ "data-agent-browser-cursor": true });
+    expect(cursor().props.style.opacity).toBe(1);
+    expect(cursor().props.style.transform).toBe("translate3d(69.5px, 66px, 0)");
+    expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.owner).toBe(owner);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(700);
+    });
+    await act(() => renderer!.update(render("human")));
+    expect(cursor().props.style.opacity).toBe(0.18);
+    mocks.activeRecordings.add(runtimeTabId);
+    await act(() => renderer!.update(render("agent")));
+    expect(renderer!.root.findAllByProps({ "data-agent-browser-cursor": true })).toHaveLength(0);
+    mocks.activeRecordings.clear();
+    await act(() => {
+      surfaceStore.claim(runtimeTabId, Symbol("native-without-toolbar"), false, false);
+      surfaceStore.present(
+        runtimeTabId,
+        useBrowserSurfaceStore.getState().byTabId[runtimeTabId]!.owner!,
+        { x: 30, y: 50, width: 900, height: 700 },
+        true,
+        0,
+        30,
+      );
+      renderer!.update(render("agent"));
+    });
+    expect(renderer!.root.findAllByProps({ "data-agent-browser-cursor": true })).toHaveLength(0);
+  });
+
   it("starts a retained background tab only after a settings read succeeds on retry", async () => {
     const firstRead = deferred<ClientSettings | null>();
     const retryRead = deferred<ClientSettings | null>();
@@ -124,9 +211,11 @@ describe("HostedBrowserWebview settings hydration", () => {
           threadRef={threadRef}
           tabId="server-tab"
           runtimeTabId={runtimeTabId}
+          serverEpoch="epoch-1"
           initialUrl="https://example.com"
           viewport={FILL_PREVIEW_VIEWPORT}
           pictureInPicture={false}
+          remoteLive={false}
           profileId="work"
           zoomFactor={1.25}
         />,

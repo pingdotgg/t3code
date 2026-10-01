@@ -26,6 +26,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -33,6 +34,7 @@ import {
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   type ChatMessage,
+  DEFAULT_THREAD_TERMINAL_ID,
   isImageAttachment,
   type SessionPhase,
   type Thread,
@@ -52,6 +54,11 @@ import type { TimelineEntry } from "../session-logic";
 import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { DesktopPreviewOverlay } from "../previewStateStore";
 import type { RightPanelSurface } from "../rightPanelStore";
+import { resourceKey } from "@t3tools/extension-sdk/contracts";
+import {
+  isExtensionPresented,
+  type BrowserSurfacePresentation,
+} from "../browser/browserSurfaceStore";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   resolveSelectableProviderInstanceEntry,
@@ -92,9 +99,30 @@ export function agentControlledBrowserCloseConfirmation(
 export function shouldRenderPreviewMiniPlayer(
   source: PreviewMiniPlayerSource | null,
   renderedRightPanelSurface: RightPanelSurface | null,
+  extensionPresentation?: {
+    readonly extensionPanelOpen: boolean;
+    readonly requestedTabId?: string | null;
+    readonly browserSurface:
+      | Pick<BrowserSurfacePresentation, "owner" | "extensionResourceKey">
+      | undefined;
+  },
+  browserPreviewSupported = true,
 ): boolean {
   if (source === null) return false;
   if (source.kind === "browser") {
+    if (!browserPreviewSupported) return false;
+    if (
+      renderedRightPanelSurface?.kind === "extension" &&
+      extensionPresentation?.extensionPanelOpen &&
+      (extensionPresentation.requestedTabId != null
+        ? extensionPresentation.requestedTabId === source.tabId
+        : source.returnSurfaceId === renderedRightPanelSurface.id ||
+          isExtensionPresented(
+            extensionPresentation.browserSurface,
+            resourceKey(renderedRightPanelSurface.record.context.resource),
+          ))
+    )
+      return false;
     return !(
       renderedRightPanelSurface?.kind === "preview" &&
       renderedRightPanelSurface.resourceId === source.tabId
@@ -685,6 +713,35 @@ export function reconcileMountedTerminalThreadIds(input: {
   }
 
   return nextThreadIds;
+}
+
+/**
+ * Picks the terminal a project script runs in. Extension-owned sessions are never
+ * a target, even when stale UI state still points at one; with no eligible native
+ * terminal, or when the base one is busy, a fresh id is allocated instead.
+ */
+export function resolveScriptTerminalTarget(input: {
+  activeTerminalId: string;
+  knownTerminalIds: ReadonlyArray<string>;
+  extensionTerminalIds: ReadonlyArray<string>;
+  runningTerminalIds: ReadonlyArray<string>;
+  allocatableTerminalIds: ReadonlyArray<string>;
+  preferNewTerminal: boolean;
+}): { terminalId: string; isNew: boolean } {
+  const extensionTerminalIds = new Set(input.extensionTerminalIds);
+  const baseTerminalId = [
+    input.activeTerminalId,
+    ...input.knownTerminalIds,
+    DEFAULT_THREAD_TERMINAL_ID,
+  ].find((terminalId) => terminalId.length > 0 && !extensionTerminalIds.has(terminalId));
+  if (
+    baseTerminalId === undefined ||
+    input.preferNewTerminal ||
+    input.runningTerminalIds.includes(baseTerminalId)
+  ) {
+    return { terminalId: nextTerminalId(input.allocatableTerminalIds), isNew: true };
+  }
+  return { terminalId: baseTerminalId, isNew: false };
 }
 
 export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {

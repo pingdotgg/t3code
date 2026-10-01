@@ -82,6 +82,8 @@ export function requestConfirmDialog(
   options?: ConfirmDialogOptions,
 ): Promise<boolean> | undefined {
   if (registeredHostCount === 0) return undefined;
+  const signal = options?.signal;
+  if (signal?.aborted) return Promise.resolve(false);
 
   const confirmation = new Promise<boolean>((resolve) => {
     const pending = {
@@ -89,6 +91,7 @@ export function requestConfirmDialog(
       variant: options?.variant ?? "default",
       resolve,
     } satisfies PendingConfirmation;
+    signal?.addEventListener("abort", () => withdrawConfirmation(pending), { once: true });
     if (activeConfirmation || state.status === "closing") {
       queuedConfirmations.push(pending);
       return;
@@ -99,6 +102,18 @@ export function requestConfirmDialog(
   });
 
   return confirmation;
+}
+
+/** Resolves a withdrawn request `false`, closing it if it is the one showing. */
+function withdrawConfirmation(pending: PendingConfirmation): void {
+  if (activeConfirmation === pending) {
+    respondToConfirmDialog(false);
+    return;
+  }
+  const index = queuedConfirmations.indexOf(pending);
+  if (index === -1) return;
+  queuedConfirmations.splice(index, 1);
+  pending.resolve(false);
 }
 
 export function respondToConfirmDialog(confirmed: boolean): void {

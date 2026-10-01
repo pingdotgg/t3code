@@ -5,9 +5,72 @@ import {
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveRemoteOpenState } from "./remoteOpen";
+
+describe("native remote editor transport", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each([undefined, [], ["trae"], new Error("probe failed")])(
+    "falls back to VS Code when the client has no remote-capable probe result (%s)",
+    async (result) => {
+      vi.resetModules();
+      const probeRemoteEditors =
+        result === undefined
+          ? undefined
+          : vi.fn(async () => {
+              if (result instanceof Error) throw result;
+              return result;
+            });
+      vi.stubGlobal("window", {
+        desktopBridge: probeRemoteEditors ? { probeRemoteEditors } : undefined,
+      });
+      const { getRemoteCapableEditors } = await import("./remoteOpen");
+      await expect(getRemoteCapableEditors()).resolves.toEqual(["vscode"]);
+      await expect(getRemoteCapableEditors()).resolves.toEqual(["vscode"]);
+      if (probeRemoteEditors) expect(probeRemoteEditors).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("shares one probe with native and SDK callers, preserving supported editor order", async () => {
+    vi.resetModules();
+    const probeRemoteEditors = vi.fn(async () => ["trae", "zed", "cursor"]);
+    vi.stubGlobal("window", { desktopBridge: { probeRemoteEditors } });
+    const { getRemoteCapableEditors } = await import("./remoteOpen");
+    const results = await Promise.all([getRemoteCapableEditors(), getRemoteCapableEditors()]);
+    expect(results).toEqual([
+      ["zed", "cursor"],
+      ["zed", "cursor"],
+    ]);
+    expect(probeRemoteEditors).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, new Error("refused")])(
+    "reports a refused desktop deep link (%s)",
+    async (result) => {
+      const openExternal = vi.fn(async () => {
+        if (result instanceof Error) throw result;
+        return result;
+      });
+      vi.stubGlobal("window", { desktopBridge: { openExternal } });
+      const { openRemoteEditorUrl } = await import("./remoteOpen");
+      await expect(openRemoteEditorUrl("cursor://vscode-remote/ssh-remote+dev/ws")).resolves.toBe(
+        false,
+      );
+      expect(openExternal).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("assigns the browser location rather than opening a blank tab", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("window", { location: { assign } });
+    const { openRemoteEditorUrl } = await import("./remoteOpen");
+    const url = "vscode://vscode-remote/ssh-remote+dev/ws";
+    await expect(openRemoteEditorUrl(url)).resolves.toBe(true);
+    expect(assign).toHaveBeenCalledWith(url);
+  });
+});
 
 const environmentId = EnvironmentId.make("environment-1");
 

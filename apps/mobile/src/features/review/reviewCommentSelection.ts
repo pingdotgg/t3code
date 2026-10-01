@@ -1,4 +1,9 @@
 import { useSyncExternalStore } from "react";
+import { unescapeReviewCommentTags } from "@t3tools/shared/composerContextLegacy";
+import {
+  neutralizeReviewCommentTags,
+  REVIEW_COMMENT_BODY_ENCODING,
+} from "@t3tools/shared/composerContextLegacySend";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
@@ -193,18 +198,24 @@ function readNonNegativeInteger(value: string | undefined): number | null {
   return Number(value);
 }
 
-function extractReviewCommentBody(rawBody: string): {
+function extractReviewCommentBody(
+  rawBody: string,
+  encoded: boolean,
+): {
   text: string;
   language: string;
   contents: string;
 } {
+  // Only bodies the escaping writer marked get decoded; historical unencoded payloads keep
+  // their literal entity spellings byte-identical.
+  const decode = encoded ? unescapeReviewCommentTags : (value: string) => value;
   const matches = Array.from(rawBody.matchAll(REVIEW_COMMENT_FENCE_PATTERN));
   const match = matches.at(-1);
   const fenceIndex = match?.index;
   return {
-    text: rawBody.slice(0, fenceIndex ?? rawBody.length).trim(),
+    text: decode(rawBody.slice(0, fenceIndex ?? rawBody.length).trim()),
     language: match?.[2]?.trim() || "diff",
-    contents: match?.[3] ?? "",
+    contents: decode(match?.[3] ?? ""),
   };
 }
 
@@ -221,7 +232,10 @@ function parseReviewInlineComment(
   if (!filePath || !sectionId || startIndex === null || endIndex === null) {
     return null;
   }
-  const body = extractReviewCommentBody(rawBody);
+  const body = extractReviewCommentBody(
+    rawBody,
+    attributes.bodyEncoding === REVIEW_COMMENT_BODY_ENCODING,
+  );
 
   return {
     id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
@@ -254,11 +268,14 @@ export function formatReviewCommentContext(target: ReviewCommentTarget, comment:
       ` startIndex="${target.startIndex}"`,
       ` endIndex="${target.endIndex}"`,
       ` rangeLabel="${escapeReviewCommentAttribute(rangeLabel)}"`,
+      ` bodyEncoding="${REVIEW_COMMENT_BODY_ENCODING}"`,
       ">",
     ].join(""),
-    comment.trim(),
+    // The block scan above ends at the first closer without tracking fences, so the
+    // comment's words and the quoted lines both travel neutralized; readers decode them.
+    neutralizeReviewCommentTags(comment.trim()),
     `${fence}diff`,
-    diff,
+    neutralizeReviewCommentTags(diff),
     fence,
     "</review_comment>",
   ].join("\n");

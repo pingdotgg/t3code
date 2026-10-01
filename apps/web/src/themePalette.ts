@@ -1493,24 +1493,85 @@ export function getThemeColorVariable(role: ThemeColorRole): string {
 export const THEME_PREVIEW_ID = "__preview";
 
 /**
- * Paint a draft palette onto the live app without installing it, so the editor
- * can be judged against the real interface instead of a miniature. Callers
- * restore the stored theme (refreshTheme) when the draft goes away.
+ * Identifies who painted the current `__preview`. The same draft colors can
+ * come from the editor or an extension overlay, so the writer tags itself and
+ * foreign drafts stay distinguishable even when identical.
  */
-export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeAppearance): void {
-  if (typeof document === "undefined") return;
+export const THEME_PREVIEW_OWNER_EDITOR = "t3.theme-editor";
+
+/**
+ * The writer that painted the live `__preview`, or null when no preview is
+ * active — including a preview that predates ownership tagging, which any
+ * writer may claim.
+ */
+export function getThemePreviewOwner(): string | null {
+  if (typeof document === "undefined") return null;
   const root = document.documentElement;
-  if (!root?.style) return;
+  if (root?.dataset?.themeId !== THEME_PREVIEW_ID) return null;
+  return root.dataset.themePreviewOwner ?? null;
+}
+
+/**
+ * Replace the live `__preview`'s owner tag without repainting — the legal way
+ * to supersede another writer's preview: acquire the owner record first, then
+ * repaint through applyThemeColorPreview, which now sees the caller as the
+ * owner. Returns false when no preview is active; a stored theme carries no
+ * owner record to transfer.
+ */
+export function transferThemePreviewOwner(owner: string): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement;
+  if (root?.dataset?.themeId !== THEME_PREVIEW_ID) return false;
+  root.dataset.themePreviewOwner = owner;
+  return true;
+}
+
+/**
+ * Paint a draft palette onto the live app without installing it, so the editor
+ * can be judged against the real interface instead of a miniature. The preview
+ * is single-writer: while another owner's tag is set the call is refused and
+ * returns false without repainting or retagging. Callers restore the stored
+ * theme (refreshTheme) when the draft goes away.
+ */
+export function applyThemeColorPreview(
+  colors: ThemeColors,
+  appearance: ThemeAppearance,
+  owner: string = THEME_PREVIEW_OWNER_EDITOR,
+): boolean {
+  if (typeof document === "undefined") return false;
+  const root = document.documentElement;
+  if (!root?.style) return false;
+
+  const activeOwner = root.dataset.themePreviewOwner;
+  if (
+    root.dataset.themeId === THEME_PREVIEW_ID &&
+    activeOwner !== undefined &&
+    activeOwner !== owner
+  ) {
+    return false;
+  }
 
   // Drafts become user-controlled themes when saved, so their preview keeps
   // the fixed stage artwork hidden even when it was seeded from a built-in.
   setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
+  root.dataset.themePreviewOwner = owner;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  return true;
+}
+
+/**
+ * Run `restore` only when `owner` painted the live preview or no tagged
+ * preview is active. A foreign writer's cleanup must not erase another
+ * owner's draft — the owning writer restores when it closes.
+ */
+export function restoreThemeAfterPreview(owner: string, restore: () => void): void {
+  const activeOwner = getThemePreviewOwner();
+  if (activeOwner === null || activeOwner === owner) restore();
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1520,6 +1581,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   if (!root?.style) return;
 
   setThemePreviewSidebarArtwork(null);
+  delete root.dataset.themePreviewOwner;
   const palette = getThemeDefinition(theme);
 
   if (palette) {

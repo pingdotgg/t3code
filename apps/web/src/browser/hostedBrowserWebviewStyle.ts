@@ -1,3 +1,5 @@
+import type { PreviewViewportSetting } from "@t3tools/contracts";
+
 import type { BrowserSurfaceRect } from "./browserSurfaceStore";
 
 export interface HostedBrowserWebviewSize {
@@ -71,5 +73,26 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     zIndex: -1,
     pointerEvents: "none",
     visibility: keepPaintableWhenInactive ? "visible" : "hidden",
+  };
+}
+
+/**
+ * Decides which layer owns the device-mode viewport controls. The toolbar
+ * strip and rails stay reserved in the layout whenever device mode shows, so
+ * an extension's own chrome lines up with the engine frame; the host only
+ * paints its toolbar and resize rails when the presenter delegated them.
+ */
+export function resolveHostedBrowserViewportChrome(input: {
+  readonly active: boolean;
+  readonly viewportTag: PreviewViewportSetting["_tag"];
+  readonly fitSourceContent: boolean;
+  readonly hostViewportControls: boolean;
+}) {
+  const deviceMode = input.active && input.viewportTag !== "fill" && !input.fitSourceContent;
+  const hostControls = deviceMode && input.hostViewportControls;
+  return {
+    reserveDeviceChrome: deviceMode,
+    deviceToolbar: hostControls,
+    resizeRails: hostControls,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  BrowserEngineHostLifecycle,
   DesktopPreviewTabState,
   PreviewReportStatusInput,
   ScopedThreadRef,
@@ -8,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useEffectEvent, useMemo, useRef } from "react";
 
 import {
@@ -15,6 +17,13 @@ import {
   recordFaviconForThread,
   useFaviconProjectRefForThread,
 } from "~/browserFaviconStore";
+import {
+  engineGenerationOf,
+  forgetHostedTab,
+  nextEnginePageReport,
+  recordHostedTabState,
+  useBrowserEngineHostStore,
+} from "~/browser/browserEngineHost";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { applyPreviewDesktopState, type DesktopPreviewOverlay } from "~/previewStateStore";
 import { previewEnvironment } from "~/state/preview";
@@ -31,18 +40,40 @@ function originOf(url: string): string | null {
   }
 }
 
+interface EngineClaim {
+  readonly hostConnectionId: string;
+  readonly generation: string;
+}
+
 /**
  * Mirrors low-latency desktop state into the store and reflects navigation
  * events back to the server. Webview lifetime is owned by ElectronBrowserHost.
+ *
+ * While this window is the environment's registered engine host, the guest is
+ * also claimed under its webContents id and its page status is reported on
+ * that fence. The unfenced `reportStatus` keeps native UI
+ * current but is not engine provenance.
+ *
+ * Returns the reporter for guest crash lifecycle. Once a lifecycle is
+ * reported the claim stops sending page status: only the replacement guest's
+ * fresh claim returns the session to live.
  */
 export function usePreviewBridge(input: {
   threadRef: ScopedThreadRef;
   tabId: string;
   runtimeTabId: string;
-}): void {
-  const { threadRef, tabId, runtimeTabId } = input;
+  serverEpoch: string | null;
+}): (lifecycle: BrowserEngineHostLifecycle) => void {
+  const { threadRef, tabId, runtimeTabId, serverEpoch } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
+  const claimEngine = useAtomCommand(previewEnvironment.engineHostClaim, { reportFailure: false });
+  const releaseEngine = useAtomCommand(previewEnvironment.engineHostRelease, {
+    reportFailure: false,
+  });
+  const reportEngine = useAtomCommand(previewEnvironment.engineHostReport, {
+    reportFailure: false,
+  });
   const bridge = previewBridge;
   const threadKey = scopedThreadKey(threadRef);
   const stableThreadRef = useMemo(() => {
@@ -55,6 +86,128 @@ export function usePreviewBridge(input: {
   const environmentHostname = Option.isSome(preparedConnection)
     ? new URL(preparedConnection.value.httpBaseUrl).hostname
     : undefined;
+  const engineHostConnectionId = useBrowserEngineHostStore(
+    (state) => state.hostConnectionIdByEnvironment[stableThreadRef.environmentId] ?? null,
+  );
+
+  // Host calls for this guest run strictly in order: claim before report,
+  // release before a re-claim.
+  const engine = useRef<{
+    chain: Promise<unknown>;
+    claimed: EngineClaim | null;
+    lastStatusKey: string | null;
+    lastState: DesktopPreviewTabState | null;
+    /** Set once the claimed guest is reported dead; cleared by a fresh claim. */
+    lifecycle: BrowserEngineHostLifecycle | null;
+  }>({
+    chain: Promise.resolve(),
+    claimed: null,
+    lastStatusKey: null,
+    lastState: null,
+    lifecycle: null,
+  });
+  const enqueueEngine = (op: () => Promise<unknown>) => {
+    const current = engine.current;
+    current.chain = current.chain.then(op, op);
+  };
+  const reportEngineLifecycle = useEffectEvent((lifecycle: BrowserEngineHostLifecycle): void => {
+    const current = engine.current;
+    const owned = current.claimed;
+    if (serverEpoch === null || owned === null || current.lifecycle === lifecycle) return;
+    current.lifecycle = lifecycle;
+    const target = { threadId: stableThreadRef.threadId, tabId, serverEpoch };
+    enqueueEngine(() =>
+      current.claimed === owned
+        ? reportEngine({
+            environmentId: stableThreadRef.environmentId,
+            input: {
+              hostConnectionId: owned.hostConnectionId,
+              target,
+              engineGeneration: owned.generation,
+              lifecycle,
+            },
+          })
+        : Promise.resolve(),
+    );
+  });
+  const syncEngine = useEffectEvent((): void => {
+    if (serverEpoch === null) return;
+    const current = engine.current;
+    const environmentId = stableThreadRef.environmentId;
+    const target = { threadId: stableThreadRef.threadId, tabId, serverEpoch };
+    const enqueue = enqueueEngine;
+    const generation = current.lastState ? engineGenerationOf(current.lastState) : null;
+    const desired =
+      engineHostConnectionId !== null && generation !== null
+        ? { hostConnectionId: engineHostConnectionId, generation }
+        : null;
+    const claimed = current.claimed;
+    if (
+      claimed !== null &&
+      (desired === null ||
+        claimed.hostConnectionId !== desired.hostConnectionId ||
+        claimed.generation !== desired.generation)
+    ) {
+      current.claimed = null;
+      current.lastStatusKey = null;
+      current.lifecycle = null;
+      // A replaced registration already lost its claims on the server.
+      if (claimed.hostConnectionId === engineHostConnectionId) {
+        enqueue(() =>
+          releaseEngine({
+            environmentId,
+            input: {
+              hostConnectionId: claimed.hostConnectionId,
+              target,
+              engineGeneration: claimed.generation,
+            },
+          }),
+        );
+      }
+    }
+    if (desired !== null && current.claimed === null) {
+      current.claimed = desired;
+      enqueue(async () => {
+        const result = await claimEngine({
+          environmentId,
+          input: {
+            hostConnectionId: desired.hostConnectionId,
+            target,
+            engineGeneration: desired.generation,
+          },
+        });
+        // A refused claim cannot imply progress or authorize page reports.
+        if (AsyncResult.isFailure(result) && current.claimed === desired) {
+          current.claimed = null;
+          useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, {
+            hostConnectionId: desired.hostConnectionId,
+            serverEpoch,
+          });
+        } else if (AsyncResult.isSuccess(result) && current.claimed === desired) {
+          useBrowserEngineHostStore.getState().setClaimFailure(runtimeTabId, null);
+        }
+      });
+    }
+    const owned = current.claimed;
+    if (owned === null || current.lastState === null || current.lifecycle !== null) return;
+    const report = nextEnginePageReport(current.lastStatusKey, current.lastState);
+    if (report === null) return;
+    const { status } = report;
+    current.lastStatusKey = report.statusKey;
+    enqueue(() =>
+      current.claimed === owned
+        ? reportEngine({
+            environmentId,
+            input: {
+              hostConnectionId: owned.hostConnectionId,
+              target,
+              engineGeneration: owned.generation,
+              status,
+            },
+          })
+        : Promise.resolve(),
+    );
+  });
 
   // One bridge subscription does both jobs (mirror state + forward to
   // server) so the desktop bridge keeps a single listener entry per tab.
@@ -64,6 +217,9 @@ export function usePreviewBridge(input: {
   const handleStateChange = useEffectEvent(
     (changedTabId: string, state: DesktopPreviewTabState): void => {
       if (changedTabId !== runtimeTabId) return;
+      recordHostedTabState(runtimeTabId, state);
+      engine.current.lastState = state;
+      syncEngine();
       if (shouldClearBrowserPointer(lastDesktopNavStatus.current, state.navStatus)) {
         clearBrowserPointer(runtimeTabId);
       }
@@ -96,9 +252,21 @@ export function usePreviewBridge(input: {
     return bridge.onStateChange(handleStateChange);
   }, [bridge, runtimeTabId, stableThreadRef, tabId]);
   useEffect(() => {
+    syncEngine();
+  }, [engineHostConnectionId, serverEpoch]);
+  useEffect(() => {
+    const current = engine.current;
+    return () => {
+      forgetHostedTab(runtimeTabId);
+      current.lastState = null;
+      syncEngine();
+    };
+  }, [runtimeTabId]);
+  useEffect(() => {
     if (!projectRef) return;
     flushPendingFaviconsForThread(stableThreadRef, projectRef, environmentHostname);
   }, [environmentHostname, projectRef, stableThreadRef]);
+  return reportEngineLifecycle;
 }
 
 function shouldClearBrowserPointer(
@@ -120,6 +288,7 @@ export function projectDesktopState(state: DesktopPreviewTabState): DesktopPrevi
     loading: state.navStatus.kind === "Loading",
     zoomFactor: state.zoomFactor,
     pictureInPicture: state.pictureInPicture,
+    remoteLive: state.remoteLive,
     colorScheme: state.colorScheme,
     audioMuted: state.audioMuted,
     audible: state.audible,

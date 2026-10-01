@@ -1,4 +1,5 @@
 import { hydratePartialDiff } from "@pierre/diffs";
+import { normalizeGitPatchPaths } from "@t3tools/shared/gitPatchPath";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
@@ -404,6 +405,17 @@ describe("a file whose name a patch header cannot carry plainly", () => {
 
   it("reads the octal a host with core.quotePath on writes for a name outside ASCII", () => {
     expect(pathOf(quotedPatch("caf\\303\\251/r\\303\\251sum\\303\\251.ts"))).toBe("café/résumé.ts");
+  });
+
+  it("displays the UTF-8 name delivered by the shared PR service and uses it as the viewed key", () => {
+    const patch = normalizeGitPatchPaths(
+      quotedPatch("caf\\303\\251-\\346\\227\\245\\346\\234\\254\\350\\252\\236.txt"),
+    );
+    const parsed = getRenderablePatch(patch, "review");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") throw new Error("patch did not parse as files");
+    expect(parsed.files[0]?.name).toBe("café-日本語.txt");
+    expect(pathOf(patch)).toBe("café-日本語.txt");
   });
 
   it("reads both sides of a rename under the names they really have", () => {

@@ -81,6 +81,7 @@ function overlay(
     loading: false,
     zoomFactor: 1,
     pictureInPicture: false,
+    remoteLive: false,
     colorScheme: "system" as const,
     audioMuted: audio?.audioMuted ?? false,
     audible: audio?.audible ?? false,

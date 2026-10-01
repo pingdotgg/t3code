@@ -1,3 +1,4 @@
+import { readContextSnapshots } from "@t3tools/extension-sdk/context";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
@@ -115,6 +116,8 @@ function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string
  * never carries stale context from another turn.
  */
 export function recallableComposerPrompt(messageText: string): string {
+  // Captured extension context is already immutable prompt text, not a live reference to refresh.
+  if (readContextSnapshots(messageText).length > 0) return messageText;
   let prompt = messageText.trim();
   if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
     prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);

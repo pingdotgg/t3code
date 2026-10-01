@@ -13,6 +13,7 @@ import {
 import { SnapShotSource } from "./orchestration.ts";
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import { PreviewZoomFactor } from "./preview.ts";
 import type {
   BrowserImportResult,
   BrowserImportSource,
@@ -624,6 +625,12 @@ export interface DesktopPreviewTabState {
   zoomFactor: number;
   /** Whether this tab is currently mirrored into a desktop picture-in-picture window. */
   pictureInPicture: boolean;
+  /**
+   * Whether this tab's pixels are being captured for remote frame viewers
+   * (`t3.browser/frames`). Remote viewers keep the guest compositing even
+   * when no local surface presents it.
+   */
+  remoteLive: boolean;
   colorScheme: DesktopPreviewColorScheme;
   /**
    * Whether the user has silenced this tab. Per tab rather than per origin, so
@@ -638,6 +645,8 @@ export interface DesktopPreviewTabState {
    * sound" from "muted and silent".
    */
   audible: boolean;
+  /** Whether the guest's DevTools window is open. Observed from Chromium. */
+  devToolsOpen: boolean;
   controller: "human" | "agent" | "none";
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
@@ -802,6 +811,36 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
     sizeBytes: Schema.Int,
     createdAt: Schema.String,
   });
+
+/**
+ * The visible viewport as PNG bytes, capped at 1280px wide. For renderer
+ * callers that upload the capture themselves; the bytes only cross local
+ * Electron IPC.
+ */
+export interface DesktopPreviewPageImage {
+  mimeType: "image/png";
+  data: Uint8Array;
+  width: number;
+  height: number;
+  pageUrl: string | null;
+  pageTitle: string | null;
+  /**
+   * The same PNG saved in the preview artifact directory, where
+   * `revealArtifact` and `copyArtifactToClipboard` accept it; null when the
+   * write failed (the bytes are still good).
+   */
+  path: string | null;
+}
+
+export const DesktopPreviewPageImageSchema: Schema.Codec<DesktopPreviewPageImage> = Schema.Struct({
+  mimeType: Schema.Literal("image/png"),
+  data: Schema.Uint8Array,
+  width: Schema.Int,
+  height: Schema.Int,
+  pageUrl: Schema.NullOr(Schema.String),
+  pageTitle: Schema.NullOr(Schema.String),
+  path: Schema.NullOr(Schema.String),
+});
 
 /**
  * Single stack frame captured by react-grab's `getElementContext`. We surface
@@ -1065,6 +1104,11 @@ export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   colorScheme: DesktopPreviewColorSchemeSchema,
 });
 
+export const DesktopPreviewSetZoomFactorInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  zoomFactor: PreviewZoomFactor,
+});
+
 export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   audioMuted: Schema.Boolean,
@@ -1272,6 +1316,8 @@ export interface DesktopPreviewBridge {
   zoomIn: (tabId: string) => Promise<void>;
   zoomOut: (tabId: string) => Promise<void>;
   resetZoom: (tabId: string) => Promise<void>;
+  /** Jump straight to any ladder factor, without stepping through the ones between. */
+  setZoomFactor: (tabId: string, zoomFactor: PreviewZoomFactor) => Promise<void>;
   /** Reload bypassing the HTTP cache. */
   hardReload: (tabId: string) => Promise<void>;
   /**
@@ -1285,8 +1331,10 @@ export interface DesktopPreviewBridge {
    * allowed; it simply takes effect once the page plays something.
    */
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
-  /** Open the guest webview's DevTools (detached). */
+  /** Open the guest webview's DevTools (detached), or focus them when already open. */
   openDevTools: (tabId: string) => Promise<void>;
+  /** Close the guest webview's DevTools; a no-op when they are closed. */
+  closeDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */
   clearCookies: (environmentId: EnvironmentId, profileId?: string) => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */
@@ -1320,11 +1368,22 @@ export interface DesktopPreviewBridge {
   /** Cancel an in-flight preview annotation session. */
   cancelPickElement: (tabId: string) => Promise<void>;
   captureScreenshot: (tabId: string) => Promise<DesktopPreviewScreenshotArtifact>;
+  capturePageImage: (tabId: string) => Promise<DesktopPreviewPageImage>;
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
     open: (tabId: string) => Promise<void>;
     close: (tabId: string) => Promise<void>;
+  };
+  frames: {
+    /**
+     * Loopback endpoint of the browser-frame hub this desktop serves
+     * (`t3.browser/frames`): canonical origin plus the shared secret that
+     * authorizes the proxy-to-hub hop. `null` when the hub is unavailable.
+     * The secret is forwarded to the server inside the automation-host
+     * registration; it is never exposed to viewers.
+     */
+    hubEndpoint: () => Promise<{ readonly origin: string; readonly secret: string } | null>;
   };
   recording: {
     onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;
@@ -1355,6 +1414,8 @@ export type ConfirmDialogVariant = "default" | "destructive";
 
 export interface ConfirmDialogOptions {
   readonly variant?: ConfirmDialogVariant;
+  /** Withdraws the request: a showing or queued confirmation resolves `false`. */
+  readonly signal?: AbortSignal;
 }
 
 /**

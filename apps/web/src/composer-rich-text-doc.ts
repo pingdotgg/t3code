@@ -126,6 +126,9 @@ function atomJsonForSegment(
       attrs: { citation: segment.citation, source: segment.source, citeKey: randomNodeKey() },
     };
   }
+  if (segment.type === "extension-context") {
+    return { type: "composer-extension-context", attrs: { source: segment.source } };
+  }
   return {
     type: "composer-context-reference",
     attrs: {
@@ -304,6 +307,7 @@ function readAtomSource(node: ProseMirrorNode): string {
     case "composer-mention":
     case "composer-citation":
     case "composer-context-reference":
+    case "composer-extension-context":
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";

@@ -1,4 +1,5 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
+import { cloneElement, type CSSProperties, type ReactElement } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -8,6 +9,34 @@ const Tooltip = TooltipPrimitive.Root;
 
 function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+}
+
+/** Keeps a disabled control's reason reachable by pointer and keyboard. */
+function TooltipControlTrigger({
+  children,
+  disabled,
+}: {
+  children: ReactElement;
+  disabled: boolean;
+}) {
+  const control = children as ReactElement<{ style?: CSSProperties; "aria-label"?: string }>;
+  return (
+    <TooltipTrigger
+      render={
+        <span
+          className="inline-flex"
+          tabIndex={disabled ? 0 : undefined}
+          role={disabled ? "button" : undefined}
+          aria-disabled={disabled || undefined}
+          aria-label={disabled ? control.props["aria-label"] : undefined}
+        >
+          {disabled
+            ? cloneElement(control, { style: { ...control.props.style, pointerEvents: "none" } })
+            : children}
+        </span>
+      }
+    />
+  );
 }
 
 function TooltipPopup({
@@ -64,4 +93,4 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup };
+export { TooltipProvider, Tooltip, TooltipTrigger, TooltipControlTrigger, TooltipPopup };

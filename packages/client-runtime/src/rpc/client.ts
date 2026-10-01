@@ -46,6 +46,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.providerInstallSubscribe
   | typeof ORCHESTRATION_WS_METHODS.subscribeShell
   | typeof ORCHESTRATION_WS_METHODS.subscribeThread
+  | typeof WS_METHODS.subscribeExtensionCatalogue
+  | typeof WS_METHODS.subscribeExtensionApi
   | typeof WS_METHODS.subscribeAuthAccess
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
@@ -57,6 +59,8 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeResourceTelemetry
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes
   | typeof WS_METHODS.previewAutomationConnect
+  | typeof WS_METHODS.browserEngineHostRegister
+  | typeof WS_METHODS.extensionsClientProvidersConnect
   | typeof WS_METHODS.subscribeVcsStatus
   | typeof WS_METHODS.subscribeWorktreeSetup
   | typeof WS_METHODS.subscribeProjectClones
@@ -152,9 +156,10 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
 });
 
-export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
+export function runStream<TTag extends EnvironmentStreamRpcTag>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
+  options?: { readonly streamBufferSize?: number },
 ): Stream.Stream<
   EnvironmentRpcStreamValue<TTag>,
   EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -165,8 +170,9 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
       Effect.map((session) => {
         const method = session.client[tag] as (
           input: EnvironmentRpcInput<TTag>,
+          options?: { readonly streamBufferSize?: number },
         ) => Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>;
-        return method(input);
+        return method(input, options);
       }),
     ),
   ).pipe(
@@ -186,8 +192,19 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
+  /**
+   * RPC delivery window per subscription, also used for the session switch's
+   * own queue so a paused consumer holds no more than the window across it;
+   * the RPC client's and `switchMap`'s defaults when absent.
+   */
+  readonly streamBufferSize?: number;
 }
 
+/**
+ * `suspended`, when given, is emitted in order with the values each time the
+ * subscription is left without a session (its transport failed, or the
+ * session ended) and starts waiting for the next one.
+ */
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
   tag: TTag,
   makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
@@ -196,7 +213,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
     stream: Stream.Stream<EnvironmentRpcStreamValue<TTag>, EnvironmentRpcStreamFailure<TTag>>,
   ) => Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>>,
   options?: SubscriptionOptions<TTag>,
+  suspended?: Option.Option<A>,
 ): Stream.Stream<A, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor> {
+  const suspension: Stream.Stream<A> =
+    suspended === undefined || Option.isNone(suspended)
+      ? Stream.empty
+      : Stream.succeed(suspended.value);
   return Stream.unwrap(
     Effect.gen(function* () {
       const supervisor = yield* EnvironmentSupervisor;
@@ -214,7 +236,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
       return sessions.pipe(
         Stream.switchMap(
           Option.match({
-            onNone: () => Stream.empty,
+            onNone: () => suspension,
             onSome: (session) => {
               const method = (
                 tag === WS_METHODS.subscribeServerConfig
@@ -222,6 +244,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                   : session.client[tag]
               ) as (
                 input: EnvironmentRpcInput<TTag>,
+                rpcOptions?: { readonly streamBufferSize?: number },
               ) => Stream.Stream<
                 EnvironmentRpcStreamValue<TTag>,
                 EnvironmentRpcStreamFailure<TTag>
@@ -236,7 +259,12 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         method: tag,
                         input,
                       });
-                      const stream = mapStream(session, method(input));
+                      const stream = mapStream(
+                        session,
+                        options?.streamBufferSize === undefined
+                          ? method(input)
+                          : method(input, { streamBufferSize: options.streamBufferSize }),
+                      );
                       // An evicted preview host completes its registration stream.
                       // Re-register only after completion; failures still follow the
                       // session recovery policy and browser actions are never replayed.
@@ -263,11 +291,14 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       const hasOnlyExpectedFailures =
                         cause.reasons.length > 0 &&
                         cause.reasons.every((reason) => reason._tag === "Fail");
+                      // A closing session's RPC client interrupts its open
+                      // streams, which is a lost transport, not a failure.
                       const isTransportFailure =
-                        hasOnlyExpectedFailures &&
-                        cause.reasons.every(
-                          (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
-                        );
+                        Cause.hasInterruptsOnly(cause) ||
+                        (hasOnlyExpectedFailures &&
+                          cause.reasons.every(
+                            (reason) => reason._tag === "Fail" && isRpcClientError(reason.error),
+                          ));
                       if (isTransportFailure) {
                         return Stream.fromEffect(
                           Effect.logWarning(
@@ -278,7 +309,7 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                               environmentId: supervisor.target.environmentId,
                             },
                           ),
-                        ).pipe(Stream.drain);
+                        ).pipe(Stream.drain, Stream.concat(suspension));
                       }
                       if (hasOnlyExpectedFailures && options?.onExpectedFailure !== undefined) {
                         const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
@@ -303,6 +334,9 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
               return subscribeToSession();
             },
           }),
+          options?.streamBufferSize === undefined
+            ? undefined
+            : { bufferSize: options.streamBufferSize },
         ),
       );
     }),
@@ -340,6 +374,67 @@ export function subscribeDynamicWithSession<TTag extends EnvironmentSubscription
     makeInput,
     (session, stream) => stream.pipe(Stream.map((value) => [session, value] as const)),
     options,
+  );
+}
+
+/**
+ * `subscribeDynamic` for a source that finishes on its own. A transport
+ * failure still waits for the next session and resubscribes there, but the
+ * source completing ends the whole stream instead of staying attached for a
+ * later session.
+ */
+export function subscribeDynamicUntilComplete<TTag extends EnvironmentSubscriptionRpcTag>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  EnvironmentRpcStreamValue<TTag>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  return subscribeDynamicUntilCompleteWithSuspensions(tag, makeInput, options).pipe(
+    Stream.filter(Option.isSome),
+    Stream.map((value) => value.value),
+  );
+}
+
+/**
+ * `subscribeDynamicUntilComplete` that also reports, in order with its
+ * values, each wait for a new session as `Option.none()` — so a consumer
+ * sees every frame delivered before the drop, then the suspension.
+ */
+export function subscribeDynamicUntilCompleteWithSuspensions<
+  TTag extends EnvironmentSubscriptionRpcTag,
+>(
+  tag: TTag,
+  makeInput: (session: RpcSession) => Effect.Effect<EnvironmentRpcInput<TTag>>,
+  options?: SubscriptionOptions<TTag>,
+): Stream.Stream<
+  Option.Option<EnvironmentRpcStreamValue<TTag>>,
+  EnvironmentRpcStreamFailure<TTag>,
+  EnvironmentSupervisor
+> {
+  type Element =
+    | { readonly _tag: "value"; readonly value: EnvironmentRpcStreamValue<TTag> }
+    | { readonly _tag: "suspended" }
+    | { readonly _tag: "end" };
+  return subscribeDynamicMapped(
+    tag,
+    makeInput,
+    // The end marker follows only a clean completion; a transport failure
+    // is drained before it and waits for the next session instead.
+    (_session, stream) =>
+      stream.pipe(
+        Stream.map((value): Element => ({ _tag: "value", value })),
+        Stream.concat(Stream.succeed<Element>({ _tag: "end" })),
+      ),
+    options,
+    Option.some<Element>({ _tag: "suspended" }),
+  ).pipe(
+    Stream.takeWhile((element) => element._tag !== "end"),
+    Stream.map((element) =>
+      element._tag === "value" ? Option.some(element.value) : Option.none(),
+    ),
   );
 }
 

@@ -4,15 +4,14 @@ interface FileEditorDismissalOptions {
     setSelections: (selections: []) => void;
   };
   isBlocked: () => boolean;
-  onDismiss: () => void;
+  onDismiss: (reason: "escape" | "pointer") => void;
 }
 
-function dismissFileEditorInteraction({
-  root,
-  editor,
-  onDismiss,
-}: Pick<FileEditorDismissalOptions, "root" | "editor" | "onDismiss">): void {
-  onDismiss();
+function dismissFileEditorInteraction(
+  { root, editor, onDismiss }: Pick<FileEditorDismissalOptions, "root" | "editor" | "onDismiss">,
+  reason: "escape" | "pointer",
+): void {
+  onDismiss(reason);
   editor.setSelections([]);
 
   const file = root.querySelector<HTMLElement>("diffs-container");
@@ -35,13 +34,13 @@ export function installFileEditorDismissal({
 }: FileEditorDismissalOptions): () => void {
   const handlePointerDown = (event: PointerEvent) => {
     if (isBlocked() || event.composedPath().includes(root)) return;
-    dismissFileEditorInteraction({ root, editor, onDismiss });
+    dismissFileEditorInteraction({ root, editor, onDismiss }, "pointer");
   };
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Escape" || isBlocked() || !isFileEditorFocused(root)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    dismissFileEditorInteraction({ root, editor, onDismiss });
+    dismissFileEditorInteraction({ root, editor, onDismiss }, "escape");
   };
 
   document.addEventListener("pointerdown", handlePointerDown, true);

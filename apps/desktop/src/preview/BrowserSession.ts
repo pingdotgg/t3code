@@ -254,7 +254,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>
           Effect.tryPromise({
-            try: () => browserSession.clearCache(),
+            // `clearCache()` only empties the disk cache: a live guest keeps
+            // serving the same subresources from its renderer memory cache.
+            // Clearing through the browsing-data remover evicts those too.
+            try: () => browserSession.clearData({ dataTypes: ["cache"] }),
             catch: (cause) =>
               new BrowserSessionCacheClearError({
                 partition,

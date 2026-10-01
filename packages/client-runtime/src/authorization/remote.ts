@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Effect from "effect/Effect";
+import { clientInstanceId } from "../clientInstance.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -39,11 +40,14 @@ const clientMetadataTokenExchangeFields = (
 
 // The server reads these off the /ws upgrade URL next to wsTicket. Optional on
 // both ends: old servers ignore unknown params, old clients never send them.
+// `clientInstanceId` is always sent: it binds this runtime's HTTP requests to
+// this socket for connection-scoped lease revocation.
 export const appendClientConnectionParams = (
   url: URL,
   clientMetadata: AuthClientPresentationMetadata | undefined,
   connectionMethod?: ClientConnectionMethod,
 ): void => {
+  url.searchParams.set("clientInstanceId", clientInstanceId);
   if (clientMetadata?.surface) {
     url.searchParams.set("clientSurface", clientMetadata.surface);
   }

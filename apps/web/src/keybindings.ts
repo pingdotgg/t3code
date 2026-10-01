@@ -125,10 +125,15 @@ function matchesShortcutModifiers(
   );
 }
 
-function matchesShortcut(
+/**
+ * `layoutKeyOnly` matches `event.key` alone, without the physical-key
+ * (`event.code`) fallback that lets non-Latin layouts reach Latin shortcuts.
+ */
+export function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
+  layoutKeyOnly = false,
 ): boolean {
   if (
     !isMacPlatform(platform) &&
@@ -137,6 +142,7 @@ function matchesShortcut(
   )
     return false;
   if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
+  if (layoutKeyOnly) return normalizeEventKey(event.key) === shortcut.key;
   return resolveEventKeys(event).has(shortcut.key);
 }
 
@@ -172,7 +178,7 @@ function evaluateWhenNode(node: KeybindingWhenNode, context: ShortcutMatchContex
   }
 }
 
-function matchesWhenClause(
+export function matchesWhenClause(
   whenAst: KeybindingWhenNode | undefined,
   context: ShortcutMatchContext,
 ): boolean {

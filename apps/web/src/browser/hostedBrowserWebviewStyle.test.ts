@@ -2,8 +2,43 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   HIDDEN_BROWSER_WEBVIEW_OFFSET,
+  resolveHostedBrowserViewportChrome,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
+
+describe("resolveHostedBrowserViewportChrome", () => {
+  const deviceMode = {
+    active: true,
+    viewportTag: "freeform",
+    fitSourceContent: false,
+  } as const;
+
+  it("paints host toolbar and rails for a native presenter in device mode", () => {
+    expect(
+      resolveHostedBrowserViewportChrome({ ...deviceMode, hostViewportControls: true }),
+    ).toEqual({ reserveDeviceChrome: true, deviceToolbar: true, resizeRails: true });
+  });
+
+  it("stands the host controls down for an extension presenter but keeps the layout reserved", () => {
+    expect(
+      resolveHostedBrowserViewportChrome({ ...deviceMode, hostViewportControls: false }),
+    ).toEqual({ reserveDeviceChrome: true, deviceToolbar: false, resizeRails: false });
+  });
+
+  it("shows no device chrome in fill, fitted, or inactive presentations", () => {
+    for (const input of [
+      { ...deviceMode, viewportTag: "fill" },
+      { ...deviceMode, fitSourceContent: true },
+      { ...deviceMode, active: false },
+    ] as const) {
+      expect(resolveHostedBrowserViewportChrome({ ...input, hostViewportControls: true })).toEqual({
+        reserveDeviceChrome: false,
+        deviceToolbar: false,
+        resizeRails: false,
+      });
+    }
+  });
+});
 
 describe("resolveHostedBrowserWebviewWrapperStyle", () => {
   it("places an active webview on its presented surface", () => {

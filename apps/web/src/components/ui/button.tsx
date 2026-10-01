@@ -66,6 +66,9 @@ const buttonVariants = cva(
         "warning-outline":
           "border-warning/32 bg-warning-surface text-warning-foreground shadow-xs/5 [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-warning/40 [:hover,[data-pressed]]:bg-warning/16 dark:[:hover,[data-pressed]]:bg-warning/24",
       },
+      iconTone: {
+        primary: "[--control-icon-color:var(--color-primary)]",
+      },
     },
   },
 );
@@ -75,16 +78,17 @@ type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>["size"]>;
 
 interface ButtonProps extends useRender.ComponentProps<"button"> {
   variant?: ButtonVariant;
+  iconTone?: VariantProps<typeof buttonVariants>["iconTone"];
   size?: ButtonSize;
 }
 
-function Button({ className, variant, size, render, ...props }: ButtonProps) {
+function Button({ className, variant, iconTone, size, render, ...props }: ButtonProps) {
   const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
     ? undefined
     : "button";
 
   const defaultProps = {
-    className: cn(buttonVariants({ className, size, variant })),
+    className: cn(buttonVariants({ className, size, variant, iconTone })),
     "data-slot": "button",
     type: typeValue,
   };

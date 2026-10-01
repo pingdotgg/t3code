@@ -8,7 +8,7 @@
  * beats server-advertised names; among advertised names the tailnet MagicDNS
  * name beats mDNS `<hostname>.local` (server sends them in that order).
  */
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import type { ConnectionTarget, EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useEnvironmentPresentation } from "~/state/presentation";
 
 export interface RemoteOpenHost {
@@ -103,19 +103,21 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
     if (presentation === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
-    const profile = Option.getOrNull(presentation.entry.profile);
-    const sshAlias =
-      profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
     return {
-      state: resolveRemoteOpenState({
-        target: presentation.entry.target,
-        sshAlias,
-        remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
-      }),
+      state: remoteOpenStateFor(presentation),
       isResolved: true,
     };
   }, [presentation]);
+}
+
+export function remoteOpenStateFor(presentation: EnvironmentPresentation | null): RemoteOpenState {
+  const profile = presentation ? Option.getOrNull(presentation.entry.profile) : null;
+  return resolveRemoteOpenState({
+    target: presentation?.entry.target ?? null,
+    sshAlias: profile?._tag === "SshConnectionProfile" ? profile.target.alias : null,
+    remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+    isDesktopRenderer: window.desktopBridge !== undefined,
+  });
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
@@ -129,6 +131,32 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
+let probingEditors: Promise<ReadonlyArray<EditorId>> | null = null;
+
+export function getRemoteCapableEditors(): Promise<ReadonlyArray<EditorId>> {
+  if (cachedProbedEditors !== null) return Promise.resolve(cachedProbedEditors);
+  if (probingEditors !== null) return probingEditors;
+  const probe = window.desktopBridge?.probeRemoteEditors;
+  if (probe === undefined) {
+    cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
+    return Promise.resolve(cachedProbedEditors);
+  }
+  probingEditors = Promise.resolve()
+    .then(() => probe())
+    .then(
+      (ids) => {
+        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
+        return remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
+      },
+      () => REMOTE_FALLBACK_EDITORS,
+    )
+    .then((ids) => {
+      cachedProbedEditors = ids;
+      probingEditors = null;
+      return ids;
+    });
+  return probingEditors;
+}
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
@@ -139,24 +167,10 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     if (cachedProbedEditors !== null) {
       return;
     }
-    const probe = window.desktopBridge?.probeRemoteEditors;
-    if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      return;
-    }
     let cancelled = false;
-    probe().then(
-      (ids) => {
-        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-        cachedProbedEditors = remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
-        if (!cancelled) {
-          setEditors(cachedProbedEditors);
-        }
-      },
-      () => {
-        cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      },
-    );
+    void getRemoteCapableEditors().then((ids) => {
+      if (!cancelled) setEditors(ids);
+    });
     return () => {
       cancelled = true;
     };
@@ -194,6 +208,10 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
  * so first click is the dismiss signal).
  */
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
+
+export function markRemoteOpenHintSeen(): void {
+  setLocalStorageItem(REMOTE_OPEN_HINT_KEY, true, Schema.Boolean);
+}
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {
   const [seen, setSeen] = useLocalStorage(REMOTE_OPEN_HINT_KEY, false, Schema.Boolean);

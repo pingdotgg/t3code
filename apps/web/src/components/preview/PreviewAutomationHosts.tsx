@@ -293,8 +293,42 @@ export function PreviewAutomationHosts() {
   );
 }
 
+/**
+ * Resolves the loopback frame-hub endpoint before mounting the host so the
+ * broker sees exactly one registration carrying `frameHub` — re-registering
+ * to add it later would churn the automation request stream. The endpoint
+ * carries the hub's shared secret; it travels inside the registration to the
+ * server and is never forwarded to viewers.
+ */
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
+  const [frameHub, setFrameHub] = useState<
+    { readonly origin: string; readonly secret: string } | null | undefined
+  >(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    if (previewBridge?.frames === undefined) {
+      // No desktop bridge — the host registers without frame capability.
+      setFrameHub(null);
+      return;
+    }
+    void previewBridge.frames
+      .hubEndpoint()
+      .then((endpoint) => !cancelled && setFrameHub(endpoint))
+      .catch(() => !cancelled && setFrameHub(null));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (frameHub === undefined) return null;
+  return <PreviewAutomationHostInner environmentId={environmentId} frameHub={frameHub} />;
+}
+
+function PreviewAutomationHostInner(props: {
+  readonly environmentId: EnvironmentId;
+  readonly frameHub: { readonly origin: string; readonly secret: string } | null;
+}) {
+  const { environmentId, frameHub } = props;
   const previewSessions = useActivePreviewSessions();
   const visibleRuntimeTabIds = useBrowserSurfaceStore(
     useShallow((state) =>
@@ -326,8 +360,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       clientId: automationClientId,
       environmentId,
       supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+      ...(frameHub === null ? {} : { frameHub }),
     }),
-    [automationClientId, environmentId],
+    [automationClientId, environmentId, frameHub],
   );
   const automationRequestsAtom = previewEnvironment.automationRequests({
     environmentId,

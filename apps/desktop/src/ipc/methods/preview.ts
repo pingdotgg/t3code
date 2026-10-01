@@ -13,8 +13,10 @@ import {
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
+  DesktopPreviewPageImageSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
+  DesktopPreviewSetZoomFactorInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   BrowserImportResult,
   BrowserImportSource,
@@ -35,6 +37,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import * as BrowserFrameHub from "../../preview/FrameHub.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview/WebviewPreferences.ts";
@@ -152,6 +155,15 @@ export const resetZoom = tabMethod(
   "desktop.ipc.preview.resetZoom",
   (manager, tabId) => manager.resetZoom(tabId),
 );
+export const setZoomFactor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ZOOM_FACTOR_CHANNEL,
+  payload: DesktopPreviewSetZoomFactorInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setZoomFactor")(function* ({ tabId, zoomFactor }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setZoomFactor(tabId, zoomFactor);
+  }),
+});
 export const hardReload = tabMethod(
   IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL,
   "desktop.ipc.preview.hardReload",
@@ -179,6 +191,11 @@ export const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
   (manager, tabId) => manager.openDevTools(tabId),
+);
+export const closeDevTools = tabMethod(
+  IpcChannels.PREVIEW_CLOSE_DEVTOOLS_CHANNEL,
+  "desktop.ipc.preview.closeDevTools",
+  (manager, tabId) => manager.closeDevTools(tabId),
 );
 export const cancelPickElement = tabMethod(
   IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL,
@@ -372,6 +389,16 @@ export const captureScreenshot = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const capturePageImage = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CAPTURE_PAGE_IMAGE_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopPreviewPageImageSchema,
+  handler: Effect.fn("desktop.ipc.preview.capturePageImage")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.capturePageImage(tabId);
+  }),
+});
+
 export const revealArtifact = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL,
   payload: DesktopPreviewArtifactInputSchema,
@@ -389,6 +416,23 @@ export const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.copyArtifactToClipboard")(function* ({ path }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.copyArtifactToClipboard(path);
+  }),
+});
+
+/**
+ * Registered separately from `methods`: it carries `BrowserFrameHub` in its
+ * context rather than `PreviewManager`, so it does not unify with the shared
+ * loop in `DesktopIpcHandlers`. Returns the loopback origin AND the hub
+ * secret — the renderer forwards both inside the automation-host
+ * registration; the broker stores the secret server-side only.
+ */
+export const frameHubEndpoint = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_FRAME_HUB_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(Schema.Struct({ origin: Schema.String, secret: Schema.String })),
+  handler: Effect.fn("desktop.ipc.preview.frameHubEndpoint")(function* () {
+    const hub = yield* BrowserFrameHub.BrowserFrameHub;
+    return { origin: hub.origin, secret: hub.secret };
   }),
 });
 
@@ -493,10 +537,12 @@ export const methods = [
   zoomIn,
   zoomOut,
   resetZoom,
+  setZoomFactor,
   hardReload,
   setColorScheme,
   setAudioMuted,
   openDevTools,
+  closeDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,
@@ -504,6 +550,7 @@ export const methods = [
   pickElement,
   cancelPickElement,
   captureScreenshot,
+  capturePageImage,
   revealArtifact,
   copyArtifactToClipboard,
   openPictureInPicture,

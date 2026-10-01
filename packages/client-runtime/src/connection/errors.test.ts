@@ -1,4 +1,4 @@
-import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+import { EnvironmentAuthInvalidError, ExtensionOperationError } from "@t3tools/contracts";
 import {
   RelayAuthInvalidError,
   RelayEnvironmentEndpointTimedOutError,
@@ -127,5 +127,15 @@ describe("mapRemoteDpopEnvironmentError", () => {
     );
 
     expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_RETRY_HINT}`);
+  });
+});
+it("treats an unexpected extension rejection as a domain failure, with no network hint", () => {
+  const error = new ExtensionOperationError({
+    operation: "test",
+    detail: "Run `glab auth login`.",
+  });
+  expect(mapRemoteEnvironmentError(error, "relay")).toMatchObject({
+    reason: "configuration",
+    detail: error.detail,
   });
 });

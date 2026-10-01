@@ -4,6 +4,13 @@ import { getLocalFileManagerName } from "~/lib/utils";
 
 const editorLabels = new Map<EditorId, string>(EDITORS.map((editor) => [editor.id, editor.label]));
 
+export function resolveEditorChoices(platform: string, availableEditors: readonly EditorId[]) {
+  return EDITORS.filter((editor) => availableEditors.includes(editor.id)).map((editor) => ({
+    id: editor.id,
+    label: editorLabelForPlatform(editor.id, platform),
+  }));
+}
+
 export function editorLabelForPlatform(editorId: EditorId, platform: string): string {
   if (editorId === "file-manager") {
     return getLocalFileManagerName(platform);

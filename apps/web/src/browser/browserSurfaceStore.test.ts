@@ -9,7 +9,32 @@ import {
 
 describe("browserSurfaceStore", () => {
   beforeEach(() => {
-    useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+    useBrowserSurfaceStore.setState({
+      activityByTabId: {},
+      byTabId: {},
+      extensionTargetsByResourceKey: {},
+    });
+  });
+
+  it("an old acquisition cannot remove a newer target for the same runtime session", () => {
+    const store = useBrowserSurfaceStore.getState();
+    const old = {
+      installationId: "install-a",
+      tabId: "tab-a",
+      serverEpoch: "epoch-a",
+      runtimeTabId: "runtime-a",
+    };
+    const current = { ...old };
+    store.requestExtension("resource-a", old);
+    store.requestExtension("resource-a", current);
+    store.forgetExtension("resource-a", old);
+    expect(useBrowserSurfaceStore.getState().extensionTargetsByResourceKey["resource-a"]).toBe(
+      current,
+    );
+    store.forgetExtension("resource-a", current);
+    expect(
+      useBrowserSurfaceStore.getState().extensionTargetsByResourceKey["resource-a"],
+    ).toBeUndefined();
   });
 
   it("keeps concurrent background work active until every lease is released", () => {
@@ -112,6 +137,8 @@ describe("browserSurfaceStore", () => {
             fittedSourceContent: null,
             fitSourceContent: false,
             cornerRadius: 0,
+            hostViewportControls: true,
+            extensionResourceKey: null,
             updatedAt: 1,
             owner: null,
           },
@@ -123,6 +150,8 @@ describe("browserSurfaceStore", () => {
             fittedSourceContent: null,
             fitSourceContent: false,
             cornerRadius: 0,
+            hostViewportControls: true,
+            extensionResourceKey: null,
             updatedAt: 2,
             owner: null,
           },
@@ -173,6 +202,20 @@ describe("browserSurfaceStore", () => {
       visible: true,
       zIndex: 48,
     });
+  });
+
+  it("hands viewport controls to whichever presenter holds the surface", () => {
+    const tabId = "viewport-controls-browser-surface";
+    const extensionLease = acquireBrowserSurface(tabId, false, false);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(false);
+
+    const nativeLease = acquireBrowserSurface(tabId);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(true);
+    expect(extensionLease.present({ x: 0, y: 0, width: 1, height: 1 }, true)).toBe(false);
+
+    nativeLease.release();
+    acquireBrowserSurface(tabId, false, false);
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]?.hostViewportControls).toBe(false);
   });
 
   it("clears fitted presentation state when its lease is released", () => {

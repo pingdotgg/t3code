@@ -1,3 +1,6 @@
+import { useWorkspaceSurfaceTitles } from "../extensions/workspaceRegistry";
+import { extensionTabKey, useExtensionTabIndicators } from "../extensions/extensionTabIndicators";
+import type { ViewRecord } from "@t3tools/extension-sdk/contracts";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -23,6 +26,7 @@ import {
   Files,
   Globe2,
   Plus,
+  Puzzle,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -198,7 +202,6 @@ type TabContextMenuAction =
   | "close-all";
 
 const TAB_SCROLL_EDGE_TOLERANCE = 1;
-
 function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
 }
@@ -609,8 +612,11 @@ function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
+  extensionTitles: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "extension":
+      return extensionTitles.get(surface.record.surfaceId) ?? surface.record.fallback;
     case "diff":
       return "Diff";
     case "files":
@@ -656,6 +662,75 @@ function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url:
   );
 }
 
+/** A plugin tab's page icon, from the indicators its view published. */
+function ExtensionSurfaceIcon({ record }: { record: ViewRecord }) {
+  const indicators = useExtensionTabIndicators(extensionTabKey(record));
+  if (!indicators?.pageUrl && !indicators?.faviconDataUrl)
+    return <Puzzle className="size-3 shrink-0" />;
+  return (
+    <PreviewFavicon
+      capturedUrl={indicators.faviconDataUrl ?? null}
+      url={indicators.pageUrl ?? null}
+    />
+  );
+}
+
+/**
+ * A plugin tab's audio indicator. Display only: muting stays inside the
+ * plugin, which owns the page command that does it.
+ */
+function ExtensionTabAudio({ record }: { record: ViewRecord }) {
+  const audio = useExtensionTabIndicators(extensionTabKey(record))?.audio;
+  if (!audio) return null;
+  const label = audio === "muted" ? "Tab audio muted" : "Tab playing audio";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            aria-label={label}
+            className="flex size-4 shrink-0 items-center justify-center"
+          >
+            {audio === "muted" ? <VolumeOff className="size-3" /> : <Volume2 className="size-3" />}
+          </span>
+        }
+      />
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * A plugin tab's badge: an info count pill (native's live-agent badge) for
+ * running work, a foreground dot for unread. Static; it changes only when the
+ * view publishes.
+ */
+function ExtensionTabBadge({ record }: { record: ViewRecord }) {
+  const badge = useExtensionTabIndicators(extensionTabKey(record))?.badge;
+  if (!badge) return null;
+  const running = badge.kind === "running";
+  const label =
+    badge.count === undefined
+      ? running
+        ? "Running"
+        : "Unread"
+      : `${badge.count} ${running ? "running" : "unread"}`;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      className={cn(
+        "ml-1 flex shrink-0 items-center justify-center rounded-full font-semibold tabular-nums",
+        badge.count === undefined ? "size-1.5" : "h-3.5 min-w-3.5 px-1 text-3xs leading-none",
+        running ? "bg-info text-white" : "bg-foreground text-background",
+      )}
+    >
+      {badge.count === undefined ? null : badge.count > 99 ? "99+" : badge.count}
+    </span>
+  );
+}
+
 function sameOrigin(left: string, right: string): boolean {
   try {
     return new URL(left).origin === new URL(right).origin;
@@ -680,6 +755,8 @@ function SurfaceIcon({
   pullRequestStatusSeeds: Readonly<Record<string, PullRequestTabStatusSeed>> | undefined;
 }) {
   switch (surface.kind) {
+    case "extension":
+      return <ExtensionSurfaceIcon record={surface.record} />;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -825,10 +902,13 @@ function PullRequestSurfaceIcon({
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const extensionTitles = useWorkspaceSurfaceTitles(props.environmentId ?? undefined);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  // Inline without layoutControls: the route's fixed titlebar controls sit over this row.
+  const sharesTitlebarOverlay = props.mode === "inline" && !props.layoutControls;
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -1112,9 +1192,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           // The sheet overlays from the viewport top, so its tab bar keeps
           // the titlebar's height: a compact row re-centers the layout
           // controls a few pixels higher and the cluster jumps on open.
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          // The shared controls cluster publishes its width, so the strip ends
+          // before it however many controls it hosts; the anchor already
+          // includes the WCO native inset. 5px is the cluster's mr-px plus gap-1.
+          sharesTitlebarOverlay
+            ? "[--right-panel-tabbar-end:calc(var(--workspace-controls-right)+var(--workspace-titlebar-controls-width,6rem)+5px)] pr-(--right-panel-tabbar-end)"
+            : "pr-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+          ownsDesktopTitleBar &&
+            props.layoutControls &&
+            "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
@@ -1131,7 +1218,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title = surfaceTitle(
+                surface,
+                props.previewSessions,
+                props.terminalLabelsById,
+                extensionTitles,
+              );
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.
@@ -1175,6 +1267,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       />
                     ) : null}
                   </PanelTabCloseButton>
+                  {surface.kind === "extension" ? (
+                    <ExtensionTabAudio record={surface.record} />
+                  ) : null}
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger
@@ -1255,6 +1350,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </TooltipPopup>
                     </Tooltip>
                   )}
+                  {surface.kind === "extension" ? (
+                    <ExtensionTabBadge record={surface.record} />
+                  ) : null}
                 </div>
               );
             })}
@@ -1392,10 +1490,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </div>
         ) : null}
         {props.layoutControls}
-        {ownsDesktopTitleBar && !props.layoutControls ? (
-          // Keeps the tabs clear of the window controls when the layout toggles live elsewhere.
-          <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
-        ) : null}
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden

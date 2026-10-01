@@ -113,6 +113,47 @@ describe("preview IPC methods", () => {
     }).pipe(Effect.provideService(BrowserImport.BrowserImport, browserImport));
   });
 
+  effectIt.effect(
+    "clears the guest's own partition for the native menu and the engine-host profile command",
+    () => {
+      const loaded: Array<string> = [];
+      const cleared: Array<ReadonlyArray<string> | undefined> = [];
+      const partitionOf = (scope: string, persistent?: boolean, namespace?: string) =>
+        `persist:${namespace ?? "env"}:${scope}:${String(persistent)}`;
+      const manager = PreviewManager.PreviewManager.of({
+        getBrowserSession: (scope: string, persistent?: boolean, namespace?: string) =>
+          Effect.sync(() => {
+            loaded.push(partitionOf(scope, persistent, namespace));
+          }),
+        getBrowserPartition: (scope: string, persistent?: boolean, namespace?: string) =>
+          Effect.succeed(partitionOf(scope, persistent, namespace)),
+        clearCache: (partitions?: ReadonlyArray<string>) =>
+          Effect.sync(() => {
+            cleared.push(partitions);
+          }),
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+      const { scope, persistent } = PreviewIpc.resolvePartitionScope(
+        "env-1",
+        DEFAULT_BROWSER_PROFILE_ID,
+      );
+      const guestPartition = partitionOf(scope, persistent, undefined);
+
+      return Effect.gen(function* () {
+        // Native "Clear cache": the thread's environment and the tab's profile.
+        yield* PreviewIpc.clearCache.handler({
+          environmentId: "env-1",
+          profileId: DEFAULT_BROWSER_PROFILE_ID,
+        });
+        // Plugin "Clear cache": the engine host's environment and the named profile.
+        yield* PreviewIpc.clearCache.handler({ environmentId: "env-1", profileId: "default" });
+
+        expect(cleared).toEqual([[guestPartition], [guestPartition]]);
+        // The partition is loaded before the clear walks the session map.
+        expect(loaded).toEqual([guestPartition, guestPartition]);
+      }).pipe(Effect.provideService(PreviewManager.PreviewManager, manager));
+    },
+  );
+
   effectIt.effect("rejects invalid webContents ids before resolving the preview service", () =>
     Effect.map(
       PreviewIpc.registerWebview

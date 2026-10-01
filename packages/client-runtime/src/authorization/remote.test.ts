@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
+import { clientInstanceId } from "../clientInstance.ts";
 import {
   appendClientConnectionParams,
   bootstrapRemoteBearerSession,
@@ -481,7 +482,7 @@ describe("remote environment authorization", () => {
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
       expect(url).toBe(
-        "wss://remote.example.com/ws?wsTicket=ws-ticket&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay",
+        `wss://remote.example.com/ws?wsTicket=ws-ticket&clientInstanceId=${clientInstanceId}&clientSurface=mobile&clientAppVersion=1.2.3&clientDeviceType=phone&clientOs=Android&clientOsMajorVersion=15&clientDeviceModel=Pixel+9&connectionMethod=relay`,
       );
     }),
   );

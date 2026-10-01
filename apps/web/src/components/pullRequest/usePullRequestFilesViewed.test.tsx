@@ -4,6 +4,7 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, StrictMode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -76,7 +77,7 @@ async function reads(state: "unviewed" | "viewed" | "dismissed") {
 }
 
 beforeEach(async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   host.data = answer("unviewed");
   host.refresh.mockReset();
@@ -158,4 +159,17 @@ describe("a mark the host has not answered for yet", () => {
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isStale("a.ts")).toBe(false);
   });
+});
+
+it("refreshes host state after a refused batch that may have partially persisted", async () => {
+  setFilesViewed.mockResolvedValueOnce(
+    AsyncResult.failure(Cause.fail(new Error("Host did not confirm"))),
+  );
+  view().setViewed("a.ts", true);
+  await act(async () => vi.advanceTimersByTimeAsync(500));
+  expect(view().isViewed("a.ts")).toBe(false);
+  expect(toastAdd).toHaveBeenCalledWith({ type: "error", title: "Could not update viewed files" });
+  expect(host.refresh).toHaveBeenCalled();
+  await reads("viewed");
+  expect(view().isViewed("a.ts")).toBe(true);
 });

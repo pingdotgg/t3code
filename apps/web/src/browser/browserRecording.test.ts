@@ -4,6 +4,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 
 import { ensureClientSettingsHydrated } from "~/hooks/useSettings";
 
@@ -14,6 +16,7 @@ const {
   registrySet,
   requestDisplayMediaCapture,
   save,
+  revealArtifact,
   startScreencast,
   stopScreencast,
 } = vi.hoisted(() => {
@@ -28,23 +31,25 @@ const {
         value.tabIds.size === 0 ? "clear" : `publish:${Array.from(value.tabIds).join(",")}`,
       );
     }),
-    save: vi.fn(async (tabId: string) => ({
+    save: vi.fn(async (tabId: string, _mimeType: string, data: Uint8Array) => ({
       id: "recording-test",
       tabId,
       path: "/tmp/recording-test.webm",
       mimeType: "video/webm" as const,
-      sizeBytes: 0,
+      sizeBytes: data.byteLength,
       createdAt: "2026-06-26T00:00:00.000Z",
     })),
     startScreencast: vi.fn(async (_tabId: string) => {
       events.push("start-screencast");
     }),
     stopScreencast: vi.fn(async () => undefined),
+    revealArtifact: vi.fn(async (_path: string) => {}),
   };
 });
 
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
+    revealArtifact,
     recording: {
       onFrame: vi.fn(),
       save,
@@ -57,9 +62,19 @@ vi.mock("~/components/preview/previewBridge", () => ({
   },
 }));
 
-vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { set: registrySet },
-}));
+vi.mock("~/rpc/atomRegistry", async (importOriginal) => {
+  const original = await importOriginal<typeof import("~/rpc/atomRegistry")>();
+  const set = original.appAtomRegistry.set.bind(original.appAtomRegistry);
+  return {
+    ...original,
+    appAtomRegistry: Object.assign(original.appAtomRegistry, {
+      set: (...args: Parameters<typeof set>) => {
+        registrySet(args[0], args[1] as { readonly tabIds: ReadonlySet<string> });
+        return set(...args);
+      },
+    }),
+  };
+});
 
 vi.mock("~/hooks/useSettings", () => ({
   ensureClientSettingsHydrated: vi.fn(async () => undefined),
@@ -76,12 +91,17 @@ import {
   findActiveBrowserRecordingRuntimeTabId,
   readActiveBrowserRecordingTabIds,
   readActiveBrowserRecordingTargets,
+  readBrowserRecordingPhase,
   startBrowserRecording,
   stopBrowserRecording,
   stopBrowserRecordingForUpload,
+  subscribeBrowserRecording,
 } from "./browserRecording";
+import { createBrowserCaptureBridge } from "~/extensions/browserCaptureBridge";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { BrowserRecordingControls } from "./BrowserRecordingControls";
 
 class FakeMediaRecorder {
   static readonly instances: FakeMediaRecorder[] = [];
@@ -116,6 +136,14 @@ class FakeMediaRecorder {
     this.state = "recording";
   }
 
+  emitData(data: Blob): void {
+    const event = Object.assign(new Event("dataavailable"), { data });
+    for (const listener of this.listeners.get("dataavailable") ?? []) {
+      if (typeof listener === "function") listener(event);
+      else listener.handleEvent(event);
+    }
+  }
+
   stop(): void {
     if (FakeMediaRecorder.stopError !== undefined) throw FakeMediaRecorder.stopError;
     this.state = "inactive";
@@ -139,6 +167,10 @@ describe("browser recording", () => {
     clientSettings.browserRecordingFrameRate = 30;
     animationFrameCount = 0;
     vi.stubGlobal("window", globalThis);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("Element", class extends EventTarget {});
+    vi.stubGlobal("addEventListener", vi.fn());
+    vi.stubGlobal("removeEventListener", vi.fn());
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       animationFrameCount += 1;
       callback(animationFrameCount);
@@ -156,7 +188,7 @@ describe("browser recording", () => {
         throw new Error(`No pending display-media capture for ${tabId}.`);
       }
     });
-    vi.stubGlobal("navigator", { mediaDevices: { getDisplayMedia } });
+    vi.stubGlobal("navigator", { platform: "MacIntel", mediaDevices: { getDisplayMedia } });
     useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
   });
 
@@ -171,6 +203,152 @@ describe("browser recording", () => {
 
     await stopBrowserRecording("recording-tab");
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
+  });
+
+  it("does not add host controls for direct recorder starts", async () => {
+    const tabId = "direct-recording-tab";
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(AppAtomRegistryProvider, null, createElement(BrowserRecordingControls)),
+        );
+        await startBrowserRecording(tabId);
+      });
+      expect(readBrowserRecordingPhase(tabId)).toBe("recording");
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        await stopBrowserRecording(tabId);
+        renderer.unmount();
+      });
+    }
+  });
+
+  it("shows a clickable, transparent workspace-anchored control only for a bridge recording", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("control-env"),
+      threadId: ThreadId.make("control-thread"),
+    };
+    const context = {
+      client: "desktop",
+      resource: {
+        namespace: "test.browser",
+        id: "view",
+        ...threadRef,
+        projectId: "control-project",
+      },
+    };
+    const lifetime = new AbortController();
+    const host = createBrowserCaptureBridge(threadRef.environmentId, {
+      resolveThreadScope: () => ({ projectId: "control-project", authoritative: true }),
+      serverEpoch: () => "epoch-1",
+      presented: () => true,
+      userActivation: () => true,
+      platform: () => "MacIntel",
+    })({
+      grants: {
+        capabilities: ["t3.browser/sessions", "t3.browser/capture", "t3.browser/recording"],
+        projectIds: ["control-project"],
+      },
+      lifetime: lifetime.signal,
+    });
+    const request = { context, session: { tabId: "control-tab", serverEpoch: "epoch-1" } };
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(AppAtomRegistryProvider, null, createElement(BrowserRecordingControls)),
+        );
+      });
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+      await act(async () => {
+        expect(await host.startRecording!(request)).toMatchObject({ ok: true });
+      });
+      const controls = renderer.root.findAllByType("button");
+      expect(controls).toHaveLength(1);
+      expect(controls[0]!.props["aria-label"]).toBe("Stop recording");
+      await act(async () => {
+        controls[0]!.props.onClick({ shiftKey: false });
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(renderer.root.findAllByType("button")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        await host.stopRecording!(request);
+        lifetime.abort();
+        renderer.unmount();
+      });
+    }
+  });
+
+  it("saves and reveals SDK recordings over 50 MiB through the native recorder, joining both stop callers", async () => {
+    const threadRef = {
+      environmentId: EnvironmentId.make("sdk-env"),
+      threadId: ThreadId.make("sdk-thread"),
+    };
+    const runtimeTabId = previewRuntimeTabId(threadRef, "epoch-1", "sdk-tab");
+    const context = {
+      client: "desktop",
+      resource: {
+        namespace: "test.browser",
+        id: "view",
+        environmentId: threadRef.environmentId,
+        projectId: "sdk-project",
+        threadId: threadRef.threadId,
+      },
+    };
+    const lifetime = new AbortController();
+    const host = createBrowserCaptureBridge(threadRef.environmentId, {
+      resolveThreadScope: () => ({ projectId: "sdk-project", authoritative: true }),
+      serverEpoch: () => "epoch-1",
+      presented: () => true,
+      userActivation: () => true,
+      platform: () => "MacIntel",
+    })({
+      grants: {
+        capabilities: [
+          "t3.browser/sessions",
+          "t3.browser/capture",
+          "t3.browser/recording",
+          "t3.browser/artifact-actions",
+        ],
+        projectIds: ["sdk-project"],
+      },
+      lifetime: lifetime.signal,
+    });
+    const phases = [readBrowserRecordingPhase(runtimeTabId)];
+    const unsubscribe = subscribeBrowserRecording(() =>
+      phases.push(readBrowserRecordingPhase(runtimeTabId)),
+    );
+    const request = { context, session: { tabId: "sdk-tab", serverEpoch: "epoch-1" } };
+    expect(await host.startRecording!(request)).toMatchObject({ ok: true });
+    expect(startScreencast).toHaveBeenCalledWith(runtimeTabId);
+    FakeMediaRecorder.instances[0]!.emitData(
+      new Blob([new Uint8Array(51 * 1024 * 1024)], { type: "video/webm" }),
+    );
+    const [first, second] = await Promise.all([
+      host.stopRecording!(request),
+      host.stopRecording!(request),
+    ]);
+    expect(first).toEqual(second);
+    expect(first).toMatchObject({
+      ok: true,
+      artifact: {
+        artifactRef: "recording-recording-test",
+        saved: true,
+        sizeBytes: 51 * 1024 * 1024,
+      },
+    });
+    expect(save).toHaveBeenCalledOnce();
+    expect(
+      await host.revealArtifact!({ context, artifactRef: "recording-recording-test" }),
+    ).toEqual({ ok: true });
+    expect(revealArtifact).toHaveBeenCalledWith("/tmp/recording-test.webm");
+    expect(phases).toEqual(["idle", "starting", "recording", "stopping", "idle"]);
+    expect(JSON.stringify(first)).not.toContain("/tmp/");
+    unsubscribe();
+    lifetime.abort();
   });
 
   it("routes gesture-free starts through the desktop capture trigger", async () => {

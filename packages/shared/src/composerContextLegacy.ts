@@ -239,7 +239,7 @@ function unescapeAttribute(value: string): string {
  * boundary is fixed, so a restored `<` can never split a record and historical unencoded
  * bodies keep byte-identical semantics.
  */
-function unescapeReviewCommentTags(text: string): string {
+export function unescapeReviewCommentTags(text: string): string {
   return text
     .replace(/&lt;(\/?\w+)/g, (entity, tail: string, offset: number, source: string) =>
       // The ASCII `\w` capture can stop mid-tag (`ſ` or the Kelvin sign U+212A is not `\w`),

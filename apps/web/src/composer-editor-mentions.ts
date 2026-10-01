@@ -1,3 +1,4 @@
+import { readContextSnapshots, type ContextSnapshot } from "@t3tools/extension-sdk/context";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
@@ -7,6 +8,7 @@ import {
 } from "@t3tools/shared/composerInlineTokens";
 
 export type ComposerPromptSegment =
+  | { type: "extension-context"; snapshot: ContextSnapshot; source: string }
   | {
       type: "text";
       text: string;
@@ -79,7 +81,14 @@ export function collectComposerPromptInlineTokens(text: string) {
   const tokens = collectComposerInlineTokens(text);
   const citations = collectAssistantCitations(text);
   const references = collectComposerContextReferences(text);
-  if (citations.length === 0 && references.length === 0) return tokens;
+  const contexts = readContextSnapshots(text).map((item) => ({
+    ...item,
+    type: "extension-context" as const,
+    source: text.slice(item.start, item.end),
+  }));
+  if (citations.length === 0 && references.length === 0 && contexts.length === 0) return tokens;
+  const outsideContexts = (token: { start: number; end: number }) =>
+    !contexts.some((context) => token.start < context.end && token.end > context.start);
 
   // An unfinished @ mention can otherwise consume the start of a link label.
   const links = [
@@ -88,9 +97,12 @@ export function collectComposerPromptInlineTokens(text: string) {
   ];
   return [
     ...tokens.filter(
-      (token) => !links.some((link) => token.start < link.end && token.end > link.start),
+      (token) =>
+        outsideContexts(token) &&
+        !links.some((link) => token.start < link.end && token.end > link.start),
     ),
-    ...links,
+    ...links.filter(outsideContexts),
+    ...contexts,
   ].sort((left, right) => left.start - right.start);
 }
 
@@ -111,7 +123,9 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
       pushTextSegment(segments, text.slice(cursor, match.start));
     }
 
-    if (match.type === "citation") {
+    if (match.type === "extension-context") {
+      segments.push({ type: "extension-context", snapshot: match.snapshot, source: match.source });
+    } else if (match.type === "citation") {
       segments.push({ type: "citation", citation: match.citation, source: match.source });
     } else if (match.type === "context-reference") {
       segments.push({

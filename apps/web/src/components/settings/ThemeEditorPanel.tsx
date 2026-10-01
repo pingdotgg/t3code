@@ -15,8 +15,11 @@ import {
 } from "react";
 import {
   applyThemeColorPreview,
+  restoreThemeAfterPreview,
+  transferThemePreviewOwner,
   THEME_COLOR_ROLES,
   THEME_FILE_VERSION,
+  THEME_PREVIEW_OWNER_EDITOR,
   createVividThemeColors,
   getCustomThemes,
   getStandardThemeColors,
@@ -468,16 +471,19 @@ export function ThemeEditorPanel({
 
   // The whole app wears the draft while the editor is open, so a role change
   // is judged on the real interface rather than a miniature. The stored theme
-  // comes back when the editor closes, including on cancel.
+  // comes back when the editor closes, including on cancel. A painted preview
+  // owned by an extension overlay transfers to the editor first — the host's
+  // draft always wins the paint over client-supplied overlays.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
+    transferThemePreviewOwner(THEME_PREVIEW_OWNER_EDITOR);
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
   }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
 
   useEffect(() => {
     if (!open) return;
     return () => {
-      restoreTheme();
+      restoreThemeAfterPreview(THEME_PREVIEW_OWNER_EDITOR, restoreTheme);
     };
   }, [open, restoreTheme]);
 

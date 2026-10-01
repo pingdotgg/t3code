@@ -84,7 +84,27 @@ interface LocalStorageChangeDetail {
   key: string;
 }
 
-function dispatchLocalStorageChange(key: string) {
+/**
+ * Calls `onChange` when `key` changes: through `useLocalStorage` in this tab,
+ * or in another tab. Non-hook readers use it to follow hook-owned keys.
+ */
+export function subscribeLocalStorageKey(key: string, onChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === key) onChange();
+  };
+  const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
+    if (event.detail.key === key) onChange();
+  };
+  window.addEventListener("storage", handleStorageChange);
+  window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  return () => {
+    window.removeEventListener("storage", handleStorageChange);
+    window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  };
+}
+
+export function dispatchLocalStorageChange(key: string) {
   if (typeof window === "undefined") return;
   try {
     window.dispatchEvent(
@@ -112,25 +132,7 @@ export function useLocalStorage<T, E>(
   }, [key]);
 
   const subscribe = useCallback(
-    (onStoreChange: () => void) => {
-      const handleStorageChange = (event: StorageEvent) => {
-        if (event.key === key) {
-          onStoreChange();
-        }
-      };
-      const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
-        if (event.detail.key === key) {
-          onStoreChange();
-        }
-      };
-
-      window.addEventListener("storage", handleStorageChange);
-      window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      return () => {
-        window.removeEventListener("storage", handleStorageChange);
-        window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      };
-    },
+    (onStoreChange: () => void) => subscribeLocalStorageKey(key, onStoreChange),
     [key],
   );
 

@@ -2,7 +2,6 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ArrowLeft,
   ArrowRight,
-  Camera,
   ExternalLink,
   MousePointerClick,
   PictureInPicture2,
@@ -20,6 +19,7 @@ import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { PreviewCaptureButton } from "./PreviewCaptureButton";
 
 interface Props {
   url: string;
@@ -259,29 +259,11 @@ export function PreviewChromeRow({
           </Tooltip>
         ) : null}
         {onCapture ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant={recording ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  onClick={(event) => onCapture(event.shiftKey)}
-                  aria-label={recording ? "Stop recording" : "Capture screenshot"}
-                  type="button"
-                  className="relative"
-                  disabled={captureDisabled}
-                />
-              }
-            >
-              <Camera className={cn(recording && "text-destructive")} />
-              {recording ? (
-                <span className="absolute right-0.5 top-0.5 size-1.5 animate-status-pulse rounded-full bg-destructive" />
-              ) : null}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {recording ? "Stop recording" : "Screenshot · Shift-click to record"}
-            </TooltipPopup>
-          </Tooltip>
+          <PreviewCaptureButton
+            recording={recording}
+            disabled={captureDisabled}
+            onCapture={onCapture}
+          />
         ) : null}
         {onPictureInPicture ? (
           <Tooltip>

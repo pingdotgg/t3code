@@ -7,7 +7,7 @@ import {
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
-import { editorLabelForPlatform } from "../../editorLabels";
+import { resolveEditorChoices } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
@@ -182,10 +182,10 @@ export const resolveOpenInOptions = (
       kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
     },
   ];
-  const availableEditorSet = new Set(availableEditors);
-  return baseOptions
-    .filter((option) => availableEditorSet.has(option.value))
-    .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+  return resolveEditorChoices(platform, availableEditors).map(({ id, label }) => ({
+    ...baseOptions.find((option) => option.value === id)!,
+    label,
+  }));
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {

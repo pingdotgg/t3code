@@ -47,6 +47,14 @@ interface DiffReviewLine {
   readonly content: string;
 }
 
+function escapeReviewCommentAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function formatReviewCommentFence(language: string, contents: string): string {
   const longestBacktickRun = Math.max(
     0,
@@ -54,6 +62,46 @@ export function formatReviewCommentFence(language: string, contents: string): st
   );
   const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
   return [`${fence}${language}`, contents.trimEnd(), fence].join("\n");
+}
+
+/**
+ * Keeps a comment's own words — and the code it quotes — from closing the block they travel
+ * in. The parser ends an attachment at the first `</review_comment>`, so text carrying one
+ * would spill the rest of itself into the prompt — and could open a forged attachment naming
+ * any file it liked. Only ever the local reader's words before, but a pull request's review
+ * bodies come from whoever wrote them — and so do the lines they selected.
+ */
+function neutralizeReviewCommentTags(text: string): string {
+  return text.replace(/<(?=\/?review_comment\b)/giu, "&lt;");
+}
+
+/**
+ * No production caller: the send path serializes through the shared
+ * `serializeLegacyContextMessage`, which does not neutralize a record's text, so this is the
+ * only in-tree expression of that hardening. Retire it together with a shared-side fix.
+ */
+export function formatReviewCommentContext(comment: ReviewCommentContext): string {
+  return [
+    [
+      "<review_comment",
+      ` sectionId="${escapeReviewCommentAttribute(comment.sectionId)}"`,
+      ` sectionTitle="${escapeReviewCommentAttribute(comment.sectionTitle)}"`,
+      ` filePath="${escapeReviewCommentAttribute(comment.filePath)}"`,
+      ` startIndex="${comment.startIndex}"`,
+      ` endIndex="${comment.endIndex}"`,
+      ` rangeLabel="${escapeReviewCommentAttribute(comment.rangeLabel)}"`,
+      ">",
+    ].join(""),
+    neutralizeReviewCommentTags(comment.text.trim()),
+    // The quoted lines ride inside the fence but are still the block's body:
+    // a selected line carrying the closing tag would truncate the attachment
+    // on re-parse, and one carrying an opening tag could forge another.
+    formatReviewCommentFence(
+      comment.fenceLanguage ?? "diff",
+      neutralizeReviewCommentTags(comment.diff),
+    ),
+    "</review_comment>",
+  ].join("\n");
 }
 
 export function buildFileReviewComment(input: {

@@ -3,6 +3,7 @@ import type { DesktopPreviewRecordingArtifact, ScopedThreadRef } from "@t3tools/
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/unstable/reactivity";
+import { useSyncExternalStore } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
@@ -148,7 +149,56 @@ export function useActiveBrowserRecordingTabIds(): ReadonlySet<string> {
   return useAtomValue(activeBrowserRecordingTabIdsAtom).tabIds;
 }
 
+let bridgeRecordingTabIds: ReadonlySet<string> = new Set();
+const bridgeRecordingListeners = new Set<() => void>();
+const readBridgeRecordingTabIds = () => bridgeRecordingTabIds;
+const subscribeBridgeRecordingTabIds = (listener: () => void) => {
+  bridgeRecordingListeners.add(listener);
+  return () => {
+    bridgeRecordingListeners.delete(listener);
+  };
+};
+
+export function useBridgeBrowserRecordingTabIds(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeBridgeRecordingTabIds, readBridgeRecordingTabIds);
+}
+
+export function acquireBrowserRecordingControl(tabId: string): () => void {
+  bridgeRecordingTabIds = new Set([...bridgeRecordingTabIds, tabId]);
+  for (const listener of bridgeRecordingListeners) listener();
+  return () => {
+    if (!bridgeRecordingTabIds.has(tabId)) return;
+    const remaining = new Set(bridgeRecordingTabIds);
+    remaining.delete(tabId);
+    bridgeRecordingTabIds = remaining;
+    for (const listener of bridgeRecordingListeners) listener();
+  };
+}
+
+export function readBrowserRecordingPhase(
+  tabId: string,
+): "idle" | "starting" | "recording" | "stopping" {
+  return activeRecordings.get(tabId)?.lifecycle.phase ?? "idle";
+}
+
+export function subscribeBrowserRecording(listener: () => void): () => void {
+  recordingListeners.add(listener);
+  return () => {
+    recordingListeners.delete(listener);
+  };
+}
+
 const activeRecordings = new Map<string, ActiveRecording>();
+const recordingListeners = new Set<() => void>();
+const publishBrowserRecordingPhase = () => {
+  for (const listener of recordingListeners) {
+    try {
+      listener();
+    } catch {
+      console.warn("Browser recording state listener failed.");
+    }
+  }
+};
 let displayMediaGrantTail = Promise.resolve();
 let displayMediaGrantQueueDepth = 0;
 
@@ -201,6 +251,7 @@ const publishActiveRecordingTabIds = (): void => {
   appAtomRegistry.set(activeBrowserRecordingTabIdsAtom, {
     tabIds: new Set(activeRecordings.keys()),
   });
+  publishBrowserRecordingPhase();
 };
 
 export const BROWSER_RECORDING_STARTUP_SETTLE_TIMEOUT_MS = 5_000;
@@ -672,6 +723,7 @@ export async function startBrowserRecording(
     }
     if (recording.lifecycle.phase === "starting") {
       recording.lifecycle = { phase: "recording" };
+      publishBrowserRecordingPhase();
     }
     return startedAt;
   } finally {
@@ -836,6 +888,7 @@ export function stopBrowserRecording(
       throw error;
     });
   recording.lifecycle = { phase: "stopping", stopPromise };
+  publishBrowserRecordingPhase();
   return stopPromise;
 }
 

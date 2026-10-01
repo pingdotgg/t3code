@@ -6,6 +6,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
+  getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
@@ -59,6 +60,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PuzzleIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -74,9 +76,16 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import {
+  dispatchExtensionCommand,
+  extensionCommandRevision,
+  listPaletteExtensionCommands,
+  subscribeExtensionCommands,
+} from "../extensions/extensionCommandRegistry";
 import { useAtomValue } from "@effect/atom-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -114,7 +123,6 @@ import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
-  ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
   hasTrailingPathSeparator,
@@ -1111,11 +1119,7 @@ function OpenCommandPaletteDialog(props: {
         (candidate) => candidate.environmentId === environmentId,
       );
       const environmentSettings = environment?.serverConfig?.settings ?? null;
-      const baseDirectory = environmentSettings?.addProjectBaseDirectory?.trim() ?? "";
-      if (baseDirectory.length === 0) {
-        return "~/";
-      }
-      return ensureBrowseDirectoryPath(baseDirectory);
+      return getAddProjectInitialQuery(environmentSettings?.addProjectBaseDirectory);
     },
     [environments],
   );
@@ -1876,6 +1880,16 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
   ]);
 
+  const extensionCommandsRevision = useSyncExternalStore(
+    subscribeExtensionCommands,
+    extensionCommandRevision,
+    extensionCommandRevision,
+  );
+  const extensionCommands = useMemo(
+    () => listPaletteExtensionCommands(),
+    [extensionCommandsRevision],
+  );
+
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
   if (projects.length > 0) {
@@ -2286,6 +2300,21 @@ function OpenCommandPaletteDialog(props: {
           to: "/projects/$projectKey",
           params: { projectKey: contextualProjectGroup.projectKey },
         });
+      },
+    });
+  }
+
+  for (const extensionCommand of extensionCommands) {
+    actionItems.push({
+      kind: "action",
+      value: `action:extension:${extensionCommand.environmentId}:${extensionCommand.command}`,
+      searchTerms: [extensionCommand.title, extensionCommand.installationId],
+      title: extensionCommand.title,
+      description: extensionCommand.installationId,
+      icon: <PuzzleIcon className={ITEM_ICON_CLASS} />,
+      disabled: !extensionCommand.enabled,
+      run: async () => {
+        dispatchExtensionCommand(extensionCommand.command, extensionCommand.environmentId);
       },
     });
   }

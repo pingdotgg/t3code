@@ -2,7 +2,7 @@ import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
@@ -53,7 +53,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import type { DraftId } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -64,17 +64,13 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useClientSettings } from "~/hooks/useSettings";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  derivePhysicalProjectKey,
-  selectProjectGroupingSettings,
-} from "~/logicalProject";
+import { selectProjectGroupingSettings } from "~/logicalProject";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
+import { legacyProjectMergeMethod } from "./legacyMergeMethod";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
@@ -120,6 +116,11 @@ import {
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
+import {
+  beginPullRequestCheckoutToast,
+  pullRequestCheckoutErrorDetail,
+  showTaskAddedToComposerToast,
+} from "./pullRequestHandoffToast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
@@ -140,8 +141,6 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
-  handoffPrompt,
-  handoffReviewComments,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isStackedPullRequestBase,
@@ -161,10 +160,13 @@ import {
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
-  stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
+import {
+  type PullRequestThreadTask,
+  writePullRequestTaskToComposer,
+} from "./pullRequestHandoffDraft";
 import {
   resolvePickableEnvironments,
   type PickableEnvironment,
@@ -258,16 +260,6 @@ const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
 // Start the download on tab hover or focus, before the click, without loading it for every PR.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
-
-/**
- * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
- * is closed by the time the next one opens. It is how a prompt the reader has since edited is told
- * apart from the one they were handed: only the sentence still exactly as written may be replaced.
- */
-const lastHandoffPromptByDraft = new Map<string, string>();
-
-const composerTargetKey = (target: ScopedThreadRef | DraftId): string =>
-  typeof target === "string" ? target : scopedThreadKey(target);
 
 /**
  * Which server the checkout and the hand-offs land on, where more than one of them holds this
@@ -893,32 +885,28 @@ export function PullRequestDetailPanel({
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
   }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
-  // Project settings stored the override under the sidebar group's key, which a duplicate row
-  // borrows from its siblings, so the project alone does not always name the same key.
-  const legacyProjectDefaultMergeMethod = useMemo(() => {
-    if (projectDefaultMergeMethod !== undefined) return undefined;
-    const project = projects.find(
-      (candidate) =>
-        candidate.environmentId === environmentId && candidate.id === reference.projectId,
-    );
-    if (!project) return undefined;
-    const projectKey =
-      buildPhysicalToLogicalProjectKeyMap({
-        projects,
-        settings: projectGroupingSettings,
-        primaryEnvironmentId,
-      }).get(derivePhysicalProjectKey(project)) ??
-      deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    return legacyMergeMethodOverrides[projectKey];
-  }, [
-    environmentId,
-    legacyMergeMethodOverrides,
-    primaryEnvironmentId,
-    projectDefaultMergeMethod,
-    projectGroupingSettings,
-    projects,
-    reference.projectId,
-  ]);
+  const legacyProjectDefaultMergeMethod = useMemo(
+    () =>
+      projectDefaultMergeMethod !== undefined
+        ? undefined
+        : legacyProjectMergeMethod({
+            projects,
+            grouping: projectGroupingSettings,
+            overrides: legacyMergeMethodOverrides,
+            primaryEnvironmentId,
+            environmentId,
+            projectId: reference.projectId,
+          }),
+    [
+      environmentId,
+      legacyMergeMethodOverrides,
+      primaryEnvironmentId,
+      projectDefaultMergeMethod,
+      projectGroupingSettings,
+      projects,
+      reference.projectId,
+    ],
+  );
   // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
   // the thread is already on one server's copy of the branch.
   const pickableEnvironments = useMemo(
@@ -1063,50 +1051,12 @@ export function PullRequestDetailPanel({
     refreshDetail();
   };
 
-  type ThreadTask = {
-    prompt: string;
-    reviewComments?: ReadonlyArray<ReviewCommentContext>;
-  };
+  type ThreadTask = PullRequestThreadTask;
 
   const attachTarget = composerDraftTarget ?? null;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
-  const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
-    const store = useComposerDraftStore.getState();
-    const draft = store.getComposerDraft(target);
-    const key = composerTargetKey(target);
-    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
-    const repeatedCommentIds = new Set(
-      (task.reviewComments ?? [])
-        .filter((comment) => previousCommentIds.has(comment.id))
-        .map((comment) => comment.id),
-    );
-    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
-      draft?.prompt ?? "",
-      draft?.reviewComments ?? [],
-      repeatedCommentIds,
-    );
-    const prompt = handoffPrompt(
-      {
-        prompt: promptWithoutPreviousHandoff,
-        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
-      },
-      task.prompt,
-    );
-    lastHandoffPromptByDraft.set(key, task.prompt);
-    store.setPrompt(target, prompt);
-    store.setReviewComments(
-      target,
-      handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
-    );
-    for (const comment of task.reviewComments ?? []) {
-      if (!repeatedCommentIds.has(comment.id)) continue;
-      store.addReviewComment(target, comment, {
-        allowDuplicateReference: true,
-        insertAtCaret: false,
-      });
-    }
-  };
+  const writeTaskToComposer = writePullRequestTaskToComposer;
 
   /**
    * Opens a thread on this project and leaves the task in its composer for the reader to send.
@@ -1189,22 +1139,14 @@ export function PullRequestDetailPanel({
     if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
       writeTaskToComposer(attachTarget, task);
-      toastManager.add({
-        type: "success",
-        title: "Added to the composer",
-        description: "The task is in the composer — read it over, then send.",
-      });
+      showTaskAddedToComposerToast();
       return;
     }
     if (checkoutRoot === null) return;
     setHandoff(kind);
     // The menu closes on the press and takes its "Preparing..." label with it, so this is the
-    // only thing answering for the checkout. It carries no timeout of its own: a loading toast
-    // never expires, and an explicit one would survive the update and pin the result on screen.
-    const toastId = toastManager.add({
-      type: "loading",
-      title: "Preparing the pull request checkout...",
-    });
+    // only thing answering for the checkout.
+    const toast = beginPullRequestCheckoutToast();
     // Wherever the reader chose to act: the thread, the checkout it is pointed at and the composer
     // the task lands in are all one server's, and picking another one moves all three.
     const projectRef = scopeProjectRef(
@@ -1223,11 +1165,7 @@ export function PullRequestDetailPanel({
       // Without a thread there is nowhere for the checkout to belong: its setup script would not
       // run and its task would have no composer to land in. Better to stop before touching the
       // working tree than to prepare a worktree nobody asked for.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
+      toast.settle({ kind: "thread-failed" });
       return;
     }
     const prepared = await prepareThread.run({
@@ -1237,14 +1175,10 @@ export function PullRequestDetailPanel({
     });
     if (prepared._tag === "Failure") {
       setHandoff(null);
-      // The server says what to do about it — that the branch is already checked out in the main
-      // repository, say — and that sentence is the only way out of the failure.
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
+      const failure = squashAtomCommandFailure(prepared);
+      toast.settle({
+        kind: "checkout-failed",
+        detail: pullRequestCheckoutErrorDetail(failure),
       });
       return;
     }
@@ -1263,52 +1197,20 @@ export function PullRequestDetailPanel({
       // The checkout is on disk; only the thread failed to move onto it. Writing the task now
       // would send the agent at whatever the thread was already open on — which is the one
       // outcome worth stopping for, since it reads as success and is not.
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
+      toast.settle({ kind: "thread-move-failed", branch: prepared.value.branch });
       return;
     }
     // Released here whatever happened next: a loading toast never expires on its own, so leaving
     // this set would spin forever and lock every handoff behind it until a reload.
     setHandoff(null);
-    // A worktree that was already there and had been worked in keeps whatever it holds, so the
-    // thread opens on older code than the pull request carries. Said once, in place of the
-    // success, because everything else about the handoff did happen.
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? "This repository is on the pull request's branch, with a thread open on it."
-                  : "The pull request is in its own worktree, with a thread open on it.",
-            }
-          : staleCheckoutToast,
-      );
-      return;
-    }
-    await openThreadWithTask(projectRef, task, opened);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer — read it over, then send.",
-          }
-        : staleCheckoutToast,
-    );
+    if (task !== null) await openThreadWithTask(projectRef, task, opened);
+    toast.settle({
+      kind: "ready",
+      mode,
+      withTask: task !== null,
+      isOnPullRequestHead: prepared.value.isOnPullRequestHead,
+      isTrackingPullRequestHead: prepared.value.isTrackingPullRequestHead,
+    });
   };
 
   const askAboutPullRequest = () => {

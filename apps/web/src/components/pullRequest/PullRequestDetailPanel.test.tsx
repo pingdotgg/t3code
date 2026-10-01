@@ -5,7 +5,10 @@ import {
   type ScopedThreadRef,
   type PullRequestDetailView,
   type ThreadPullRequestLink,
+  SourceControlProviderError,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -50,7 +53,7 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { listRefs: () => null } }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (query: string) => ({
-    data: query === "detail" ? detail : null,
+    data: query === "detail" ? loadedDetail : null,
     isPending: false,
     isSuccess: true,
     error: null,
@@ -143,6 +146,7 @@ vi.mock("./PullRequestCodeTab", () => ({
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
+import { toastManager } from "../ui/toast";
 
 const detail: PullRequestDetailView = {
   provider: "github",
@@ -202,9 +206,12 @@ const threadRef: ScopedThreadRef = {
 };
 const draftId = DraftId.make("draft-1");
 const newDraftId = DraftId.make("new-draft");
+let loadedDetail = detail;
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  loadedDetail = detail;
+  vi.mocked(toastManager.update).mockClear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -282,11 +289,11 @@ describe.each([
 ] as const)("%s", (_name, thread, target) => {
   const context = thread ? pullRequestPanelContext(thread, surface) : "page";
 
-  function render() {
+  function render(reference = detail) {
     renderer = create(
       <PullRequestDetailPanel
         environmentId={threadRef.environmentId}
-        reference={detail}
+        reference={reference}
         context={context}
         {...(target ? { composerDraftTarget: target, threadRef } : {})}
         shortcutsEnabled={false}
@@ -309,6 +316,45 @@ describe.each([
       .filter((node) => node.props["aria-label"] === "Check out");
     expect(checkout).toHaveLength(thread === stackThread ? 0 : 1);
   });
+
+  it.runIf(thread !== stackThread).each(["In this repository", "In a separate worktree"])(
+    "%s reports the returned GitLab login hint",
+    async (mode) => {
+      const message =
+        "If private, run `glab auth login --hostname gitlab.example --api-host gitlab.example:8443` and retry. Merge request !1 was not found or is inaccessible on gitlab.example.";
+      const error = new SourceControlProviderError({
+        provider: "gitlab",
+        operation: "getChangeRequest",
+        cwd: "/workspace",
+        detail: message,
+      });
+      prepareThread.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(error)));
+      const reference = {
+        ...detail,
+        provider: "gitlab" as const,
+        url: "https://gitlab.example/team/repo/-/merge_requests/1",
+      };
+      loadedDetail = reference;
+      await act(async () => render(reference));
+      await click(mode);
+      expect(toastManager.update).toHaveBeenLastCalledWith(
+        undefined,
+        expect.objectContaining({
+          type: "error",
+          title: "Could not prepare the pull request checkout",
+          description: message,
+        }),
+      );
+      expect(prepareThread).toHaveBeenCalledOnce();
+      expect(prepareThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reference: reference.url,
+          mode: mode === "In this repository" ? "local" : "worktree",
+        }),
+      );
+      expect(newThread).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each(actions)("%s writes to the correct composer", async (action) => {
     if (target) useComposerDraftStore.getState().setPrompt(target, "Keep my draft");

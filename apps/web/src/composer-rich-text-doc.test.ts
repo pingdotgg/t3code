@@ -3,6 +3,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { describe, expect, it } from "vite-plus/test";
+import { formatContextSnapshot } from "@t3tools/extension-sdk/context";
 
 import {
   buildDocJson,
@@ -15,6 +16,7 @@ import {
   pmToFlat,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
+import { collapseExpandedComposerCursor, expandCollapsedComposerCursor } from "./composer-logic";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
   return Node.create({
@@ -59,6 +61,7 @@ const schema = getSchemaByResolvedExtensions(
       label: { default: "" },
       source: { default: "" },
     }),
+    stubAtom("composer-extension-context", { source: { default: "" } }),
     TaskList,
     ComposerTaskItemExtension,
   ]),
@@ -109,6 +112,7 @@ const plainSchema = getSchemaByResolvedExtensions(
       label: { default: "" },
       source: { default: "" },
     }),
+    stubAtom("composer-extension-context", { source: { default: "" } }),
     TaskList,
     ComposerTaskItemExtension,
   ]),
@@ -320,6 +324,34 @@ describe("composer rich text document model", () => {
     expect(
       map.runs.some((run) => run.kind === "token" && run.nodeName === "composer-mention"),
     ).toBe(true);
+  });
+
+  it("keeps a captured extension context as one chip with its exact source", () => {
+    const captured = formatContextSnapshot({
+      version: 1,
+      id: "opaque-fixture-id",
+      contributionId: "example.issue-context/select",
+      extensionVersion: "1.0.0",
+      capturedAt: "2026-09-09T00:00:00.000Z",
+      origin: {
+        namespace: "t3.composer",
+        id: "thread",
+        environmentId: "env",
+        projectId: "project",
+        threadId: "thread",
+      },
+      title: "Issue snapshot (fixture)",
+      sourceUrl: "https://example.com/issues/fixture",
+      text: "Unicode 選択 🌈 with @README.md, **stars** and $skill kept as captured text.",
+    });
+    const value = `see ${captured} now`;
+    for (const map of [roundTrip(value), roundTripPlain(value)]) {
+      expect(map.value).toBe(value);
+      const tokens = map.runs.filter((run) => run.kind === "token");
+      expect(tokens.map((run) => run.nodeName)).toEqual(["composer-extension-context"]);
+    }
+    expect(collapseExpandedComposerCursor(captured, captured.length)).toBe(1);
+    expect(expandCollapsedComposerCursor(captured, 1)).toBe(captured.length);
   });
 
   it("normalizes uppercase checkboxes to lowercase", () => {

@@ -25,6 +25,8 @@ import {
   applyPreviewDesktopState,
 } from "~/previewStateStore";
 import { appAtomRegistry, AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { shouldRenderPreviewMiniPlayer } from "~/components/ChatView.logic";
 
 import { PreviewAutomationHosts } from "./PreviewAutomationHosts";
 
@@ -122,7 +124,8 @@ beforeEach(async () => {
   mocks.focus.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   __resetClientSettingsPersistenceForTests();
   resetPreviewStateForTests();
-  useBrowserSurfaceStore.setState({ byTabId: {} });
+  useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} });
+  usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
   appAtomRegistry.set(requestsAtom, AsyncResult.initial(false));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
@@ -153,6 +156,47 @@ afterEach(async () => {
 });
 
 describe("PreviewAutomationHosts open", () => {
+  it("records native mini-player intent even while the native panel is presenting the tab", async () => {
+    const response = deferred<PreviewAutomationResponse>();
+    mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
+    mocks.open.mockImplementationOnce(async () => {
+      const runtimeTabId = previewRuntimeTabId(
+        threadRef,
+        readThreadPreviewState(threadRef).serverEpoch,
+        snapshot.tabId,
+      );
+      const surfaces = useBrowserSurfaceStore.getState();
+      const owner = Symbol("native-panel");
+      surfaces.claim(runtimeTabId, owner, false);
+      surfaces.present(runtimeTabId, owner, { x: 0, y: 0, width: 900, height: 700 }, true, 0, 30);
+      return AsyncResult.success(snapshot);
+    });
+    await act(async () => {
+      appAtomRegistry.set(
+        requestsAtom,
+        AsyncResult.success({
+          ...requestEvent,
+          request: { ...requestEvent.request, input: { open: true, reuseExistingTab: false } },
+        }),
+      );
+      await response.promise;
+    });
+    await expect(response.promise).resolves.toMatchObject({ requestId: "open-request", ok: true });
+    const intent = selectThreadPreviewMiniPlayer(
+      usePreviewMiniPlayerStore.getState().byThreadKey,
+      threadRef,
+    );
+    expect(intent?.source).toEqual({ kind: "browser", tabId: snapshot.tabId });
+    expect(
+      shouldRenderPreviewMiniPlayer(intent!.source, {
+        id: `browser:${snapshot.tabId}`,
+        kind: "preview",
+        resourceId: snapshot.tabId,
+      }),
+    ).toBe(false);
+    expect(shouldRenderPreviewMiniPlayer(intent!.source, { id: "diff", kind: "diff" })).toBe(true);
+  });
+
   it("waits for saved settings before opening a tab with the configured profile and viewport", async () => {
     const readStarted = deferred<void>();
     const read = deferred<ClientSettings>();
@@ -224,6 +268,7 @@ describe("PreviewAutomationHosts ownership", () => {
       expect.objectContaining({ input: expect.objectContaining({ liveTabs: [] }) }),
     );
     const overlay = {
+      remoteLive: false,
       hasWebContents: true,
       canGoBack: false,
       canGoForward: false,
