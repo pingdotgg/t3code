@@ -96,6 +96,7 @@ import {
 import { AuthControlPlane } from "./auth/Services/AuthControlPlane.ts";
 import type { AuthControlPlaneShape } from "./auth/Services/AuthControlPlane.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
+import { inspectShellExecutions } from "./orchestration/commandExecution.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -1685,7 +1686,10 @@ const chatShowCommand = Command.make("show", {
   ...liveTargetFlags,
   chat: Argument.string("chat").pipe(Argument.withDescription("Thread id or title.")),
   messages: Flag.boolean("messages").pipe(Flag.withDefault(false)),
-  activities: Flag.boolean("activities").pipe(Flag.withDefault(false)),
+  activities: Flag.boolean("activities").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription("Activity history with shell commands, provider status, and timing."),
+  ),
   full: Flag.boolean("full").pipe(
     Flag.withDescription("Legacy full detail, including checkpoints and activity context."),
   ),
@@ -1741,7 +1745,18 @@ const chatShowCommand = Command.make("show", {
       yield* printJson({
         ...threadSummary(result.thread),
         ...(result.messages ? { messages: result.messages, page: result.page } : {}),
-        ...(result.activities ? { activities: result.activities, page: result.page } : {}),
+        ...(result.activities
+          ? {
+              activities: result.activities,
+              page: result.page,
+              shellExecutions: inspectShellExecutions(
+                result.activities,
+                Option.isSome(flags.before)
+                  ? (result.activities.at(-1)?.createdAt ?? new Date().toISOString())
+                  : new Date().toISOString(),
+              ),
+            }
+          : {}),
       });
     }),
   ),
