@@ -5305,7 +5305,8 @@ function ChatViewBody(
               ? cn(
                   "drag-region flex items-center px-3 sm:px-5",
                   TITLEBAR_ROW_CLASS,
-                  !showPanelRail && TITLEBAR_CONTROL_INSET_CLASS,
+                  (shouldUseRightPanelSheet || !browserPanel.isOpen) &&
+                    TITLEBAR_CONTROL_INSET_CLASS,
                 )
               : "py-2 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:py-3 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
           )}

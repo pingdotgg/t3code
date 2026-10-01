@@ -26,7 +26,7 @@ export function ThreadPullRequestsPanel({
   return (
     <section
       aria-label="Linked pull requests"
-      className={cn("flex min-h-0 flex-1 flex-col bg-background", !visible && "hidden")}
+      className={cn("flex min-h-0 flex-1 flex-col bg-chat-background", !visible && "hidden")}
       data-thread-pull-requests-panel
     >
       <div className="border-b border-border/70 px-3 py-2">

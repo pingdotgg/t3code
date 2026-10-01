@@ -200,7 +200,7 @@ export function RightPanelTabs({
     <PreviewPanelShell mode={mode} maximized={maximized}>
       <div
         className={cn(
-          "flex h-8 shrink-0 items-center gap-1 border-b border-border/70 bg-muted/20 px-1.5",
+          "flex h-8 shrink-0 items-center gap-1 border-b border-border/70 bg-chat-background px-1.5",
           isElectron && mode === "inline" && "drag-region",
         )}
         data-right-panel-tabbar

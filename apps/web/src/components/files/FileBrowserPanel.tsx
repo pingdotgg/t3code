@@ -30,7 +30,7 @@ const TREE_UNSAFE_CSS = `
   :host {
     /* Opaque: the truncation fade markers paint this base first and state
        colors on top, so a transparent base lets measure text bleed through. */
-    --trees-bg-override: var(--background);
+    --trees-bg-override: var(--chat-background);
     --trees-selected-bg-override: color-mix(in srgb, var(--primary) 18%, transparent);
     --trees-hover-bg-override: color-mix(in srgb, currentColor 10%, transparent);
     --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
@@ -320,7 +320,7 @@ export default function FileBrowserPanel({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 flex-1 flex-col bg-chat-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-2.5">

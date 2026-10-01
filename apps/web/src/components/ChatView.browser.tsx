@@ -74,6 +74,11 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
+vi.mock("../env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../env")>()),
+  isElectron: true,
+}));
+
 vi.mock("../lib/gitStatusState", () => ({
   useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
   useGitStatuses: () => new Map(),
@@ -8078,6 +8083,118 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it.each(["light", "dark"] as const)(
+    "matches right-panel canvases and toolbars to the chat in %s mode",
+    async (theme) => {
+      localStorage.setItem("t3code:theme", theme);
+      const matchMediaSpy = stubNarrowLayout(false);
+      const mounted = await mountChatView({
+        viewport: WIDE_FOOTER_VIEWPORT,
+        snapshot: createSnapshotWithLongProposedPlan(),
+        resolveRpc: (body) => {
+          if (body._tag === WS_METHODS.projectsListEntries) {
+            return {
+              entries: [
+                { path: "src", kind: "directory" },
+                { path: "src/index.ts", kind: "file" },
+              ],
+              truncated: false,
+            };
+          }
+          return undefined;
+        },
+      });
+
+      try {
+        await page.getByRole("button", { name: "Toggle file browser", exact: true }).click();
+        const fileBrowser = await waitForElement(
+          () => document.querySelector<HTMLElement>("[data-file-browser-panel]"),
+          "Unable to find file browser.",
+        );
+        await vi.waitFor(() => {
+          expect(document.documentElement.classList.contains("dark")).toBe(theme === "dark");
+        });
+        const chat = fileBrowser.closest('[data-preview-panel-mode="inline"]')!.parentElement!;
+        const background = getComputedStyle(chat).backgroundColor;
+        const expectBackground = (element: Element | null) => {
+          expect(element).not.toBeNull();
+          expect(getComputedStyle(element!).backgroundColor).toBe(background);
+        };
+        await vi.waitFor(() => {
+          expectBackground(fileBrowser);
+          expectBackground(document.querySelector('[data-preview-panel-mode="inline"]'));
+          expectBackground(document.querySelector("[data-right-panel-tabbar]"));
+          expectBackground(document.querySelector("[data-right-panel-files-surface]"));
+        });
+        await vi.waitFor(() => {
+          const tree = [...fileBrowser.querySelectorAll("*")].find((element) =>
+            element.shadowRoot?.querySelector('button[data-type="item"]'),
+          );
+          expectBackground(tree?.shadowRoot?.querySelector('button[data-type="item"]') ?? null);
+        });
+
+        Object.defineProperty(window, "desktopBridge", {
+          configurable: true,
+          value: { preview: {}, setTheme: () => Promise.resolve() },
+        });
+        for (const kind of ["preview", "insights", "plan", "diff"] as const) {
+          useRightPanelStore.getState().open(THREAD_REF, kind);
+          const surface = await waitForElement(
+            () =>
+              document.querySelector<HTMLElement>(`[data-chat-view-right-panel-surface="${kind}"]`),
+            `Unable to find ${kind} surface.`,
+          );
+          await vi.waitFor(() => {
+            expectBackground(surface.firstElementChild);
+            if (kind === "preview") {
+              expectBackground(surface.querySelector("[data-thread-key]"));
+              expectBackground(surface.querySelector("[data-surface-subheader]"));
+            }
+          });
+        }
+      } finally {
+        await mounted.cleanup();
+        matchMediaSpy.mockRestore();
+        Reflect.deleteProperty(window, "desktopBridge");
+        localStorage.removeItem("t3code:theme");
+        document.documentElement.classList.remove("dark");
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps the Windows caption inset unless an inline panel is open (compact=%s)",
+    async (compact) => {
+      const matchMediaSpy = stubNarrowLayout(compact);
+      const mounted = await mountChatView({
+        viewport: compact ? COMPACT_FOOTER_VIEWPORT : WIDE_FOOTER_VIEWPORT,
+        snapshot: createSnapshotForTargetUser({
+          targetMessageId: "msg-user-caption-inset" as MessageId,
+          targetText: "caption inset",
+        }),
+      });
+      const header = document.querySelector<HTMLElement>("header")!;
+      const captionInset = "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]";
+
+      try {
+        expect(header.classList.contains(captionInset)).toBe(true);
+        await page.getByRole("button", { name: "Toggle file browser", exact: true }).click();
+        await vi.waitFor(() => {
+          expect(document.querySelector("[data-chat-view-right-panel-surface]")).not.toBeNull();
+          expect(header.classList.contains(captionInset)).toBe(compact);
+        });
+        useRightPanelStore.getState().close(THREAD_REF);
+        await vi.waitFor(() => {
+          expect(document.querySelector("[data-chat-view-right-panel-surface]")).toBeNull();
+          expect(header.classList.contains(captionInset)).toBe(true);
+        });
+      } finally {
+        await mounted.cleanup();
+        matchMediaSpy.mockRestore();
+      }
+    },
+  );
 
   it("keeps the inline right panel full-height beside the header and restores it after maximizing", async () => {
     const matchMediaSpy = stubNarrowLayout(false);

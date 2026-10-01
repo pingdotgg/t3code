@@ -617,7 +617,7 @@ export function PreviewView({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 flex-1 flex-col bg-chat-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
@@ -712,7 +712,7 @@ export function PreviewView({
           </div>
         ) : null}
         {navStatus._tag === "LoadFailed" ? (
-          <div className="absolute inset-0 z-10 bg-background">
+          <div className="absolute inset-0 z-10 bg-chat-background">
             <PreviewUnreachable
               url={navStatus.url}
               code={navStatus.code}
