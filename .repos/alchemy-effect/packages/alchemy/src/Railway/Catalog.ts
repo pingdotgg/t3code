@@ -1,8 +1,14 @@
-import type { RegionsResultItem } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { resolveWorkspace } from "./Environment.ts";
+
+const regionSelection = {
+  id: true,
+  name: true,
+  region: true,
+} as const satisfies railway.Selection<"Region">;
+type RegionsResultItem = railway.Result<"Region!", typeof regionSelection>;
 
 export type CatalogKind = "region" | "workspace";
 
@@ -29,6 +35,7 @@ export const currentWorkspace = resolveWorkspace;
 export const listRegions = Effect.fn(function* (projectId?: string) {
   const regions = yield* railway.regions(
     projectId === undefined ? {} : { projectId },
+    regionSelection,
   );
   return regions ?? [];
 });

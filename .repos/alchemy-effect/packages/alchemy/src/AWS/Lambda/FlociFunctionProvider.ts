@@ -38,7 +38,7 @@ import * as Bundle from "../../Bundle/Bundle.ts";
 import * as TempRoot from "../../Bundle/TempRoot.ts";
 import { Assets, AssetsLive } from "../Assets.ts";
 import {
-  flociSidecarEntry,
+  flociProvidersUrl,
   makeDevWatchProvider,
 } from "../Local/DevWatchProvider.ts";
 import {
@@ -60,7 +60,7 @@ const isFunctionImageProps = (
 export const FlociFunctionProvider = () =>
   makeDevWatchProvider<Function, FunctionProps, Function["Attributes"]>(
     Function,
-    flociSidecarEntry(),
+    flociProvidersUrl(),
     {
       liveProvider: () => FunctionProvider(),
       // A FRESH `Assets` instance: its cached bucket lookup must resolve

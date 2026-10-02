@@ -316,6 +316,18 @@ describe("resolveHostedFirstRunDecision", () => {
     });
   });
 
+  it("keeps Connections reachable for a remote-only desktop predating onboarding", () => {
+    expect(
+      resolveHostedFirstRunDecision({
+        hydrated: true,
+        completed: false,
+        catalogReady: true,
+        environmentCount: 0,
+        localEnvironmentDisabled: true,
+      }),
+    ).toEqual({ decision: "app", persistCompletion: true });
+  });
+
   it("backfills onboarding for a hosted install with saved environments", () => {
     expect(
       resolveHostedFirstRunDecision({

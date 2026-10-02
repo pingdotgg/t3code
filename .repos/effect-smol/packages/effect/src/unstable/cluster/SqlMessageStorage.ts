@@ -666,7 +666,7 @@ export const makeEncoded: (options?: {
     unprocessedMessagesById(ids, now) {
       const idArr = Array.from(ids, (id) => String(id))
       return sql<MessageRow & ReplyJoinRow>`
-        SELECT m.*, r.id as reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
+        SELECT m.*, r.id as reply_reply_id, r.kind as reply_kind, r.payload as reply_payload, r.sequence as reply_sequence
         FROM ${messagesTableSql} m
         LEFT JOIN ${repliesTableSql} r ON r.id = m.last_reply_id
         WHERE m.id IN (${sql.literal(idArr.join(","))})
@@ -964,13 +964,17 @@ const migrations = (options?: {
             ON ${messagesTableSql} (request_id);
           `.unprepared.pipe(Effect.ignore),
         pg: () =>
-          sql`
-            CREATE INDEX IF NOT EXISTS ${sql(shardLookupIndex)}
-            ON ${messagesTableSql} (shard_id, processed, last_read, deliver_at);
-
-            CREATE INDEX IF NOT EXISTS ${sql(requestIdLookupIndex)}
-            ON ${messagesTableSql} (request_id);
-          `.pipe(
+          Effect.gen(function*() {
+            yield* sql`
+              CREATE INDEX IF NOT EXISTS ${sql(shardLookupIndex)}
+              ON ${messagesTableSql} (shard_id, processed, last_read, deliver_at)
+            `
+            yield* sql`
+              CREATE INDEX IF NOT EXISTS ${sql(requestIdLookupIndex)}
+              ON ${messagesTableSql} (request_id)
+            `
+          }).pipe(
+            sql.withTransaction,
             Effect.tapDefect((error) =>
               Effect.annotateLogs(Effect.logDebug("Failed to create indexes", error), {
                 package: "@effect/cluster",
