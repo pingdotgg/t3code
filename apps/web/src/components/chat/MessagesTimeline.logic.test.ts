@@ -1412,7 +1412,7 @@ describe("deriveMessagesTimelineRows", () => {
         liveAgentTaskIds,
         ...(expandedTurnIds ? { expandedTurnIds } : {}),
       }).map((row) => row.id);
-    const unfolded = ["turn-fold:turn-1", "spawn-entry", "assistant-final-entry"];
+    const unfolded = ["assistant-first-entry", "spawn-entry", "assistant-final-entry"];
 
     const activeRows = (
       timelineEntries: typeof direct,
@@ -1481,9 +1481,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(derive(workflow, new Set())).toEqual(unfolded);
     // No live set is known.
     expect(derive(direct, undefined)).toEqual(unfolded);
-    // Expanding the turn reveals the other work without duplicating the batch.
+    // A turn with only assistant text and a spawn card has nothing to fold.
     expect(derive(direct, new Set(), new Set(["turn-1" as TurnId]))).toEqual([
-      "turn-fold:turn-1",
       "assistant-first-entry",
       "spawn-entry",
       "assistant-final-entry",
@@ -1667,7 +1666,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("folds the first assistant message and settled work before the terminal response", () => {
+  it("keeps the first assistant message visible while folding settled work", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -1743,6 +1742,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.label).toBe("Worked for 22s");
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
+      "assistant-first-entry",
       "turn-fold:turn-1",
       "assistant-final-entry",
     ]);
@@ -1758,8 +1758,8 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(expandedRows.map((row) => row.id)).toEqual([
       "user-entry",
-      "turn-fold:turn-1",
       "assistant-first-entry",
+      "turn-fold:turn-1",
       "work-entry-1",
       "assistant-final-entry",
     ]);
@@ -1855,7 +1855,7 @@ describe("deriveMessagesTimelineRows", () => {
     ).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
-  it("folds all assistant messages before the terminal message", () => {
+  it("keeps all assistant messages visible in text-only turns", () => {
     const timelineEntries = [
       {
         id: "assistant-first-entry",
@@ -1909,7 +1909,11 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
     });
 
-    expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-first-entry",
+      "assistant-middle-entry",
+      "assistant-final-entry",
+    ]);
   });
 
   const reasoningEntry = (id: string, at: string, turnId: string | null) => ({
@@ -1954,6 +1958,93 @@ describe("deriveMessagesTimelineRows", () => {
       tone: "tool" as const,
     },
   });
+
+  it.each([
+    { text: "Short update" },
+    { text: "A substantive answer.\n\n".repeat(500) },
+    { text: "https://example.com/preview" },
+    {
+      text: "",
+      attachments: [
+        { type: "image", id: "image", name: "image.png", mimeType: "image/png", sizeBytes: 42 },
+      ],
+    },
+    {
+      text: "",
+      attachments: [
+        { type: "file", id: "file", name: "answer.txt", mimeType: "text/plain", sizeBytes: 8 },
+      ],
+    },
+  ] satisfies Pick<ChatMessage, "text" | "attachments">[])(
+    "preserves assistant content through streaming, settlement and restored snapshots (%#)",
+    (content) => {
+      const turnId = TurnId.make("turn-1");
+      const answer = answerEntry("answer", "2026-01-01T00:00:01Z", turnId);
+      const middle = { ...answer, message: { ...answer.message, ...content } };
+      const thought = reasoningEntry("thought", "2026-01-01T00:00:02Z", turnId);
+      const tool = toolEntry("tool", "2026-01-01T00:00:03Z", turnId);
+      const final = answerEntry("final", "2026-01-01T00:00:04Z", turnId);
+      const input = {
+        timelineEntries: [middle, thought, tool, final],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+      const live = deriveMessagesTimelineRowsWithState({
+        ...input,
+        timelineEntries: input.timelineEntries.slice(0, 3),
+        isWorking: true,
+        runningTurnId: turnId,
+      });
+      const closing = deriveMessagesTimelineRowsWithState(
+        {
+          ...input,
+          isWorking: true,
+          runningTurnId: turnId,
+          timelineEntries: [
+            middle,
+            thought,
+            tool,
+            { ...final, message: { ...final.message, streaming: true } },
+          ],
+        },
+        live,
+      );
+      for (const projection of [live, closing]) {
+        expect(projection.rows.find((row) => row.id === "answer")).toMatchObject({
+          kind: "message",
+          message: middle.message,
+        });
+      }
+      for (const state of ["completed", "interrupted", "error"] as const) {
+        const settled = {
+          ...input,
+          latestTurn: { turnId, state, startedAt: answer.createdAt, completedAt: final.createdAt },
+        };
+        const collapsed = deriveMessagesTimelineRowsWithState(settled, closing);
+        expect(collapsed.rows.map((row) => row.id)).toEqual([
+          "answer",
+          "turn-fold:turn-1",
+          "final",
+        ]);
+        expect(collapsed.rows[0]).toMatchObject({ kind: "message", message: middle.message });
+        // A reconnect/reload recreates entries rather than reusing streaming objects.
+        const restored = deriveMessagesTimelineRows(JSON.parse(JSON.stringify(settled)));
+        expect(restored).toEqual(collapsed.rows);
+        const expanded = deriveMessagesTimelineRowsWithState(
+          { ...settled, expandedTurnIds: new Set([turnId]) },
+          collapsed,
+        );
+        expect(
+          expanded.rows
+            .filter((row) => row.kind === "message" && row.message.role === "assistant")
+            .map((row) => row.id),
+        ).toEqual(["answer", "final"]);
+        expect(deriveMessagesTimelineRowsWithState(settled, expanded).rows).toEqual(collapsed.rows);
+      }
+    },
+  );
 
   it("keeps all thoughts in one activity row as current and earlier traces stream", () => {
     const entries = [1, 2, 3, 4].map((second) => {

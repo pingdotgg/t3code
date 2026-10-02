@@ -1868,7 +1868,7 @@ describe("buildThreadFeed", () => {
     expect(collapsed[1]).toMatchObject({ type: "turn-fold", label: "Worked for 17s" });
   });
 
-  it("folds assistant messages between the first and terminal messages", () => {
+  it("keeps assistant messages between the first and terminal messages visible", () => {
     const turnId = TurnId.make("turn-1");
     const thread = makeThread({
       id: ThreadId.make("thread-middle-message"),
@@ -1918,9 +1918,62 @@ describe("buildThreadFeed", () => {
 
     expect(rows.map((entry) => entry.id)).toEqual([
       "assistant-first",
-      "turn-fold:turn-1",
+      "assistant-middle",
       "assistant-final",
     ]);
+
+    for (const instanceId of ["claudeCode", "codex", "cursor", "grok", "opencode", "antigravity"]) {
+      const mixedThread = {
+        ...thread,
+        modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model: "test-model" },
+        messages: [
+          thread.messages[0]!,
+          { ...thread.messages[1]!, text: "The substantive answer.\n\n".repeat(500) },
+          {
+            ...thread.messages[1]!,
+            id: MessageId.make("reasoning"),
+            role: "reasoning" as const,
+            createdAt: "2026-04-01T00:00:02.500Z",
+          },
+          thread.messages[2]!,
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("tool-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Read files",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: { title: "Read files", itemType: "file_read", status: "completed" },
+          }),
+        ],
+      };
+      for (const state of ["running", "completed", "interrupted", "error"] as const) {
+        const latestTurn = {
+          ...thread.latestTurn!,
+          state,
+          completedAt: state === "running" ? null : thread.latestTurn!.completedAt,
+        };
+        const source = { ...mixedThread, latestTurn };
+        for (const restored of [source, JSON.parse(JSON.stringify(source)) as typeof source]) {
+          const restoredFeed = buildThreadFeed(restored);
+          for (const expandedTurnIds of [new Set<TurnId>(), new Set([turnId]), new Set<TurnId>()]) {
+            const presented = deriveThreadFeedPresentation(
+              restoredFeed,
+              latestTurn,
+              expandedTurnIds,
+            );
+            expect(
+              presented
+                .filter((entry) => entry.type === "message" && entry.message.role === "assistant")
+                .map((entry) => entry.id),
+            ).toEqual(["assistant-first", "assistant-middle", "assistant-final"]);
+            expect(presented.some((entry) => entry.type === "turn-fold")).toBe(state !== "running");
+          }
+        }
+      }
+    }
   });
 
   it("measures a steer-superseded turn from its user boundary through trailing work", () => {

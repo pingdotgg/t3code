@@ -641,9 +641,9 @@ export function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
 }
 
 /**
- * Settled turns fold activity before their terminal assistant message behind
- * a "Worked for ..." row. A single ordinary activity after that message joins
- * the fold, while larger groups and failures stay visible as a trailing summary.
+ * Settled turns fold work and reasoning behind a "Worked for ..." row while
+ * keeping assistant messages visible in place. A single ordinary activity after
+ * the terminal message joins the fold; larger groups and failures stay visible.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -735,7 +735,7 @@ function deriveTurnFolds(input: {
         !(candidate.kind === "message" && candidate.message.role === "reasoning"),
     ).length;
     for (const [index, entry] of group.entries.entries()) {
-      if (entry.id === group.terminalEntry?.id) {
+      if (entry.kind === "message" && entry.message.role === "assistant") {
         continue;
       }
       const isCompaction =
