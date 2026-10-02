@@ -1,6 +1,7 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
   MessageId,
+  CheckpointScopeId,
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -534,11 +535,18 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
       {
         id: runId,
         status: "waiting",
+        rootNodeId: NodeId.make("node_stale_waiting"),
         providerInstanceId: ProviderInstanceId.make("codex"),
       },
     ],
     attempts: [],
-    nodes: [],
+    nodes: [
+      {
+        id: NodeId.make("node_stale_waiting"),
+        status: "waiting",
+        checkpointScopeId: CheckpointScopeId.make("scope_stale_waiting"),
+      },
+    ],
     subagents: [],
     messages: [],
     turnItems: [],
@@ -573,6 +581,11 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
     const summary =
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
     assert.equal(summary.terminalizedRuns, 1);
+    assert.isTrue(
+      committedInput?.effects.some(
+        (effect) => effect.request.type === "checkpoint.baseline.cleanup",
+      ) ?? false,
+    );
     const runEvent = committedInput?.events.find((event) => event.type === "run.updated");
     assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
   }).pipe(Effect.provide(layer));

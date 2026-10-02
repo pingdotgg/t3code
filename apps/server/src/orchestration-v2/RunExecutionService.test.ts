@@ -519,7 +519,26 @@ it("does not carry interrupted or still-running child ownership into later attem
 
 it.effect("rechecks run ownership immediately before calling the provider", () =>
   Effect.gen(function* () {
-    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+    const effectTypes: string[] = [];
+    const guardTestLayer = RunExecutionService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                effectTypes.push(...input.effects.map((effect) => effect.request.type));
+              }).pipe(Effect.as([])),
+          }),
+          IdAllocator.layer,
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+
     const guardCalls = yield* Ref.make(0);
     const providerStarts = yield* Ref.make(0);
     const threadId = ThreadId.make("thread:run-execution-start-guard");
@@ -549,46 +568,50 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
       startTurn: () => Ref.update(providerStarts, (count) => count + 1),
     } as unknown as ProviderAdapterV2SessionRuntime;
 
-    yield* runExecution.startRootRun({
-      commandId: CommandId.make("command:run-execution-start-guard"),
-      appThread: { id: threadId } as OrchestrationV2AppThread,
-      providerSessionId,
-      session,
-      run,
-      rootNode,
-      checkpointScope: {
-        id: CheckpointScopeId.make("checkpoint-scope:run-execution-start-guard"),
-      } as OrchestrationV2CheckpointScope,
-      providerThread,
-      attempt,
-      attemptId,
-      providerTurnOrdinal: 1,
-      shouldStartProviderTurn: () =>
-        Ref.modify(guardCalls, (calls) => [calls === 0, calls + 1] as const),
-      message: {
-        messageId: MessageId.make("message:run-execution-start-guard"),
-        text: "Do not start after ownership changes.",
-        attachments: [],
-        createdBy: "user",
-        creationSource: "web",
-      },
-      modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
-      runtimePolicy: {
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-        approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "readOnly",
-          access: { type: "fullAccess" },
-          networkAccess: false,
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make("command:run-execution-start-guard"),
+        appThread: { id: threadId } as OrchestrationV2AppThread,
+        providerSessionId,
+        session,
+        run,
+        rootNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make("checkpoint-scope:run-execution-start-guard"),
+        } as OrchestrationV2CheckpointScope,
+        providerThread,
+        attempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        shouldStartProviderTurn: () =>
+          Ref.modify(guardCalls, (calls) => [calls === 0, calls + 1] as const),
+        message: {
+          messageId: MessageId.make("message:run-execution-start-guard"),
+          text: "Do not start after ownership changes.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
         },
-      },
-    });
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(guardTestLayer));
 
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
-  }).pipe(Effect.provide(layerRunExecutionTest)),
+    assert.deepEqual(effectTypes, ["checkpoint.baseline.cleanup"]);
+  }),
 );
 
 it.effect("fails the run when its ownership check cannot be read before calling the provider", () =>
@@ -990,6 +1013,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
       const writes = yield* Ref.make<ReadonlyArray<ReadonlyArray<OrchestrationV2DomainEvent>>>([]);
+      const effectRequests = yield* Ref.make<ReadonlyArray<string>>([]);
       const layerTest = RunExecutionService.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -998,6 +1022,12 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                 scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
             }),
             Layer.mock(EventSink.EventSinkV2)({
+              writeWithEffects: (input) =>
+                Ref.update(effectRequests, (current) => [
+                  ...current,
+                  ...input.effects.map((effect) => effect.request.type),
+                ]).pipe(Effect.as([])),
+
               writeIfRunCurrent: (input) =>
                 Effect.gen(function* () {
                   assert.equal(input.threadId, threadId);
@@ -1109,6 +1139,9 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
         assert.equal(yield* Ref.get(guardedWrites), 0);
         assert.equal(yield* Ref.get(refreshes), 0);
         assert.isEmpty(events);
+        // The declined turn still owns the baseline captured during
+        // preparation, so it queues that baseline's cleanup.
+        assert.deepEqual(yield* Ref.get(effectRequests), ["checkpoint.baseline.cleanup"]);
         return;
       }
       assert.equal(yield* Ref.get(guardedWrites), 1);
@@ -3206,7 +3239,7 @@ it.effect("omits interrupt results and subagent cascade for a superseded attempt
 
 it.effect("emits run_interrupt_result when superseded attempt still has a hard-stop request", () =>
   Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
+    const { written, observed, committedEffects } = yield* captureRootRunTermination({
       key: "stop-then-steer-supersede",
       shouldFinalizeRun: () => Effect.succeed(false),
       hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
@@ -3216,6 +3249,10 @@ it.effect("emits run_interrupt_result when superseded attempt still has a hard-s
       ["run_interrupt_result"],
     );
     assert.deepEqual(observed, ["pull-requests-refreshed"]);
+    assert.deepEqual(
+      committedEffects.map((effect) => effect.request.type),
+      ["checkpoint.baseline.cleanup"],
+    );
     const ids = backgroundScenarioIds("stop-then-steer-supersede");
     const expectedRequestId = yield* Effect.gen(function* () {
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3903,6 +3940,26 @@ function rootTerminalEvent(
     : { ...common, status, failure: null };
 }
 
+it.effect.each(["completed", "interrupted", "failed", "cancelled"] as const)(
+  "persists checkpoint work appropriate to a $status terminal",
+  (status) =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      yield* runBackgroundItemScenario(
+        `baseline-cleanup-${status}`,
+        (ids) => [rootTerminalEvent(ids, status)],
+        {
+          onEffects: (effects) => {
+            requests.push(...effects.map((effect) => effect.request.type));
+          },
+        },
+      );
+      assert.deepEqual(requests, [
+        status === "failed" ? "checkpoint.baseline.cleanup" : "checkpoint.capture",
+      ]);
+    }),
+);
+
 function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapterV2Event>,
@@ -3912,6 +3969,9 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onEffects?: (
+      effects: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0]["effects"],
+    ) => void;
   },
 ) {
   return Effect.gen(function* () {
@@ -3927,6 +3987,7 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                options?.onEffects?.(input.effects);
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,

@@ -41,6 +41,10 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import { checkpointStartRef } from "../checkpointing/Utils.ts";
+import * as CheckpointService from "./CheckpointService.ts";
+import * as IdAllocator from "./IdAllocator.ts";
+import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -441,6 +445,8 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   RuntimeLayer.layerProjectService,
   RuntimeLayer.layerEventSink,
   RuntimeLayer.layerEventInfrastructure,
+  CheckpointService.layer,
+  EffectOutbox.layer,
 ).pipe(
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -468,7 +474,8 @@ const layerSharedApplicationDataPlaneTest = Layer.mergeAll(
   ),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
+  Layer.provideMerge(layerCheckpointStoreTest),
+  Layer.provide(IdAllocator.layer),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
   Layer.provide(layerTestProviderInstanceRegistry),
@@ -4345,77 +4352,149 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (it) => {
-  it.effect("interrupts a pending provider start without launching provider work", () =>
-    Effect.gen(function* () {
-      const projects = yield* ProjectService.ProjectService;
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-      const effectWorker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const projectId = ProjectId.make("runtime-layer-pending-interrupt-project");
-      const threadId = ThreadId.make("runtime-layer-pending-interrupt-thread");
+  for (const scenario of ["pending", "captured", "later-baseline"] as const) {
+    it.effect(`interrupts ${scenario} startup and reclaims only its abandoned baseline`, () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+        const effectWorker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+        const store = yield* CheckpointStore.CheckpointStore;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const workspace = yield* checkpointWorkspace(`startup-cancel-${scenario}`);
+        const projectId = ProjectId.make(`runtime-layer-${scenario}-interrupt-project`);
+        const threadId = ThreadId.make(`runtime-layer-${scenario}-interrupt-thread`);
 
-      yield* projects.create({
-        commandId: CommandId.make("runtime-layer-pending-interrupt-project-create"),
-        projectId,
-        title: "Pending interrupt project",
-        workspaceRoot: "/tmp/runtime-layer-pending-interrupt-project",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-pending-interrupt-create"),
-        threadId,
-        projectId,
-        title: "Pending interrupt",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-pending-interrupt-message"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-pending-interrupt-message"),
-        text: "Do not reach the provider.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
+        yield* projects.create({
+          commandId: CommandId.make(`runtime-layer-pending-interrupt-project-create-${scenario}`),
+          projectId,
+          title: "Pending interrupt project",
+          workspaceRoot: workspace,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-pending-interrupt-create-${scenario}`),
+          threadId,
+          projectId,
+          title: "Pending interrupt",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-pending-interrupt-message-${scenario}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-pending-interrupt-message-${scenario}`),
+          text: "Do not reach the provider.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
 
-      const starting = yield* orchestrator.getThreadProjection(threadId);
-      const run = starting.runs[0];
-      assert.isDefined(run);
-      assert.equal(run.status, "starting");
+        const starting = yield* orchestrator.getThreadProjection(threadId);
+        const run = starting.runs[0];
+        assert.isDefined(run);
+        assert.equal(run.status, "starting");
+        const scope = starting.checkpointScopes[0];
+        assert.isDefined(scope);
+        const checkpointRef = CheckpointService.checkpointRefForScopeOrdinal({
+          scopeId: scope.id,
+          ordinalWithinScope: run.ordinal,
+        });
+        const startRef = checkpointStartRef(checkpointRef);
+        let claimedId: string | undefined;
+        if (scenario !== "pending") {
+          // Stop races the worker after its durable claim and Git snapshot, before
+          // a provider turn exists. The cancelled worker cannot enqueue cleanup.
+          const claimed = yield* outbox.claimNext({
+            workerId: "cancelled-start",
+            leaseDurationMs: 30000,
+          });
+          assert.isTrue(Option.isSome(claimed));
+          if (Option.isNone(claimed)) return;
+          assert.equal(claimed.value.request.type, "provider-turn.start");
+          claimedId = claimed.value.id;
+          yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: run.ordinal - 1 });
+          assert.isTrue(yield* store.hasCheckpointRef({ cwd: workspace, checkpointRef: startRef }));
+        }
 
-      const interrupt = yield* threadManagement.interruptThread({
-        projectId,
-        commandId: CommandId.make("runtime-layer-pending-interrupt-command"),
-        threadId,
-        runId: run.id,
-        reason: "Cancelled before provider start",
-      });
-      assert.equal(interrupt.type, "interrupt_requested");
+        const interrupt = yield* threadManagement.interruptThread({
+          projectId,
+          commandId: CommandId.make(`runtime-layer-pending-interrupt-command-${scenario}`),
+          threadId,
+          runId: run.id,
+          reason: "Cancelled before provider start",
+        });
+        assert.equal(interrupt.type, "interrupt_requested");
 
-      const interrupted = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(interrupted.runs[0]?.status, "interrupted");
-      assert.equal(interrupted.attempts[0]?.status, "interrupted");
-      assert.equal(
-        interrupted.nodes.find((node) => node.kind === "root_turn")?.status,
-        "interrupted",
-      );
-      assert.deepEqual(
-        interrupted.turnItems.filter((item) => item.runId === run.id).map((item) => item.type),
-        ["user_message", "run_interrupt_request", "run_interrupt_result"],
-      );
-      assert.deepEqual(interrupted.providerTurns, []);
-      assert.isFalse(yield* effectWorker.runOnce);
-    }),
-  );
+        const interrupted = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(interrupted.runs[0]?.status, "interrupted");
+        assert.equal(interrupted.attempts[0]?.status, "interrupted");
+        assert.equal(
+          interrupted.nodes.find((node) => node.kind === "root_turn")?.status,
+          "interrupted",
+        );
+        assert.deepEqual(
+          interrupted.turnItems.filter((item) => item.runId === run.id).map((item) => item.type),
+          ["user_message", "run_interrupt_request", "run_interrupt_result"],
+        );
+        assert.deepEqual(interrupted.providerTurns, []);
+        if (claimedId !== undefined) {
+          const cancelled = yield* outbox.get(claimedId);
+          assert.isTrue(Option.isSome(cancelled));
+          if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
+        }
+        if (scenario === "later-baseline") {
+          // A cleanup retry may run after a later turn has materialized a ready
+          // baseline at the interrupted run's ordinal. That row owns no run.
+          yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: run.ordinal });
+          const baseline = yield* checkpoints.materializeBaselineCheckpoint({
+            scope,
+            ordinalWithinScope: run.ordinal,
+          });
+          assert.isNull(baseline.runId);
+          assert.equal(baseline.status, "ready");
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`later-baseline-${scenario}`),
+                type: "checkpoint.captured",
+                threadId,
+                nodeId: baseline.nodeId,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: yield* DateTime.now,
+                payload: baseline,
+              },
+            ],
+          });
+        }
+        assert.equal(yield* effectWorker.drain(), 1);
+        assert.isFalse(yield* store.hasCheckpointRef({ cwd: workspace, checkpointRef: startRef }));
+        if (scenario === "later-baseline") {
+          assert.isTrue(yield* store.hasCheckpointRef({ cwd: workspace, checkpointRef }));
+          const nextStart = checkpointStartRef(
+            CheckpointService.checkpointRefForScopeOrdinal({
+              scopeId: scope.id,
+              ordinalWithinScope: run.ordinal + 1,
+            }),
+          );
+          assert.isTrue(
+            yield* store.hasCheckpointRef({ cwd: workspace, checkpointRef: nextStart }),
+          );
+        }
+        assert.isFalse(yield* effectWorker.runOnce);
+      }).pipe(Effect.scoped),
+    );
+  }
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {

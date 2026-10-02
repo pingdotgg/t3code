@@ -93,6 +93,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     scopeId: CheckpointScopeId,
   }),
   Schema.Struct({
+    type: Schema.Literal("checkpoint.baseline.cleanup"),
+    runId: RunId,
+    scopeId: CheckpointScopeId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
@@ -119,6 +124,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",
+  "checkpoint.baseline.cleanup",
   "terminal.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
