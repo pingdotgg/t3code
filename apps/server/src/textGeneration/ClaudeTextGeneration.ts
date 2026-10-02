@@ -51,6 +51,9 @@ import {
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
+// A `claude -p` call is a short-lived helper: it stays in the backend's process
+// group so quit reaches it, and is SIGKILLed if it ignores SIGTERM on timeout.
+const CLAUDE_FORCE_KILL_AFTER = "1 second";
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -226,6 +229,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
+        detached: false,
+        forceKillAfter: CLAUDE_FORCE_KILL_AFTER,
       });
 
       const child = yield* commandSpawner
