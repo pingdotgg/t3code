@@ -805,6 +805,71 @@ describe("runtime command runner", () => {
     registry.dispose();
   });
 
+  it("waits for all reserved lanes after rejection and blocks later overlapping commands", async () => {
+    const scheduler = createAtomCommandScheduler();
+    const registry = AtomRegistry.make();
+    const events: string[] = [];
+    let rejectFirst = (_error: Error) => {};
+    let finishSecond = () => {};
+    const firstReady = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const secondReady = new Promise<void>((resolve) => {
+      finishSecond = resolve;
+    });
+    const first = scheduler.schedule(
+      registry,
+      { mode: "serial", key: () => "first" },
+      undefined,
+      () => firstReady,
+    );
+    const second = scheduler.schedule(
+      registry,
+      { mode: "serial", key: () => "second" },
+      undefined,
+      async () => {
+        await secondReady;
+        return AsyncResult.success(undefined);
+      },
+    );
+    const joined = scheduler.schedule(
+      registry,
+      { mode: "serial", key: () => ["first", "second"] },
+      undefined,
+      async () => {
+        events.push("joined");
+        return AsyncResult.success(undefined);
+      },
+    );
+    const later = scheduler.schedule(
+      registry,
+      { mode: "serial", key: () => "first" },
+      undefined,
+      async () => {
+        events.push("later");
+        return AsyncResult.success(undefined);
+      },
+    );
+    try {
+      rejectFirst(new Error("Rejected first lane"));
+      await expect(first).rejects.toThrow("Rejected first lane");
+      expect(events).toEqual([]);
+      finishSecond();
+      await Promise.all([second, joined, later]);
+      expect(events).toEqual(["joined", "later"]);
+      const reused = await scheduler.schedule(
+        registry,
+        { mode: "serial", key: () => ["second", "first"] },
+        undefined,
+        async () => AsyncResult.success("reused"),
+      );
+      expect(reused).toMatchObject({ _tag: "Success", value: "reused" });
+    } finally {
+      finishSecond();
+      registry.dispose();
+    }
+  });
+
   it.effect("releases a shared scheduler lane before the outer command finishes", () =>
     Effect.gen(function* () {
       const handoffStarted = Latch.makeUnsafe();
