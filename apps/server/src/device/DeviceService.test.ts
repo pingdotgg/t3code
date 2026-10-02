@@ -70,6 +70,8 @@ const fixture = Effect.fn("fixture")(function* (
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
   inspectError = false,
   installTool?: Parameters<typeof makeWithHosts>[3],
+  runHostCommand: DeviceHost.DeviceHostReady["run"] = () =>
+    Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -82,7 +84,7 @@ const fixture = Effect.fn("fixture")(function* (
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
+    run: runHostCommand,
   };
   const host: DeviceHost.DeviceHost["Service"] = {
     ...(inspectError
@@ -402,6 +404,38 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
   }).pipe(Effect.scoped),
 );
 
+describe("partial device lists", () => {
+  const withAvdExit = (code: number, stderr: string) =>
+    fixture(Effect.void, undefined, false, undefined, false, undefined, () =>
+      Effect.succeed({ code, stdout: "", stderr }),
+    );
+
+  it.effect("stays ready when the emulator command cannot be spawned", () =>
+    Effect.gen(function* () {
+      const { service } = yield* withAvdExit(
+        127,
+        "ProcessSpawnError: Failed to spawn process 'emulator'",
+      );
+      const state = yield* service.configure({ enabled: true });
+      const status = state.hostStatuses[LOCAL_DEVICE_HOST_ID];
+      expect(status?.status).toBe("ready");
+      expect(status?.detail).toContain("could not be started");
+      // The spawn never happened, so 127 says nothing worth showing.
+      expect(status?.detail).not.toContain("127");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports what the emulator itself said when it runs and fails", () =>
+    Effect.gen(function* () {
+      const { service } = yield* withAvdExit(2, "PANIC: Broken AVD system path.\n");
+      const state = yield* service.configure({ enabled: true });
+      const status = state.hostStatuses[LOCAL_DEVICE_HOST_ID];
+      expect(status?.status).toBe("ready");
+      expect(status?.detail).toContain("exit code 2");
+      expect(status?.detail).toContain("PANIC: Broken AVD system path.");
+    }).pipe(Effect.scoped),
+  );
+});
 it.effect.each(["shutdown", "close"] as const)(
   "%s releases iOS capture so reopening uses a fresh session",
   (operation) =>
