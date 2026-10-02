@@ -829,11 +829,12 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
 
 /**
  * Sinks settled roots to the bottom of their own project list. The whole
- * subtree follows its root, mirroring `classifySidebarV2Shelves`: a root with
- * an active descendant stays active, since the root's own `canSettle` check
- * cannot see live work below it. Pinned roots keep their leading position —
- * a pin is an explicit order override the settle must not defeat — but still
- * fade when settled, matching SidebarV2. Settled
+ * subtree follows its root, mirroring `classifySidebarV2Shelves`: a block
+ * stays active while any row in it — root or descendant — carries a status
+ * pill, since the root's own `canSettle` check cannot see pills like a failed
+ * turn or an unseen completion that still need attention. Pinned roots keep
+ * their leading position — a pin is an explicit order override the settle
+ * must not defeat — but still fade when settled, matching SidebarV2. Settled
  * roots sort most-recently-settled first (`settledAt`, falling back through
  * the same stamps `resolveSettledThreadTimestamp` uses); the sort is stable
  * so ties keep their existing order.
@@ -862,7 +863,7 @@ export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow
   for (const block of blocks) {
     const root = block[0]!;
     const isSettledSubtree =
-      !block.some((row, index) => index > 0 && isActiveThreadStatus(row.status)) &&
+      !block.some((row) => isActiveThreadStatus(row.status)) &&
       isSettledSidebarThread(root.thread, { now: input.now });
     if (input.pinnedThreadKeys?.has(root.threadKey) === true) {
       pinnedBlocks.push(block);

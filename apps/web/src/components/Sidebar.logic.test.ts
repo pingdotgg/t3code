@@ -1784,6 +1784,57 @@ describe("partitionSettledSidebarRows", () => {
     expect(partitioned.settledThreadKeys).toEqual(new Set([summaryKey(settled)]));
   });
 
+  it("keeps a settled root active when its own turn failed", () => {
+    const failed = makeSummary({
+      id: ThreadId.make("thread-failed"),
+      title: "Failed",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+      latestTurn: { ...makeLatestTurn(), state: "error" },
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([failed, active]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    // The failed pill needs attention even though no canSettle blocker fires.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Failed", "Active"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set());
+  });
+
+  it("keeps a settled root with an unseen completion active", () => {
+    const done = makeSummary({
+      id: ThreadId.make("thread-done"),
+      title: "Done",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:55:00.000Z",
+      latestTurn: makeLatestTurn(),
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([done, active]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    // buildSettledRows visits nothing, so the completed turn reads as unseen.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Done", "Active"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set());
+  });
+
   it("keeps the active-route settled row visible below the window", () => {
     const active = makeSummary({
       id: ThreadId.make("thread-active"),
