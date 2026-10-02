@@ -210,11 +210,19 @@ A deleted legacy tunnel keeps its allocation, so its hostname is kept. When the 
 - On an older build linked from web or mobile, the host stays offline until T3 Code on that computer
   is updated.
 
+Ship the web and mobile builds that show the offline reason before enabling legacy cleanup, so a
+user whose host is affected sees what to do. The relay adds the `tunnel_released_at` allocation
+column in its first deploy with this change; the legacy switch stays `off` until you set it.
+
 1. Run `vp run --filter t3code-relay tunnels:census` with a read-only Cloudflare token. It counts
    tunnels in every relay stage. The reaper only sees its own stage's tunnels, so clean up the rest
    by hand.
 2. Set the legacy mode to `dry-run`, deploy, and read `wouldDeleteLegacy`, `legacyOver30Days`,
-   `totalDown`, and `totalInactive` on the sweep spans for a day.
+   `totalDown`, and `totalInactive` on the sweep spans for a day. `wouldDeleteLegacy` counts only the
+   tunnels a sweep inspected, at most 500 per status. `totalDown` and `totalInactive` are Cloudflare's
+   counts of this stage's tunnels down for over five minutes and never connected for over an hour.
+   They include ones the reaper skips, so they are an upper bound on the backlog. The share of `wouldDeleteLegacy` in each sweep's `scanned` estimates how
+   much of that total is eligible.
 3. Run the legacy steps of the disposable-host canary below.
 4. Before enabling, confirm the web and mobile builds that show the "update T3 Code on that computer"
    message are live. Without them, a user whose older host lost its tunnel only sees it as offline.
@@ -224,6 +232,20 @@ A deleted legacy tunnel keeps its allocation, so its hostname is kept. When the 
    `attempted` well under 100 with `truncated` set means the sweep stopped early: either the time
    budget ran out or Cloudflare rate-limited a deletion. The counters don't say which; the relay
    logs a warning with the Cloudflare error for each failed deletion.
+
+In Axiom, filter the relay traces dataset on `name == "relay.managed_endpoint_reaper.sweep"` and
+chart the `attributes.custom.relay.managed_endpoint_reaper.*` fields over time.
+
+Set the legacy mode back to `off` and deploy if any of these happen:
+
+- `failed` stays above a few per sweep. Read the warning log for the Cloudflare error.
+- Users report an environment that is offline with the update message after they have updated T3
+  Code on that computer and restarted it.
+- Relay request errors rise while sweeps run. Deletions share the Postgres connection pool with
+  request handlers.
+
+Turning the switch off stops new deletions. Deleted tunnels stay deleted; their hosts recover as
+described above.
 
 ### Disposable-host canary
 
