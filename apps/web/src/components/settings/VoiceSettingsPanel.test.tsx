@@ -354,6 +354,19 @@ it("shows models for the selected language while keeping the active model summar
   expect(root.root.findAllByType("p").map((p) => p.children.join(""))).toContain(
     "This model only supports English.",
   );
+  await act(async () => root.root.findByProps({ children: "All" }).props.onClick());
+  expect(modelNames()).toContain("English Model");
+  expect(modelNames()).toContain("French Model");
+  expect(root.root.findAllByType("p").map((p) => p.children.join(""))).toContain("All models");
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Search transcription models" }).props.onChange({
+      target: { value: "French" },
+    }),
+  );
+  expect(modelNames()).toContain("French Model");
+  await act(async () =>
+    root.root.findByProps({ "aria-label": "Clear model search" }).props.onClick(),
+  );
   const french = root.root.findByProps({ children: "French" });
   await act(async () => french.props.onClick());
   expect(modelNames()).toContain("French Model");
@@ -396,6 +409,7 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
     "aria-label": "Browse transcription models by language",
   });
   expect(languageList.findAllByType("button").map((button) => button.children.join(""))).toEqual([
+    "All",
     "English",
     "Hindi",
     "Spanish",
@@ -412,7 +426,7 @@ it("orders supported languages by speaker ranking, then alphabetically", async (
   await act(async () =>
     root.root.findByProps({ "aria-label": "Clear language search" }).props.onClick(),
   );
-  expect(languageList.findAllByType("button")).toHaveLength(7);
+  expect(languageList.findAllByType("button")).toHaveLength(8);
 });
 it("puts the active model first, then installed and downloading models", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
