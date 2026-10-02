@@ -10,6 +10,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
   CommandId,
@@ -859,10 +860,21 @@ describe("agent browser close confirmation", () => {
 });
 
 describe("floating browser preview", () => {
+  const isMiniPlayerVisible = (
+    source: PreviewMiniPlayerSource | null,
+    renderedRightPanelSurface: RightPanelSurface | null,
+    rightPanelSurfaceVisible = true,
+  ) =>
+    shouldRenderPreviewMiniPlayer({
+      source,
+      renderedRightPanelSurface,
+      rightPanelSurfaceVisible,
+    });
+
   it("only hides the duplicate while the same browser is rendered in the panel", () => {
-    expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
+    expect(isMiniPlayerVisible(null, null)).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer(
+      isMiniPlayerVisible(
         { kind: "browser", tabId: "tab-1" },
         {
           id: "browser:one",
@@ -872,7 +884,7 @@ describe("floating browser preview", () => {
       ),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer(
+      isMiniPlayerVisible(
         { kind: "browser", tabId: "tab-1" },
         {
           id: "browser:two",
@@ -882,11 +894,31 @@ describe("floating browser preview", () => {
       ),
     ).toBe(true);
     expect(
-      shouldRenderPreviewMiniPlayer(
+      isMiniPlayerVisible({ kind: "browser", tabId: "tab-1" }, { id: "diff", kind: "diff" }),
+    ).toBe(true);
+  });
+
+  it("shows floating previews when the Thread tab hides their panel", () => {
+    expect(isMiniPlayerVisible(null, null, false)).toBe(false);
+    expect(
+      isMiniPlayerVisible(
         { kind: "browser", tabId: "tab-1" },
-        { id: "diff", kind: "diff" },
+        { id: "browser:one", kind: "preview", resourceId: "tab-1" },
+        false,
       ),
     ).toBe(true);
+
+    const target = {
+      hostId: "mac",
+      deviceId: "phone",
+      platform: "ios",
+      name: "iPhone",
+    } as const;
+    const source = { kind: "device", ...target } as const;
+    const surface = { id: "device:mac:phone", kind: "device", target } as const;
+
+    expect(isMiniPlayerVisible(source, surface)).toBe(false);
+    expect(isMiniPlayerVisible(source, surface, false)).toBe(true);
   });
 });
 

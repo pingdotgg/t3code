@@ -21,6 +21,7 @@ const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"))
 beforeEach(() => {
   useRightPanelStore.setState({
     byThreadKey: {},
+    selectedThreadTabKey: null,
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
   });
@@ -113,6 +114,123 @@ describe("rightPanelStore", () => {
     projectId: "project-a",
     repository: "pingdotgg/t3code",
     number: 42,
+  });
+
+  it("returns to the panel when a manual panel action follows Thread selection", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.selectThreadTab(refA);
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
+
+    store.activateSurface(refA, "diff");
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+  });
+
+  it("keeps Thread selected when an automatic panel update arrives", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.selectThreadTab(refA);
+    const revision = store.getUserActionRevision(refA);
+
+    expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(true);
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
+  });
+
+  it("rejects pending proactive panels after leaving the Thread tab", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts", 42);
+    store.selectThreadTab(refA);
+    const turnRevision = store.getUserActionRevision(refA);
+    const selectedPanel = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    );
+
+    store.selectPanelTab(refA);
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+    expect(store.openProactive(refA, completedDiff, turnRevision)).toBe(false);
+    expect(store.openProactive(refA, linkedPullRequest, turnRevision)).toBe(false);
+    expect(
+      store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, turnRevision),
+    ).toBe(false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      selectedPanel,
+    );
+
+    const nextTurnRevision = store.getUserActionRevision(refA);
+    expect(store.openProactive(refA, completedDiff, nextTurnRevision)).toBe(true);
+  });
+
+  it("keeps pending updates eligible when selecting the panel does not leave Thread mode", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    const turnRevision = store.getUserActionRevision(refA);
+
+    store.selectPanelTab(refA);
+    store.selectThreadTab(refB);
+    store.selectPanelTab(refA);
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-B");
+    expect(store.openProactive(refA, completedDiff, turnRevision)).toBe(true);
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-B");
+  });
+
+  it.each(["diff", "files", "preview", "device", "pull-requests"] as const)(
+    "reveals %s when opened from the Thread tab",
+    (kind) => {
+      const store = useRightPanelStore.getState();
+      store.open(refA, kind);
+      store.selectThreadTab(refA);
+      store.open(refA, kind);
+
+      expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(kind);
+    },
+  );
+
+  it("reveals resource tabs opened from the conversation", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    const openings = [
+      () => store.openFile(refA, "src/app.ts", 42),
+      () => store.openBrowser(refA, "browser-1"),
+      () => store.openTerminal(refA, "terminal-1"),
+      () => store.openPullRequest(refA, linkedPullRequest),
+      () =>
+        store.openDevice(refA, {
+          hostId: "mac",
+          deviceId: "phone",
+          platform: "ios",
+          name: "iPhone",
+        }),
+    ];
+
+    for (const open of openings) {
+      store.selectThreadTab(refA);
+      open();
+
+      expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps Thread selection scoped while another thread receives a panel action", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    const revision = store.getUserActionRevision(refA);
+    store.selectThreadTab(refA);
+    store.openFile(refB, "src/app.ts");
+
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBe("env-1:thread-A");
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+
+    store.removeThread(refA);
+    expect(useRightPanelStore.getState().selectedThreadTabKey).toBeNull();
   });
 
   it.each([

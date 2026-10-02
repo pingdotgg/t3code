@@ -121,8 +121,12 @@ export interface ThreadPanelVisibility {
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
+  /** Session-only selection for the transient Thread tab shown while maximized. */
+  selectedThreadTabKey: string | null;
   /** Session-only count of user panel choices per thread. Automatic updates do not advance it. */
   userActionRevisionByThreadKey: Record<string, number>;
+  selectThreadTab: (ref: ScopedThreadRef) => void;
+  selectPanelTab: (ref: ScopedThreadRef) => void;
   getUserActionRevision: (ref: ScopedThreadRef) => number;
   /**
    * Open a surface on behalf of the app, not the user. Refused when the user
@@ -406,6 +410,8 @@ const userAction = (
       ],
     };
   }),
+  selectedThreadTabKey:
+    state.selectedThreadTabKey === threadKey ? null : state.selectedThreadTabKey,
   userActionRevisionByThreadKey: {
     ...state.userActionRevisionByThreadKey,
     [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
@@ -570,7 +576,32 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     (set, get) => ({
       byThreadKey: {},
       threadPanelVisibilityByThreadKey: {},
+      selectedThreadTabKey: null,
       userActionRevisionByThreadKey: {},
+      selectThreadTab: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          return {
+            selectedThreadTabKey: threadKey,
+            userActionRevisionByThreadKey: {
+              ...state.userActionRevisionByThreadKey,
+              [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
+            },
+          };
+        }),
+      selectPanelTab: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (state.selectedThreadTabKey !== threadKey) return state;
+
+          return {
+            selectedThreadTabKey: null,
+            userActionRevisionByThreadKey: {
+              ...state.userActionRevisionByThreadKey,
+              [threadKey]: (state.userActionRevisionByThreadKey[threadKey] ?? 0) + 1,
+            },
+          };
+        }),
       getUserActionRevision: (ref) =>
         get().userActionRevisionByThreadKey[scopedThreadKey(ref)] ?? 0,
       openProactive: (ref, surface, expectedUserActionRevision) => {
@@ -969,7 +1000,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           if (
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
-            !(threadKey in state.userActionRevisionByThreadKey)
+            !(threadKey in state.userActionRevisionByThreadKey) &&
+            state.selectedThreadTabKey !== threadKey
           ) {
             return state;
           }
@@ -981,6 +1013,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           return {
             byThreadKey,
             threadPanelVisibilityByThreadKey,
+            selectedThreadTabKey:
+              state.selectedThreadTabKey === threadKey ? null : state.selectedThreadTabKey,
             userActionRevisionByThreadKey,
           };
         }),
