@@ -79,7 +79,15 @@ az extension add --name azure-devops
 az login
 ```
 
-## Clone or publish a project
+## Start, clone, or publish a project
+
+To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or
+**New project** under **Add Project** on any client, and type a name. T3 Code makes a Git
+repository in `~/.t3/projects` (the `projects` folder of your T3 data directory) with a README,
+an icon, and a first commit, then opens a new thread in it. The folder is named after the project,
+like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on GitHub** to also
+publish it. If Git has no name or email on that machine, the project is created without the
+first commit.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
@@ -164,7 +172,7 @@ on the Pull Requests page, **Link to thread** lets you search for an active thre
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count or the current review number with a count of additional
-links. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+links. Clicking a badge with more than one review opens the **Linked pull requests** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
 Linking and unlinking are available in the web and desktop clients.
 
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its

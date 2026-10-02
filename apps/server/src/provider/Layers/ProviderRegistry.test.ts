@@ -1,3 +1,6 @@
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +19,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import {
+  EnvironmentId,
   ClaudeSettings,
   CodexSettings,
   DEFAULT_SERVER_SETTINGS,
@@ -275,6 +279,7 @@ function makeCodexProbeSnapshot(
   input: Partial<CodexAppServerProviderSnapshot> = {},
 ): CodexAppServerProviderSnapshot {
   return {
+    version: undefined,
     account: {
       account: {
         type: "chatgpt",
@@ -343,7 +348,16 @@ const awaitPersistedProvider = (
     Effect.forkScoped,
   );
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), TestHttpClientLive))(
+const TestNodeServices = Layer.mergeAll(
+  NodeServices.layer,
+  Layer.mock(CodexInstallation)({ managedDirectory: "unused-managed-installation" }),
+  Layer.mock(ServerSecretStore)({}),
+  Layer.succeed(ServerEnvironmentIdentity, {
+    getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
+  }),
+);
+
+it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -1440,6 +1454,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             slashCommands: [],
           } as const satisfies ServerProvider;
           const snapshotCalls = yield* Ref.make(0);
+          const scopedResult = yield* Ref.make<ServerProvider>(scopedProvider);
+          const cacheInvalidations = yield* Ref.make(0);
+          const scanGate = yield* Ref.make<{
+            readonly started: Deferred.Deferred<void>;
+            readonly release: Deferred.Deferred<void>;
+          } | null>(null);
           const returnPendingSnapshot = yield* Ref.make(true);
           const probeStarted = yield* Deferred.make<void>();
           const releaseProbe = yield* Deferred.make<void>();
@@ -1469,6 +1489,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               applyUsageLimits: () => Effect.void,
             },
             snapshotForCwd,
+            invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
@@ -1478,7 +1499,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               if (yield* Ref.get(returnPendingSnapshot)) return pendingScopedProvider;
               yield* Deferred.succeed(probeStarted, undefined);
               yield* Deferred.await(releaseProbe);
-              return scopedProvider;
+              const result = yield* Ref.get(scopedResult);
+              const gate = yield* Ref.getAndSet(scanGate, null);
+              if (gate) {
+                yield* Deferred.succeed(gate.started, undefined);
+                yield* Deferred.await(gate.release);
+              }
+              return result;
             }),
           );
           const rebuiltProvider = {
@@ -1554,6 +1581,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             );
             yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
             assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
+            const newSkills = [
+              ...scopedProvider.skills,
+              { name: "added", path: "/workspace/added/SKILL.md", enabled: true },
+            ];
+            yield* Ref.set(scopedResult, { ...scopedProvider, skills: newSkills });
+            yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: "/workspace",
+              fresh: true,
+            });
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 3);
+            assert.strictEqual(yield* Ref.get(cacheInvalidations), 1);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+              [newSkills],
+            );
+
+            // A slow fresh scan that read older files must not overwrite a
+            // newer scan that finished first.
+            const slowStarted = yield* Deferred.make<void>();
+            const releaseSlow = yield* Deferred.make<void>();
+            yield* Ref.set(scanGate, { started: slowStarted, release: releaseSlow });
+            yield* Ref.set(scopedResult, scopedProvider);
+            const slowScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace", fresh: true })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(slowStarted);
+            const latestSkills = [
+              ...newSkills,
+              { name: "latest", path: "/workspace/latest/SKILL.md", enabled: true },
+            ];
+            yield* Ref.set(scopedResult, { ...scopedProvider, skills: latestSkills });
+            yield* registry.refreshWorkspaceSnapshot({
+              instanceId,
+              cwd: "/workspace",
+              fresh: true,
+            });
+            yield* Deferred.succeed(releaseSlow, undefined);
+            yield* Fiber.join(slowScan);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+              [latestSkills],
+            );
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);
