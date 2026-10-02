@@ -343,49 +343,36 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
       >
         {pendingTask.title}
       </Text>
-      {branch || props.environmentLabel ? (
-        <View className="mt-1 flex-row items-center gap-1">
-          <Text
-            className={cn(
-              "shrink text-xs text-foreground-muted",
-              sidebarPane && "text-drawer-foreground-muted",
-            )}
-            numberOfLines={1}
-          >
-            {branch ? (
-              <Text
-                className={cn(
-                  "text-xs text-foreground-muted",
-                  sidebarPane && "text-drawer-foreground-muted",
-                )}
-                style={{ fontFamily: MONO_FONT }}
-              >
-                {branch}
-              </Text>
-            ) : null}
-            {branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "text-xs text-foreground-tertiary",
-                  sidebarPane && "text-drawer-foreground-muted",
-                )}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
-          </Text>
-          {props.environmentLabel && props.environmentMachine ? (
-            <EnvironmentMachineSymbol
-              kind={props.environmentMachine}
-              size={11}
-              tintColorClassName={
-                sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-tertiary"
-              }
-            />
-          ) : null}
-        </View>
-      ) : null}
+      <View className="mt-1 flex-row items-center gap-2">
+        <Text
+          className={cn(
+            "min-w-0 flex-1 text-xs text-foreground-muted",
+            sidebarPane && "text-drawer-foreground-muted",
+          )}
+          numberOfLines={1}
+          style={{ fontFamily: MONO_FONT }}
+        >
+          {branch ?? ""}
+        </Text>
+        <Text
+          className={cn(
+            "max-w-28 text-xs text-foreground-tertiary",
+            sidebarPane && "text-drawer-foreground-muted",
+          )}
+          numberOfLines={1}
+        >
+          {props.environmentLabel ?? "Environment"}
+        </Text>
+        {props.environmentMachine ? (
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={11}
+            tintColorClassName={
+              sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-tertiary"
+            }
+          />
+        ) : null}
+      </View>
     </>
   );
 
@@ -965,62 +952,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           >
             {thread.session.lastError}
           </Text>
-        ) : thread.branch || props.environmentLabel ? (
-          /* "branch · machine" share one truncating line. The machine sits
-             last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. The glyph
-             hugs the label (it cannot live inside the Text without breaking
-             truncation), and the wrapper takes the slack so the trailers
-             stay pinned right. */
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {thread.branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.mutedForegroundClassName,
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {thread.branch}
-                </Text>
-              ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.tertiaryForegroundClassName,
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
-            </Text>
-            {props.environmentLabel && props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={11}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
-              />
-            ) : null}
-          </View>
+        ) : thread.branch ? (
+          <Text
+            className={cn(
+              "min-w-0 flex-1 text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : rowAppearance.mutedForegroundClassName,
+            )}
+            numberOfLines={1}
+            style={{ fontFamily: MONO_FONT }}
+          >
+            {thread.branch}
+          </Text>
         ) : (
           <View className="flex-1" />
         )}
@@ -1056,6 +1000,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             accentColor={props.providerInstance.accentColor}
             showBadge={props.providerInstance.showBadge}
             surfaceColor={rowAppearance.providerIconSurfaceColor}
+          />
+        ) : null}
+        <Text
+          className={cn(
+            "max-w-28 text-xs",
+            selected
+              ? selectedThreadRowColors.mutedForegroundClassName
+              : rowAppearance.tertiaryForegroundClassName,
+          )}
+          numberOfLines={1}
+        >
+          {props.environmentLabel ?? "Environment"}
+        </Text>
+        {props.environmentMachine ? (
+          <EnvironmentMachineSymbol
+            kind={props.environmentMachine}
+            size={11}
+            tintColorClassName={
+              selected
+                ? selectedThreadRowColors.mutedIconTintClassName
+                : rowAppearance.tertiaryIconTintClassName
+            }
           />
         ) : null}
       </View>
@@ -1155,21 +1121,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
-          <Text
-            className={cn(
-              "text-sm tabular-nums",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : snoozedRow
-                  ? rowAppearance.mutedForegroundClassName
+          <View className="max-w-28 items-end">
+            <Text
+              className={cn(
+                "text-sm tabular-nums",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
+                  : snoozedRow
+                    ? rowAppearance.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+              )}
+              style={{ fontFamily: MONO_FONT }}
+            >
+              {snoozedRow && props.snoozeWakeLabelText !== undefined
+                ? props.snoozeWakeLabelText
+                : timeLabel}
+            </Text>
+            <Text
+              className={cn(
+                "text-xs",
+                selected
+                  ? selectedThreadRowColors.mutedForegroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
-            )}
-            style={{ fontFamily: MONO_FONT }}
-          >
-            {snoozedRow && props.snoozeWakeLabelText !== undefined
-              ? props.snoozeWakeLabelText
-              : timeLabel}
-          </Text>
+              )}
+              numberOfLines={1}
+            >
+              {props.environmentLabel ?? "Environment"}
+            </Text>
+          </View>
         </View>
       </RowPressable>
     );

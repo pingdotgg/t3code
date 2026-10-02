@@ -792,6 +792,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   composer: ComposerThreadDraftState;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
+  environmentLabel: string | null;
   isActive: boolean;
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
@@ -887,6 +888,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
           <div aria-hidden className="mt-0.5 truncate text-sm font-medium text-foreground/90">
             {preview}
           </div>
+          <div className="mt-0.5 truncate text-right text-xs text-sidebar-muted-foreground">
+            {props.environmentLabel ?? "Environment"}
+          </div>
         </div>
       </div>
     </li>
@@ -906,6 +910,7 @@ interface SidebarDraftRowData {
 const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
+  environmentLabelById: ReadonlyMap<string, string>;
   environmentScopeIds: ReadonlySet<string> | null;
   scopedProjectKeys: ReadonlySet<string> | null;
   routeDraftId: string | null;
@@ -1000,6 +1005,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             composer={composer}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
+            environmentLabel={props.environmentLabelById.get(session.environmentId) ?? null}
             isActive={draftId === props.routeDraftId}
             onNavigate={props.onNavigateToDraft}
             onDiscard={handleDiscard}
@@ -1687,8 +1693,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
-          // Matches the h-9 row so unrendered rows never shift the list when they paint.
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
+          // Matches the h-10 row so unrendered rows never shift the list when they paint.
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_40px]",
           sortable?.isDragging && "relative z-20",
         )}
       >
@@ -1709,7 +1715,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(rowSurfaceClassName, "flex h-10 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1745,7 +1751,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {sortable?.isDragging ? (
               dragDestination
             ) : (
-              <span className="relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end">
+              <span className="relative ml-auto flex h-9 min-w-20 shrink-0 items-start justify-end">
                 <span
                   className={cn(
                     "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
@@ -1831,6 +1837,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <CheckIcon className="size-3" />
                   </button>
                 )}
+                <span className="pointer-events-none absolute right-0 bottom-0 max-w-20 truncate text-3xs text-sidebar-muted-foreground">
+                  {props.environmentLabel ?? "Environment"}
+                </span>
               </span>
             )}
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
@@ -2096,6 +2105,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
               </span>
+              <span className="max-w-20 shrink-0 truncate text-sidebar-muted-foreground">
+                {props.environmentLabel ?? "Environment"}
+              </span>
             </div>
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
@@ -2248,6 +2260,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
                 }}
               />
             ) : null}
+            <span className="max-w-24 self-end truncate text-xs text-sidebar-muted-foreground">
+              {props.environmentLabel ?? "Environment"}
+            </span>
           </span>
         </TooltipTrigger>
         <SidebarThreadTooltip
@@ -5308,6 +5323,7 @@ export default function Sidebar() {
                           key="draft-sessions"
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
+                          environmentLabelById={environmentLabelById}
                           environmentScopeIds={scopedEnvironmentIds}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}

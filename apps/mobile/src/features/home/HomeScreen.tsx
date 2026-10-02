@@ -732,10 +732,7 @@ export function HomeScreen(props: HomeScreenProps) {
             project={projectByKey.get(pendingScopeKey) ?? null}
             projectTitle={v2ProjectTitleByProjectKey.get(pendingScopeKey)}
             environmentLabel={
-              Object.keys(props.savedConnectionsById).length > 1
-                ? (props.savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ??
-                  null)
-                : null
+              props.savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null
             }
             environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
             showPendingDivider={item.showPendingDivider}
@@ -786,9 +783,7 @@ export function HomeScreen(props: HomeScreenProps) {
           )}
           providerInstance={resolveProviderInstance(thread)}
           environmentLabel={
-            Object.keys(props.savedConnectionsById).length > 1
-              ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
-              : null
+            props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
           }
           environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
           searchMatch={threadSearchMatchByKey.get(

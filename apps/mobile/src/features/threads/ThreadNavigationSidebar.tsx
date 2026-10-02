@@ -721,9 +721,7 @@ function ThreadNavigationSidebarPane(
               project={projectByKey.get(pendingScopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(pendingScopeKey)}
               environmentLabel={
-                Object.keys(savedConnectionsById).length > 1
-                  ? (savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null)
-                  : null
+                savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null
               }
               environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
               pane="sidebar"
@@ -759,9 +757,7 @@ function ThreadNavigationSidebarPane(
               projectTitle={projectTitleByProjectKey.get(scopeKey)}
               providerInstance={resolveProviderInstance(thread)}
               environmentLabel={
-                Object.keys(savedConnectionsById).length > 1
-                  ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
-                  : null
+                savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
               environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
               searchMatch={threadSearchMatchByKey.get(
