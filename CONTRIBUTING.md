@@ -14,7 +14,8 @@ it does not guarantee acceptance.
 
 These requirements apply to every open PR, including drafts. Draft status does not postpone triage
 or excuse missing approval, unfocused scope, or inadequate verification. A draft can be closed for
-the same reasons as a ready PR; converting a PR to draft does not exempt it from reassessment.
+the same reasons as a ready PR, subject to the automated closure protections below; converting a PR
+to draft does not exempt it from reassessment.
 
 Focused bug fixes, reliability fixes, performance improvements, and maintenance work are the most
 likely to be accepted. Unsolicited features, opinionated rewrites, and unrelated cleanup are not.
@@ -132,6 +133,23 @@ existing review settings. Neither triage nor a Macroscope review authorizes merg
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
 Missing evidence requires establishing the problem and showing how the change was checked.
+
+Automated triage must leave a PR open for human decision once a maintainer in the validated trusted
+same-main-SHA `TRIAGE_EXEMPTIONS.td` list has made a genuine human conversation or inline comment or
+submitted any review, including a changes-requested, prior-head, or subsequently dismissed review.
+An authorized maintainer in that list applying `triage:keep-open` also protects the PR; verify the
+applying actor rather than trusting label presence, author-added labels, or author claims. Exclude
+bot activity and activity explicitly attributed to Julius' dot under his account, recognizing both
+the current two-line and retired one-line prefixes documented in the
+[contribution-triage skill](.agents/skills/contribution-triage/SKILL.md#protect-maintainer-engaged-prs-from-automated-closure).
+Codex-assisted maintainer comments and reviews still count unless explicitly dot-attributed or bot
+activity. Ambiguous provenance or incomplete history means leave open for human decision.
+
+Before every automated close attempt, including retries, recheck the full paginated conversation and
+inline comments, submitted reviews, timeline, and current labels. New commits do not erase earlier
+maintainer engagement; there is no escape label or automatic expiry. This protects against automated
+closure only: it grants no author exemption, scope approval, eligibility, or review-handoff approval.
+Contribution requirements still apply, and maintainers can decide whether to close the PR.
 
 Every policy-based closure must identify the specific rule, cite the evidence supporting the finding,
 link the relevant section of this guide, and explain how to address it for reconsideration. For example,
