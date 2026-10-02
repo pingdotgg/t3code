@@ -159,6 +159,10 @@ export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
     model: "grok-build",
     options: [{ id: "reasoningEffort", value: "low" }],
   },
+  [PI_DRIVER_KIND]: {
+    model: "default",
+    options: [],
+  },
   [OPENCODE_DRIVER_KIND]: {
     model: "opencode/big-pickle",
     options: [{ id: "variant", value: "low" }],

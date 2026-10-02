@@ -100,6 +100,7 @@ describe("serverSettings helpers", () => {
       ["claudeAgent", { model: "claude-haiku-4-5", options: [{ id: "thinking", value: false }] }],
       ["cursor", { model: "composer-2", options: [{ id: "reasoning", value: "low" }] }],
       ["grok", { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["pi", { model: "default", options: [] }],
       ["opencode", { model: "opencode/big-pickle", options: [{ id: "variant", value: "low" }] }],
       ["antigravity", { model: "antigravity-default", options: [] }],
     ] as const;
