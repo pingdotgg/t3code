@@ -61,14 +61,16 @@ function setGhost(next: ThreadContextDragGhost | null) {
   for (const listener of listeners) listener();
 }
 
+function subscribeThreadContextDragGhost(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function useThreadContextDragGhost(): ThreadContextDragGhost | null {
   return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
+    subscribeThreadContextDragGhost,
     () => ghost,
     () => null,
   );

@@ -3,26 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE,
   isThreadContextDragOutsideList,
-  isThreadRowEligibleForContextDrag,
   resolvePinnedDragEndShouldReorder,
   resolveThreadContextDragRefs,
+  shouldArmThreadContextDrag,
   shouldIgnoreThreadContextDragStart,
 } from "./Sidebar.logic";
 
 describe("sidebar thread-context drag gating", () => {
-  it("arms every real thread row, pinned or not", () => {
-    expect(isThreadRowEligibleForContextDrag({ isDraft: false, isPinned: true }).eligible).toBe(
-      true,
-    );
-    expect(isThreadRowEligibleForContextDrag({ isDraft: false, isPinned: false }).eligible).toBe(
-      true,
-    );
-  });
-
-  it("never arms draft rows", () => {
-    expect(isThreadRowEligibleForContextDrag({ isDraft: true, isPinned: false }).eligible).toBe(
-      false,
-    );
+  it("arms every real thread row, pinned or not, but never drafts or virtual-agent runs", () => {
+    // Row eligibility is production-gated: SidebarDraftRow never attaches the
+    // gesture (structural) and virtual-agent run rows refuse to arm (their
+    // ref points at the parent while the label names the child run).
+    expect(shouldArmThreadContextDrag({ isDraft: false, isVirtualAgentRun: false })).toBe(true);
+    expect(shouldArmThreadContextDrag({ isDraft: true, isVirtualAgentRun: false })).toBe(false);
+    expect(shouldArmThreadContextDrag({ isDraft: false, isVirtualAgentRun: true })).toBe(false);
+    expect(shouldArmThreadContextDrag({ isDraft: true, isVirtualAgentRun: true })).toBe(false);
   });
 
   it("ignores presses on drafts and action controls to preserve clicks", () => {
@@ -97,11 +92,11 @@ describe("sidebar thread-context drag gating", () => {
 
   it("treats horizontal list exit as the context gesture, vertical moves as reorder", () => {
     const bounds = { left: 0, right: 260 };
-    expect(isThreadContextDragOutsideList({ x: 130, y: 400 }, bounds)).toBe(false);
-    expect(isThreadContextDragOutsideList({ x: 400, y: 400 }, bounds)).toBe(true);
-    expect(isThreadContextDragOutsideList({ x: -20, y: 400 }, bounds)).toBe(true);
-    // Returning to the sidebar resumes the reorder preview.
-    expect(isThreadContextDragOutsideList({ x: 130, y: 450 }, bounds)).toBe(false);
+    expect(isThreadContextDragOutsideList({ x: 130 }, bounds)).toBe(false);
+    expect(isThreadContextDragOutsideList({ x: 400 }, bounds)).toBe(true);
+    expect(isThreadContextDragOutsideList({ x: -20 }, bounds)).toBe(true);
+    // Returning to the sidebar clears the ghost so the reorder preview resumes.
+    expect(isThreadContextDragOutsideList({ x: 130 }, bounds)).toBe(false);
   });
 
   it("never reorders on a context drop, even inside nested project contexts", () => {

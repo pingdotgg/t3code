@@ -919,14 +919,18 @@ const THREAD_CONTEXT_DRAG_INTERACTIVE_SELECTOR = [
   "[role='dialog']",
 ].join(", ");
 
-export function isThreadRowEligibleForContextDrag(input: {
+export function shouldArmThreadContextDrag(input: {
   readonly isDraft: boolean;
-  readonly isPinned: boolean;
-}): { readonly eligible: boolean } {
-  // Drafts are unsent composer state, not threads: they navigate, never drag.
-  // Every real row — pinned roots and unpinned/nested rows alike — can drag.
-  void input.isPinned;
-  return { eligible: !input.isDraft };
+  readonly isVirtualAgentRun: boolean;
+}): boolean {
+  // Drafts are unsent composer state, not threads: they navigate, never drag
+  // (SidebarDraftRow never attaches the gesture — structural, not gated).
+  // Virtual-agent run rows are not threads either: their ref points at the
+  // parent thread while the label names the child run, so arming them would
+  // attach the wrong identity. Every other real row arms the gesture.
+  if (input.isDraft) return false;
+  if (input.isVirtualAgentRun) return false;
+  return true;
 }
 
 export function shouldIgnoreThreadContextDragStart(input: {
@@ -955,10 +959,9 @@ export function resolveThreadContextDragRefs(input: {
 }
 
 export function isThreadContextDragOutsideList(
-  point: { readonly x: number; readonly y: number },
+  point: { readonly x: number },
   bounds: { readonly left: number; readonly right: number },
 ): boolean {
-  void point.y;
   return point.x < bounds.left || point.x > bounds.right;
 }
 

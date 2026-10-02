@@ -183,6 +183,7 @@ import {
   resolveSidebarDraftPreview,
   resolveExistingThreadDraftPreview,
   resolveThreadContextDragRefs,
+  shouldArmThreadContextDrag,
   shouldIgnoreThreadContextDragStart,
   shouldRenderSidebarDraft,
   resolveThreadRowClassName,
@@ -274,21 +275,30 @@ const SIDEBAR_THREAD_WINDOW_SIZE = 30;
  *
  * Every real thread row — pinned roots and unpinned/nested rows alike —
  * arms this pointer gesture alongside the per-project pinned `DndContext`s.
- * Past the activation distance the row stays put (dnd-kit keeps owning any
- * reorder preview); once the pointer exits the thread list horizontally the
- * bridge ghost takes over, and releasing over a composer form dispatches the
- * drop event. Releasing anywhere else, returning to the list, or cancelling
- * (Escape, blur, unmount) clears the ghost and never reorders.
+ * Draft rows never attach it (unsent composer state) and virtual-agent run
+ * rows never arm it (their ref points at the parent thread while the label
+ * names the child run). Past the activation distance the row stays put;
+ * dnd-kit's reorder preview is NOT suspended while outside — the bridge
+ * ghost overlays it, the trailing pinned `onDragEnd` stands down via the
+ * suppression flag, and returning to the list clears the ghost so the
+ * reorder preview underneath resumes. Releasing over a composer form
+ * dispatches the cancelable drop event (only the receiver's `preventDefault`
+ * counts as acceptance); releasing anywhere else, returning to the list, or
+ * cancelling (Escape, blur, unmount, missed release) clears the ghost and
+ * never reorders.
  *
  * Ghost position lives in the bridge's external store, so pointer moves
- * re-render only the ghost — never the sidebar list.
+ * re-render only the ghost — never the sidebar list. The drop payload and
+ * list edges are resolved once at activation; only the ghost position and
+ * target hit test run per move.
  */
 const THREAD_CONTEXT_DRAG_LIST_SELECTOR = "[data-thread-context-list]";
 
 interface SidebarThreadContextDragSource {
   readonly threadKey: string;
   readonly title: string;
-  readonly threadRef: ScopedThreadRef;
+  readonly isPinned: boolean;
+  readonly isVirtualAgentRun: boolean;
 }
 
 let activeThreadContextGesture: {
@@ -299,25 +309,59 @@ let activeThreadContextGesture: {
   readonly listEl: Element | null;
   activated: boolean;
   outside: boolean;
+  /** List horizontal bounds, captured once at activation. */
+  listLeft: number;
+  listRight: number;
+  /** Drop payload, resolved once at activation: the selection cannot change mid-gesture. */
+  refs: ScopedThreadRef[] | null;
+  title: string;
   cleanup: () => void;
 } | null = null;
 
 /**
- * Set when a context drop dispatched during the current gesture so the
- * pinned `onDragEnd` firing after release can stand down even under the
- * nested per-project `DndContext`s. Consumed (cleared) by the next pinned
- * drag end.
+ * Set when a PINNED gesture released outside the list or was cancelled, so
+ * a trailing pinned `onDragEnd` from the same pointer stands down even under
+ * the nested per-project `DndContext`s. Cleared when the next gesture
+ * starts and consumed (cleared) by the next pinned drag end/cancel, so an
+ * unpinned-row drop — which has no trailing pinned drag end — can never
+ * suppress a later genuine reorder.
  */
 let consumedThreadContextDrop = false;
 
 function cancelActiveThreadContextGesture(): void {
-  activeThreadContextGesture?.cleanup();
+  const gesture = activeThreadContextGesture;
+  if (gesture?.activated && gesture.source.isPinned) {
+    consumedThreadContextDrop = true;
+  }
+  gesture?.cleanup();
 }
 
-function resolveThreadContextDragPayload(activeKey: string): {
-  readonly refs: ScopedThreadRef[];
-  readonly count: number;
-} {
+/** Test hooks: expose the production gesture protocol without changing it. */
+export function __getConsumedThreadContextDropForTests(): boolean {
+  return consumedThreadContextDrop;
+}
+
+export function __setConsumedThreadContextDropForTests(value: boolean): void {
+  consumedThreadContextDrop = value;
+}
+
+export function __getActiveThreadContextGestureForTests(): {
+  readonly activated: boolean;
+  readonly outside: boolean;
+} | null {
+  const gesture = activeThreadContextGesture;
+  return gesture ? { activated: gesture.activated, outside: gesture.outside } : null;
+}
+
+export function __resetThreadContextDragForTests(): void {
+  activeThreadContextGesture = null;
+  consumedThreadContextDrop = false;
+  endThreadContextDrag();
+}
+
+export { startSidebarThreadContextGesture, cancelActiveThreadContextGesture };
+
+function resolveThreadContextDragPayload(activeKey: string): ScopedThreadRef[] {
   const selectedKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
   const keys = resolveThreadContextDragRefs({
     activeKey,
@@ -329,7 +373,7 @@ function resolveThreadContextDragPayload(activeKey: string): {
     const ref = parseScopedThreadKey(key);
     if (ref) refs.push(ref);
   }
-  return { refs, count: Math.max(1, refs.length) };
+  return refs;
 }
 
 function startSidebarThreadContextGesture(
@@ -337,6 +381,13 @@ function startSidebarThreadContextGesture(
   source: SidebarThreadContextDragSource,
 ): void {
   if (activeThreadContextGesture) return;
+  // Virtual-agent run rows carry a parent ref with a child label and are not
+  // real threads: never arm the gesture for them.
+  if (
+    !shouldArmThreadContextDrag({ isDraft: false, isVirtualAgentRun: source.isVirtualAgentRun })
+  ) {
+    return;
+  }
   const nativeTarget = event.target instanceof Element ? event.target : null;
   if (
     shouldIgnoreThreadContextDragStart({
@@ -361,9 +412,17 @@ function startSidebarThreadContextGesture(
     listEl,
     activated: false,
     outside: false,
+    listLeft: 0,
+    listRight: 0,
+    refs: null as ScopedThreadRef[] | null,
+    title: "",
     cleanup: () => {},
   };
   activeThreadContextGesture = gesture;
+  // A fresh gesture owns the flag: a previous unpinned-row drop (whose
+  // DndContext never fires drag end) must not suppress this gesture's
+  // genuine reorder.
+  consumedThreadContextDrop = false;
 
   const suppressReleaseClick = () => {
     const suppress = (click: Event) => {
@@ -397,6 +456,14 @@ function startSidebarThreadContextGesture(
 
   const cancel = () => {
     const wasActive = gesture.activated;
+    if (wasActive && source.isPinned) {
+      // Stand down a trailing dnd-kit drag from the same pointer: dnd-kit
+      // aborts its own drag on Escape, but blur/unmount paths leave it live,
+      // and either way the release after a cancelled pinned gesture must not
+      // reorder. Unpinned gestures have no trailing drag end, so they leave
+      // the flag alone. The next gesture start clears this again.
+      consumedThreadContextDrop = true;
+    }
     cleanup();
     // A cancelled press must not navigate on release; an untouched press
     // keeps plain-click behavior.
@@ -407,14 +474,17 @@ function startSidebarThreadContextGesture(
 
   const onMove = (native: Event) => {
     if (!(native instanceof PointerEvent) || native.pointerId !== pointerId) return;
+    // A release outside the window can be missed (no pointerup arrives):
+    // whenever the initiating button is no longer held the gesture is over.
+    // Checking after activation too keeps a missed release from stranding
+    // the ghost. `cancel` suppresses the release click only when the press
+    // had activated, preserving plain-click behavior otherwise.
+    if ((native.buttons & 1) === 0) {
+      cancel();
+      return;
+    }
     const point = pointFromEvent(native);
     if (!gesture.activated) {
-      // A release outside the window can be missed: never arm when the
-      // initiating button is no longer held.
-      if ((native.buttons & 1) === 0) {
-        cleanup();
-        return;
-      }
       const distance = Math.hypot(point.x - startX, point.y - startY);
       if (distance <= THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE) return;
       gesture.activated = true;
@@ -422,24 +492,38 @@ function startSidebarThreadContextGesture(
       // accumulating a stray selection. Clicks never reach this path.
       document.getSelection()?.removeAllRanges();
       suppressReleaseClick();
+      // Resolve once: the selection cannot change mid-gesture, the title is
+      // fixed, and only the list's horizontal edges matter for exit
+      // detection, so per-move work stays at ghost position + hit test.
+      const bounds = listEl?.getBoundingClientRect();
+      gesture.listLeft = bounds?.left ?? 0;
+      gesture.listRight = bounds?.right ?? Number.POSITIVE_INFINITY;
+      gesture.title = source.title.trim() || "Thread";
+      gesture.refs = resolveThreadContextDragPayload(source.threadKey);
     } else if (native.cancelable) {
       native.preventDefault();
     }
-    const bounds = listEl?.getBoundingClientRect();
-    const outside = bounds ? isThreadContextDragOutsideList(point, bounds) : true;
+    const outside =
+      gesture.listEl === null
+        ? true
+        : isThreadContextDragOutsideList(point, {
+            left: gesture.listLeft,
+            right: gesture.listRight,
+          });
     if (!outside) {
       if (gesture.outside) {
         // Back over the list: drop the ghost so the dnd-kit reorder preview
-        // resumes underneath.
+        // underneath (never suspended while outside) resumes visibly.
         gesture.outside = false;
         endThreadContextDrag();
       }
       return;
     }
     gesture.outside = true;
-    const title = source.title.trim() || "Thread";
-    const { count } = resolveThreadContextDragPayload(source.threadKey);
-    moveThreadContextDrag(point, { title, count });
+    moveThreadContextDrag(point, {
+      title: gesture.title,
+      count: Math.max(1, gesture.refs?.length ?? 0),
+    });
   };
 
   const onUp = (native: Event) => {
@@ -447,9 +531,9 @@ function startSidebarThreadContextGesture(
     const wasOutside = gesture.activated && gesture.outside;
     const point =
       native instanceof PointerEvent ? pointFromEvent(native) : { x: startX, y: startY };
+    const refs = gesture.refs ?? [];
     cleanup();
     if (!wasOutside) return;
-    const { refs } = resolveThreadContextDragPayload(source.threadKey);
     // Integration seam: pass `{ enabled: <composer-can-accept> }` once the
     // composer exposes it; the bridge honors the gate without new contracts.
     // The return reports receiver acceptance — found target alone is not
@@ -457,7 +541,12 @@ function startSidebarThreadContextGesture(
     if (refs.length > 0) {
       dropThreadContext(point, refs);
     }
-    consumedThreadContextDrop = true;
+    // Only pinned gestures have a trailing dnd-kit drag end to stand down.
+    // Unpinned drops must never set the flag: no drag end will consume it,
+    // so it would poison the next genuine pinned reorder.
+    if (source.isPinned) {
+      consumedThreadContextDrop = true;
+    }
   };
 
   const onCancel = (native: Event) => {
@@ -715,7 +804,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const contextDragPointerDown = useSidebarThreadContextDragSource({
     threadKey,
     title: thread.title,
-    threadRef,
+    isPinned: props.isPinned,
+    isVirtualAgentRun: virtualAgentRun != null,
   });
   const pendingTurnKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const pendingTurn = usePendingTurnStore(
@@ -1619,8 +1709,10 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
     (event: DragEndEvent) => {
       const { active, over } = event;
       const overId = over ? String(over.id) : null;
-      // A context drop releasing over (or outside) the list never reorders,
-      // even with the nested per-project DndContexts mounted.
+      // A pinned context gesture releasing over (or outside) the list never
+      // reorders, even with the nested per-project DndContexts mounted. The
+      // flag is consumed here so an unpinned-row drop — which sets no flag —
+      // can never suppress a later genuine reorder.
       const wasContextDrag = consumedThreadContextDrop;
       consumedThreadContextDrop = false;
       if (
@@ -1637,6 +1729,12 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
     },
     [projectKey, reorderPinnedThreads],
   );
+  const handlePinnedThreadDragCancel = useCallback(() => {
+    // A cancelled dnd-kit drag consumes a pending suppression the same way a
+    // completed one does, so a cancelled pinned gesture cannot poison the
+    // next genuine reorder either.
+    consumedThreadContextDrop = false;
+  }, []);
 
   return (
     <DndContext
@@ -1644,6 +1742,7 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
       collisionDetection={pinnedThreadCollisionDetection}
       modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
       onDragEnd={handlePinnedThreadDragEnd}
+      onDragCancel={handlePinnedThreadDragCancel}
     >
       <SortableContext items={[...sortablePinnedThreadKeys]} strategy={verticalListSortingStrategy}>
         {children}
