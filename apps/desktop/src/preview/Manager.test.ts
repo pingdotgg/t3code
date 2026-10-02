@@ -1691,53 +1691,69 @@ describe("PreviewManager", () => {
     ),
   );
 
+  const makeAttachingGuest = (id: number) => {
+    const listeners = new Map<string, () => void>();
+    const attach = vi.fn();
+    const detach = vi.fn();
+    const sendCommand = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
+      async () => undefined,
+    );
+    let destroyed = false;
+    const wc = {
+      id,
+      isDestroyed: () => destroyed,
+      isDevToolsOpened: () => {
+        // Electron throws from native methods once a WebContents is destroyed.
+        if (destroyed) throw new TypeError("Object has been destroyed");
+        return false;
+      },
+      getType: () => "webview",
+      getURL: () => "http://localhost:5173/README.md",
+      getTitle: () => "README.md",
+      isLoading: () => true,
+      getZoomFactor: () => 1,
+      setZoomFactor: vi.fn(),
+      setAudioMuted: vi.fn(),
+      isCurrentlyAudible: () => false,
+      on: vi.fn(),
+      off: vi.fn(),
+      once: (event: string, listener: () => void) => {
+        listeners.set(event, listener);
+      },
+      ipc: { on: vi.fn(), off: vi.fn() },
+      send: webviewSend,
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+      setIgnoreMenuShortcuts: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      debugger: {
+        isAttached: () => attach.mock.calls.length > detach.mock.calls.length,
+        attach,
+        detach,
+        sendCommand,
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+    };
+    return {
+      wc: wc as unknown as Electron.WebContents,
+      attach,
+      detach,
+      sendCommand,
+      destroy: () => {
+        destroyed = true;
+        listeners.get("destroyed")?.();
+      },
+    };
+  };
+
   effectIt.effect("sets the opaque base as soon as a guest attaches", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const makeGuest = (id: number) => {
-          const listeners = new Map<string, () => void>();
-          const attach = vi.fn();
-          const detach = vi.fn();
-          const sendCommand = vi.fn(async () => undefined);
-          const wc = {
-            id,
-            isDestroyed: () => false,
-            isDevToolsOpened: () => false,
-            getType: () => "webview",
-            getURL: () => "http://localhost:5173/README.md",
-            getTitle: () => "README.md",
-            isLoading: () => true,
-            getZoomFactor: () => 1,
-            setZoomFactor: vi.fn(),
-            setAudioMuted: vi.fn(),
-            isCurrentlyAudible: () => false,
-            on: vi.fn(),
-            off: vi.fn(),
-            once: (event: string, listener: () => void) => {
-              listeners.set(event, listener);
-            },
-            ipc: { on: vi.fn(), off: vi.fn() },
-            send: webviewSend,
-            navigationHistory: { canGoBack: () => false, canGoForward: () => false },
-            setIgnoreMenuShortcuts: vi.fn(),
-            setWindowOpenHandler: vi.fn(),
-            debugger: {
-              isAttached: () => attach.mock.calls.length > detach.mock.calls.length,
-              attach,
-              detach,
-              sendCommand,
-              on: vi.fn(),
-              off: vi.fn(),
-            },
-          };
-          return { wc, attach, detach, sendCommand, listeners };
-        };
-
         // The tab's first document can paint before the renderer registers the
         // guest, so the opaque base has to be the first command on attach.
-        const claimed = makeGuest(44);
-        fromId.mockReturnValue(claimed.wc as never);
-        yield* manager.prepareWebview(claimed.wc as never);
+        const claimed = makeAttachingGuest(44);
+        fromId.mockReturnValue(claimed.wc);
+        yield* manager.prepareWebview(claimed.wc);
         expect(claimed.attach).toHaveBeenCalledTimes(1);
         expect(claimed.sendCommand.mock.calls[0]).toEqual([
           "Emulation.setDefaultBackgroundColorOverride",
@@ -1753,13 +1769,41 @@ describe("PreviewManager", () => {
         });
 
         // A guest destroyed before any tab claims it releases its session.
-        const unclaimed = makeGuest(45);
-        yield* manager.prepareWebview(unclaimed.wc as never);
+        const unclaimed = makeAttachingGuest(45);
+        yield* manager.prepareWebview(unclaimed.wc);
         expect(unclaimed.attach).toHaveBeenCalledTimes(1);
-        unclaimed.listeners.get("destroyed")?.();
+        unclaimed.destroy();
         yield* Effect.yieldNow;
         expect(unclaimed.detach).toHaveBeenCalledTimes(1);
         expect(claimed.detach).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const slow = makeAttachingGuest(46);
+        let releaseSlow = () => {};
+        const slowCommand = new Promise<void>((resolve) => {
+          releaseSlow = resolve;
+        });
+        slow.sendCommand.mockImplementation(() => slowCommand);
+        const queued = makeAttachingGuest(47);
+
+        const slowFiber = yield* manager
+          .prepareWebview(slow.wc)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const queuedFiber = yield* manager
+          .prepareWebview(queued.wc)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        queued.destroy();
+        releaseSlow();
+
+        expect(Exit.isSuccess(yield* Fiber.await(slowFiber))).toBe(true);
+        expect(Exit.isSuccess(yield* Fiber.await(queuedFiber))).toBe(true);
+        expect(slow.attach).toHaveBeenCalledTimes(1);
+        expect(queued.attach).not.toHaveBeenCalled();
       }),
     ),
   );

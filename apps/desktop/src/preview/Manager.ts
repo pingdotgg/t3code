@@ -1303,6 +1303,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       > => {
         const existing = sessions.get(wc.id);
         if (existing) return Effect.succeed([existing, sessions] as const);
+        // A guest can be destroyed while it waits for this lock, and its native
+        // methods throw once it is.
+        if (wc.isDestroyed()) {
+          return Effect.fail(
+            new PreviewOperationError({
+              operation: "ensureControlSession",
+              webContentsId: wc.id,
+              cause: new Error("WebContents was destroyed"),
+            }),
+          );
+        }
         if (wc.isDevToolsOpened()) {
           return Effect.fail(
             new PreviewAutomationDevToolsOpenError({
@@ -2429,7 +2440,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc.once("destroyed", () => {
       runFork(detachControlSession(webContentsId));
     });
-    yield* ensureControlSession(wc).pipe(Effect.ignore);
+    // Runs detached from the attach event, so nothing may escape. registerWebview
+    // opens the session again if this one did not.
+    yield* ensureControlSession(wc).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("Preview webview control session was not opened on attach.", {
+          webContentsId,
+          cause,
+        }),
+      ),
+    );
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
