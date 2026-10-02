@@ -59,7 +59,6 @@ import {
 
 const PI_PRESENTATION = {
   displayName: "Pi",
-  badgeLabel: "Early Access",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
   // The adapter reports context usage from Pi's streaming usage while a
