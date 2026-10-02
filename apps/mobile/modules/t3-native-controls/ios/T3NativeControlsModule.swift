@@ -11,6 +11,11 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Function("observeAgentWidget") { (props: String) in T3AgentWidgetConfiguration.observe(props: props) }
+    Function("agentWidgetToken") { (identity: String) in T3AgentWidgetConfiguration.token(identity: identity) }
+    Function("configureAgentWidgetRefresh") { (url: String, token: String) in T3AgentWidgetConfiguration.configure(url: url, token: token) }
+    Function("clearAgentWidgetRefresh") { T3AgentWidgetConfiguration.clear() }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,

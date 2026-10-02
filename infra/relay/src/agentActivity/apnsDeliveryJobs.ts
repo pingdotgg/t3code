@@ -19,6 +19,7 @@ const ApnsDeliveryKindSchema = Schema.Literals([
   "live_activity_update",
   "live_activity_end",
   "push_notification",
+  "widget_refresh",
 ]);
 const LiveActivityStartOrUpdateKindSchema = Schema.Literals([
   "live_activity_start",
@@ -302,6 +303,8 @@ function validatePayloadShape(payload: ApnsDeliveryJobPayload): ApnsDeliveryJobI
           deviceId: payload.target.deviceId,
         });
       }
+      return null;
+    case "widget_refresh":
       return null;
     case "live_activity_end":
       if (payload.notification !== null) {

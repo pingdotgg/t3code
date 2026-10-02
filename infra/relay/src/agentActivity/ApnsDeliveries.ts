@@ -41,6 +41,7 @@ import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import { withSpanAttributes } from "../observability.ts";
 
 import {
@@ -95,12 +96,22 @@ type ChosenPushNotificationDelivery = {
 type ChosenDelivery = ChosenLiveActivityDelivery | ChosenPushNotificationDelivery;
 
 export type ApnsDeliveryError =
+  | WidgetRefreshDeliveryError
   | ApnsDeliveryQueue.ApnsDeliveryQueueError
   | ApnsDeliveryJobVerificationError
   | ApnsDeliveryJobClaimInFlight
   | DeliveryAttempts.DeliveryAttemptRecordPersistenceError
   | LiveActivities.LiveActivityTargetListPersistenceError
   | LiveActivities.LiveActivityDeliveryMarkPersistenceError;
+
+export class WidgetRefreshDeliveryError extends Schema.TaggedError<WidgetRefreshDeliveryError>()(
+  "WidgetRefreshDeliveryError",
+  { deviceId: Schema.String, sourceJobId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to deliver widget refresh for device ${this.deviceId}.`;
+  }
+}
 
 export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedError<ApnsDeliveryJobClaimInFlight>()(
   "ApnsDeliveryJobClaimInFlight",
@@ -455,6 +466,8 @@ function expectedCurrentToken(input: {
     case "live_activity_update":
     case "live_activity_end":
       return input.target.activity_push_token;
+    case "widget_refresh":
+      return null;
     case "push_notification":
       return input.target.push_token;
   }
@@ -551,6 +564,7 @@ export const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
+  const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
 
   // Start jobs are decided at publish time, but consecutive publishes land in
   // the same queue batch: a start chosen from a running aggregate can be
@@ -1032,6 +1046,17 @@ export const make = Effect.gen(function* () {
     });
     return yield* Effect.suspend(() => {
       switch (payload.kind) {
+        case "widget_refresh":
+          return widgets.process(payload).pipe(
+            Effect.mapError(
+              (cause) =>
+                new WidgetRefreshDeliveryError({
+                  deviceId: payload.target.deviceId,
+                  sourceJobId: payload.jobId,
+                  cause,
+                }),
+            ),
+          );
         case "live_activity_start":
         case "live_activity_update":
           if (payload.aggregate === null) {

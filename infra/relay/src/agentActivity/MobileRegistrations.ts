@@ -3,6 +3,7 @@ import type {
   RelayDeviceRegistrationRequest,
   RelayLiveActivityRegistrationRequest,
 } from "@t3tools/contracts/relay";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -36,6 +37,7 @@ export class MobileRegistrations extends Context.Service<
     }) => Effect.Effect<{ readonly ok: true }, MobileRegistrationError>;
     readonly getAgentActivitySnapshot: (input: {
       readonly userId: string;
+      readonly excludedEnvironmentIds?: ReadonlyArray<EnvironmentId>;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, MobileRegistrationError>;
   }
 >()("t3code-relay/agentActivity/MobileRegistrations") {}
@@ -94,9 +96,12 @@ export const make = Effect.gen(function* () {
       function* (input) {
         const activeStates = yield* rows.listForUser({ userId: input.userId });
         const now = yield* DateTime.now;
+        const excludedEnvironmentIds = [...new Set(input.excludedEnvironmentIds ?? [])];
+        const excluded = new Set(excludedEnvironmentIds);
         return {
+          excludedEnvironmentIds,
           aggregate: AgentActivityPublisher.makeAggregateState({
-            activeStates,
+            activeStates: activeStates.filter((state) => !excluded.has(state.environmentId)),
             terminalState: null,
             nowMs: now.epochMilliseconds,
           }),

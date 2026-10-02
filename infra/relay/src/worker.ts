@@ -24,6 +24,7 @@ import {
   healthApi,
   metadataApi,
   mobileApi,
+  widgetApi,
   RELAY_HTTP_ROUTER_CONFIG,
   relayClientAuthLayer,
   relayDpopClientAuthLayer,
@@ -73,6 +74,7 @@ import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider
 import * as ManagedEndpointReaper from "./environments/ManagedEndpointReaper.ts";
 import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
+import * as AgentWidgetRefresh from "./agentActivity/AgentWidgetRefresh.ts";
 
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -101,6 +103,7 @@ const relayApiLayer = Layer.mergeAll(
   healthApi,
   metadataApi,
   mobileApi,
+  widgetApi,
   clientApi,
   tokenApi,
   dpopClientApi,
@@ -230,7 +233,7 @@ export const ApiLive = Api.make(
         ),
       ),
       Layer.provideMerge(DpopProofs.layer),
-      Layer.provideMerge(ApnsDeliveries.layer),
+      Layer.provideMerge(ApnsDeliveries.layer.pipe(Layer.provideMerge(AgentWidgetRefresh.layer))),
       Layer.provideMerge(
         FcmDeliveries.layer.pipe(
           Layer.provide(

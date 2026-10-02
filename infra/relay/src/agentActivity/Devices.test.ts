@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import type { SQL } from "drizzle-orm";
@@ -19,6 +20,7 @@ const registration: RelayDeviceRegistrationRequest = {
   apsEnvironment: "production",
   pushToken: "apns-device-token" as RelayDeviceRegistrationRequest["pushToken"],
   pushToStartToken: "push-to-start-token" as RelayDeviceRegistrationRequest["pushToStartToken"],
+  widgetAccessToken: "a".repeat(64),
   preferences: {
     notificationsEnabled: true,
     liveActivitiesEnabled: true,
@@ -104,6 +106,7 @@ describe("Devices", () => {
           params: ["push-to-start-token"],
         },
       ]);
+      expect(insertedValues[0]).not.toHaveProperty("widgetAccessToken");
       expect(insertedValues).toEqual([
         expect.objectContaining({
           userId: "user-2",
@@ -112,6 +115,9 @@ describe("Devices", () => {
           apsEnvironment: "production",
           pushToken: "apns-device-token",
           pushToStartToken: "push-to-start-token",
+          widgetAccessTokenHash: NodeCrypto.createHash("sha256")
+            .update("a".repeat(64))
+            .digest("hex"),
         }),
       ]);
     }).pipe(

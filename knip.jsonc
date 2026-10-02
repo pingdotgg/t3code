@@ -66,9 +66,11 @@
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
     "apps/mobile": {
-      // Expo loads plugins by string; Metro embeds the browser entry in the native WebView.
+      // Expo loads plugins and fingerprint configuration by filename; Metro
+      // embeds the browser entry in the native WebView.
       "entry": [
         "index.ts!",
+        "fingerprint.config.cjs",
         "plugins/*.cjs",
         "scripts/generate-device-stream.mts",
         "src/features/devices/device-stream.browser.ts!",

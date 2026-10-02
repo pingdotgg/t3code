@@ -196,6 +196,56 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("uses the WidgetKit push type and app topic without a user alert", () => {
+    const { privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const client = HttpClient.make((request) => {
+      expect(request.url).toBe("https://api.sandbox.push.apple.com/3/device/widget-token");
+      expect(request.headers).toMatchObject({
+        "apns-push-type": "widgets",
+        "apns-topic": "com.t3tools.t3code.dev.push-type.widgets",
+        "apns-priority": "5",
+        "apns-collapse-id": "agent-widget",
+      });
+      expect(request.body._tag).toBe("Uint8Array");
+      if (request.body._tag === "Uint8Array")
+        expect(JSON.parse(new TextDecoder().decode(request.body.body))).toEqual({
+          aps: { "content-changed": true },
+        });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 })));
+    });
+    return Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const result = yield* apns.sendPushNotificationRequest({
+        credentials: {
+          teamId: "widget-team",
+          keyId: "widget-key",
+          privateKey: Redacted.make(privateKey),
+          bundleId: "com.t3tools.t3code.dev",
+          environment: "sandbox",
+        },
+        request: {
+          token: "widget-token",
+          pushType: "widgets",
+          priority: "5",
+          payload: { aps: { "content-changed": true } },
+        },
+        issuedAtUnixSeconds: 0,
+      });
+      expect(result.ok).toBe(true);
+    }).pipe(
+      Effect.provide(
+        ApnsClient.layer.pipe(
+          Layer.provide(ApnsProviderTokens.layer),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        ),
+      ),
+    );
+  });
+
   it.effect("preserves JWT signing context and the crypto cause", () =>
     Effect.gen(function* () {
       const apns = yield* ApnsClient.ApnsClient;

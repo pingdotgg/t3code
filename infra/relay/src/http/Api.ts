@@ -74,6 +74,7 @@ import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvide
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublishSignatures.ts";
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
+import * as AgentWidgetRefresh from "../agentActivity/AgentWidgetRefresh.ts";
 import { withSpanAttributes } from "../observability.ts";
 import * as RelayDb from "../db.ts";
 
@@ -673,6 +674,72 @@ export const recoverEnvironmentTunnelRecord = Effect.fn(
   };
 });
 
+export const widgetApi = HttpApiBuilder.group(
+  RelayApi,
+  "widget",
+  Effect.fnUntraced(function* (handlers) {
+    const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+    return handlers
+      .handle(
+        "refresh",
+        Effect.fn("relay.api.widget.refresh")(
+          function* ({ headers, query }) {
+            const token = headers.authorization.replace(/^Bearer /i, "");
+            yield* appendRelayCredentialResponseHeaders;
+            return yield* widgets.refresh({
+              token,
+              ...(query.pushToken !== undefined ? { pushToken: query.pushToken } : {}),
+            });
+          },
+          mapErrorTags({
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+            AgentActivityRowListPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      )
+      .handle(
+        "revoke",
+        Effect.fn("relay.api.widget.revoke")(
+          function* ({ headers }) {
+            yield* appendRelayCredentialResponseHeaders;
+            yield* widgets.revoke({ token: headers.authorization.replace(/^Bearer /i, "") });
+            return { ok: true as const };
+          },
+          mapErrorTags({
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      );
+  }),
+);
+
 export const mobileApi = HttpApiBuilder.group(
   RelayApi,
   "mobile",
@@ -706,13 +773,16 @@ export const mobileApi = HttpApiBuilder.group(
       )
       .handle(
         "getAgentActivitySnapshot",
-        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* () {
+        Effect.fn("relay.api.mobile.getAgentActivitySnapshot")(function* ({ query }) {
           const { userId, token } = yield* RelayClientPrincipal;
           const proofKeyThumbprint = yield* requireDpopPrincipalScope("mobile:registration");
           yield* requireDpopThumbprint(proofKeyThumbprint, {
             expectedAccessToken: token,
           }).pipe(Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs));
-          return yield* registrations.getAgentActivitySnapshot({ userId });
+          return yield* registrations.getAgentActivitySnapshot({
+            userId,
+            excludedEnvironmentIds: query.excludedEnvironmentIds ?? [],
+          });
         }, mapRelayCommonApiErrors("invalid_dpop")),
       )
       .handle(
@@ -1200,6 +1270,12 @@ export const serverApi = HttpApiBuilder.group(
               traceId,
             }),
           ApnsDeliveryQueueSendError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "upstream_unavailable",
+              traceId,
+            }),
+          WidgetRefreshDeliveryError: (_error, traceId) =>
             new RelayInternalError({
               code: "internal_error",
               reason: "upstream_unavailable",

@@ -1,3 +1,4 @@
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,22 @@ import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
 const publisherLayer = AgentActivityPublisher.layer.pipe(
+  Layer.provide(
+    Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+      revoke: () => Effect.void,
+      refresh: () => Effect.succeed({ aggregate: null }),
+      notify: () => Effect.succeed([]),
+      process: (job) =>
+        Effect.succeed({
+          deviceId: job.target.deviceId,
+          kind: "widget_refresh",
+          ok: true,
+          apnsStatus: null,
+          apnsReason: null,
+          apnsId: null,
+        }),
+    }),
+  ),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -137,6 +154,59 @@ function makeApnsDeliveries(
 }
 
 describe("AgentActivityPublisher", () => {
+  it.effect("enqueues the widget refresh even when Android notification delivery fails", () => {
+    const widgetUsers: string[] = [];
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      const error = yield* Effect.flip(
+        publisher.publish({
+          environmentId: state.environmentId,
+          environmentPublicKey: "key",
+          threadId: state.threadId,
+          state,
+        }),
+      );
+      expect(error._tag).toBe("FcmDeliveryError");
+      expect(widgetUsers).toEqual([android.user_id]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android]) }),
+              ),
+              Layer.succeed(ApnsDeliveries.ApnsDeliveries, makeApnsDeliveries()),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: () =>
+                  Effect.fail(
+                    new FcmDeliveries.FcmDeliveryError({
+                      operation: "enqueue",
+                      cause: "test failure",
+                    }),
+                  ),
+                process: () => Effect.void,
+              }),
+              Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+                revoke: () => Effect.void,
+                refresh: () => Effect.succeed({ aggregate: null }),
+                notify: ({ userId }) =>
+                  Effect.sync(() => {
+                    widgetUsers.push(userId);
+                    return [];
+                  }),
+                process: () => Effect.die("unused"),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   it.effect("routes Android publication and registration replay to FCM alongside iOS", () => {
     const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
     const ios = target("ios");
@@ -162,6 +232,22 @@ describe("AgentActivityPublisher", () => {
     }).pipe(
       Effect.provide(
         AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+              revoke: () => Effect.void,
+              refresh: () => Effect.succeed({ aggregate: null }),
+              notify: () => Effect.succeed([]),
+              process: (job) =>
+                Effect.succeed({
+                  deviceId: job.target.deviceId,
+                  kind: "widget_refresh",
+                  ok: true,
+                  apnsStatus: null,
+                  apnsReason: null,
+                  apnsId: null,
+                }),
+            }),
+          ),
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
