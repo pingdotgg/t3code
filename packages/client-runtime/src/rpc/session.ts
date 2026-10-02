@@ -25,7 +25,7 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { WEBSOCKET_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
   ConnectionTransientError,
@@ -161,7 +161,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     const networkHint =
-      connection.target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : "";
+      connection.target._tag === "RelayConnectionTarget" ? ` ${WEBSOCKET_BLOCKING_HINT}` : "";
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
       mapSessionRpcError(error, networkHint);
     yield* Effect.annotateCurrentSpan({

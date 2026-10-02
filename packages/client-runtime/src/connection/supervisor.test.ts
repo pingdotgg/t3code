@@ -39,7 +39,7 @@ import {
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
-import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { NETWORK_BLOCKING_HINT, WEBSOCKET_BLOCKING_HINT } from "../errors/network.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -476,6 +476,22 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment did not respond during connection setup.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("blames the WebSocket when a relay connection stalls after preparing", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ ready: () => Effect.never });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.stage === "synchronizing");
+      yield* TestClock.adjust("15 seconds");
+      const failed = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      expect(failed.lastFailure?.message).toBe(
+        `Test environment did not finish connection setup after T3 Connect accepted the request. ${WEBSOCKET_BLOCKING_HINT}`,
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
