@@ -168,7 +168,6 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarScopeItems,
   formatWorkingDurationLabel,
-  groupSidebarThreadsByEnvironment,
   firstValidTimestampMs,
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
@@ -1085,7 +1084,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   jumpLabel: string | null;
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
-  environmentHeading: string | null;
   environmentMachine: EnvironmentMachineKind;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
@@ -1692,12 +1690,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           sortable?.isDragging && "relative z-20",
         )}
       >
-        {props.environmentHeading !== null ? (
-          <div className="pointer-events-none flex items-center gap-2 px-2.5 pt-3 pb-1 text-xs font-medium text-sidebar-muted-foreground">
-            <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5 shrink-0" />
-            <span className="min-w-0 truncate">{props.environmentHeading}</span>
-          </div>
-        ) : null}
         <Tooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
             render={
@@ -1854,12 +1846,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         sortable?.isDragging && "relative z-20",
       )}
     >
-      {props.environmentHeading !== null ? (
-        <div className="pointer-events-none flex items-center gap-2 px-2.5 pt-3 pb-1 text-xs font-medium text-sidebar-muted-foreground">
-          <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate">{props.environmentHeading}</span>
-        </div>
-      ) : null}
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
@@ -2413,10 +2399,6 @@ export default function Sidebar() {
             ] as const,
         ),
       ),
-    [environments],
-  );
-  const environmentOrder = useMemo(
-    () => environments.map((environment) => environment.environmentId),
     [environments],
   );
   const orderedProjects = useMemo(
@@ -3468,17 +3450,17 @@ export default function Sidebar() {
   }, [activeThreads, pinnedThreads, settledThreads, snoozedThreads, workingThreads]);
   const pinnedKeys = useMemo(
     () =>
-      groupSidebarThreadsByEnvironment(pinnedThreads, environmentOrder).map((thread) =>
+      pinnedThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [environmentOrder, pinnedThreads],
+    [pinnedThreads],
   );
   const activeKeys = useMemo(
     () =>
-      groupSidebarThreadsByEnvironment(activeThreads, environmentOrder).map((thread) =>
+      activeThreads.map((thread) =>
         scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       ),
-    [activeThreads, environmentOrder],
+    [activeThreads],
   );
   useEffect(() => {
     if (optimisticDrop === null) return;
@@ -3625,7 +3607,7 @@ export default function Sidebar() {
       list: readonly EnvironmentThreadShell[],
       section: SidebarSection,
     ): SidebarListItem[] =>
-      groupSidebarThreadsByEnvironment(list, environmentOrder).map((thread) => {
+      list.map((thread) => {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return { kind: "thread", key, section };
       });
@@ -3661,7 +3643,6 @@ export default function Sidebar() {
     return items;
   }, [
     activeThreads,
-    environmentOrder,
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
@@ -5167,7 +5148,6 @@ export default function Sidebar() {
                       const renderThreadRowInner = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
-                        environmentHeading: string | null,
                         sortable?: SortableThreadRowBag,
                       ) => {
                         const threadKey = scopedThreadKey(
@@ -5239,7 +5219,6 @@ export default function Sidebar() {
                             environmentLabel={
                               environmentLabelById.get(thread.environmentId) ?? null
                             }
-                            environmentHeading={environmentHeading}
                             environmentMachine={
                               environmentMachineById.get(thread.environmentId) ?? "server"
                             }
@@ -5279,7 +5258,6 @@ export default function Sidebar() {
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
-                        environmentHeading: string | null,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -5296,9 +5274,7 @@ export default function Sidebar() {
                               (section === "active" && sidebarThreadSortOrder !== "created_at")
                             }
                           >
-                            {(bag) =>
-                              renderThreadRowInner(thread, section, environmentHeading, bag)
-                            }
+                            {(bag) => renderThreadRowInner(thread, section, bag)}
                           </SortableThreadRow>
                         );
                       };
@@ -5314,20 +5290,10 @@ export default function Sidebar() {
                           onNavigateToDraft={navigateToDraft}
                         />,
                       ];
-                      let previousThreadGroup: string | null = null;
-                      let previousThreadSection: SidebarSection | null = null;
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           const thread = threadByKey.get(item.key)!;
-                          const environmentHeading =
-                            environments.length > 1 &&
-                            (previousThreadSection !== item.section ||
-                              previousThreadGroup !== thread.environmentId)
-                              ? (environmentLabelById.get(thread.environmentId) ?? "Environment")
-                              : null;
-                          previousThreadSection = item.section;
-                          previousThreadGroup = thread.environmentId;
-                          items.push(renderThreadRow(thread, item.section, environmentHeading));
+                          items.push(renderThreadRow(thread, item.section));
                           continue;
                         }
                         switch (item.marker) {

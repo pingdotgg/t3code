@@ -285,18 +285,11 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
-export interface ThreadListV2EnvironmentListItem {
-  readonly type: "v2-environment";
-  readonly key: string;
-  readonly label: string;
-}
-
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2SnoozedShelfListItem
-  | ThreadListV2SettledShelfListItem
-  | ThreadListV2EnvironmentListItem;
+  | ThreadListV2SettledShelfListItem;
 
 /** Narrows a wider list-item union (e.g. the sidebar's legacy + v2 mix) to
     the v2 item kinds the shared equality understands. */
@@ -306,7 +299,6 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
-    value.type === "v2-environment" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
   );
@@ -362,75 +354,7 @@ export function threadListV2ListItemsAreEqual(
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
       );
-    case "v2-environment":
-      return previous.type === "v2-environment" && previous.label === item.label;
   }
-}
-
-/** Keep each lifecycle shelf intact while collecting its conversations by environment. */
-export function groupThreadListV2ByEnvironment(
-  items: readonly ThreadListV2ListItem[],
-  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>,
-): ThreadListV2ListItem[] {
-  if (environments.length < 2) return [...items];
-  const result: ThreadListV2ListItem[] = [];
-  let section: ThreadListV2ListItem[] = [];
-  let sectionIndex = 0;
-  const flush = () => {
-    if (section.length === 0) return;
-    const byEnvironment = new Map<EnvironmentId, ThreadListV2ListItem[]>();
-    for (const item of section) {
-      const environmentId =
-        item.type === "v2-thread"
-          ? item.item.thread.environmentId
-          : item.type === "v2-pending"
-            ? item.pendingTask.environmentId
-            : null;
-      if (environmentId === null) continue;
-      const group = byEnvironment.get(environmentId) ?? [];
-      group.push(item);
-      byEnvironment.set(environmentId, group);
-    }
-    for (const environment of environments) {
-      const group = byEnvironment.get(environment.environmentId);
-      if (group === undefined) continue;
-      result.push({
-        type: "v2-environment",
-        key: `v2-environment:${sectionIndex}:${environment.environmentId}`,
-        label: environment.label,
-      });
-      result.push(...group);
-      byEnvironment.delete(environment.environmentId);
-    }
-    for (const [environmentId, group] of byEnvironment) {
-      result.push({
-        type: "v2-environment",
-        key: `v2-environment:${sectionIndex}:${environmentId}`,
-        label: "Environment",
-      });
-      result.push(...group);
-    }
-    section = [];
-    sectionIndex += 1;
-  };
-  for (const item of items) {
-    if (item.type === "v2-snoozed-shelf" || item.type === "v2-settled-shelf") {
-      flush();
-      result.push(item);
-    } else {
-      section.push(item);
-    }
-  }
-  flush();
-  return result.map((item, index) => {
-    if (item.type !== "v2-thread" && item.type !== "v2-pending") return item;
-    const next = result[index + 1];
-    const showTrailingDivider =
-      next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
-    return item.showTrailingDivider === showTrailingDivider
-      ? item
-      : { ...item, showTrailingDivider };
-  });
 }
 
 /** The timestamp a row renders when it shows no status label: the settle

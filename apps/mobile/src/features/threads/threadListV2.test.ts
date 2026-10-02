@@ -28,7 +28,6 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
-  groupThreadListV2ByEnvironment,
   isThreadListV2ListItem,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -1713,59 +1712,11 @@ describe("isThreadListV2ListItem", () => {
   it("narrows the v2 kinds and rejects the legacy discriminators", () => {
     expect(isThreadListV2ListItem({ type: "v2-thread" })).toBe(true);
     expect(isThreadListV2ListItem({ type: "v2-pending" })).toBe(true);
-    expect(isThreadListV2ListItem({ type: "v2-environment" })).toBe(true);
+    expect(isThreadListV2ListItem({ type: "v2-environment" })).toBe(false);
     expect(isThreadListV2ListItem({ type: "v2-snoozed-shelf" })).toBe(true);
     expect(isThreadListV2ListItem({ type: "v2-settled-shelf" })).toBe(true);
     expect(isThreadListV2ListItem({ type: "thread" })).toBe(false);
     expect(isThreadListV2ListItem({ type: "v2-show-more" })).toBe(false);
-  });
-});
-
-describe("groupThreadListV2ByEnvironment", () => {
-  it("groups each visible shelf by environment and preserves order within each group", () => {
-    const otherEnvironmentId = EnvironmentId.make("environment-2");
-    const threads = [
-      makeThread({ id: ThreadId.make("a1"), title: "a1" }),
-      makeThread({ id: ThreadId.make("b1"), title: "b1", environmentId: otherEnvironmentId }),
-      makeThread({ id: ThreadId.make("a2"), title: "a2" }),
-      makeThread({
-        id: ThreadId.make("b-settled"),
-        title: "b-settled",
-        environmentId: otherEnvironmentId,
-        settledOverride: "settled",
-      }),
-    ];
-    const layout = buildThreadListV2Items({
-      threads,
-      environmentId: null,
-      searchQuery: "",
-      now: NOW,
-    });
-    const rows = buildThreadListV2ListItems({
-      items: layout.items,
-      pendingTasks: [],
-      settledCount: layout.settledCount,
-      settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
-    });
-    const grouped = groupThreadListV2ByEnvironment(rows, [
-      { environmentId, label: "Local" },
-      { environmentId: otherEnvironmentId, label: "Remote" },
-    ]);
-    expect(
-      grouped.map((item) =>
-        item.type === "v2-thread"
-          ? item.item.thread.id
-          : item.type === "v2-environment"
-            ? item.label
-            : item.type,
-      ),
-    ).toEqual(["Local", "a1", "a2", "Remote", "b1", "v2-settled-shelf", "Remote", "b-settled"]);
-    expect(
-      grouped.find(
-        (item) =>
-          item.type === "v2-thread" && item.item.thread.id === "a2" && item.showTrailingDivider,
-      ),
-    ).toBeUndefined();
   });
 });
 

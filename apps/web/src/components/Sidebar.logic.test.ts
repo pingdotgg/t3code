@@ -18,7 +18,6 @@ import {
   reduceSidebarScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
-  groupSidebarThreadsByEnvironment,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
@@ -1098,19 +1097,6 @@ describe("reduceSidebarScopeMenuState", () => {
         { type: "query-changed", query: "beta" },
       ),
     ).toEqual({ open: true, query: "beta" });
-  });
-});
-
-describe("groupSidebarThreadsByEnvironment", () => {
-  it("keeps each environment together without changing its thread order", () => {
-    const threads = [
-      { environmentId: "remote", id: "r1" },
-      { environmentId: "local", id: "l1" },
-      { environmentId: "remote", id: "r2" },
-    ];
-    expect(
-      groupSidebarThreadsByEnvironment(threads, ["local", "remote"]).map((thread) => thread.id),
-    ).toEqual(["l1", "r1", "r2"]);
   });
 });
 

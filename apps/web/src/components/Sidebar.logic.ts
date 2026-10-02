@@ -133,28 +133,6 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
-export function groupSidebarThreadsByEnvironment<T extends { readonly environmentId: string }>(
-  threads: readonly T[],
-  environmentIds: readonly string[],
-): T[] {
-  if (environmentIds.length < 2) return [...threads];
-  const groups = new Map<string, T[]>();
-  for (const thread of threads) {
-    const group = groups.get(thread.environmentId) ?? [];
-    group.push(thread);
-    groups.set(thread.environmentId, group);
-  }
-  const result: T[] = [];
-  for (const environmentId of environmentIds) {
-    const group = groups.get(environmentId);
-    if (group === undefined) continue;
-    result.push(...group);
-    groups.delete(environmentId);
-  }
-  for (const group of groups.values()) result.push(...group);
-  return result;
-}
-
 /** Sortable ids: thread rows use their scoped key; structural items use a
     colon-free prefix: scoped thread keys always contain a colon. */
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
