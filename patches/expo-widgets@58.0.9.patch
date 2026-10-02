@@ -13,6 +13,15 @@ index c9f4dfe..dc0792e 100644
      /**
       * Whether the activity is displayed in a context with reduced luminance.
       * @platform iOS 16+
+diff --git a/bundle/react-stub.ts b/bundle/react-stub.ts
+--- a/bundle/react-stub.ts
++++ b/bundle/react-stub.ts
+@@ -3 +3,5 @@
+ export const Fragment = 'react.fragment';
++
++// Widget layouts are evaluated once per render without a React reconciler.
++// Keep memoized @expo/ui components callable by the widget tree normalizer.
++export const memo = <T>(component: T): T => component;
 diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
 index 76b2199..6cb52c3 100644
 --- a/ios/Widgets/Utils.swift
