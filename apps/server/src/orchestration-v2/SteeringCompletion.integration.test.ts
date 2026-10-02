@@ -18,7 +18,9 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -44,10 +46,28 @@ for (const mailbox of [false, true]) {
     "after delivery",
     "without native steering",
     "settled only",
+    "failed terminal",
+    "interrupted terminal",
+    "user stop",
   ] as const) {
-    if (!mailbox && (timing === "without native steering" || timing === "settled only")) continue;
+    if (
+      !mailbox &&
+      (timing === "without native steering" ||
+        timing === "settled only" ||
+        timing === "interrupted terminal" ||
+        timing === "user stop")
+    )
+      continue;
     it.effect(
-      `delivers ${mailbox ? "mailbox notification" : "steering"} when completion wins ${timing}`,
+      timing === "user stop"
+        ? "does not redeliver a mailbox notification after user stop"
+        : timing === "interrupted terminal"
+          ? "does not redeliver a mailbox notification after receiver interruption"
+          : timing === "failed terminal"
+            ? mailbox
+              ? "redelivers a mailbox notification after receiver failure"
+              : "does not replay ordinary steering after receiver failure"
+            : `delivers ${mailbox ? "mailbox notification" : "steering"} when completion wins ${timing}`,
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -288,40 +308,148 @@ for (const mailbox of [false, true]) {
               if (timing !== "before dispatch") yield* dispatchSteer;
               if (timing === "after delivery") yield* worker.drain();
               const delivery =
-                timing === "during delivery" ? yield* worker.runOnce.pipe(Effect.forkScoped) : null;
+                timing === "during delivery" ||
+                timing === "failed terminal" ||
+                timing === "interrupted terminal" ||
+                timing === "user stop"
+                  ? yield* worker.runOnce.pipe(Effect.forkScoped)
+                  : null;
               if (delivery !== null) yield* Deferred.await(steerEntered);
-              const completed = yield* watch(
-                (event) =>
-                  event.type === "run.updated" &&
-                  event.payload.id === first.runId &&
-                  event.payload.status === "waiting",
-              );
-              const projection = yield* orchestrator.getThreadProjection(threadId);
-              const turn = projection.providerTurns[0]!;
-              yield* Queue.offer(events, {
-                type: "provider_turn.updated",
-                driver,
-                providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
-              });
-              yield* Queue.offer(events, {
-                type: "turn.terminal",
-                driver,
-                providerThreadId: turn.providerThreadId,
-                providerTurnId: turn.id,
-                runOrdinal: first.runOrdinal,
-                status: "completed",
-                failure: null,
-                threadDisposition: "reusable",
-              });
-              yield* Fiber.join(completed);
+              if (timing === "user stop") {
+                yield* orchestrator.dispatch({
+                  type: "run.interrupt",
+                  commandId: CommandId.make("interrupt"),
+                  threadId,
+                  runId: first.runId,
+                });
+                const stopped = yield* orchestrator.getThreadProjection(threadId);
+                assert.equal(stopped.runs[0]?.delegatedCompletion?.disposition, "stopped");
+              }
+              {
+                const terminalStatus =
+                  timing === "user stop" || timing === "interrupted terminal"
+                    ? "interrupted"
+                    : timing === "failed terminal"
+                      ? "failed"
+                      : "completed";
+                const completed = yield* watch(
+                  (event) =>
+                    event.type === "run.updated" &&
+                    event.payload.id === first.runId &&
+                    event.payload.status ===
+                      (terminalStatus === "completed" ? "waiting" : terminalStatus),
+                );
+                const projection = yield* orchestrator.getThreadProjection(threadId);
+                const turn = projection.providerTurns[0]!;
+                yield* Queue.offer(events, {
+                  type: "provider_turn.updated",
+                  driver,
+                  providerTurn: {
+                    ...turn,
+                    status: terminalStatus,
+                    completedAt: yield* DateTime.now,
+                  },
+                });
+                yield* Queue.offer(events, {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: turn.providerThreadId,
+                  providerTurnId: turn.id,
+                  runOrdinal: first.runOrdinal,
+                  ...(terminalStatus === "failed"
+                    ? {
+                        status: "failed" as const,
+                        failureItemOrdinal: 1,
+                        failure: {
+                          class: "provider_error" as const,
+                          message: "Receiver failed before mailbox delivery",
+                          code: null,
+                          retryable: false,
+                        },
+                      }
+                    : { status: terminalStatus, failure: null }),
+                  threadDisposition: "reusable",
+                });
+                yield* Fiber.join(completed);
+              }
+              if (mailbox && (timing === "failed terminal" || timing === "interrupted terminal")) {
+                const beforeReject = yield* orchestrator.getThreadProjection(threadId);
+                assert.equal(beforeReject.runs[0]?.delegatedCompletion?.disposition, "open");
+                assert.equal(beforeReject.subagents[0]?.completionDelivery?.state, "claimed");
+              }
               if (delivery !== null) {
                 yield* Deferred.succeed(rejectSteer, undefined);
                 yield* Fiber.join(delivery);
               }
               if (timing === "before dispatch") yield* dispatchSteer;
-              yield* worker.drain();
+              if (
+                timing === "failed terminal" ||
+                timing === "interrupted terminal" ||
+                timing === "user stop"
+              ) {
+                const outbox = yield* EffectOutbox.EffectOutboxV2;
+                for (let remaining = 8; remaining > 0; remaining -= 1) {
+                  const steerEffect = (yield* outbox.listByCommandId(CommandId.make("steer"))).find(
+                    (row) => row.request.type === "provider-turn.steer",
+                  );
+                  if (
+                    steerEffect !== undefined &&
+                    (steerEffect.status === "succeeded" ||
+                      steerEffect.status === "failed" ||
+                      steerEffect.status === "cancelled")
+                  ) {
+                    break;
+                  }
+                  if (steerEffect !== undefined && steerEffect.status === "pending") {
+                    const available = DateTime.makeUnsafe(steerEffect.availableAt);
+                    const now = yield* DateTime.now;
+                    const delayMs = DateTime.toEpochMillis(available) - DateTime.toEpochMillis(now);
+                    if (delayMs > 0) {
+                      yield* TestClock.adjust(`${delayMs} millis`);
+                    }
+                  }
+                  if (!(yield* worker.runOnce)) {
+                    break;
+                  }
+                }
+              } else {
+                yield* worker.drain();
+              }
               yield* orchestrator.resumeQueuedRuns;
               yield* worker.drain();
+              if ((!mailbox && timing === "failed terminal") || timing === "interrupted terminal") {
+                const outbox = yield* EffectOutbox.EffectOutboxV2;
+                const steerEffect = (yield* outbox.listByCommandId(CommandId.make("steer"))).find(
+                  (row) => row.request.type === "provider-turn.steer",
+                );
+                assert.equal(steerEffect?.status, "failed");
+                assert.equal(steerEffect?.attemptCount, 5);
+                assert.equal(started.length, 1);
+                if (mailbox) {
+                  const interrupted = yield* orchestrator.getThreadProjection(threadId);
+                  assert.equal(interrupted.runs[0]?.delegatedCompletion?.disposition, "open");
+                  assert.equal(interrupted.subagents[0]?.completionDelivery?.state, "claimed");
+                }
+                return;
+              }
+              if (timing === "user stop") {
+                const stopped = yield* orchestrator.getThreadProjection(threadId);
+                const outbox = yield* EffectOutbox.EffectOutboxV2;
+                const steerEffect = (yield* outbox.listByCommandId(CommandId.make("steer"))).find(
+                  (row) => row.request.type === "provider-turn.steer",
+                );
+                assert.include(["succeeded", "cancelled"], steerEffect?.status);
+                assert.equal(stopped.runs[0]?.delegatedCompletion?.disposition, "stopped");
+                assert.equal(started.length, 1);
+                return;
+              }
+              if (mailbox && timing === "failed terminal") {
+                const outbox = yield* EffectOutbox.EffectOutboxV2;
+                const steerEffect = (yield* outbox.listByCommandId(CommandId.make("steer"))).find(
+                  (row) => row.request.type === "provider-turn.steer",
+                );
+                assert.equal(steerEffect?.status, "succeeded");
+              }
               if (timing === "after delivery") {
                 assert.equal(steerCalls, 1);
                 assert.equal(started.length, 1);
@@ -370,7 +498,10 @@ for (const mailbox of [false, true]) {
                   sizeBytes: 10,
                 },
               ]);
-              assert.equal(steerCalls, timing === "during delivery" ? 1 : 0);
+              assert.equal(
+                steerCalls,
+                timing === "during delivery" || timing === "failed terminal" ? 1 : 0,
+              );
               const final = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(final.messages.filter((message) => message.id === messageId).length, 1);
               assert.equal(
@@ -395,6 +526,7 @@ for (const mailbox of [false, true]) {
                   { runEffectWorker: false },
                 ),
               ),
+              Effect.provide(TestClock.layer()),
             );
           }),
         ),

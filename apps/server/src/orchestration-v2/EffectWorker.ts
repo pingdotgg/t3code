@@ -218,11 +218,7 @@ export const executorLayer: Layer.Layer<
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
-                    if (
-                      !("turnCompleted" in error) ||
-                      !error.turnCompleted ||
-                      effect.request.type !== "provider-turn.steer"
-                    ) {
+                    if (effect.request.type !== "provider-turn.steer") {
                       return yield* error;
                     }
                     const projection = yield* threads.getThreadRecords(
@@ -234,6 +230,33 @@ export const executorLayer: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    const turnCompleted = "turnCompleted" in error && Boolean(error.turnCompleted);
+                    if (!turnCompleted) {
+                      const ownership = message.delegatedCompletion;
+                      const parentRun =
+                        ownership === undefined
+                          ? undefined
+                          : projection.runs.find(
+                              (candidate) => candidate.id === ownership.parentRunId,
+                            );
+                      const delivery = parentRun?.delegatedCompletion?.delivery;
+                      const failedReceiver =
+                        run.userMessageId !== message.id && run.status === "failed";
+                      const mailboxFallback =
+                        error._tag === "ProviderTurnControlError" &&
+                        ownership !== undefined &&
+                        failedReceiver &&
+                        parentRun?.delegatedCompletion?.disposition === "open" &&
+                        delivery !== null &&
+                        delivery !== undefined &&
+                        delivery.generation === ownership.generation &&
+                        delivery.messageId === message.id &&
+                        projection.thread.archivedAt === null &&
+                        projection.thread.deletedAt === null;
+                      if (!mailboxFallback) {
+                        return yield* error;
+                      }
+                    }
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
                     yield* threads.dispatch({
