@@ -371,17 +371,19 @@ describe("Grok launch permission mode", () => {
       ...override,
     });
 
-  for (const [runtimeMode, args] of [
-    ["approval-required", ["--permission-mode", "default", "agent", "stdio"]],
-    ["auto", ["--permission-mode", "auto", "agent", "stdio"]],
-    ["full-access", ["agent", "--always-approve", "stdio"]],
-  ] as const) {
-    it.effect(`launches ${runtimeMode} threads with ${args.join(" ")}`, () =>
-      Effect.gen(function* () {
-        assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
-      }),
-    );
-  }
+  it.effect.each(
+    (
+      [
+        ["approval-required", ["--permission-mode", "default", "agent", "stdio"]],
+        ["auto", ["--permission-mode", "auto", "agent", "stdio"]],
+        ["full-access", ["agent", "--always-approve", "stdio"]],
+      ] as const
+    ).map(([runtimeMode, args]) => [runtimeMode, args.join(" "), args] as const),
+  )("launches %s threads with %s", ([runtimeMode, , args]) =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
+    }),
+  );
 
   it.effect("launches a thread stored as Auto-accept edits asking", () =>
     Effect.gen(function* () {

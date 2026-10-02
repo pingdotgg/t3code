@@ -1269,8 +1269,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
-  for (const targetArch of ["x64", "arm64"] as const) {
-    it.effect(`accepts an embedded archive with the Linux ${targetArch} node-pty prebuild`, () =>
+  it.effect.each(["x64", "arm64"] as const)(
+    "accepts an embedded archive with the Linux %s node-pty prebuild",
+    (targetArch) =>
       Effect.scoped(
         Effect.gen(function* () {
           const fixture = yield* makeWindowsPayloadFixture({
@@ -1290,33 +1291,32 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           assert.equal(result.packagedAppDir, fixture.packagedAppDir);
         }),
       ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
-    );
+  );
 
-    it.effect(
-      `rejects a node-pty prebuild for the wrong architecture in a Linux ${targetArch} archive`,
-      () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const fixture = yield* makeWindowsPayloadFixture({
-              copyUnpackedNatives: true,
-              wslRuntime: "valid",
-              targetArch,
-              ptyPrebuildArch: targetArch === "x64" ? "arm64" : "x64",
-            });
-            const error = yield* validateWindowsPackagedPayload({
-              stageDistDir: fixture.stageDistDir,
-              appExecutableName: fixture.appExecutableName,
-              targetArch,
-              appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
-              expectWslRuntime: true,
-            }).pipe(Effect.flip);
+  it.effect.each(["x64", "arm64"] as const)(
+    "rejects a node-pty prebuild for the wrong architecture in a Linux %s archive",
+    (targetArch) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = yield* makeWindowsPayloadFixture({
+            copyUnpackedNatives: true,
+            wslRuntime: "valid",
+            targetArch,
+            ptyPrebuildArch: targetArch === "x64" ? "arm64" : "x64",
+          });
+          const error = yield* validateWindowsPackagedPayload({
+            stageDistDir: fixture.stageDistDir,
+            appExecutableName: fixture.appExecutableName,
+            targetArch,
+            appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
+            expectWslRuntime: true,
+          }).pipe(Effect.flip);
 
-            assert.instanceOf(error, WindowsPackagedPayloadValidationError);
-            assert.equal(error.reason, "wsl-runtime-invalid");
-          }),
-        ),
-    );
-  }
+          assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+          assert.equal(error.reason, "wsl-runtime-invalid");
+        }),
+      ),
+  );
 
   it.effect("rejects an embedded archive built for a different release version", () =>
     Effect.scoped(

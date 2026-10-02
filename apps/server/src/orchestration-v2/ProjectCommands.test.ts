@@ -128,16 +128,17 @@ describe("planProjectCommand", () => {
     assert.isNull(payloadOf(update({ defaultThreadEnvMode: null })).defaultThreadEnvMode);
   });
 
-  for (const id of ["install-javascript-dependencies", "A", "a.b", "a b", "-a", "a".repeat(25)]) {
-    it(`rejects a new script ID that cannot have a shortcut: ${id}`, () => {
+  it.each(["install-javascript-dependencies", "A", "a.b", "a b", "-a", "a".repeat(25)])(
+    "rejects a new script ID that cannot have a shortcut: %s",
+    (id) => {
       const failure = failureOf(update({ scripts: [script("lint"), script(id)] }));
       assert.equal(failure._tag, "ProjectCommandInvariantError");
       assert.include(failure.message, "Script ID");
       assert.include(failure.message, "24");
       // The detail is persisted in the rejected receipt, so it omits the raw ID.
       assert.notInclude(failure.message, `'${id}'`);
-    });
-  }
+    },
+  );
 
   it("accepts a script ID at the shortcut length limit", () => {
     const scripts = [script("a".repeat(24))];

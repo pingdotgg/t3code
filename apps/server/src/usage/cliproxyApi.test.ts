@@ -234,22 +234,20 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  for (const [code, outcome] of [
+  it.effect.each([
     ["nothing_to_reset", "nothingToReset"],
     ["no_credit", "noCredit"],
     ["already_redeemed", "alreadyRedeemed"],
-  ] as const) {
-    it.effect(`reports ${code} accurately`, () =>
-      Effect.gen(function* () {
-        const test = fixture({ upstream: () => ({ status: 200, body: { code } }) });
-        const api = yield* test.api;
-        expect(yield* api.consume(config, "first.json", "credit")).toEqual({ outcome });
-        expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(
-          code === "already_redeemed",
-        );
-      }),
-    );
-  }
+  ] as const)("reports %s accurately", ([code, outcome]) =>
+    Effect.gen(function* () {
+      const test = fixture({ upstream: () => ({ status: 200, body: { code } }) });
+      const api = yield* test.api;
+      expect(yield* api.consume(config, "first.json", "credit")).toEqual({ outcome });
+      expect(test.requests.some((request) => request.path.endsWith("/reset-quota"))).toBe(
+        code === "already_redeemed",
+      );
+    }),
+  );
 
   it.effect("reports redemption success even if cooldown clearing fails", () =>
     Effect.gen(function* () {

@@ -1245,77 +1245,78 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
-  for (const { label, variable, expected, duplicate } of [
-    {
-      label: "preserves an inline secret on a redacted settings save",
-      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
-      expected: "inline-test-token",
-    },
-    {
-      label: "preserves the effective last inline secret when names are duplicated",
-      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
-      expected: "last-inline-test-token",
-      duplicate: true,
-    },
-    {
-      label: "replaces an inline secret with an explicit value",
-      variable: { name: "API_TOKEN", value: "replacement-test-token", sensitive: true },
-      expected: "replacement-test-token",
-    },
-    {
-      label: "clears an inline secret with an explicit empty value",
-      variable: { name: "API_TOKEN", value: "", sensitive: true },
-      expected: "",
-    },
-  ]) {
-    it.effect(label, () =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make("codex_personal");
-        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-        const serverConfig = yield* ServerConfig.ServerConfig;
-        const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(
-          serverConfig.settingsPath,
-          duplicate
-            ? '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true},{"name":"API_TOKEN","value":"last-inline-test-token","sensitive":true}],"config":{}}}}'
-            : '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
-        );
-        const initial = yield* serverSettings.getSettings;
-        assert.equal(
-          initial.providerInstances[instanceId]?.environment?.[0]?.value,
-          "inline-test-token",
-        );
+  it.effect.each(
+    [
+      {
+        label: "preserves an inline secret on a redacted settings save",
+        variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+        expected: "inline-test-token",
+      },
+      {
+        label: "preserves the effective last inline secret when names are duplicated",
+        variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+        expected: "last-inline-test-token",
+        duplicate: true,
+      },
+      {
+        label: "replaces an inline secret with an explicit value",
+        variable: { name: "API_TOKEN", value: "replacement-test-token", sensitive: true },
+        expected: "replacement-test-token",
+      },
+      {
+        label: "clears an inline secret with an explicit empty value",
+        variable: { name: "API_TOKEN", value: "", sensitive: true },
+        expected: "",
+      },
+    ].map((testCase) => [testCase.label, testCase] as const),
+  )("%s", ([, { variable, expected, duplicate }]) =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        duplicate
+          ? '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true},{"name":"API_TOKEN","value":"last-inline-test-token","sensitive":true}],"config":{}}}}'
+          : '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
+      );
+      const initial = yield* serverSettings.getSettings;
+      assert.equal(
+        initial.providerInstances[instanceId]?.environment?.[0]?.value,
+        "inline-test-token",
+      );
 
-        const next = yield* serverSettings.updateSettings({
-          providerInstances: {
-            [instanceId]: {
-              driver: ProviderDriverKind.make("codex"),
-              displayName: "Renamed provider",
-              environment: duplicate ? [variable, variable] : [variable],
-              config: {},
-            },
+      const next = yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "Renamed provider",
+            environment: duplicate ? [variable, variable] : [variable],
+            config: {},
           },
-        });
-        assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, expected);
-        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
-        assert.notInclude(raw, "inline-test-token");
-        assert.notInclude(raw, "replacement-test-token");
+        },
+      });
+      assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "inline-test-token");
+      assert.notInclude(raw, "replacement-test-token");
 
-        const reloaded = yield* Effect.gen(function* () {
-          const fresh = yield* ServerSettingsModule.ServerSettingsService;
-          return yield* fresh.getSettings;
-        }).pipe(
-          Effect.provide(
-            Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
-          ),
-        );
-        assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
-      }).pipe(Effect.provide(makeServerSettingsLayer())),
-    );
-  }
+      const reloaded = yield* Effect.gen(function* () {
+        const fresh = yield* ServerSettingsModule.ServerSettingsService;
+        return yield* fresh.getSettings;
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+        ),
+      );
+      assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
-  for (const sensitiveLast of [true, false]) {
-    it.effect(`preserves duplicate secret operation order (sensitive last: ${sensitiveLast})`, () =>
+  it.effect.each([true, false])(
+    "preserves duplicate secret operation order (sensitive last: %s)",
+    (sensitiveLast) =>
       Effect.gen(function* () {
         const service = yield* ServerSettingsModule.ServerSettingsService;
         const instanceId = ProviderInstanceId.make("codex_duplicate");
@@ -1339,8 +1340,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           sensitiveLast ? "secret-last" : "",
         );
       }).pipe(Effect.provide(makeServerSettingsLayer())),
-    );
-  }
+  );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
@@ -1630,8 +1630,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }),
   );
 
-  for (const failure of ["response materialization", "partially committed write"] as const) {
-    it.effect(`rolls back provider secret changes after ${failure} fails`, () => {
+  it.effect.each(["response materialization", "partially committed write"] as const)(
+    "rolls back provider secret changes after %s fails",
+    (failure) => {
       const textDecoder = new TextDecoder();
       const secrets = new Map<string, Uint8Array>();
       let rejectNewSecret = false;
@@ -1734,8 +1735,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "sk-kept",
         );
       }).pipe(Effect.provide(settingsLayer));
-    });
-  }
+    },
+  );
 
   it.effect("folds legacy project overrides into projectSettingsOverrides once", () =>
     Effect.gen(function* () {

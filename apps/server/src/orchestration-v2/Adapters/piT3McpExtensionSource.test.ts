@@ -28,8 +28,9 @@ async function loadRequestHook(): Promise<RequestHook> {
 }
 
 describe("Pi upstream output-budget workaround", () => {
-  for (const key of ["max_tokens", "max_completion_tokens"]) {
-    it(`caps ${key} without changing the conversation or tools`, async () => {
+  it.each(["max_tokens", "max_completion_tokens"])(
+    "caps %s without changing the conversation or tools",
+    async (key) => {
       const hook = await loadRequestHook();
       const payload = {
         model: "moonshotai/kimi-k2.6",
@@ -43,8 +44,8 @@ describe("Pi upstream output-budget workaround", () => {
       assert.strictEqual(result?.tools, payload.tools);
       assert.equal(result?.model, payload.model);
       assert.equal(payload[key], 231_969);
-    });
-  }
+    },
+  );
 
   it("preserves smaller budgets and other providers' payloads", async () => {
     const hook = await loadRequestHook();

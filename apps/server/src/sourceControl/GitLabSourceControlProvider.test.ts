@@ -227,8 +227,9 @@ selfhosted
   );
 });
 
-for (const kind of ["merge_requests", "issues"]) {
-  it.effect(`resolves ${kind} subjects on the linked host without using the checkout`, () =>
+it.effect.each(["merge_requests", "issues"])(
+  "resolves %s subjects on the linked host without using the checkout",
+  (kind) =>
     Effect.gen(function* () {
       const provider = yield* makeProvider({
         execute: (input) => {
@@ -269,11 +270,11 @@ for (const kind of ["merge_requests", "issues"]) {
         undefined,
       );
     }),
-  );
-}
+);
 
-for (const stage of ["read", "decode"] as const) {
-  it.effect(`retains the ${stage} failure without exposing its raw contents`, () =>
+it.effect.each(["read", "decode"] as const)(
+  "retains the %s failure without exposing its raw contents",
+  (stage) =>
     Effect.gen(function* () {
       const cause = new GitLabCli.GitLabCliCommandError({
         command: "glab",
@@ -305,5 +306,4 @@ for (const stage of ["read", "decode"] as const) {
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
-  );
-}
+);

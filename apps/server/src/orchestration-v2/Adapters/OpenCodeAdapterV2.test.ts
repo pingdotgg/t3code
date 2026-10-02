@@ -237,8 +237,9 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
-  for (const ending of ["completed", "failed", "unresolved", "unavailable", "reconnect"] as const) {
-    it.effect(`normalizes OpenCode step usage for ${ending} turns`, () =>
+  it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
+    "normalizes OpenCode step usage for %s turns",
+    (ending) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         let promptId = "";
@@ -375,11 +376,11 @@ describe("OpenCodeAdapterV2", () => {
               },
         );
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
-  for (const kind of ["permission", "question"] as const) {
-    it.effect(`cancels an undelivered ${kind} reply at its deadline`, () =>
+  it.effect.each(["permission", "question"] as const)(
+    "cancels an undelivered %s reply at its deadline",
+    (kind) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const called = promiseGate<void>();
@@ -453,8 +454,7 @@ describe("OpenCodeAdapterV2", () => {
         // Failed delivery leaves the request available for an explicit retry.
         yield* harness.runtime.respondToRuntimeRequest(response);
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
   it.effect("aborts external root and descendants before closing the event stream", () =>
     Effect.gen(function* () {
@@ -494,8 +494,9 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
   );
 
-  for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
-    it.effect(`reports descendant cleanup ${failure}`, () =>
+  it.effect.each(["enumeration", "abort", "not-found", "timeout"] as const)(
+    "reports descendant cleanup %s",
+    (failure) =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const called = promiseGate<void>();
@@ -545,8 +546,7 @@ describe("OpenCodeAdapterV2", () => {
         assert.equal(Exit.isSuccess(result), failure === "not-found");
         if (failure === "timeout") assert.isTrue(childSignal?.aborted);
       }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
-    );
-  }
+  );
 
   it.effect(
     "preserves tool lifecycle, approval kinds, and late assistant text without cached tool payloads",

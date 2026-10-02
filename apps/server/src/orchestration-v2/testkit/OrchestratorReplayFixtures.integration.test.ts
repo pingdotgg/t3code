@@ -221,19 +221,19 @@ function runFixtureProviderWithRegisteredHarness(input: {
 }
 
 describe("orchestrator replay fixtures", () => {
-  for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
-    for (const provider of fixture.providers) {
-      it.effect(
-        `runs ${fixture.name}/${provider.driver} through OrchestratorV2 using deterministic replay`,
-        () =>
-          runFixtureProviderWithRegisteredHarness({
-            fixtureName: fixture.name,
-            buildInput: fixture.buildInput,
-            driver: provider,
-          }),
-      );
-    }
-  }
+  it.effect.each(
+    ORCHESTRATOR_REPLAY_FIXTURES.flatMap((fixture) =>
+      fixture.providers.map(
+        (provider) => [fixture.name, provider.driver, fixture, provider] as const,
+      ),
+    ),
+  )("runs %s/%s through OrchestratorV2 using deterministic replay", ([, , fixture, provider]) =>
+    runFixtureProviderWithRegisteredHarness({
+      fixtureName: fixture.name,
+      buildInput: fixture.buildInput,
+      driver: provider,
+    }),
+  );
 
   const steeringFixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
     (fixture) => fixture.name === "message_steering",
@@ -254,33 +254,38 @@ describe("orchestrator replay fixtures", () => {
   // A later OpenCode may change an execution start's shape; the client then
   // reads it as `unreadable.execution.started`. A subagent's turn and a
   // background follow-up must still start from it.
-  for (const [fixtureName, label] of [
-    ["opencode2_subagent", "session.execution.started.2"],
-    ["opencode2_background", "session.execution.started.3"],
-  ] as const) {
-    const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
-      (candidate) => candidate.name === fixtureName,
-    );
-    const provider = fixture?.providers[0];
-    if (fixture === undefined || provider === undefined) continue;
-    it.effect(
-      `runs ${fixtureName} when ${label} is an execution start this build cannot decode`,
-      () =>
-        runFixtureProviderWithRegisteredHarness({
-          fixtureName,
-          buildInput: fixture.buildInput,
-          driver: provider,
-          transformTranscript: (transcript) => ({
-            ...transcript,
-            entries: transcript.entries.map((entry) =>
-              entry.type === "emit_inbound" && entry.label === label
-                ? undecodableEvent(entry)
-                : entry,
-            ),
-          }),
+  it.effect.each(
+    (
+      [
+        ["opencode2_subagent", "session.execution.started.2"],
+        ["opencode2_background", "session.execution.started.3"],
+      ] as const
+    ).flatMap(([fixtureName, label]) => {
+      const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+        (candidate) => candidate.name === fixtureName,
+      );
+      const provider = fixture?.providers[0];
+      return fixture === undefined || provider === undefined
+        ? []
+        : [[fixtureName, label, fixture, provider] as const];
+    }),
+  )(
+    "runs %s when %s is an execution start this build cannot decode",
+    ([fixtureName, label, fixture, provider]) =>
+      runFixtureProviderWithRegisteredHarness({
+        fixtureName,
+        buildInput: fixture.buildInput,
+        driver: provider,
+        transformTranscript: (transcript) => ({
+          ...transcript,
+          entries: transcript.entries.map((entry) =>
+            entry.type === "emit_inbound" && entry.label === label
+              ? undecodableEvent(entry)
+              : entry,
+          ),
         }),
-    );
-  }
+      }),
+  );
 });
 
 /** The same event with an envelope this build cannot decode, as a newer OpenCode may send. */

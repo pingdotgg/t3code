@@ -78,8 +78,9 @@ function createList(bundle: string) {
   };
 }
 
-for (const bundle of ["react-native.js", "react-native.mjs"]) {
-  describe(`initial inset end reveal (${bundle})`, () => {
+describe.each(["react-native.js", "react-native.mjs"])(
+  "initial inset end reveal (%s)",
+  (bundle) => {
     it("waits for the native offset instead of the optimistic scroll target", () => {
       const list = createList(bundle);
       list.start();
@@ -210,5 +211,5 @@ for (const bundle of ["react-native.js", "react-native.mjs"]) {
       empty.complete();
       expect(empty.ready()).toBe(true);
     });
-  });
-}
+  },
+);

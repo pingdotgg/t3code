@@ -186,12 +186,17 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
   ];
 }
 
-for (const storage of ["sqlite", "memory"] as const) {
-  const storeLayer =
+const storageCases = (["sqlite", "memory"] as const).map((storage) => ({
+  storage,
+  storeLayer:
     storage === "sqlite"
       ? ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
-      : ProjectionStore.layerMemory;
-  it.effect(`${storage}: finds the active root turn without an attempt reverse link`, () =>
+      : ProjectionStore.layerMemory,
+}));
+
+it.effect.each(storageCases)(
+  "$storage: finds the active root turn without an attempt reverse link",
+  ({ storeLayer }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -210,8 +215,10 @@ for (const storage of ["sqlite", "memory"] as const) {
       });
       assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
     }).pipe(Effect.provide(storeLayer)),
-  );
-  it.effect(`${storage}: controls and replies read only their exact durable targets`, () =>
+);
+it.effect.each(storageCases)(
+  "$storage: controls and replies read only their exact durable targets",
+  ({ storage, storeLayer }) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -344,5 +351,4 @@ for (const storage of ["sqlite", "memory"] as const) {
         ),
       );
     }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
-  );
-}
+);

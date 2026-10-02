@@ -3090,81 +3090,78 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
-  for (const running of [true, false]) {
-    it.effect(
-      running
-        ? "refuses a rollback while a timed-out Stop's run is still going"
-        : "rolls back once a timed-out Stop's run has left the server",
-      () =>
-        Effect.gen(function* () {
-          const prompt = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
-          const { runtime, thread } = yield* resumed([
-            ...stopTimedOut,
-            // The server says whether the stopped run still goes.
-            out("session.active"),
-            reply("session.active", { data: running ? { [SESSION]: { type: "running" } } : {} }),
-            // Gone: the cut is made. Running: nothing is read or cut meanwhile.
-            ...(running
-              ? []
-              : [
-                  out("message.list", "<any>"),
-                  reply("message.list", {
-                    data: [{ id: prompt, time: { created: 1 }, text: "hi", type: "user" }],
-                    cursor: {},
-                  }),
-                  out("session.revert.stage", {
-                    sessionID: SESSION,
-                    messageID: prompt,
-                    files: false,
-                  }),
-                  replyData("session.revert.stage", { messageID: prompt, files: [] }),
-                  out("session.revert.commit", { sessionID: SESSION }),
-                  reply("session.revert.commit", null),
-                  out("message.list", "<any>"),
-                  reply("message.list", { data: [], cursor: {} }),
-                ]),
-          ]);
-          yield* stopFirstTurn(runtime, thread);
-          const now = yield* DateTime.now;
-          const first = {
-            id: yield* providerTurnId,
-            providerThreadId: thread.id,
-            nodeId: NodeId.make("node:opencode2-adapter"),
-            runAttemptId: RunAttemptId.make("attempt:opencode2-adapter"),
-            nativeTurnRef: {
-              driver: OPENCODE_PROVIDER,
-              nativeId: prompt,
-              strength: "weak" as const,
-            },
-            ordinal: 1,
-            status: "interrupted" as const,
-            startedAt: now,
-            completedAt: now,
-          };
-          const rollback = yield* runtime
-            .rollbackThread({
-              providerThread: thread,
-              target: {
-                type: "thread_start",
-                checkpointId: CheckpointId.make("checkpoint:start"),
-                appRunOrdinal: 0,
-              },
-              providerThreadTurns: [first],
-            })
-            .pipe(Effect.exit);
-          if (running) {
-            assert.isTrue(Exit.isFailure(rollback));
-            const error = Exit.isFailure(rollback) ? Cause.squash(rollback.cause) : undefined;
-            assert.equal(
-              (error as { _tag?: string } | undefined)?._tag,
-              "ProviderAdapterProtocolError",
-            );
-          } else {
-            assert.isTrue(Exit.isSuccess(rollback));
-          }
-        }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
-    );
-  }
+  it.effect.each([
+    ["refuses a rollback while a timed-out Stop's run is still going", true],
+    ["rolls back once a timed-out Stop's run has left the server", false],
+  ] as const)("%s", ([, running]) =>
+    Effect.gen(function* () {
+      const prompt = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+      const { runtime, thread } = yield* resumed([
+        ...stopTimedOut,
+        // The server says whether the stopped run still goes.
+        out("session.active"),
+        reply("session.active", { data: running ? { [SESSION]: { type: "running" } } : {} }),
+        // Gone: the cut is made. Running: nothing is read or cut meanwhile.
+        ...(running
+          ? []
+          : [
+              out("message.list", "<any>"),
+              reply("message.list", {
+                data: [{ id: prompt, time: { created: 1 }, text: "hi", type: "user" }],
+                cursor: {},
+              }),
+              out("session.revert.stage", {
+                sessionID: SESSION,
+                messageID: prompt,
+                files: false,
+              }),
+              replyData("session.revert.stage", { messageID: prompt, files: [] }),
+              out("session.revert.commit", { sessionID: SESSION }),
+              reply("session.revert.commit", null),
+              out("message.list", "<any>"),
+              reply("message.list", { data: [], cursor: {} }),
+            ]),
+      ]);
+      yield* stopFirstTurn(runtime, thread);
+      const now = yield* DateTime.now;
+      const first = {
+        id: yield* providerTurnId,
+        providerThreadId: thread.id,
+        nodeId: NodeId.make("node:opencode2-adapter"),
+        runAttemptId: RunAttemptId.make("attempt:opencode2-adapter"),
+        nativeTurnRef: {
+          driver: OPENCODE_PROVIDER,
+          nativeId: prompt,
+          strength: "weak" as const,
+        },
+        ordinal: 1,
+        status: "interrupted" as const,
+        startedAt: now,
+        completedAt: now,
+      };
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint:start"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [first],
+        })
+        .pipe(Effect.exit);
+      if (running) {
+        assert.isTrue(Exit.isFailure(rollback));
+        const error = Exit.isFailure(rollback) ? Cause.squash(rollback.cause) : undefined;
+        assert.equal(
+          (error as { _tag?: string } | undefined)?._tag,
+          "ProviderAdapterProtocolError",
+        );
+      } else {
+        assert.isTrue(Exit.isSuccess(rollback));
+      }
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
 
   it.effect("takes back a stranded steer again when its first cancel failed", () =>
     Effect.gen(function* () {
@@ -3376,92 +3373,92 @@ describe("OpenCode2 adapter", () => {
     }).pipe(Effect.scoped),
   );
 
-  for (const running of [true, false]) {
-    it.effect(
-      running
-        ? "refuses to roll back a session not loaded yet while the server runs it"
-        : "keeps the recorded turns before the target when rolling back a session not loaded yet",
-      () =>
-        Effect.gen(function* () {
-          const first = `msg_t3_turn_${SESSION}:attempt:first`;
-          const second = `msg_t3_turn_${SESSION}:attempt:second`;
-          // A runtime that never loaded the session, as after a T3 restart
-          // against a server that kept running.
-          const runtime = yield* openCode2ReplayRuntime([
-            ...opening,
-            out("session.active"),
-            reply("session.active", { data: running ? { [SESSION]: { type: "running" } } : {} }),
-            ...(running
-              ? []
-              : [
-                  out("session.get", { sessionID: SESSION }),
-                  replyData("session.get", sessionInfo()),
-                  ...noOpenRequests,
-                  out("message.list", "<any>"),
-                  reply("message.list", {
-                    data: [
-                      { id: second, time: { created: 2 }, text: "second", type: "user" },
-                      { id: first, time: { created: 1 }, text: "first", type: "user" },
-                    ],
-                    cursor: {},
-                  }),
-                  out("session.revert.stage", {
-                    sessionID: SESSION,
-                    messageID: second,
-                    files: false,
-                  }),
-                  replyData("session.revert.stage", { messageID: second, files: [] }),
-                  out("session.revert.commit", { sessionID: SESSION }),
-                  reply("session.revert.commit", null),
-                  out("message.list", "<any>"),
-                  reply("message.list", {
-                    data: [{ id: first, time: { created: 1 }, text: "first", type: "user" }],
-                    cursor: {},
-                  }),
-                ]),
-          ]);
-          const thread = providerThread(yield* DateTime.now);
-          const now = yield* DateTime.now;
-          const recorded = (key: string, ordinal: number, nativeId: string) => ({
-            id: ProviderTurnId.make(`provider-turn:${key}`),
-            providerThreadId: thread.id,
-            nodeId: NodeId.make(`node:${key}`),
-            runAttemptId: RunAttemptId.make(`attempt:${key}`),
-            nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
-            ordinal,
-            status: "completed" as const,
-            startedAt: now,
-            completedAt: now,
-          });
-          const kept = recorded("first", 1, first);
-          const rollback = yield* runtime
-            .rollbackThread({
-              providerThread: thread,
-              target: {
-                type: "provider_turn",
-                checkpointId: CheckpointId.make("checkpoint:first"),
-                appRunOrdinal: 1,
-                providerTurn: kept,
-              },
-              providerThreadTurns: [kept, recorded("second", 2, second)],
-            })
-            .pipe(Effect.exit);
-          if (running) {
-            const error = Exit.isFailure(rollback) ? Cause.squash(rollback.cause) : undefined;
-            assert.equal(
-              (error as { _tag?: string } | undefined)?._tag,
-              "ProviderAdapterProtocolError",
-            );
-          } else {
-            assert.isTrue(Exit.isSuccess(rollback));
-            assert.deepEqual(
-              Exit.isSuccess(rollback) ? rollback.value.providerTurns.map((turn) => turn.id) : [],
-              [kept.id],
-            );
-          }
-        }).pipe(Effect.scoped),
-    );
-  }
+  it.effect.each([
+    ["refuses to roll back a session not loaded yet while the server runs it", true],
+    [
+      "keeps the recorded turns before the target when rolling back a session not loaded yet",
+      false,
+    ],
+  ] as const)("%s", ([, running]) =>
+    Effect.gen(function* () {
+      const first = `msg_t3_turn_${SESSION}:attempt:first`;
+      const second = `msg_t3_turn_${SESSION}:attempt:second`;
+      // A runtime that never loaded the session, as after a T3 restart
+      // against a server that kept running.
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("session.active"),
+        reply("session.active", { data: running ? { [SESSION]: { type: "running" } } : {} }),
+        ...(running
+          ? []
+          : [
+              out("session.get", { sessionID: SESSION }),
+              replyData("session.get", sessionInfo()),
+              ...noOpenRequests,
+              out("message.list", "<any>"),
+              reply("message.list", {
+                data: [
+                  { id: second, time: { created: 2 }, text: "second", type: "user" },
+                  { id: first, time: { created: 1 }, text: "first", type: "user" },
+                ],
+                cursor: {},
+              }),
+              out("session.revert.stage", {
+                sessionID: SESSION,
+                messageID: second,
+                files: false,
+              }),
+              replyData("session.revert.stage", { messageID: second, files: [] }),
+              out("session.revert.commit", { sessionID: SESSION }),
+              reply("session.revert.commit", null),
+              out("message.list", "<any>"),
+              reply("message.list", {
+                data: [{ id: first, time: { created: 1 }, text: "first", type: "user" }],
+                cursor: {},
+              }),
+            ]),
+      ]);
+      const thread = providerThread(yield* DateTime.now);
+      const now = yield* DateTime.now;
+      const recorded = (key: string, ordinal: number, nativeId: string) => ({
+        id: ProviderTurnId.make(`provider-turn:${key}`),
+        providerThreadId: thread.id,
+        nodeId: NodeId.make(`node:${key}`),
+        runAttemptId: RunAttemptId.make(`attempt:${key}`),
+        nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
+        ordinal,
+        status: "completed" as const,
+        startedAt: now,
+        completedAt: now,
+      });
+      const kept = recorded("first", 1, first);
+      const rollback = yield* runtime
+        .rollbackThread({
+          providerThread: thread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint:first"),
+            appRunOrdinal: 1,
+            providerTurn: kept,
+          },
+          providerThreadTurns: [kept, recorded("second", 2, second)],
+        })
+        .pipe(Effect.exit);
+      if (running) {
+        const error = Exit.isFailure(rollback) ? Cause.squash(rollback.cause) : undefined;
+        assert.equal(
+          (error as { _tag?: string } | undefined)?._tag,
+          "ProviderAdapterProtocolError",
+        );
+      } else {
+        assert.isTrue(Exit.isSuccess(rollback));
+        assert.deepEqual(
+          Exit.isSuccess(rollback) ? rollback.value.providerTurns.map((turn) => turn.id) : [],
+          [kept.id],
+        );
+      }
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("refuses to fork a session while OpenCode runs a follow-up on it", () =>
     Effect.gen(function* () {

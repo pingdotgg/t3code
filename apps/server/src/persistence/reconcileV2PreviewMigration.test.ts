@@ -60,8 +60,9 @@ describe("V2 preview upgrade", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  for (const withIndexes of [false, true]) {
-    it.effect(`upgrades preview migration 54 with index cleanup ${withIndexes}`, () =>
+  it.effect.each([false, true])(
+    "upgrades preview migration 54 with index cleanup %s",
+    (withIndexes) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* runMigrations({ toMigrationInclusive: 52 });
@@ -89,8 +90,7 @@ describe("V2 preview upgrade", () => {
         }>`PRAGMA table_info(projection_threads)`;
         assert.ok(columns.some((column) => column.name === "auto_settle_disabled_at"));
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
-    );
-  }
+  );
 
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
     Effect.gen(function* () {

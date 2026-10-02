@@ -332,61 +332,59 @@ const runScenario = (input: {
   });
 
 describe("OpenCode 2 through the orchestrator", () => {
-  for (const via of ["message", "thread settings"] as const) {
-    it.effect(
-      `switches the session's model before the next prompt when changed from the ${via}`,
-      () =>
-        Effect.gen(function* () {
-          const name = `opencode2-model-switch-${via.replace(" ", "-")}`;
-          const cwd = yield* checkpointWorkspace(name);
-          const thread = threadCommands({ name, worktreePath: cwd });
-          const projection = yield* runScenario({
-            name,
-            threadId: thread.threadId,
-            entries: [
-              ...createdSession(cwd, name),
-              ...instructionsWritten,
-              ...answeredPrompt("FIRST"),
-              // The next turn resumes the session at its new selection.
-              out("session.get", { sessionID: SESSION }),
-              reply("session.get", sessionInfo(cwd, t3Rules(name))),
-              out("session.switchModel", {
-                sessionID: SESSION,
-                model: { providerID: "opencode", id: "mimo-v2.6-flash-free" },
-              }),
-              reply("session.switchModel", null),
-              // The instructions name the model, so they are written again.
-              ...instructionsWritten,
-              ...answeredPrompt("SECOND"),
-            ],
-            commands: [
-              thread.create,
-              thread.message("first"),
-              ...(via === "thread settings"
-                ? [
-                    {
-                      type: "thread.model-selection.set",
-                      commandId: thread.command("model"),
-                      threadId: thread.threadId,
-                      modelSelection: mimo,
-                    } satisfies OrchestrationV2Command,
-                  ]
-                : []),
-              thread.message("second", mimo),
-            ],
-          });
-          assert.deepEqual(
-            projection.runs.map((run) => [run.status, run.modelSelection.model]),
-            [
-              ["completed", bigPickle.model],
-              ["completed", mimo.model],
-            ],
-          );
-          // One native session carried both turns.
-          assert.lengthOf(projection.providerThreads, 1);
-        }).pipe(Effect.scoped),
-    );
-  }
+  it.effect.each(["message", "thread settings"] as const)(
+    "switches the session's model before the next prompt when changed from the %s",
+    (via) =>
+      Effect.gen(function* () {
+        const name = `opencode2-model-switch-${via.replace(" ", "-")}`;
+        const cwd = yield* checkpointWorkspace(name);
+        const thread = threadCommands({ name, worktreePath: cwd });
+        const projection = yield* runScenario({
+          name,
+          threadId: thread.threadId,
+          entries: [
+            ...createdSession(cwd, name),
+            ...instructionsWritten,
+            ...answeredPrompt("FIRST"),
+            // The next turn resumes the session at its new selection.
+            out("session.get", { sessionID: SESSION }),
+            reply("session.get", sessionInfo(cwd, t3Rules(name))),
+            out("session.switchModel", {
+              sessionID: SESSION,
+              model: { providerID: "opencode", id: "mimo-v2.6-flash-free" },
+            }),
+            reply("session.switchModel", null),
+            // The instructions name the model, so they are written again.
+            ...instructionsWritten,
+            ...answeredPrompt("SECOND"),
+          ],
+          commands: [
+            thread.create,
+            thread.message("first"),
+            ...(via === "thread settings"
+              ? [
+                  {
+                    type: "thread.model-selection.set",
+                    commandId: thread.command("model"),
+                    threadId: thread.threadId,
+                    modelSelection: mimo,
+                  } satisfies OrchestrationV2Command,
+                ]
+              : []),
+            thread.message("second", mimo),
+          ],
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.modelSelection.model]),
+          [
+            ["completed", bigPickle.model],
+            ["completed", mimo.model],
+          ],
+        );
+        // One native session carried both turns.
+        assert.lengthOf(projection.providerThreads, 1);
+      }).pipe(Effect.scoped),
+  );
 
   it.effect("moves the session to the thread's new worktree before the next prompt", () =>
     Effect.gen(function* () {
