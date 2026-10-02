@@ -1650,6 +1650,9 @@ code {
   .conversation-font-scope {
     --conversation-text-unit: var(--font-size-conversation, 1rem);
     --conversation-font-scale: var(--font-scale-conversation, 1);
+    --conversation-preview-line-height: calc(var(--conversation-text-unit) * 1.25);
+    --text-2xs: calc(11px * var(--conversation-font-scale));
+    --text-3xs: calc(10px * var(--conversation-font-scale));
     --text-xs: calc(var(--conversation-text-unit) * 0.75);
     --text-sm: calc(var(--conversation-text-unit) * 0.875);
     --text-base: var(--conversation-text-unit);
