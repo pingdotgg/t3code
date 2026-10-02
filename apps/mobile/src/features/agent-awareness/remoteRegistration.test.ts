@@ -571,7 +571,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           const snapshot = excludedEnvironmentIds
             ? { ...remoteSnapshot, excludedEnvironmentIds }
             : remoteSnapshot;
-          return ordinal === 2 && kind === blockedRead
+          return ordinal === 1 && kind === blockedRead
             ? Deferred.succeed(readStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(finishRead)),
                 Effect.as(snapshot),
@@ -592,20 +592,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
               isReady: true,
               entries: new Map(),
             });
-          expect(backgroundRuntime.pending).toHaveLength(1);
-          const refresh = backgroundRuntime.pending.shift();
-          if (!refresh) throw new Error("Expected scope-only widget refresh");
-          const exit = yield* Effect.exit(
-            refresh.operation as Effect.Effect<unknown, unknown, ManagedRelay.ManagedRelayClient>,
-          ).pipe(Effect.provide(layer));
-          refresh.resolve(exit);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
-            expect.objectContaining({
-              activeCount: 1,
-              activities: remoteSnapshot.aggregate!.activities,
-            }),
-          );
+          // The in-flight read rechecks the scope before publishing; no second
+          // foreground reconciliation is needed before that first response.
+          expect(backgroundRuntime.pending).toHaveLength(0);
         } else if (transition === "background") {
           appStateMock.currentState = "background";
           for (const listener of appStateMock.listeners) listener("background");
@@ -622,8 +611,8 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         yield* Fiber.join(prime);
         if (transition === "scope change") {
           expect({ globalReads, scopedReads }).toEqual({
-            globalReads: 3,
-            scopedReads: blockedRead === "global" ? 1 : 2,
+            globalReads: 1,
+            scopedReads: 1,
           });
           expect(backgroundRuntime.pending).toHaveLength(0);
           expect(widgetMocks.start).toHaveBeenCalledExactlyOnceWith(
@@ -660,7 +649,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           expect(activity.getPushToken).toHaveBeenCalledTimes(1);
           expect(backgroundRuntime.pending).toHaveLength(0);
         } else {
-          expect(globalReads).toBe(2);
+          expect(globalReads).toBe(1);
           expect(widgetMocks.start).not.toHaveBeenCalled();
           expect(activity.getPushToken).not.toHaveBeenCalled();
           expect(widgetBeforeRelease?.activities).toEqual([]);
@@ -739,7 +728,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }),
       expect.any(Date),
     );
-    expect(publishAgentActivityWidget).not.toHaveBeenCalled();
+    expect(publishAgentActivityWidget).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ activeCount: 0, activities: [] }),
+    );
   });
 
   it("preserves disabled Live Activity preferences in relay registrations", () => {
@@ -1752,7 +1743,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* runBackgroundOperations();
 
       expect(widgetMocks.start).not.toHaveBeenCalled();
-      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(1);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
           activeCount: 1,
@@ -1786,7 +1777,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* runBackgroundOperations();
 
       expect(widgetMocks.start).not.toHaveBeenCalled();
-      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(1);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
           activeCount: 1,
@@ -1868,7 +1859,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* Deferred.succeed(finishFirstRead, undefined);
       yield* Fiber.join(olderRefresh);
 
-      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(1);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
           activities: [expect.objectContaining({ status: "Working" })],
@@ -1929,7 +1920,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         }),
         expect.any(Date),
       );
-      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(1);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(2);
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
           activeCount: 0,
@@ -1983,7 +1974,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           const snapshot = excludedEnvironmentIds
             ? { aggregate: null, excludedEnvironmentIds }
             : activeAgentActivitySnapshot;
-          return ordinal === 2 && kind === blockedRead
+          return ordinal === 1 && kind === blockedRead
             ? Deferred.succeed(readStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(finishRead)),
                 Effect.as(snapshot),
@@ -2016,7 +2007,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         const readsBeforeTokenResolved = { global: globalReads, scoped: scopedReads };
         finishToken("activity-token");
         pending.resolve(yield* Fiber.join(localRegistration));
-        expect(readsBeforeTokenResolved).toEqual({ global: 2, scoped: 2 });
+        expect(readsBeforeTokenResolved).toEqual({ global: 1, scoped: 1 });
         expect(startsBeforeTokenResolved).toBe(1);
         expect(activities).toHaveLength(1);
       }).pipe(Effect.scoped),
@@ -2073,11 +2064,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         preferencesStarted();
         return preferences;
       });
-      let readCount = 0;
-      const layer = snapshotRelayLayer(() => {
-        readCount++;
-        return Effect.succeed(readCount === 1 ? activeAgentActivitySnapshot : { aggregate: null });
-      });
+      let snapshot: RelayAgentActivitySnapshotResponse = activeAgentActivitySnapshot;
+      const readSnapshot = vi.fn(() => Effect.succeed(snapshot));
+      const layer = snapshotRelayLayer(readSnapshot);
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
 
       const refresh = yield* refreshActiveLiveActivityRemoteRegistration().pipe(
@@ -2086,10 +2075,12 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       );
       yield* Effect.promise(() => started);
 
+      expect(readSnapshot).not.toHaveBeenCalled();
+      snapshot = { aggregate: null };
       finishPreferences({ liveActivitiesEnabled: true } as Preferences);
       yield* Fiber.join(refresh);
 
-      expect(readCount).toBe(2);
+      expect(readSnapshot).toHaveBeenCalledTimes(1);
       expect(widgetMocks.start).not.toHaveBeenCalled();
       expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
         expect.objectContaining({
@@ -2369,7 +2360,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         );
       });
       yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
-      expect(queries).toEqual([undefined, [liveEnvironmentId], undefined, [liveEnvironmentId]]);
+      expect(queries).toEqual([undefined, [liveEnvironmentId]]);
       expect(widgetMocks.start).toHaveBeenCalledWith(
         expect.objectContaining({
           activities: activeAgentActivitySnapshot.aggregate.activities,
@@ -2545,6 +2536,43 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         expect.objectContaining({ activeCount: 0, isStale: false, activities: [] }),
       );
     }),
+  );
+
+  it.effect.each(["account switch", "provider remount"] as const)(
+    "clears the prior account's native widget on %s even when the relay is unavailable",
+    (transition) =>
+      Effect.gen(function* () {
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+        backgroundRuntime.pending.length = 0;
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+          Effect.provide(snapshotRelayLayer()),
+        );
+        expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            activeCount: 1,
+            activities: activeAgentActivitySnapshot.aggregate.activities,
+          }),
+        );
+        if (transition === "provider remount") releaseAgentAwarenessRelayTokenProvider();
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-b"), "user-b");
+        backgroundRuntime.pending.length = 0;
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+          Effect.provide(
+            snapshotRelayLayer(() =>
+              Effect.fail(
+                new ManagedRelay.ManagedRelayRequestFailedError({
+                  action: "read relay agent activity snapshot",
+                  transportFailed: true,
+                  cause: new Error("offline"),
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
+          expect.objectContaining({ activeCount: 0, activities: [] }),
+        );
+      }),
   );
 
   it.effect("publishes freshness changes even when rows and count are unchanged", () =>

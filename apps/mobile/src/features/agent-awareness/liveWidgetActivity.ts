@@ -143,18 +143,16 @@ export function reconcileWidgetActivity(
     acknowledgedScope !== undefined &&
     sameWidgetEnvironmentScope(acknowledgedScope, [...live.keys()]);
   const globalScope = (acknowledgedScope?.length ?? 0) === 0;
-  const activeCount =
-    snapshot === null
-      ? null
-      : exactScope
-        ? localActiveCount + (aggregate?.activeCount ?? 0)
-        : !globalScope
-          ? null
-          : live.size === 0
-            ? (aggregate?.activeCount ?? 0)
-            : relayCountIsComplete
-              ? localActiveCount + remoteRows.filter(isActive).length
-              : null;
+  let activeCount: number | null = null;
+  if (snapshot !== null) {
+    if (exactScope) {
+      activeCount = localActiveCount + (aggregate?.activeCount ?? 0);
+    } else if (globalScope) {
+      if (live.size === 0) activeCount = aggregate?.activeCount ?? 0;
+      else if (relayCountIsComplete)
+        activeCount = localActiveCount + remoteRows.filter(isActive).length;
+    }
+  }
   const activities = [...localRows, ...remoteRows]
     .sort(
       (left, right) =>

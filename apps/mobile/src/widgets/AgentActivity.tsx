@@ -55,15 +55,21 @@ export interface AgentActivityProps {
 // must stay self-contained: no references to module-scope helpers, only the
 // imported view/modifier factories.
 export function AgentActivity(
-  props: AgentActivityProps,
+  props: AgentActivityProps | undefined,
   environment: WidgetEnvironment,
 ): JSX.Element;
 export function AgentActivity(
-  props: AgentActivityProps,
+  props: AgentActivityProps | undefined,
   environment: LiveActivityEnvironment,
 ): LiveActivityLayout;
 export function AgentActivity(
-  props: AgentActivityProps,
+  props: AgentActivityProps = {
+    title: "T3 Code",
+    subtitle: "No active agents",
+    activeCount: 0,
+    updatedAt: "",
+    activities: [],
+  },
   environment: WidgetEnvironment | LiveActivityEnvironment,
 ): JSX.Element | LiveActivityLayout {
   "widget";
@@ -317,11 +323,7 @@ export function AgentActivity(
             lineLimit(1),
           ]}
         >
-          {props.isStale || activeCount === null
-            ? activeLabel
-            : attentionRows.length > 0
-              ? summary
-              : activeLabel}
+          {props.isStale || activeCount === null ? activeLabel : summary}
         </Text>
         <Spacer minLength={6} />
       </HStack>
@@ -610,15 +612,5 @@ export function AgentActivity(
 }
 
 export const AgentActivityWidget = createWidget<AgentActivityProps>("AgentActivity", AgentActivity);
-
-export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
-  try {
-    AgentActivityWidget.updateSnapshot(props);
-    return true;
-  } catch {
-    // Personal-team and Android builds have no widget extension.
-    return false;
-  }
-}
 
 export default createLiveActivity<AgentActivityProps>("AgentActivity", AgentActivity);

@@ -244,6 +244,9 @@ export function setAgentAwarenessRelayTokenProvider(
     });
     return;
   }
+  // Native timelines survive JS restarts. Clear unowned content before a new
+  // session publishes, even if its relay read fails. Token refreshes keep it.
+  if (!isExistingIdentity) publishRegularWidget(idleWidgetProps());
   ensurePushTokenListener();
   ensureAppStateListener();
   startLiveWidgetObserver();
@@ -1308,95 +1311,54 @@ export function refreshActiveLiveActivityRemoteRegistration(): Effect.Effect<
       activities = activities.slice(0, 1);
     }
 
-    // Home-screen widgets are independent of the lock-screen card. Publish
-    // the latest aggregate even when a Live Activity already exists or the
-    // user has turned Live Activities off; otherwise the widget stays on the
-    // "Connecting" snapshot from local arming.
-    yield* refreshAgentActivityWidget();
+    // Read preferences before the snapshot so the widget and a newly primed
+    // Live Activity can share one fresh response, including any scoped read.
+    const preferences =
+      activities.length === 0
+        ? yield* Effect.tryPromise({
+            try: () => loadPreferences(),
+            catch: (cause) =>
+              new AgentAwarenessOperationError({
+                operation: "load-live-activity-prime-preferences",
+                cause,
+              }),
+          }).pipe(Effect.orElseSucceed(() => null))
+        : null;
+    if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) return;
 
-    if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) {
-      return;
-    }
+    // Home-screen widgets update independently of the Live Activity toggle.
+    const snapshot = yield* refreshAgentActivityWidget();
+    if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) return;
 
-    // Activities are only ever created here, in the foreground, where the
-    // update token can be observed and registered immediately — the relay
-    // never remote-starts one (background push-to-start wakes proved too
-    // unreliable to hand the token over). Arming is conditional: the relay is
-    // asked what the card would show first, so an idle open never creates an
-    // empty lock-screen card, and an armed card is born with the real
-    // aggregate instead of a placeholder.
-    if (activities.length === 0) {
-      const preferences = yield* Effect.tryPromise({
-        try: () => loadPreferences(),
-        catch: (cause) =>
-          new AgentAwarenessOperationError({
-            operation: "load-live-activity-prime-preferences",
-            cause,
-          }),
-      }).pipe(Effect.orElseSucceed(() => null));
-      if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) {
-        return;
-      }
-      // The toggle defaults to on: an unset preference (fresh install) must
-      // prime, so only an explicit false blocks it.
-      if (preferences?.liveActivitiesEnabled !== false) {
-        // The snapshot request yields; an arm-on-send may have created the
-        // card in the meantime. Re-check so two cards are never started.
-        const armedMeanwhile = yield* Effect.try({
-          try: () => getAgentLiveActivities(),
-          catch: () => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>,
-        }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>));
-        if (armedMeanwhile.length > 0) {
-          activities = [...armedMeanwhile];
-        } else {
-          const latestSnapshot = yield* refreshAgentActivityWidget();
-          if (
-            expectedDeviceGeneration !== deviceRegistrationGeneration ||
-            !relayTokenProvider ||
-            AppState.currentState !== "active"
-          ) {
-            return;
-          }
-          if (!latestSnapshot?.aggregate || latestSnapshot.aggregate.activeCount <= 0) {
-            return;
-          }
-          // Local arming may finish while either snapshot request is pending.
-          const armedDuringRead = yield* Effect.try({
-            try: () => getAgentLiveActivities(),
-            catch: () => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>,
-          }).pipe(
-            Effect.orElseSucceed(() => [] as ReadonlyArray<LiveActivity<AgentActivityProps>>),
-          );
-          if (armedDuringRead.length > 0) {
-            activities = [...armedDuringRead];
-          } else {
-            const aggregate = latestSnapshot.aggregate;
-            const primed = yield* Effect.try({
-              try: () =>
-                startAgentLiveActivity(
-                  widgetPropsFromAggregate(aggregate),
-                  liveActivityStaleDate(),
-                ),
-              catch: (cause) =>
-                new AgentAwarenessOperationError({
-                  operation: "prime-live-activity",
-                  cause,
-                }),
-            }).pipe(
-              Effect.catch((error) =>
-                Effect.sync(() => {
-                  logRegistrationError("live activity priming failed", error);
-                  return null;
-                }),
-              ),
-            );
-            if (primed) {
-              logRegistrationDebug("live activity card primed", {
-                activeCount: aggregate.activeCount,
-              });
-              activities = [primed];
-            }
-          }
+    if (
+      activities.length === 0 &&
+      preferences?.liveActivitiesEnabled !== false &&
+      AppState.currentState === "active"
+    ) {
+      // Local arming may have created a card while preferences or either
+      // snapshot request was pending. Register that card instead of a duplicate.
+      activities = yield* Effect.try({
+        try: () => [...getAgentLiveActivities()],
+        catch: () => [] as Array<LiveActivity<AgentActivityProps>>,
+      }).pipe(Effect.orElseSucceed(() => [] as Array<LiveActivity<AgentActivityProps>>));
+      if (activities.length === 0 && snapshot?.aggregate && snapshot.aggregate.activeCount > 0) {
+        const aggregate = snapshot.aggregate;
+        const primed = yield* Effect.try({
+          try: () =>
+            startAgentLiveActivity(widgetPropsFromAggregate(aggregate), liveActivityStaleDate()),
+          catch: (cause) =>
+            new AgentAwarenessOperationError({ operation: "prime-live-activity", cause }),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              logRegistrationError("live activity priming failed", error);
+              return null;
+            }),
+          ),
+        );
+        if (primed) {
+          logRegistrationDebug("live activity card primed", { activeCount: aggregate.activeCount });
+          activities = [primed];
         }
       }
     }

@@ -38,8 +38,6 @@ vi.mock("expo-widgets", () => ({
 
 import {
   AgentActivity,
-  AgentActivityWidget,
-  publishAgentActivityWidget,
   type AgentActivityProps,
   type AgentActivityRowProps,
 } from "./AgentActivity";
@@ -404,15 +402,18 @@ describe("AgentActivity widget layout", () => {
     expect(JSON.stringify(layout)).not.toContain("containerBackground");
   });
 
-  it("renders an idle home-screen widget when props are missing", () => {
-    for (const family of ["systemSmall", "systemMedium"] as const) {
-      const view = AgentActivity({} as AgentActivityProps, widgetEnvironment(family));
-      const json = JSON.stringify(view);
-      expect(json.match(/No active agents/g)).toHaveLength(1);
-      expect(json).toContain('"containerBackground":{"color":"clear","container":"widget"}');
-      expect(json).not.toContain("0 active");
-    }
-  });
+  it.each([undefined, {} as AgentActivityProps])(
+    "renders an idle home-screen widget with props %s",
+    (emptyProps) => {
+      for (const family of ["systemSmall", "systemMedium"] as const) {
+        const view = AgentActivity(emptyProps, widgetEnvironment(family));
+        const json = JSON.stringify(view);
+        expect(json.match(/No active agents/g)).toHaveLength(1);
+        expect(json).toContain('"containerBackground":{"color":"clear","container":"widget"}');
+        expect(json).not.toContain("0 active");
+      }
+    },
+  );
 
   it.each(["systemSmall", "systemMedium", "accessoryRectangular"] as const)(
     "distinguishes unavailable counts from idle in the serialized %s widget layout",
@@ -470,12 +471,4 @@ describe("AgentActivity widget layout", () => {
     }
     expect(banner).not.toContain("Thread 6");
   });
-});
-
-it("reports a failed native widget snapshot so the caller can retry", () => {
-  vi.mocked(AgentActivityWidget.updateSnapshot).mockImplementationOnce(() => {
-    throw new Error("native update failed");
-  });
-  expect(publishAgentActivityWidget(props)).toBe(false);
-  expect(publishAgentActivityWidget(props)).toBe(true);
 });

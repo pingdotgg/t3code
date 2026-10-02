@@ -188,7 +188,10 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         description: "Shows the current state of active T3 Code agents.",
         // Live Activity companion; there is no Android presentation for it.
         android: null,
-        ios: { supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"] },
+        ios: {
+          supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
+          initialLayout: "./src/widgets/AgentActivity.tsx",
+        },
       },
     ],
   },

@@ -1,9 +1,17 @@
 import AgentActivity, {
-  publishAgentActivityWidget,
+  AgentActivityWidget,
   type AgentActivityProps,
 } from "../../widgets/AgentActivity";
 
-export { publishAgentActivityWidget };
+export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
+  try {
+    AgentActivityWidget.updateSnapshot(props);
+    return true;
+  } catch {
+    // Personal-team builds have no widget extension.
+    return false;
+  }
+}
 
 export function getAgentLiveActivities() {
   return AgentActivity.getInstances();
