@@ -525,9 +525,16 @@ function ScheduledTaskEditorDialog({
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
   // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
-  const activeSelection = draft.modelKey
+  const chosenSelection = draft.modelKey
     ? splitModelKey(draft.modelKey)
     : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const activeSelection =
+    chosenSelection !== null &&
+    draft.baseModelSelection !== null &&
+    draft.baseModelSelection.instanceId === chosenSelection.instanceId &&
+    draft.baseModelSelection.model === chosenSelection.model
+      ? draft.baseModelSelection
+      : chosenSelection;
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
@@ -577,14 +584,6 @@ function ScheduledTaskEditorDialog({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    // Keep the original selection object (with provider options) when the
-    // picker still points at the same instance+model.
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -604,7 +603,7 @@ function ScheduledTaskEditorDialog({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -803,10 +802,15 @@ function ScheduledTaskEditorDialog({
                 lockedProvider={null}
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
+                modelSelection={activeSelection}
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                onInstanceModelChange={(selection) =>
+                  setDraft((current) => ({
+                    ...current,
+                    modelKey: `${selection.instanceId}:${selection.model}`,
+                    baseModelSelection: selection,
+                  }))
                 }
               />
             </Field>

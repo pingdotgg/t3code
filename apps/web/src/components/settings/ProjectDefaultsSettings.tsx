@@ -162,6 +162,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               lockedProvider={null}
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
+              modelSelection={targets.length === 1 ? selection : undefined}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
               getModelDisabledReason={modelDisabledReason}
@@ -172,9 +173,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     search: { environmentId: representative.environmentId, instanceId },
                   });
               }}
-              onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
-              }
+              onInstanceModelChange={setModel}
             />
             {!mixedModel ? (
               <TraitsPicker

@@ -2,6 +2,58 @@ import { assert, it } from "@effect/vitest";
 
 import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
+it("advertises only approved Daybreak programs with Off as the default", () => {
+  for (const [programs, labels] of [
+    [undefined, []],
+    [[], []],
+    [["standard"], []],
+    [["daybreakBlue"], []],
+    [["daybreakRed"], []],
+    [
+      ["standard", "daybreakBlue"],
+      ["Off", "Blue"],
+    ],
+    [
+      ["standard", "daybreakRed"],
+      ["Off", "Red"],
+    ],
+    [
+      ["standard", "daybreakBlue", "daybreakRed"],
+      ["Off", "Blue", "Red"],
+    ],
+  ] as const) {
+    const [descriptor] =
+      mapCodexModelCapabilities({
+        additionalSpeedTiers: [],
+        defaultReasoningEffort: "medium",
+        description: "Test",
+        displayName: "Test",
+        hidden: false,
+        id: "test",
+        isDefault: true,
+        model: "test",
+        supportedReasoningEfforts: [],
+        ...(programs === undefined ? {} : { availableAccessPrograms: { cyber: programs } }),
+      }).optionDescriptors ?? [];
+    assert.equal(descriptor?.id, labels.length > 0 ? "cyberAccessProgram" : undefined);
+    assert.deepStrictEqual(
+      descriptor?.type === "select" ? descriptor.options.map((option) => option.label) : [],
+      [...labels],
+    );
+    if (descriptor?.type === "select") {
+      assert.equal(descriptor.currentValue, "standard");
+      assert.deepStrictEqual(
+        descriptor.options.map((option) => option.id),
+        [...(programs ?? [])],
+      );
+      assert.deepStrictEqual(
+        descriptor.options.filter((option) => option.isDefault).map((option) => option.id),
+        ["standard"],
+      );
+    }
+  }
+});
+
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: [],

@@ -66,9 +66,8 @@ export interface DraftState {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   /**
-   * The task's original model selection. The picker only edits
-   * `instanceId:model`; keeping the source object preserves provider options
-   * (reasoning, temperature, …) when the model itself is left unchanged.
+   * The complete selection for the keyed model, including saved or edited
+   * options. It applies only while the picker targets the same instance and model.
    */
   readonly baseModelSelection: ModelSelection | null;
 }

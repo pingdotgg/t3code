@@ -10,6 +10,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import * as CodexReplay from "./replay.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -154,5 +155,39 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
 
       assert.equal(initialized.userAgent, "mock-codex-app-server");
     }),
+  );
+
+  it.effect.each([undefined, "standard", "daybreakBlue", "daybreakRed"] as const)(
+    "encodes turn/start cyberAccessProgram %s",
+    (cyberAccessProgram) => {
+      const params = {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "Hello" }] as const,
+        ...(cyberAccessProgram === undefined ? {} : { cyberAccessProgram }),
+      };
+      const response = { turn: { id: "turn-1", items: [], status: "inProgress" } } as const;
+
+      return Effect.gen(function* () {
+        const client = yield* CodexClient.CodexAppServerClient;
+        assert.deepEqual(yield* client.request("turn/start", params), response);
+      }).pipe(
+        Effect.provide(
+          CodexReplay.layerReplay({
+            provider: "codex",
+            protocol: "codex.app-server",
+            version: "test",
+            scenario: "turn-cyber-access-program",
+            entries: [
+              {
+                type: "expect_outbound",
+                frame: { id: 1, method: "turn/start", params },
+              },
+              { type: "emit_inbound", frame: { id: 1, result: response } },
+            ],
+          }),
+        ),
+        Effect.scoped,
+      );
+    },
   );
 });

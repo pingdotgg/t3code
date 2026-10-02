@@ -237,6 +237,48 @@ export function getProviderOptionCurrentLabel(
   return descriptor.options.find((option) => option.id === currentValue)?.label;
 }
 
+/** Resolve an explicit treatment against the selected account and model's advertised choices. */
+export function getCodexDaybreakState(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+  value?: string | boolean,
+) {
+  const descriptor = descriptors?.find(
+    (candidate): candidate is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      candidate.id === "cyberAccessProgram" && candidate.type === "select",
+  );
+  if (!descriptor || !descriptor.options.some((option) => option.id === "standard")) return null;
+  const hasBlue = descriptor.options.some((option) => option.id === "daybreakBlue");
+  const hasRed = descriptor.options.some((option) => option.id === "daybreakRed");
+  if (!hasBlue && !hasRed) return null;
+  value ??= getProviderOptionCurrentValue(descriptor);
+  const selected =
+    (value === "daybreakBlue" && hasBlue) || (value === "daybreakRed" && hasRed) ? value : null;
+  return {
+    checked: selected !== null,
+    enabledValue: selected ?? (hasBlue ? "daybreakBlue" : "daybreakRed"),
+  } as const;
+}
+
+export function getCodexDaybreakLabel(programs: ReadonlyArray<string | undefined>) {
+  const choices = new Set(programs);
+  choices.delete(undefined);
+  if (choices.size === 0) return null;
+  if (choices.size > 1) return "Daybreak";
+  return choices.has("daybreakBlue") ? "Daybreak Blue" : "Daybreak Red";
+}
+
+/** Apply the chosen treatment without changing the model's other options. */
+export function withCodexDaybreakProgram(selection: ModelSelection, value: string | undefined) {
+  if (value === undefined) return selection;
+  return {
+    ...selection,
+    options: [
+      ...(selection.options ?? []).filter((option) => option.id !== "cyberAccessProgram"),
+      { id: "cyberAccessProgram", value },
+    ],
+  };
+}
+
 export function buildProviderOptionSelectionsFromDescriptors(
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | null | undefined,
 ): Array<ProviderOptionSelection> | undefined {

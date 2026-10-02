@@ -155,13 +155,16 @@ function getSelectedTraits(
       });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" && descriptor.id !== "cyberAccessProgram",
   );
   const booleanDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
       descriptor.type === "boolean",
   );
-  const primarySelectDescriptor = selectDescriptors[0] ?? null;
+  const primarySelectDescriptor =
+    selectDescriptors.find(
+      (descriptor) => provider !== "codex" || descriptor.id === "reasoningEffort",
+    ) ?? null;
   const contextWindowDescriptor =
     selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
@@ -245,7 +248,7 @@ function getTraitsSectionVisibility(input: {
     showContextWindow,
     showAgent,
     hasAnyControls:
-      showEffort ||
+      selected.selectDescriptors.length > 0 ||
       showThinking ||
       showFastMode ||
       showContextWindow ||
@@ -488,6 +491,9 @@ export function buildTraitsTriggerDisplay(input: {
   let speedIcon: "fast" | "ultrafast" | null = null;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
+    if (descriptor.id === "cyberAccessProgram") {
+      continue;
+    }
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedIcon = descriptor.currentValue === true ? "fast" : null;
       fastModeFallbackLabel = speedIcon ? "Fast" : "Normal";

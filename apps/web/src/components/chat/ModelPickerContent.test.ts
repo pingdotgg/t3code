@@ -12,6 +12,8 @@ import {
   resolveModelPickerSelectedModel,
   shouldIncludeModelPickerOption,
   shouldOfferModelPickerSetup,
+  modelPickerDaybreakLabel,
+  modelPickerSelection,
 } from "./ModelPickerContent";
 
 function entry(status: ServerProvider["status"], driver = "opencode") {
@@ -31,6 +33,74 @@ function entry(status: ServerProvider["status"], driver = "opencode") {
     },
   ])[0]!;
 }
+
+describe("Daybreak picker mode", () => {
+  const luna = {
+    instanceId: ProviderInstanceId.make("codex_work"),
+    model: "luna",
+    daybreakProgram: "daybreakBlue",
+  };
+
+  it("shows the switch only for eligible Codex views or Favorites", () => {
+    const models = [
+      { instanceId: luna.instanceId, slug: "luna", daybreakProgram: "daybreakBlue" },
+      { instanceId: luna.instanceId, slug: "astra" },
+      { instanceId: ProviderInstanceId.make("claude"), slug: "fable" },
+    ];
+    const favorites = new Set([`${luna.instanceId}:luna`]);
+    expect(modelPickerDaybreakLabel(models, luna.instanceId, favorites)).toBe("Daybreak Blue");
+    expect(modelPickerDaybreakLabel(models, "favorites", favorites)).toBe("Daybreak Blue");
+    expect(
+      modelPickerDaybreakLabel(models, ProviderInstanceId.make("claude"), favorites),
+    ).toBeNull();
+    expect(modelPickerDaybreakLabel(models, "favorites", new Set())).toBeNull();
+    expect(
+      modelPickerDaybreakLabel(
+        [...models, { instanceId: luna.instanceId, slug: "sol", daybreakProgram: "daybreakRed" }],
+        luna.instanceId,
+        favorites,
+      ),
+    ).toBe("Daybreak");
+    const otherAccount = [
+      ...models,
+      {
+        instanceId: ProviderInstanceId.make("codex_red"),
+        slug: "sol",
+        daybreakProgram: "daybreakRed",
+      },
+    ];
+    expect(modelPickerDaybreakLabel(otherAccount, luna.instanceId, favorites)).toBe(
+      "Daybreak Blue",
+    );
+    expect(modelPickerDaybreakLabel(otherAccount, luna.instanceId, favorites, true)).toBe(
+      "Daybreak",
+    );
+  });
+
+  it("sets the native program only in the chosen selection, retaining reasoning", () => {
+    const current = {
+      instanceId: luna.instanceId,
+      model: "luna",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "cyberAccessProgram", value: "standard" },
+      ],
+    };
+    const selected = modelPickerSelection(luna, current, true);
+    expect(selected).toEqual({
+      ...current,
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "cyberAccessProgram", value: "daybreakBlue" },
+      ],
+    });
+    expect(current.options[1]?.value).toBe("standard");
+    expect(
+      modelPickerSelection({ ...luna, model: "astra", daybreakProgram: undefined }, current, true),
+    ).toBeNull();
+    expect(modelPickerSelection(luna, selected, false)).toEqual(current);
+  });
+});
 
 describe("shouldIncludeModelPickerOption", () => {
   it.each(["ready", "error"] as const)(

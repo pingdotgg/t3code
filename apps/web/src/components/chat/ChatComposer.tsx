@@ -1657,11 +1657,7 @@ export interface ChatComposerProps {
     cursorAdjacentToMention: boolean,
   ) => void;
 
-  onProviderModelSelect: (
-    instanceId: ProviderInstanceId,
-    model: string,
-    options?: { focusComposer?: boolean },
-  ) => void;
+  onProviderModelSelect: (selection: ModelSelection, options?: { focusComposer?: boolean }) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
   toggleInteractionMode: () => void;
@@ -5360,12 +5356,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         compact={false}
         isComposerOwned
         disabled={providerCatalogPending || isSendBusy}
+        modelSelection={selectedModelSelection}
         {...(routeKind === "draft" && supportsMultipleModels
           ? {
               ...(multipleModelSelections !== null
                 ? { selectedModels: multipleModelSelections }
                 : {}),
-              onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+              onToggleModel: (pickedSelection: ModelSelection) => {
+                const { instanceId, model } = pickedSelection;
                 const current = multipleModelSelections ?? [selectedModelSelection];
                 const matchesModel = (selection: ModelSelection) => {
                   if (selection.instanceId !== instanceId) return false;
@@ -5382,13 +5380,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 const exists = current.some(matchesModel);
                 const next = exists
                   ? current.filter((selection) => !matchesModel(selection))
-                  : [...current, createModelSelection(instanceId, model)];
+                  : [...current, pickedSelection];
                 if (next.length > 1) {
                   setMultipleModelSelections(next);
                 } else {
                   setMultipleModelSelections(null);
                   const remaining = next[0] ?? selectedModelSelection;
-                  onProviderModelSelect(remaining.instanceId, remaining.model, {
+                  onProviderModelSelect(remaining, {
                     focusComposer: false,
                   });
                 }
@@ -5438,9 +5436,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
         getModelDisabledReason={getModelDisabledReason}
-        onInstanceModelChange={(instanceId, model) => {
+        onInstanceModelChange={(selection) => {
           setMultipleModelSelections(null);
-          onProviderModelSelect(instanceId, model);
+          onProviderModelSelect(selection);
         }}
         onOpenProviderSetup={onOpenProviderSetup}
       />

@@ -320,7 +320,7 @@ export function SourceControlWritingSettingsSection() {
                       }
                     : {})}
                   getModelDisabledReason={writerModelDisabledReason}
-                  onInstanceModelChange={(instanceId, model) => {
+                  onInstanceModelChange={({ instanceId, model }) => {
                     const reason = writerModelDisabledReason(instanceId, model);
                     if (reason) {
                       toastManager.add({

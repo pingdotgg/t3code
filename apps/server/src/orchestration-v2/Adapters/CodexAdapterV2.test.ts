@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   MessageId,
   type ModelSelection,
+  type ModelCapabilities,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -78,6 +79,20 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+function codexDaybreakTestCapabilities(programs: ReadonlyArray<string>): ModelCapabilities {
+  return {
+    optionDescriptors: [
+      {
+        id: "cyberAccessProgram",
+        label: "Daybreak",
+        type: "select",
+        options: programs.map((id) => ({ id, label: id })),
+        currentValue: "standard",
+      },
+    ],
+  };
+}
 
 describe("Codex context usage compatibility", () => {
   const previous: ModelSelection = {
@@ -566,6 +581,7 @@ describe("CodexAdapterV2 runtime policy", () => {
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
+        cyberAccessProgram: "daybreakBlue",
         codexInput: [{ type: "text", text: "test" }],
         runtimePolicy: {
           runtimeMode: "full-access",
@@ -586,6 +602,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(params.model, "gpt-5.4");
       assert.equal(params.effort, "xhigh");
       assert.equal(params.serviceTier, "priority");
+      assert.equal(params.cyberAccessProgram, "daybreakBlue");
       assert.equal(params.cwd, "/workspace/model-options");
       assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
       assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
@@ -1471,6 +1488,8 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   /** Text the adapter should send, when it differs from what the user typed. */
   readonly sentPrompt?: string;
+  readonly cyberAccessProgram?: string;
+  readonly turnRequestId?: number;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -1554,7 +1573,7 @@ function codexReplayPreamble(input: {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: input.turnRequestId ?? 3,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
@@ -1565,6 +1584,9 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          ...(input.cyberAccessProgram === undefined
+            ? {}
+            : { cyberAccessProgram: input.cyberAccessProgram }),
         },
       },
     },
@@ -1572,7 +1594,7 @@ function codexReplayPreamble(input: {
       type: "emit_inbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: input.turnRequestId ?? 3,
         result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
       },
     },
@@ -1620,6 +1642,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    models?: CodexAdapterV2.CodexAdapterV2Options["models"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1665,6 +1688,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         fileSystem,
         idAllocator,
         serverConfig,
+        ...(models === undefined ? {} : { models }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -1727,6 +1751,137 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  it.effect.each([
+    ["daybreakBlue", "daybreakBlue", undefined],
+    ["daybreakRed", "daybreakRed", undefined],
+    ["standard", "standard", undefined],
+    [undefined, "standard", undefined],
+    ["unknown", "standard", undefined],
+    ["daybreakBlue", undefined, "absent"],
+    ["daybreakBlue", undefined, "standard-only"],
+    ["daybreakBlue", undefined, "other-account"],
+    ["daybreakBlue", "daybreakBlue", "revoked"],
+    ["daybreakBlue", "daybreakBlue", "removed"],
+  ] as const)(
+    "forwards Daybreak %s as %s (%s) before and after resume",
+    ([selected, expected, mode]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "daybreak-thread";
+          const selection = (program: string | undefined): ModelSelection => ({
+            ...CODEX_TEST_MODEL_SELECTION,
+            ...(mode === "other-account"
+              ? { instanceId: ProviderInstanceId.make("other-codex") }
+              : {}),
+            ...(program === undefined
+              ? {}
+              : { options: [{ id: "cyberAccessProgram", value: program }] }),
+          });
+          const catalogModel = (programs: ReadonlyArray<string>) => ({
+            slug: CODEX_TEST_MODEL_SELECTION.model,
+            name: "Test",
+            isCustom: false,
+            capabilities: codexDaybreakTestCapabilities(programs),
+          });
+          const catalog = yield* Ref.make(
+            mode === "absent"
+              ? []
+              : [
+                  catalogModel(
+                    mode === "standard-only"
+                      ? ["standard"]
+                      : ["standard", "daybreakBlue", "daybreakRed", "unknown"],
+                  ),
+                ],
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario: `daybreak-${selected}-${mode}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "first",
+                prompt: "work",
+                ...(expected === undefined ? {} : { cyberAccessProgram: expected }),
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: "first", status: "completed" }),
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  id: 4,
+                  method: "thread/resume",
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+              },
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId: "second",
+                prompt: "work",
+                turnRequestId: 5,
+                ...(expected === undefined || mode === "removed"
+                  ? {}
+                  : { cyberAccessProgram: "standard" }),
+              }).slice(5),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            Ref.get(catalog),
+          );
+          const turnInput = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("first-attempt"),
+            text: "work",
+          });
+          yield* harness.runtime.startTurn({ ...turnInput, modelSelection: selection(selected) });
+          yield* harness.firstTerminal;
+          if (mode === "revoked" || mode === "removed") {
+            yield* Ref.set(catalog, [
+              catalogModel(mode === "revoked" ? ["standard", "daybreakRed"] : ["standard"]),
+            ]);
+          }
+          const providerThread = yield* harness.runtime.resumeThread({
+            providerThread: harness.providerThread,
+          });
+          yield* harness.runtime.startTurn({
+            ...turnInput,
+            providerThread,
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+            attemptId: RunAttemptId.make("second-attempt"),
+            modelSelection: selection(
+              mode === "revoked" || mode === "removed"
+                ? selected
+                : selected === undefined
+                  ? undefined
+                  : "standard",
+            ),
+          });
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",

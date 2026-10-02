@@ -1,5 +1,10 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import type { ProviderInstanceId } from "@t3tools/contracts";
+import {
+  getCodexDaybreakState,
+  getModelSelectionStringOptionValue,
+  withCodexDaybreakProgram,
+} from "@t3tools/shared/model";
 
 export type ModelFavorite = {
   readonly provider: ProviderInstanceId;
@@ -58,11 +63,32 @@ export function pendingModelAfterPress(input: {
   readonly current: ModelOption | null;
   readonly pressed: ModelOption;
   readonly pressedIsApplied: boolean;
+  readonly daybreakEnabled?: boolean;
 }): ModelOption | null {
-  if (input.pressedIsApplied) {
+  const pressed = input.current?.key === input.pressed.key ? input.current : input.pressed;
+  const daybreak =
+    input.daybreakEnabled === undefined ? null : getModelDaybreakToggleState(pressed);
+  if (input.pressedIsApplied && !daybreak) {
     return null;
   }
-  return input.current?.key === input.pressed.key ? input.current : input.pressed;
+  return daybreak
+    ? {
+        ...pressed,
+        selection: withCodexDaybreakProgram(
+          pressed.selection,
+          input.daybreakEnabled ? daybreak.enabledValue : "standard",
+        ),
+      }
+    : pressed;
+}
+
+export function getModelDaybreakToggleState(model: ModelOption) {
+  return model.providerDriver === "codex" && !model.isUnavailable && model.capabilities
+    ? getCodexDaybreakState(
+        model.capabilities.optionDescriptors,
+        getModelSelectionStringOptionValue(model.selection, "cyberAccessProgram"),
+      )
+    : null;
 }
 
 /** A model can disappear while the picker is open. */

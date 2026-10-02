@@ -133,7 +133,10 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const descriptors = getProviderOptionDescriptors({ caps, selections });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
-      descriptor.type === "select",
+      descriptor.type === "select" &&
+      (provider === "codex"
+        ? descriptor.id === "reasoningEffort"
+        : descriptor.id !== "cyberAccessProgram"),
   );
   const primaryValue = getProviderOptionCurrentValue(primarySelectDescriptor ?? null);
   const promptEffort = typeof primaryValue === "string" ? primaryValue : null;
