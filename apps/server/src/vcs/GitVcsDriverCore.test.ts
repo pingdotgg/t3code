@@ -2888,6 +2888,46 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* git(cwd, ["remote"]), "octocat\norigin");
       }),
     );
+
+    // A partial clone appends its filter to the fetch line, e.g. "(fetch) [blob:none]".
+    it.effect.each([
+      { suffix: "", remoteName: "origin" },
+      { suffix: " [blob:none]", remoteName: "origin" },
+      { suffix: " [blob:limit=1m]", remoteName: "origin" },
+      { suffix: " [tree:0]", remoteName: "origin" },
+      { suffix: " blob:none", remoteName: "pingdotgg" },
+      { suffix: " [blob:none", remoteName: "pingdotgg" },
+    ])(
+      "ensureRemote reads an origin fetch line ending in '(fetch)$suffix'",
+      ({ suffix, remoteName }) =>
+        Effect.gen(function* () {
+          const added: Array<ReadonlyArray<string>> = [];
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+              if (args[0] === "remote" && args[1] === "add") added.push(args);
+              return makeSuccessfulHandle(
+                args[0] === "remote" && args[1] === "-v"
+                  ? `origin\thttps://github.com/pingdotgg/t3code.git (fetch)${suffix}\norigin\thttps://github.com/pingdotgg/t3code.git (push)\n`
+                  : "",
+              );
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(ServerConfigLayer),
+          );
+
+          const resolved = yield* driver.ensureRemote({
+            cwd: "/repo",
+            preferredName: "pingdotgg",
+            url: "git@github.com:pingdotgg/t3code.git",
+          });
+
+          assert.equal(resolved, remoteName);
+          assert.equal(added.length, remoteName === "origin" ? 0 : 1);
+        }),
+    );
   });
 
   describe("commit context", () => {

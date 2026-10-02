@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -1190,3 +1191,49 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+// A partial clone appends its filter to the fetch line, e.g. "(fetch) [blob:none]".
+it.effect.each([
+  { suffix: "", listed: true },
+  { suffix: " [blob:none]", listed: true },
+  { suffix: " [blob:limit=1m]", listed: true },
+  { suffix: " [tree:0]", listed: true },
+  // Git prints the configured filter verbatim, spaces and brackets included.
+  { suffix: " [sparse:oid=main:dir/a b]c]", listed: true },
+  { suffix: " blob:none", listed: false },
+  { suffix: " [blob:none", listed: false },
+])("GitVcsDriver lists a remote whose fetch line ends in '(fetch)$suffix'", ({ suffix, listed }) =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const { remotes } = yield* driver.listRemotes("/repo");
+
+    assert.deepStrictEqual(
+      remotes.map(({ name, url, pushUrl }) => ({ name, url, pushUrl: Option.getOrNull(pushUrl) })),
+      listed
+        ? [
+            {
+              name: "origin",
+              url: "https://github.com/acme/repo.git",
+              pushUrl: "git@github.com:acme/repo.git",
+            },
+          ]
+        : [],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: `origin\thttps://github.com/acme/repo.git (fetch)${suffix}\norigin\tgit@github.com:acme/repo.git (push)\n`,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        }),
+      ),
+    ),
+  ),
+);

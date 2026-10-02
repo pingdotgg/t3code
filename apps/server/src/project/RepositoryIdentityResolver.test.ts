@@ -174,6 +174,64 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), resolverLayer)));
   });
 
+  // A partial clone appends its filter to the fetch line, e.g. "(fetch) [blob:none]".
+  it.effect.each([
+    { suffix: "", canonicalKey: "github.com/acme/repo" },
+    { suffix: " [blob:none]", canonicalKey: "github.com/acme/repo" },
+    { suffix: " [blob:limit=1m]", canonicalKey: "github.com/acme/repo" },
+    { suffix: " [tree:0]", canonicalKey: "github.com/acme/repo" },
+    { suffix: " blob:none", canonicalKey: null },
+    { suffix: " [blob:none", canonicalKey: null },
+  ])(
+    "reads the remote from a fetch line ending in '(fetch)$suffix'",
+    ({ suffix, canonicalKey }) => {
+      const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args.includes("rev-parse")
+              ? "/repo\n"
+              : `origin\thttps://github.com/acme/repo.git (fetch)${suffix}\norigin\thttps://github.com/acme/repo.git (push)\n`,
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const resolverLayer = Layer.effect(
+        RepositoryIdentityResolver.RepositoryIdentityResolver,
+        RepositoryIdentityResolver.make(),
+      ).pipe(Layer.provide(processRunner));
+
+      return Effect.gen(function* () {
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        const identity = yield* resolver.resolve("/repo");
+        expect(identity?.canonicalKey ?? null).toBe(canonicalKey);
+      }).pipe(Effect.provide(resolverLayer));
+    },
+  );
+
+  it.effect("resolves a partial clone the same as a full clone of the repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-partial-clone-test-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/T3Tools/t3code.git"]);
+      // What `git clone --filter=blob:none` records for the remote.
+      yield* git(cwd, ["config", "remote.origin.partialclonefilter", "blob:none"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

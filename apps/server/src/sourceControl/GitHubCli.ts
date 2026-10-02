@@ -528,7 +528,8 @@ export function selectGitHubBaseRepository(input: {
   const host = input.host.toLowerCase();
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const line of input.remotes.split("\n")) {
-    const match = /^(\S+)\s+(\S+)\s+\(fetch\)$/u.exec(line.trim());
+    // A partial clone's fetch line ends with its filter, e.g. "(fetch) [blob:none]".
+    const match = /^(\S+)\s+(\S+)\s+\(fetch\)(?:\s+\[.*\])?$/u.exec(line.trim());
     if (!match) continue;
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(match[2]!).split("/");
     if (remoteHost !== host || !owner || !name || rest.length > 0) return null;

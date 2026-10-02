@@ -221,6 +221,28 @@ describe("selectGitHubBaseRepository", () => {
       assert.strictEqual(select(input), null);
     }
   });
+
+  it("reads an origin whose fetch line carries a partial-clone filter", () => {
+    const withOrigin = (fetchSuffix: string) =>
+      [
+        `origin\tgit@github.com:acme/web.git (fetch)${fetchSuffix}`,
+        "origin\tgit@github.com:acme/web.git (push)",
+        remotes(["fork", "git@github.com:me/web.git"]),
+      ].join("\n");
+    // gh ranks origin above fork, so origin wins whenever its fetch line is read.
+    for (const suffix of ["", " [blob:none]", " [blob:limit=1m]", " [tree:0]"]) {
+      assert.deepStrictEqual(select({ remotes: withOrigin(suffix) }), {
+        owner: "acme",
+        name: "web",
+      });
+    }
+    for (const malformed of [" blob:none", " [blob:none"]) {
+      assert.deepStrictEqual(select({ remotes: withOrigin(malformed) }), {
+        owner: "me",
+        name: "web",
+      });
+    }
+  });
 });
 
 describe("GitHubCli.listPullRequestsByHead", () => {
