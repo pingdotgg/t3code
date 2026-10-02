@@ -151,18 +151,18 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // The queue, agents, and reconnect labels have separate tap targets.
-  const statusInteractive = props.status?.kind === "connection";
+  // Each interactive segment has its own tap target.
+  const statusInteractive = props.status?.kind === "connection" || props.status?.kind === "waiting";
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasDevicePreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
     props.status !== null ? (
       <View
-        pointerEvents={props.status.kind === "connection" ? "box-none" : "none"}
+        pointerEvents={statusInteractive ? "box-none" : "none"}
         className="h-11 items-center justify-center"
       >
-        <Animated.View className="h-11" style={capsuleSizerStyle} />
+        <Animated.View pointerEvents="none" className="h-11" style={capsuleSizerStyle} />
         <View
           pointerEvents={statusInteractive ? "box-none" : "none"}
           className="absolute h-11 items-center justify-center"
@@ -386,25 +386,9 @@ function FloatingStatusLabel(props: {
     );
   }
   if (props.status.kind === "waiting") {
-    return (
-      <StatusLabelRow
-        key="waiting"
-        accessibilityLabel={props.status.accessibilityLabel}
-        className="gap-2"
-        onLayout={props.onLayout}
-      >
-        <SymbolView
-          name={{ ios: "bolt", android: "bolt" }}
-          size={13}
-          tintColorClassName="foreground"
-          type="monochrome"
-        />
-        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
+    return <BackgroundWorkLabel status={props.status} onLayout={props.onLayout} />;
   }
+
   if (props.status.kind === "preparing") {
     return (
       <StatusLabelRow
@@ -467,6 +451,56 @@ function StatusLabelRow(props: {
           {props.children}
         </View>
       )}
+    </Animated.View>
+  );
+}
+
+// Stop is its own button inside the row rather than the whole pill, so a
+// stray tap on the label cannot end background work. Everything but Stop
+// passes touches through to the feed, like the non-interactive labels.
+function BackgroundWorkLabel(props: {
+  readonly status: Extract<FloatingWorkingStatus, { kind: "waiting" }>;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
+}) {
+  return (
+    <Animated.View
+      pointerEvents="box-none"
+      className="absolute max-w-full"
+      entering={LABEL_ENTERING}
+      exiting={LABEL_EXITING}
+      onLayout={props.onLayout}
+    >
+      <View pointerEvents="box-none" className="h-11 flex-row items-center pl-4">
+        <View
+          pointerEvents="none"
+          accessible
+          accessibilityLabel={props.status.accessibilityLabel}
+          className="min-w-0 shrink flex-row items-center gap-2"
+        >
+          <SymbolView
+            name={{ ios: "bolt", android: "bolt" }}
+            size={13}
+            tintColorClassName="foreground"
+            type="monochrome"
+          />
+          <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
+            {props.status.label}
+          </Text>
+        </View>
+        <View pointerEvents="none" className="ml-3 h-4 w-px bg-border" />
+        <Pressable
+          accessibilityLabel={props.status.stopping ? "Stopping" : "Stop background work"}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: props.status.stopping }}
+          className="h-11 justify-center pl-3 pr-4 active:opacity-70"
+          disabled={props.status.stopping}
+          onPress={props.status.onStop}
+        >
+          <Text className="font-t3-medium text-xs text-danger-foreground">
+            {props.status.stopping ? "Stopping…" : "Stop"}
+          </Text>
+        </Pressable>
+      </View>
     </Animated.View>
   );
 }

@@ -10,7 +10,13 @@ export type FloatingWorkingStatus =
   | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
   // The turn settled while background work it started still runs.
-  | { readonly kind: "waiting"; readonly label: string; readonly accessibilityLabel: string }
+  | {
+      readonly kind: "waiting";
+      readonly label: string;
+      readonly accessibilityLabel: string;
+      readonly stopping: boolean;
+      readonly onStop: () => void;
+    }
   // A task whose thread the server has not created yet: the worktree may
   // still be checking out, so there is no turn to time.
   | { readonly kind: "preparing"; readonly label: string }
