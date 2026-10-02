@@ -73,7 +73,7 @@ Use this skill for the web client. For native mobile testing (simulator builds, 
 2. Choose a base directory that belongs only to the current worktree or test:
    - Use the repository's ignored `.t3` directory for reusable worktree-local state.
    - Use `mktemp -d /tmp/t3code-test.XXXXXX` for disposable state and retain the printed absolute path.
-3. Start the full web stack with `t3-code.terminal_start`, passing the foreground command `pnpm dev --home-dir <absolute-base-dir> --no-browser`. Search for the tool if it is deferred. Always pass the isolated directory explicitly; this runner does not automatically select a worktree-local home. The root script runs `scripts/dev-runner.ts`, which has no `--share` flag.
+3. Start the full web stack with `t3-code.terminal_start`, passing the foreground command `pnpm dev --home-dir <absolute-base-dir> --no-browser`. Search for the tool if it is deferred. Prefer an explicit isolated directory for tests; when `--home-dir` is omitted the runner defaults to the current worktree's own gitignored `.t3` (then isolated `~/.t3-dev`), never the shared `~/.t3` home. The root script runs `scripts/dev-runner.ts`, which supports `--share` to publish the web port on the tailnet via `tailscale serve` (removed on exit; no-op for `dev:server`, unsupported for `dev:desktop`).
 4. Keep the returned `terminalId`. Use `terminal_read` to read the selected server port, web port, base directory, and pairing information, and verify readiness with a health request. `terminal_start` returning successfully means the terminal accepted the command, not that the app is ready. `terminal_list` recovers existing terminal IDs after a lost response; inspect these before retrying a launch.
 
 Retained servers belong in T3-managed terminals, not provider-attached background shells.
@@ -123,7 +123,7 @@ Keep pairing URLs out of screenshots, committed files, and durable logs. When th
 
 ## Recover a consumed or expired pairing token
 
-Run `node apps/server/src/bin.ts pair --base-dir <absolute-base-dir>` from the repository root, using the identical directory passed to `--home-dir`. It discovers the running server in that directory and prints a fresh pairing URL. If a remote user needs access, use an existing network or reverse-proxy setup; this checkout has no dev-runner `--share` flag.
+Run `node apps/server/src/bin.ts pair --base-dir <absolute-base-dir>` from the repository root, using the identical directory passed to `--home-dir` (or the resolved `baseDir=` from the `[dev-runner]` line when `--home-dir` was omitted). It discovers the running server in that directory and prints a fresh pairing URL. If a remote user needs access, prefer `pnpm dev --share` (publishes the single-origin web port on the tailnet; backend needs no separate mapping because Vite proxies it) over an ad hoc reverse proxy; without `--share`, use an existing network or reverse-proxy setup.
 
 Tokens from `pair` carry standard client scopes. The startup pairing URL carries admin scopes; if the user needs Settings → Connections management (`access:write`), restart the server and hand over the new startup URL instead.
 
@@ -131,8 +131,8 @@ Tokens from `pair` carry standard client scopes. The startup pairing URL carries
 
 Read [references/sqlite-fixtures.md](references/sqlite-fixtures.md) before inspecting the database.
 
-- Use the documented `sqlite3` read-only commands for schema discovery when the `sqlite3` executable is available. This checkout has no `apps/server/scripts/t3-sqlite-state.ts` helper.
-- Do not write SQLite fixtures directly from this skill. Use application commands and APIs for behavior tests; if a disposable projection fixture is essential, stop the server and use a separately reviewed, temporary database script after confirming the exact schema.
+- Prefer the guarded helper `apps/server/scripts/t3-sqlite-state.ts` for read-only schema discovery on an isolated base directory (readonly connection; `exec` refuses the shared `~/.t3` / `~/.t3-dev` homes). Fall back to the documented `sqlite3 -readonly` commands only when the helper is unusable.
+- Do not write SQLite fixtures directly from this skill. Use application commands and APIs for behavior tests; if a disposable projection fixture is essential, stop the server and use `t3-sqlite-state.ts exec` (takes a `VACUUM INTO` backup, 0600, automatically) after confirming the exact schema — isolated fixture databases only, never the shared homes.
 - Use the auth CLI, not direct `auth_*` table edits, for pairing and sessions.
 
 ## Tear down only when the testing loop is finished
