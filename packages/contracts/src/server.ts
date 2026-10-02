@@ -67,6 +67,8 @@ export const ServerProviderAuth = Schema.Struct({
   email: Schema.optional(TrimmedNonEmptyString),
   action: Schema.optional(AcpRegistryUrlAuthAction),
   canLogout: Schema.optional(Schema.Boolean),
+  /** Provider-scoped subscription/workspace identity, never a display label. */
+  accountId: Schema.optional(TrimmedNonEmptyString),
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
 });

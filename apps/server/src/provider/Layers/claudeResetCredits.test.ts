@@ -257,3 +257,21 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     }),
   );
 });
+
+effectIt.effect(
+  "reads Claude organization identity and tolerates missing or malformed account config",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const login = yield* writeLogin;
+      expect(yield* ClaudeResetCredits.readClaudeAccountId(login.accountConfigPath)).toBe("org-1");
+      yield* fs.writeFileString(login.accountConfigPath, "not-json");
+      expect(
+        yield* ClaudeResetCredits.readClaudeAccountId(login.accountConfigPath),
+      ).toBeUndefined();
+      yield* fs.remove(login.accountConfigPath);
+      expect(
+        yield* ClaudeResetCredits.readClaudeAccountId(login.accountConfigPath),
+      ).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

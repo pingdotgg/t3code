@@ -1,6 +1,14 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+  readCodexAccountId,
+} from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -171,3 +179,29 @@ it("ignores custom models that shadow a preferred slug", () => {
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
+
+it.effect(
+  "reads Codex subscription identity from the instance home without publishing tokens",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const authPath = path.join(home, "auth.json");
+      yield* fs.writeFileString(
+        authPath,
+        '{"tokens":{"account_id":" account-a ","access_token":"private"}}',
+      );
+      assert.equal(yield* readCodexAccountId(home, { CODEX_HOME: "/other" }), "account-a");
+      assert.equal(yield* readCodexAccountId("", { CODEX_HOME: home }), "account-a");
+      const token = `${Buffer.from("{}").toString("base64url")}.${Buffer.from('{"https://api.openai.com/auth":{"chatgpt_account_id":"account-b"}}').toString("base64url")}.signature`;
+      yield* fs.writeFileString(authPath, JSON.stringify({ tokens: { id_token: token } }));
+      assert.equal(yield* readCodexAccountId(home, {}), "account-b");
+      for (const encoded of ["not-json", "{}", '{"tokens":{"id_token":"not-a-jwt"}}']) {
+        yield* fs.writeFileString(authPath, encoded);
+        assert.equal(yield* readCodexAccountId(home, {}), undefined);
+      }
+      yield* fs.remove(authPath);
+      assert.equal(yield* readCodexAccountId(home, {}), undefined);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

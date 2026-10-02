@@ -195,6 +195,16 @@ export const claudeAccountConfigPath = (configDir: string | undefined) =>
     configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
   );
 
+/** The quota and reset-credit organization is the subscription identity. */
+export const readClaudeAccountId = Effect.fn("readClaudeAccountId")(function* (
+  accountConfigPath: string,
+) {
+  const config = yield* readJson(Config, accountConfigPath).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  return config?.oauthAccount?.organizationUuid?.trim() || undefined;
+});
+
 const CLAIM_OUTCOMES = {
   reset: "reset",
   not_limited: "nothingToReset",

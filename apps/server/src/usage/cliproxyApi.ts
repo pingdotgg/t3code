@@ -70,6 +70,10 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(Schema.Struct({ uuid: Schema.String })),
+});
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -205,11 +209,24 @@ export const makeCliproxyApi = Effect.gen(function* () {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
+      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id?.trim()
+        ? { accountId: account.id_token.chatgpt_account_id.trim() }
+        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const [body, profile] = yield* Effect.all(
+          [
+            apiCall(config, account, "https://api.anthropic.com/api/oauth/usage"),
+            apiCall(config, account, "https://api.anthropic.com/api/oauth/profile").pipe(
+              Effect.flatMap(decodeClaudeProfile),
+              Effect.orElseSucceed(() => undefined),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
         const usage = yield* decodeClaudeUsage(body);
+        const accountId = profile?.organization?.uuid.trim();
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -224,6 +241,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         return {
           ...base,
           plan: "Claude Subscription",
+          ...(accountId ? { accountId } : {}),
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
             response: {

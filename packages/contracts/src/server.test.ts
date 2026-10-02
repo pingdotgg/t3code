@@ -11,8 +11,10 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import { ServerSettings } from "./settings.ts";
+import { UsageLimitSourceAccount } from "./providerUsageLimits.ts";
 
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const decodeUsageLimitSourceAccount = Schema.decodeUnknownSync(UsageLimitSourceAccount);
 const decodeServerProviders = Schema.decodeUnknownSync(ServerProviders);
 const decodeServerObservability = Schema.decodeUnknownSync(ServerObservability);
 const decodeUpsertKeybindingResult = Schema.decodeUnknownSync(ServerUpsertKeybindingResult);
@@ -31,6 +33,24 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("preserves optional subscription identity on native and hub snapshots", () => {
+    for (const accountId of [undefined, "subscription-a"]) {
+      const identity = accountId ? { accountId } : {};
+      const native = decodeServerProvider({
+        ...baseProviderSnapshot,
+        auth: { ...baseProviderSnapshot.auth, ...identity },
+      });
+      const hub = decodeUsageLimitSourceAccount({
+        id: "auth.json",
+        driver: "codex",
+        ...identity,
+        usageLimits: { checkedAt: baseProviderSnapshot.checkedAt, windows: [] },
+      });
+      expect(native.auth.accountId).toBe(accountId);
+      expect(hub.accountId).toBe(accountId);
+    }
+  });
+
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

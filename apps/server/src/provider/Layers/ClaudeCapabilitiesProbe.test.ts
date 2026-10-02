@@ -60,6 +60,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
       const executablePath = path.join(tempDir, "fake-claude.mjs");
       const invocationPath = path.join(tempDir, "invocation.json");
+      yield* fs.writeFileString(
+        path.join(tempDir, ".claude.json"),
+        '{"oauthAccount":{"organizationUuid":"org-a"}}',
+      );
       // The probe aborts the SDK without awaiting the child's exit, and on
       // Windows a directory that is still some process's cwd cannot be
       // removed. Keep the workspace outside the scoped directory and let it
@@ -136,7 +140,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       yield* fs.chmod(executablePath, 0o755);
 
       const capabilities = yield* probeClaudeCapabilities(
-        decodeClaudeSettings({ binaryPath: executablePath }),
+        decodeClaudeSettings({ binaryPath: executablePath, homePath: tempDir }),
         {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
@@ -146,6 +150,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       assert.deepEqual(capabilities, {
+        accountId: "org-a",
         email: "dev@example.com",
         subscriptionType: "pro",
         tokenSource: "oauth",

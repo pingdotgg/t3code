@@ -153,6 +153,7 @@ function booleanDescriptor(id: string, label: string) {
 }
 
 type TestClaudeCapabilities = {
+  readonly accountId?: string;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -409,6 +410,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
             Effect.succeed(
               makeCodexProbeSnapshot({
+                accountId: "subscription-a",
                 skills: [
                   {
                     name: "github:gh-fix-ci",
@@ -428,6 +430,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.strictEqual(status.auth.email, "test@example.com");
+          assert.strictEqual(status.auth.accountId, "subscription-a");
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",
@@ -2926,11 +2929,12 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            claudeCapabilities(),
+            claudeCapabilities({ subscriptionType: "pro", accountId: "org-a" }),
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.accountId, "org-a");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

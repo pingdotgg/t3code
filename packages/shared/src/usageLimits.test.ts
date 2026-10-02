@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   UsageLimitSourceId,
+  type UsageLimitSourceAccount,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -151,7 +152,7 @@ describe("pools", () => {
     const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claude"),
-      auth: { status: "authenticated", email: "Same@example.com" },
+      auth: { status: "authenticated", email: "Same@example.com", accountId: "same-account" },
       usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
     });
     const input = new Map([
@@ -178,6 +179,7 @@ describe("pools", () => {
                     id: "claude-same@example.com.json",
                     driver: claude,
                     email: "same@example.com",
+                    accountId: "same-account",
                     plan: "Claude Subscription",
                     usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
                   },
@@ -258,14 +260,22 @@ describe("pools", () => {
     input.set(EnvironmentId.make("env-a"), {
       ...laptop,
       serverConfig: {
-        providers: [{ ...go, auth: { status: "authenticated", email: "same@example.com" } }],
+        providers: [
+          {
+            ...go,
+            auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
+          },
+        ],
       },
     });
     input.set(EnvironmentId.make("env-b"), {
       entry: { target: { label: "Desktop" } },
       serverConfig: {
         providers: [
-          { ...differentKey, auth: { status: "authenticated", email: "SAME@example.com" } },
+          {
+            ...differentKey,
+            auth: { status: "authenticated", email: "SAME@example.com", accountId: "same-account" },
+          },
         ],
       },
     });
@@ -276,7 +286,7 @@ describe("pools", () => {
     const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claude"),
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
       usageLimits: {
         checkedAt,
         windows: [{ ...window, usedPercent: 40 }],
@@ -298,6 +308,7 @@ describe("pools", () => {
                     id: "claude-same@example.com.json",
                     driver: claude,
                     email: "same@example.com",
+                    accountId: "same-account",
                     usageLimits: {
                       checkedAt: "2026-09-03T11:30:00.000Z",
                       windows: [{ ...window, usedPercent: 55 }],
@@ -321,7 +332,7 @@ describe("pools", () => {
     const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claude"),
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
       usageLimits: {
         checkedAt: "2026-09-03T11:30:00.000Z",
         windows: [{ ...window, usedPercent: 40 }],
@@ -343,6 +354,7 @@ describe("pools", () => {
                     id: "claude-same@example.com.json",
                     driver: claude,
                     email: "same@example.com",
+                    accountId: "same-account",
                     usageLimits: {
                       checkedAt,
                       windows: [{ ...window, usedPercent: 55 }],
@@ -368,7 +380,7 @@ describe("pools", () => {
 
   it("redeems on the environment whose snapshot supplied the credits on show", () => {
     const stale = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
       usageLimits: {
         checkedAt,
         windows: [window],
@@ -397,13 +409,14 @@ describe("pools", () => {
 
   it("uses the freshest hub credit and its environment even when the account is also native", () => {
     const native = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
       usageLimits: { checkedAt, windows: [window], resetCredits: { availableCount: 1 } },
     });
     const hubAccount = {
       id: "codex-same.json",
       driver: native.driver,
       email: "same@example.com",
+      accountId: "same-account",
       usageLimits: {
         checkedAt: "2026-09-03T11:30:00.000Z",
         windows: [window],
@@ -482,7 +495,11 @@ describe("pools", () => {
           serverConfig: {
             providers: [
               provider({
-                auth: { status: "authenticated", email: "same@example.com" },
+                auth: {
+                  status: "authenticated",
+                  email: "same@example.com",
+                  accountId: "same-account",
+                },
                 usageLimits,
               }),
             ],
@@ -498,7 +515,7 @@ describe("pools", () => {
 
   it("names an environment once however many of its instances share the account", () => {
     const shared = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "same-account" },
       usageLimits: { checkedAt, windows: [window] },
     });
     const input = new Map([
@@ -517,8 +534,8 @@ describe("pools", () => {
     ]);
   });
 
-  it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
-    const seat = {
+  it("keeps unidentified hub observations separate across environments", () => {
+    const seat: UsageLimitSourceAccount = {
       id: "claude-team-seat.json",
       driver: claude,
       usageLimits: { checkedAt, windows: [window] },
@@ -532,8 +549,33 @@ describe("pools", () => {
       ],
     ]);
     const accounts = collectLimitAccounts(input);
-    expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
+    expect(accounts.map((account) => account.key)).toEqual([
+      "env-a:hub:claude-team-seat.json",
+      "env-b:hub:claude-team-seat.json",
+    ]);
     expect(accounts[0]?.displayName).toBe("claude-team-seat");
+    input.set(EnvironmentId.make("env-a"), {
+      ...laptop,
+      serverConfig: {
+        usageLimitSources: [{ ...hub, accounts: [{ ...seat, accountId: "org-a" }] }],
+      },
+    });
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: {
+        usageLimitSources: [{ ...hub, accounts: [{ ...seat, accountId: "org-a" }] }],
+      },
+    });
+    expect(collectLimitAccounts(input)).toHaveLength(1);
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: {
+        usageLimitSources: [{ ...hub, accounts: [{ ...seat, accountId: "org-b" }] }],
+      },
+    });
+    const separate = collectLimitAccounts(input);
+    expect(separate).toHaveLength(2);
+    expect(new Set(separate.map((account) => account.key)).size).toBe(2);
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
@@ -597,7 +639,7 @@ describe("pools", () => {
     // A member with no reset has no clock, so it does not vote on pace.
     const untimed = collectLimitPools(
       collectLimitAccounts(input).map((account) =>
-        account.key === "hub:b"
+        account.key === "env-a:hub:b"
           ? {
               ...account,
               limits: {
@@ -621,8 +663,8 @@ describe("pools", () => {
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
     ).toEqual([
-      ["hub:a", 40],
-      ["hub:b", 20],
+      ["env-a:hub:a", 40],
+      ["env-a:hub:b", 20],
     ]);
     expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
     // Codex reports `primary` for both its five-hour and (on Go) monthly window.
@@ -662,8 +704,14 @@ describe("pools", () => {
       ["monthly", 1],
     ]);
     // Session resets determine the account order for every row.
-    expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
-    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+    expect(session?.members.map((member) => member.account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual([
+      "env-a:hub:a",
+      "env-a:hub:b",
+    ]);
   });
 });
 
@@ -864,7 +912,7 @@ describe("/usage-limits", () => {
   const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
   const selected = provider({
     usageLimits: limits,
-    auth: { status: "authenticated", email: "same@example.com" },
+    auth: { status: "authenticated", email: "same@example.com", accountId: "account-a" },
   });
   const sources = [
     {
@@ -876,6 +924,7 @@ describe("/usage-limits", () => {
         {
           id: "duplicate",
           driver: selected.driver,
+          accountId: "account-a",
           email: "SAME@example.com",
           usageLimits: limits,
         },
@@ -917,7 +966,7 @@ describe("/usage-limits", () => {
         windows: [window],
         resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
       },
-      auth: { status: "authenticated", email: "same@example.com" },
+      auth: { status: "authenticated", email: "same@example.com", accountId: "account-a" },
     });
     const stale = [
       {
@@ -930,6 +979,7 @@ describe("/usage-limits", () => {
             id: "duplicate",
             driver: fresher.driver,
             email: "SAME@example.com",
+            accountId: "account-a",
             usageLimits: {
               ...limits,
               resetCredits: { availableCount: 2, nextCreditId: "hub-credit" },
@@ -1243,4 +1293,151 @@ describe("ChatGPT sharing presentation", () => {
       }),
     ).toBe(false);
   });
+});
+
+describe("subscription identity", () => {
+  const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+  for (const [name, identities, expected] of [
+    [
+      "same account despite changed email or plan",
+      [
+        { email: "old@example.com", label: "Personal", accountId: "a" },
+        { email: "new@example.com", label: "Business", accountId: "a" },
+      ],
+      1,
+    ],
+    [
+      "distinct accounts on the same email and plan",
+      [
+        { email: "same@example.com", label: "Business", accountId: "a" },
+        { email: "same@example.com", label: "Business", accountId: "b" },
+      ],
+      2,
+    ],
+    [
+      "ambiguous unidentified account",
+      [
+        { email: "same@example.com", label: "Business", accountId: "a" },
+        { email: "same@example.com", label: "Business", accountId: "b" },
+        { email: "same@example.com", label: "Business" },
+      ],
+      3,
+    ],
+    [
+      "unambiguous legacy observation",
+      [
+        { email: "same@example.com", label: "Personal", accountId: "a" },
+        { email: "SAME@example.com", label: "Personal" },
+      ],
+      1,
+    ],
+    [
+      "ambiguous unidentified account without plan",
+      [
+        { email: "same@example.com", label: "Personal", accountId: "a" },
+        { email: "same@example.com", label: "Business", accountId: "b" },
+        { email: "same@example.com" },
+      ],
+      3,
+    ],
+    [
+      "ambiguous unidentified account with generic plan",
+      [
+        { email: "same@example.com", label: "Personal", accountId: "a" },
+        { email: "same@example.com", label: "Business", accountId: "b" },
+        { email: "same@example.com", label: "ChatGPT Subscription" },
+      ],
+      3,
+    ],
+    [
+      "different legacy plans",
+      [
+        { email: "same@example.com", label: "Personal" },
+        { email: "same@example.com", label: "Business" },
+      ],
+      2,
+    ],
+    [
+      "unidentified subscriptions on the same email and plan",
+      [
+        { email: "same@example.com", label: "Business" },
+        { email: "same@example.com", label: "Business" },
+      ],
+      2,
+    ],
+  ] as const) {
+    it.each(["codex", "claudeAgent"])(
+      `uses the same grouping in both collectors for ${name} with %s`,
+      (driver) => {
+        const providers = identities.map((identity, index) =>
+          provider({
+            instanceId: ProviderInstanceId.make(`codex-${index}`),
+            driver: ProviderDriverKind.make(driver),
+            auth: { status: "authenticated", ...identity },
+            usageLimits: limits,
+          }),
+        );
+        const source = {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy" as const,
+          label: "hub",
+          checkedAt: limits.checkedAt,
+          accounts: identities.map((identity, index) => ({
+            id: `account-${index}`,
+            driver: providers[0]!.driver,
+            email: identity.email,
+            plan: "label" in identity ? identity.label : undefined,
+            ...("accountId" in identity ? { accountId: identity.accountId } : {}),
+            usageLimits: {
+              ...limits,
+              resetCredits: { availableCount: index + 1, nextCreditId: `credit-${index}` },
+            },
+          })),
+        };
+        const native = collectProviderUsageLimits(providers[0]!.instanceId, providers, [], now);
+        expect(native?.accounts).toHaveLength(expected);
+        const composer = collectProviderUsageLimits(
+          providers[0]!.instanceId,
+          providers,
+          [source],
+          now,
+        );
+        const pooled = collectLimitAccounts(
+          new Map([
+            [
+              EnvironmentId.make("env-a"),
+              {
+                entry: { target: { label: "Laptop" } },
+                serverConfig: { providers, usageLimitSources: [source] },
+              },
+            ],
+            [
+              EnvironmentId.make("env-b"),
+              {
+                entry: { target: { label: "Desktop" } },
+                serverConfig: { providers, usageLimitSources: [] },
+              },
+            ],
+          ]),
+        );
+        // An ambiguous legacy observation is kept separately for each observer.
+        const ambiguous = name.startsWith("ambiguous unidentified account");
+        const unidentified = name === "different legacy plans" || name.startsWith("unidentified");
+        expect(composer?.accounts).toHaveLength(
+          ambiguous ? 4 : unidentified ? expected * 2 : expected,
+        );
+        expect(pooled).toHaveLength(ambiguous ? 5 : unidentified ? expected * 3 : expected);
+        if (name === "distinct accounts on the same email and plan") {
+          expect(composer?.accounts.map((account) => account.resetCreditInput)).toEqual([
+            { sourceId: "hub", accountId: "account-0", creditId: "credit-0" },
+            { sourceId: "hub", accountId: "account-1", creditId: "credit-1" },
+          ]);
+          expect(pooled.map((account) => account.redeem?.input)).toEqual([
+            { sourceId: "hub", accountId: "account-0", creditId: "credit-0" },
+            { sourceId: "hub", accountId: "account-1", creditId: "credit-1" },
+          ]);
+        }
+      },
+    );
+  }
 });

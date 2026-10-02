@@ -1,3 +1,7 @@
+import * as NodeOS from "node:os";
+import { decodeJwt } from "jose";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -71,6 +75,7 @@ const CODEX_PRESENTATION = {
 } as const;
 
 export interface CodexAppServerProviderSnapshot {
+  readonly accountId?: string;
   readonly account: CodexSchema.V2GetAccountResponse;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
@@ -149,6 +154,48 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
   if (!account || account.type !== "chatgpt") return undefined;
   return account.email;
 }
+
+const CodexAuthIdentity = Schema.Struct({
+  tokens: Schema.optional(
+    Schema.Struct({
+      account_id: Schema.optional(Schema.String),
+      id_token: Schema.optional(Schema.String),
+    }),
+  ),
+});
+const CodexIdentityClaims = Schema.Struct({
+  "https://api.openai.com/auth": Schema.optional(
+    Schema.Struct({
+      chatgpt_account_id: Schema.optional(Schema.String),
+    }),
+  ),
+});
+
+/** Reads only grouping identity from the same native home used by the app server. */
+export const readCodexAccountId = Effect.fn("readCodexAccountId")(function* (
+  homePath: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = homePath.trim()
+    ? expandHomePath(homePath)
+    : environment.CODEX_HOME || path.join(environment.HOME || NodeOS.homedir(), ".codex");
+  const auth = yield* fs.readFileString(path.join(home, "auth.json")).pipe(
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CodexAuthIdentity))),
+    Effect.orElseSucceed(() => undefined),
+  );
+  const accountId = auth?.tokens?.account_id?.trim();
+  if (accountId) return accountId;
+  const idToken = auth?.tokens?.id_token;
+  if (!idToken) return undefined;
+  // This is grouping metadata, not authentication; the CLI verifies its tokens.
+  const claims = yield* Effect.try(() => decodeJwt(idToken)).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(CodexIdentityClaims)),
+    Effect.orElseSucceed(() => undefined),
+  );
+  return claims?.["https://api.openai.com/auth"]?.chatgpt_account_id?.trim() || undefined;
+});
 
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
@@ -438,6 +485,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
+  const accountId =
+    !input.skipNativeUsage && accountResponse.account?.type === "chatgpt"
+      ? yield* readCodexAccountId(input.homePath ?? "", input.environment ?? process.env)
+      : undefined;
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
@@ -472,6 +523,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   return {
     account: accountResponse,
+    ...(accountId ? { accountId } : {}),
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
@@ -578,14 +630,14 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   > = probeCodexAppServerProvider,
   environment?: NodeJS.ProcessEnv,
   managedAuth?: ServerProvider["auth"],
 ): Effect.fn.Return<
   ServerProviderDraft,
   ServerSettingsError,
-  ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -701,7 +753,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       installed: true,
       version: snapshot.version ?? null,
       status: accountStatus.status,
-      auth: accountStatus.auth,
+      auth: {
+        ...accountStatus.auth,
+        ...(snapshot.accountId ? { accountId: snapshot.accountId } : {}),
+      },
       ...(accountStatus.message ? { message: accountStatus.message } : {}),
       ...(managedAuth ? {} : { usageLimits }),
     },

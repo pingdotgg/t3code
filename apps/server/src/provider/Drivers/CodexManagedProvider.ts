@@ -1,5 +1,7 @@
 import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -28,6 +30,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const { instanceId, enabled, displayName, accentColor, config } = input;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const settings = yield* ServerSettingsService;
   const runtime = yield* makeCodexManagedRuntime({
     instanceId,
@@ -187,7 +191,11 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       ),
       Effect.scoped,
     );
-  }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+  }).pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+  );
   const snapshot = yield* makeManagedServerProvider({
     resolveMaintenance: () => Effect.succeed({ provider: DRIVER, packageName: null, update: null }),
     getSettings: settings.getSettings,

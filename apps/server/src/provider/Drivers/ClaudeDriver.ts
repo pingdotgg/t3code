@@ -200,6 +200,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         lookup: () =>
           probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(Path.Path, path),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
           ),
       });
       const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
