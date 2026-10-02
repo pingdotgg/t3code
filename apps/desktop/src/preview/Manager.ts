@@ -1418,6 +1418,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 ),
               { concurrency: "unbounded", discard: true },
             );
+            // Electron gives `<webview>` guests a transparent base background, and
+            // Chromium only paints a dark canvas for dark color-scheme pages over an
+            // opaque base. Without this, dark-scheme pages with no background of
+            // their own (text/plain, e.g. .md files) render white text on white.
+            // White matches the webview's existing white backing, so light pages look
+            // the same; Chromium still swaps in its dark canvas for dark-scheme pages.
+            yield* attemptPromise(
+              { operation: "initializeDebugger.defaultBackground", webContentsId: wc.id },
+              () =>
+                wcDebugger.sendCommand("Emulation.setDefaultBackgroundColorOverride", {
+                  color: { r: 255, g: 255, b: 255, a: 1 },
+                }),
+            );
             return [
               control,
               replaceMap(sessions, (copy) => {
