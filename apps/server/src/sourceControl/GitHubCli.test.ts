@@ -232,6 +232,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
     url: `https://github.com/acme/web/pull/${number}`,
     baseRefName: "main",
     headRefName,
+    headRefOid: "a".repeat(40),
     state: "MERGED",
     mergedAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-02T00:00:00Z",
@@ -286,9 +287,11 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         first?.map((pr) => [pr.number, pr.state, pr.headRepositoryNameWithOwner]),
         [[7, "merged", "acme/web"]],
       );
+      assert.strictEqual(first?.[0]?.headSha, "a".repeat(40));
       assert.deepStrictEqual(second, []);
       assert.strictEqual(documents.length, 1);
       assert.include(documents[0]!.query, "rateLimit");
+      assert.include(documents[0]!.query, "headRefOid");
       assert.deepStrictEqual(documents[0]!.variables, {
         owner: "acme",
         name: "web",
@@ -330,6 +333,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         pullRequests.map((pr) => pr.number),
         [8],
       );
+      assert.strictEqual(pullRequests[0]?.headSha, "a".repeat(40));
       assert.deepStrictEqual(commands.at(-1), [
         "gh",
         "pr",
