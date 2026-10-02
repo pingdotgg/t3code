@@ -242,6 +242,7 @@ import { createContextPresentationRegistry } from "../contextPresentationRegistr
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useThreadWidth } from "~/hooks/useThreadWidth";
+import { observeTimelineColumn } from "./observeTimelineColumn";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -1111,12 +1112,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
-    const contentElement =
-      timelineViewportElement.querySelector<HTMLElement>("[data-timeline-root]");
-    const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      // Without a mounted row, treat the column as full width so the strip stays inert.
-      const contentWidth = contentElement?.getBoundingClientRect().width ?? viewportWidth;
+    return observeTimelineColumn(timelineViewportElement, (viewportWidth, contentWidth) => {
       const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
         viewportWidth,
         contentWidth,
@@ -1126,22 +1122,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
       reportContentOverflow();
-    };
-
-    const frame = requestAnimationFrame(measure);
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(timelineViewportElement);
-    if (contentElement) {
-      // Width can change without resizing the viewport when the header control
-      // or the Appearance setting changes the shared content-column cap.
-      observer.observe(contentElement);
-    }
-
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
+    });
   }, [
     timelineViewportElement,
     rows.length,
