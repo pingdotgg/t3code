@@ -2172,6 +2172,15 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
                 detail: "Pi fork boundary has no captured session-tree entry.",
               });
             }
+            // Anchor invariant: the caller's zero-based `turnIndex` is the
+            // position of the anchored turn in this session's `turnEntryIds`,
+            // which the caller derives from distinct turn ids in T3 message
+            // order. Entries recorded as `""` (turn added no user message) or
+            // `null` (unreadable) still occupy their position, so the fork keeps
+            // exactly the turns up to and including the anchor and drops the
+            // rest; `piRollbackForkEntry` then re-roots at the first discarded
+            // turn's user message, and refuses when that boundary was never
+            // captured.
             forkEntryId = piRollbackForkEntry(source.turnEntryIds.slice(turnIndex + 1));
             if (forkEntryId === undefined) {
               return yield* new ProviderAdapterRequestError({

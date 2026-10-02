@@ -905,18 +905,21 @@ const make = Effect.gen(function* () {
     const capabilities = yield* providerService.getCapabilities(
       sourceSession.providerInstanceId ?? ProviderInstanceId.make(sourceSession.providerName),
     );
-    if (capabilities.canForkThread === false) {
+    // Capabilities are declared, never inferred: an adapter that does not
+    // declare fork support cannot fork, so a missing flag is a refusal rather
+    // than a call that fails after the fork thread already exists.
+    if (capabilities.canForkThread !== true) {
       return yield* failFork(
         "Provider fork unavailable",
-        `Source run status is '${sourceThread.latestTurn?.state ?? "provider-finished"}'; provider '${sourceSession.providerName}' does not declare thread forking support.`,
+        `Provider '${sourceSession.providerName}' does not support forking a chat, so the fork keeps its visible history but has no provider session.`,
       );
     }
 
-    const canForkFromTurn = capabilities.canForkFromTurn ?? false;
+    const canForkFromTurn = capabilities.canForkFromTurn === true;
     if (!canForkFromTurn && event.payload.targetTurnCount !== sourceAssistantTurnCount) {
       return yield* failFork(
         "Provider fork unavailable",
-        `Source run status is '${sourceThread.latestTurn?.state ?? "provider-finished"}'; provider '${sourceSession.providerName}' only supports whole-thread forks.`,
+        `Provider '${sourceSession.providerName}' can only fork a whole chat, so forking from an earlier turn would hand the model context you cannot see.`,
       );
     }
 
@@ -940,7 +943,7 @@ const make = Effect.gen(function* () {
     ) {
       return yield* failFork(
         "Provider fork unavailable",
-        "Source run status is 'provider-finished', but its selected provider turn cannot be resolved from the source history.",
+        `Provider '${sourceSession.providerName}' can fork this chat, but the selected turn is missing from the source history, so the fork would start from a different point than you chose.`,
       );
     }
 

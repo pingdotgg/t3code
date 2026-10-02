@@ -332,6 +332,10 @@ function makeFakeCodexAdapter(
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      // The fake forks like a fork-capable provider; callers opt out with
+      // `canForkThread: false` so capability gating is exercised explicitly
+      // instead of relying on an undeclared default.
+      canForkThread: true,
       ...capabilities,
     },
     startSession,
@@ -2456,7 +2460,7 @@ describe("agent MCP access", () => {
       assert.deepEqual(forked.wholeThread.resumeCursor, {
         opaque: "resume-whole-target",
       });
-      assert.include(forked.unsupported.message, "does not declare native thread forking support");
+      assert.include(forked.unsupported.message, "does not support forking a chat");
       assert.equal(noThreadForkAdapter.forkSession.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );

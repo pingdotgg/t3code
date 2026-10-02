@@ -36,13 +36,16 @@ export interface ProviderAdapterCapabilities {
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
   /**
-   * Declares native whole-thread forking. Omitted capabilities preserve the
-   * existing eager adapter call path for compatibility.
+   * Declares native whole-thread forking. Callers treat an omitted flag as
+   * unsupported: fork support is declared, never inferred, so an adapter that
+   * forgets to declare it is refused before a fork thread exists instead of
+   * failing after one does.
    */
   readonly canForkThread?: boolean;
   /**
-   * Declares whether native forks can be anchored after a selected provider
-   * turn. Omitted capabilities retain the existing whole-thread behavior.
+   * Declares whether native forks can be anchored at a selected provider turn.
+   * Omitted means whole-thread forking only, so an earlier-turn fork is refused
+   * rather than silently handing the model context the user cannot see.
    */
   readonly canForkFromTurn?: boolean;
 }

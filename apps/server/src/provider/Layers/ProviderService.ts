@@ -804,11 +804,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           `Provider instance '${routed.instanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
         );
       }
-      if (routed.adapter.capabilities.canForkThread === false) {
+      if (routed.adapter.capabilities.canForkThread !== true) {
         return yield* new ProviderAdapterRequestError({
           provider: resolvedProvider,
           method: "session/fork",
-          detail: `Provider '${resolvedProvider}' does not declare native thread forking support.`,
+          detail: `Provider '${resolvedProvider}' does not support forking a chat.`,
         });
       }
 
