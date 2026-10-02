@@ -13,6 +13,7 @@ import {
   isContextMenuPointerDown,
   isCollapsedSettledRow,
   orderItemsByPreferredIds,
+  resolveSettleMenuItems,
   partitionSettledSidebarRows,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
@@ -1670,6 +1671,73 @@ describe("isCollapsedSettledRow", () => {
     expect(isCollapsedSettledRow({ status: null, thread: makeSummary(), now: SETTLED_NOW })).toBe(
       false,
     );
+  });
+});
+
+describe("resolveSettleMenuItems", () => {
+  it("offers reopen for a quiet settled thread", () => {
+    expect(
+      resolveSettleMenuItems({
+        status: null,
+        thread: makeSummary({ settledOverride: "settled" }),
+        settlementSupported: true,
+        now: SETTLED_NOW,
+      }),
+    ).toEqual([{ id: "reopen", label: "Reopen thread" }]);
+  });
+
+  it("offers settle for a quiet active thread", () => {
+    expect(
+      resolveSettleMenuItems({
+        status: null,
+        thread: makeSummary(),
+        settlementSupported: true,
+        now: SETTLED_NOW,
+      }),
+    ).toEqual([{ id: "settle", label: "Settle thread" }]);
+  });
+
+  it("offers nothing when the server predates settlement", () => {
+    expect(
+      resolveSettleMenuItems({
+        status: null,
+        thread: makeSummary({ settledOverride: "settled" }),
+        settlementSupported: false,
+        now: SETTLED_NOW,
+      }),
+    ).toEqual([]);
+  });
+
+  it("offers settle (V2-toggle parity) for a settled thread whose pill keeps it active", () => {
+    const status = resolveThreadStatusPill({
+      thread: makeSummary({
+        settledOverride: "settled",
+        latestTurn: { ...makeLatestTurn(), state: "error" },
+      }),
+      lastVisitedAt: null,
+    });
+    // Matches SidebarV2Row's toggle, which keys off shelf membership rather
+    // than the raw override; settling re-affirms the override while the pill
+    // keeps the row in the active shelf.
+    expect(
+      resolveSettleMenuItems({
+        status,
+        thread: makeSummary({ settledOverride: "settled" }),
+        settlementSupported: true,
+        now: SETTLED_NOW,
+      }),
+    ).toEqual([{ id: "settle", label: "Settle thread" }]);
+  });
+
+  it("offers nothing while a turn is running", () => {
+    expect(
+      resolveSettleMenuItems({
+        status: null,
+        thread: makeSummary({ latestTurn: { ...makeLatestTurn(), state: "running" } }),
+        settlementSupported: true,
+        now: SETTLED_NOW,
+      }),
+    ).toEqual([]);
   });
 });
 

@@ -23,7 +23,7 @@ import {
   hasUnseenThreadCompletion,
   resolveThreadSemanticStatus,
 } from "@t3tools/client-runtime/state/thread-status";
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { canSettle, effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -803,6 +803,28 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
     }) ?? "",
   );
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Settle toggle for the v1 right-click menu. Labels match SidebarV2
+ * ("Settle thread" / "Reopen thread"); the same root-status rule as the
+ * sidebar partition decides which (if either) shows, and stale environments
+ * whose server predates thread.settle offer neither.
+ */
+export function resolveSettleMenuItems(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): ReadonlyArray<{ readonly id: "settle" | "reopen"; readonly label: string }> {
+  if (!input.settlementSupported) return [];
+  if (isCollapsedSettledRow({ status: input.status, thread: input.thread, now: input.now })) {
+    return [{ id: "reopen", label: "Reopen thread" }];
+  }
+  if (canSettle(input.thread, { now: input.now })) {
+    return [{ id: "settle", label: "Settle thread" }];
+  }
+  return [];
 }
 
 /**
