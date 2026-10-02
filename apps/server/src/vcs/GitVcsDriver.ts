@@ -836,67 +836,124 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            // Keep present files' skip bits until inspection can invalidate their cached stat data.
+            const inspectConfig = sparseCheckout
+              ? [...indexConfig, "-c", "sparse.expectFilesOutsideOfPatterns=true"]
+              : indexConfig;
             // Retain stat data only where the copied index already matches HEAD.
             yield* execute({
               operation,
               cwd: input.cwd,
-              args: [...indexConfig, "read-tree", "--reset", "HEAD"],
+              args: [...inspectConfig, "read-tree", "--reset", "HEAD"],
               env: commitEnv,
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             let specialFlags = false;
             let recordStart = true;
-            let skipped = false;
-            let skippedRecord: number[] = [];
-            const skippedPaths: string[] = [];
+            let flaggedRecord: number[] | null = null;
+            const flaggedEntries: string[] = [];
+            const skippedEntries = new Map<string, { entry: string; assumed: boolean }>();
             yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
-              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
+              args: [
+                ...inspectConfig,
+                "ls-files",
+                "--full-name",
+                "--sparse",
+                "--stage",
+                "-v",
+                "-z",
+              ],
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // Inspect every tag; retain only skipped file paths for checking sparse rules.
+              // Retain only flagged entries; ordinary sparse exclusions must keep their skip bit.
               onStdoutChunk: (chunk) => {
                 for (const byte of chunk) {
-                  if (recordStart) skipped = byte === 83;
-                  if (skipped && sparseCheckout) {
-                    if (byte !== 0) skippedRecord.push(byte);
+                  if (recordStart)
+                    flaggedRecord = (byte >= 97 && byte <= 122) || byte === 83 ? [] : null;
+                  if (flaggedRecord !== null) {
+                    if (byte !== 0) flaggedRecord.push(byte);
                     else {
-                      if (skippedRecord.at(-1) !== 47) {
-                        const name = Buffer.from(skippedRecord).subarray(2);
-                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
-                        else skippedPaths.push(name.toString("utf8"));
+                      const tag = flaggedRecord[0];
+                      const bytes = Buffer.from(flaggedRecord).subarray(2);
+                      if (!NodeBuffer.isUtf8(bytes)) specialFlags = true;
+                      else {
+                        const entry = bytes.toString("utf8");
+                        if (entry.startsWith("040000 ")) {
+                          if (!sparseCheckout || tag !== 83) specialFlags = true;
+                        } else if (sparseCheckout && (tag === 83 || tag === 115)) {
+                          skippedEntries.set(entry.slice(entry.indexOf("\t") + 1), {
+                            entry,
+                            assumed: tag === 115,
+                          });
+                        } else if (entry.startsWith("160000 ")) specialFlags = true;
+                        else flaggedEntries.push(entry);
                       }
-                      skippedRecord = [];
+                      flaggedRecord = null;
                     }
-                  }
-                  if (
-                    recordStart &&
-                    ((byte >= 97 && byte <= 122) || (!sparseCheckout && byte === 83))
-                  ) {
-                    specialFlags = true;
                   }
                   recordStart = byte === 0;
                 }
               },
             });
-            if (skippedPaths.length > 0 && !specialFlags) {
+            if (!recordStart) specialFlags = true;
+            if (skippedEntries.size > 0 && !specialFlags) {
               const selected = yield* execute({
                 operation,
                 cwd: input.cwd,
-                args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
-                stdin: skippedPaths.join("\0") + "\0",
+                args: [...inspectConfig, "sparse-checkout", "check-rules", "-z"],
+                stdin: [...skippedEntries.keys()].join("\0") + "\0",
                 env: commitEnv,
-                maxOutputBytes: 1,
-                outputMode: "truncate",
               });
-              // Any selected skipped file has a manual flag, not a sparse exclusion.
-              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+              if (selected.stdoutTruncated || (selected.stdout && !selected.stdout.endsWith("\0")))
+                specialFlags = true;
+              else {
+                for (const name of selected.stdout.split("\0").slice(0, -1)) {
+                  const skipped = skippedEntries.get(name);
+                  if (!skipped || skipped.entry.startsWith("160000 ")) specialFlags = true;
+                  else flaggedEntries.push(skipped.entry);
+                  skippedEntries.delete(name);
+                }
+                // An excluded assumed entry needs the fresh sparse index to retain its skip bit.
+                if ([...skippedEntries.values()].some((entry) => entry.assumed))
+                  specialFlags = true;
+              }
             }
-            // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
+            if (!specialFlags && flaggedEntries.length > 0) {
+              // Present exclusions can lose their skip bit during add; invalidate their stat too.
+              for (const { entry } of skippedEntries.values()) {
+                if (entry.startsWith("160000 ")) return false;
+                flaggedEntries.push(entry);
+              }
+              // Reinsert to clear both flags and stat data without losing ignored tracked files.
+              yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [...inspectConfig, "update-index", "-z", "--index-info"],
+                stdin: flaggedEntries.join("\0") + "\0",
+                env: commitEnv,
+              });
+              if (skippedEntries.size > 0) {
+                // Unlike index-info, --stdin paths are cwd-relative. Restore exclusions at the root.
+                const root = yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["rev-parse", "--show-toplevel"],
+                });
+                yield* execute({
+                  operation,
+                  cwd: root.stdout.trim(),
+                  args: [...inspectConfig, "update-index", "--skip-worktree", "-z", "--stdin"],
+                  stdin: [...skippedEntries.keys()].join("\0") + "\0",
+                  env: commitEnv,
+                });
+              }
+              yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            }
             return !specialFlags;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
