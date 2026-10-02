@@ -1,6 +1,6 @@
 import "../index.css";
 
-import type { PreviewSessionSnapshot } from "@t3tools/contracts";
+import type { EnvironmentId, PreviewSessionSnapshot, ProjectId } from "@t3tools/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -91,6 +91,29 @@ describe("RightPanelTabs", () => {
       expect(browserTabElement.parentElement!.querySelector("img")?.src).toBe(
         `${globalThis.location.origin}/favicon.ico`,
       );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("labels pull request tabs with only the pull request number", async () => {
+    const pullRequest: RightPanelSurface = {
+      id: "pull-request:environment-a:project-a:owner/repo:626",
+      kind: "pull-request",
+      environmentId: "environment-a" as EnvironmentId,
+      reference: {
+        projectId: "project-a" as ProjectId,
+        repository: "owner/repo",
+        number: 626,
+      },
+      title: "A descriptive pull request title",
+    };
+    const { screen } = await mountTabs([pullRequest], pullRequest.id);
+    try {
+      const tab = page.getByRole("button", { name: "#626", exact: true });
+      await expect.element(tab).toBeInTheDocument();
+      expect(await tab.element()).toHaveTextContent("#626");
+      await expect.element(page.getByLabelText("Close #626")).toBeInTheDocument();
     } finally {
       await screen.unmount();
     }

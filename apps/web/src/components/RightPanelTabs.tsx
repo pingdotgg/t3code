@@ -87,9 +87,7 @@ function titleFor(
     case "terminal":
       return terminalLabels[surface.resourceId] ?? "Terminal";
     case "pull-request":
-      return surface.title
-        ? `#${surface.reference.number} ${surface.title}`
-        : `Pull request #${surface.reference.number}`;
+      return `#${surface.reference.number}`;
     case "pull-requests":
       return "Pull requests";
     case "device":
