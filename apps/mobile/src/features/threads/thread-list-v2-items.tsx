@@ -250,6 +250,7 @@ const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
 ];
 
 const DRAFT_TASK_MENU_ACTIONS: MenuAction[] = [
+  { id: "open", title: "Open", image: "square.and.pencil" },
   { id: "delete", title: "Discard", image: "trash", attributes: { destructive: true } },
 ];
 
@@ -283,9 +284,10 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "open") onSelectPendingTask(pendingTask);
       if (nativeEvent.event === "delete") onDeletePendingTask(pendingTask);
     },
-    [onDeletePendingTask, pendingTask],
+    [onDeletePendingTask, onSelectPendingTask, pendingTask],
   );
 
   const rowContent = (
