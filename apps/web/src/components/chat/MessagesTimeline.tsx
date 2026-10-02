@@ -2136,7 +2136,7 @@ const ActivityEvidenceDetails = memo(function ActivityEvidenceDetails({
   }, [activityId, environmentId, threadId]);
 
   return (
-    <div className="mt-2 space-y-1 text-xs">
+    <div className="mt-2 space-y-1">
       {evidence === null ? (
         <button
           type="button"
