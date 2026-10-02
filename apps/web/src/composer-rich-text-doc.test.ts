@@ -4,9 +4,14 @@ import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
+import { Transform } from "@tiptap/pm/transform";
 import { describe, expect, it } from "vite-plus/test";
 
-import { collapseExpandedComposerCursor, pastedPathQueryLength } from "./composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  expandCollapsedComposerCursor,
+  pastedPathQueryLength,
+} from "./composer-logic";
 
 import {
   buildDocJson,
@@ -15,15 +20,15 @@ import {
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
-  collapsedToFlat,
   ComposerCodeExtension,
   ComposerTaskItemExtension,
-  flatToCollapsed,
   flatToMarkdown,
   flatToPm,
+  markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
   serializeSelection,
+  skillChipReplacements,
   stepCaretAcrossStyledEdge,
 } from "./composer-rich-text-doc";
 
@@ -159,7 +164,9 @@ describe("literal editor answers", () => {
     expect(serialized.contextIds).toEqual([]);
     expect(serializeSelection(doc, 1, doc.content.size - 1)).toBe(value);
     for (let offset = 0; offset <= value.length; offset += 1) {
-      expect(flatToCollapsed(serialized, offset)).toBe(offset);
+      expect(collapseExpandedComposerCursor(value, flatToMarkdown(serialized, offset), true)).toBe(
+        offset,
+      );
     }
   });
 
@@ -255,7 +262,7 @@ describe("composer rich text document model", () => {
       const position = flatToPm(map, flat);
       expect(doc.resolve(position).parent.isTextblock).toBe(true);
       expect(pmToFlat(map, position)).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
   });
 
@@ -366,7 +373,7 @@ describe("composer rich text document model", () => {
     expect(serializeEditorDoc(rebuilt).value).toBe(map.value);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
       expect(pmToFlat(map, flatToPm(map, flat))).toBe(flat);
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       if (flat < map.docLength && !/\s/.test(doc.textContent[flat]!)) {
         expect(rebuilt.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name)).toEqual(
           doc.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name),
@@ -444,12 +451,12 @@ describe("composer rich text document model", () => {
   });
 
   it.each(["- one\n- two", "1. a\n   - b\n2. c", "- **bold** @README.md tail", "-"])(
-    "maps every document offset of the list %s through collapsed coordinates and back",
+    "maps every document offset of the list %s through markdown coordinates and back",
     (value) => {
       const map = roundTrip(value);
       expect(map.value).toBe(value);
       for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       }
     },
   );
@@ -458,11 +465,11 @@ describe("composer rich text document model", () => {
     const value = "- item";
     const map = roundTrip(value);
     // The marker owns no document characters, like a checkbox.
-    for (let collapsed = 0; collapsed <= "- ".length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(0);
+    for (let markdown = 0; markdown <= "- ".length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(0);
     }
-    expect(collapsedToFlat(map, "- it".length)).toBe(2);
-    expect(flatToCollapsed(map, 0)).toBe("- ".length);
+    expect(markdownToFlat(map, "- it".length)).toBe(2);
+    expect(flatToMarkdown(map, 0)).toBe("- ".length);
   });
 
   it.each([
@@ -625,12 +632,12 @@ describe("composer rich text document model", () => {
     "# Heading text",
     "## **b** @README.md",
   ])(
-    "maps every document offset of the block %s through collapsed coordinates and back",
+    "maps every document offset of the block %s through markdown coordinates and back",
     (value) => {
       const map = roundTrip(value);
       expect(map.value).toBe(value);
       for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       }
     },
   );
@@ -641,10 +648,10 @@ describe("composer rich text document model", () => {
       ["# Heading", "# "],
     ] as const) {
       const map = roundTrip(value);
-      for (let collapsed = 0; collapsed <= prefix.length; collapsed += 1) {
-        expect(collapsedToFlat(map, collapsed)).toBe(0);
+      for (let markdown = 0; markdown <= prefix.length; markdown += 1) {
+        expect(markdownToFlat(map, markdown)).toBe(0);
       }
-      expect(flatToCollapsed(map, 0)).toBe(prefix.length);
+      expect(flatToMarkdown(map, 0)).toBe(prefix.length);
     }
   });
 
@@ -670,12 +677,12 @@ describe("composer rich text document model", () => {
   });
 
   it.each(["```ts\nconst a = 1;\n```", "```\n```", "before\n```ts\ncode\n```\nafter"])(
-    "maps every document offset of %s through collapsed coordinates and back",
+    "maps every document offset of %s through markdown coordinates and back",
     (value) => {
       const map = roundTrip(value);
       expect(map.value).toBe(value);
       for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       }
     },
   );
@@ -698,17 +705,16 @@ describe("composer rich text document model", () => {
     const map = roundTrip(value);
     const endOfCode = "func();".length;
     // Not the end of the string: the closing fence is a line of its own.
-    expect(flatToCollapsed(map, endOfCode)).toBe("```ts\nfunc();".length);
     expect(flatToMarkdown(map, endOfCode)).toBe("```ts\nfunc();".length);
-    expect(collapsedToFlat(map, flatToCollapsed(map, endOfCode))).toBe(endOfCode);
+    expect(markdownToFlat(map, flatToMarkdown(map, endOfCode))).toBe(endOfCode);
   });
 
   it("keeps the caret inside an empty fence", () => {
     const value = "before\n```\n```";
     const map = roundTrip(value);
     const inside = "before\n".length;
-    expect(flatToCollapsed(map, inside)).toBe("before\n```".length);
-    expect(collapsedToFlat(map, flatToCollapsed(map, inside))).toBe(inside);
+    expect(flatToMarkdown(map, inside)).toBe("before\n```".length);
+    expect(markdownToFlat(map, flatToMarkdown(map, inside))).toBe(inside);
   });
 
   it("still places the end of an inline mark after its markers", () => {
@@ -724,13 +730,13 @@ describe("composer rich text document model", () => {
     expect(map.value).toBe(value);
     // The opening fence owns no document characters, so every offset in it
     // lands on the first character of the code.
-    for (let collapsed = 0; collapsed <= "```ts\n".length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(0);
+    for (let markdown = 0; markdown <= "```ts\n".length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(0);
     }
-    expect(collapsedToFlat(map, "```ts\na".length)).toBe(1);
+    expect(markdownToFlat(map, "```ts\na".length)).toBe(1);
     // Everything from the closing newline onwards clamps to the code's end.
-    for (let collapsed = "```ts\nab".length; collapsed <= value.length; collapsed += 1) {
-      expect(collapsedToFlat(map, collapsed)).toBe(2);
+    for (let markdown = "```ts\nab".length; markdown <= value.length; markdown += 1) {
+      expect(markdownToFlat(map, markdown)).toBe(2);
     }
   });
 
@@ -813,19 +819,18 @@ describe("composer rich text document model", () => {
     expect(roundTrip("```\ncode").value).toBe("```\ncode");
   });
 
-  it("counts a chip's source in a fence as one cursor position, as the draft store does", () => {
-    const value = "```\nsee @b.md now\n```\nafter";
-    const map = roundTrip(value);
+  it("keeps a chip's source in a fence as literal text", () => {
+    const value = "```\nsee @b.md and $babysit now\n```\nafter";
+    const known = () => ({ label: "Babysit", description: null });
+    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    const map = serializeEditorDoc(doc);
     expect(map.value).toBe(value);
+    expect(map.runs.filter((run) => run.kind === "token")).toEqual([]);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(flatToCollapsed(map, flat)).toBe(
-        collapseExpandedComposerCursor(value, flatToMarkdown(map, flat)),
-      );
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
-    const afterChip = "see @b.md".length;
-    expect(collapsedToFlat(map, flatToCollapsed(map, afterChip))).toBe(afterChip);
-    const end = map.docLength;
-    expect(collapsedToFlat(map, flatToCollapsed(map, end))).toBe(end);
+    // Reconciling against the provider's skills leaves the code alone too.
+    expect(skillChipReplacements(doc, known)).toEqual([]);
   });
 
   it("keeps fences literal in plain mode", () => {
@@ -833,12 +838,12 @@ describe("composer rich text document model", () => {
     expect(roundTripPlain(value).value).toBe(value);
   });
 
-  it("maps every document offset through collapsed coordinates and back", () => {
+  it("maps every document offset through markdown coordinates and back", () => {
     const value = "hi **bold** @README.md bye";
     const map = roundTrip(value);
     expect(map.value).toBe(value);
     for (let flat = 0; flat <= map.docLength; flat += 1) {
-      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
     }
   });
 
@@ -856,8 +861,9 @@ describe("composer rich text document model", () => {
     expect(rich.value).toBe(value);
     expect(plain.value).toBe(value);
     for (let collapsed = 0; collapsed <= value.length; collapsed += 1) {
-      expect(flatToMarkdown(rich, collapsedToFlat(rich, collapsed))).toBe(
-        flatToMarkdown(plain, collapsedToFlat(plain, collapsed)),
+      const markdown = expandCollapsedComposerCursor(value, collapsed);
+      expect(flatToMarkdown(rich, markdownToFlat(rich, markdown))).toBe(
+        flatToMarkdown(plain, markdownToFlat(plain, markdown)),
       );
     }
   });
@@ -869,8 +875,8 @@ describe("composer rich text document model", () => {
     // Between the two asterisks: a real caret position in plain mode, and no
     // position at all in rich mode, where it lands on the first styled
     // character instead. The flip moves the caret by a marker's width at most.
-    expect(flatToMarkdown(plain, collapsedToFlat(plain, 3))).toBe(3);
-    expect(flatToMarkdown(rich, collapsedToFlat(rich, 3))).toBe(4);
+    expect(flatToMarkdown(plain, markdownToFlat(plain, 3))).toBe(3);
+    expect(flatToMarkdown(rich, markdownToFlat(rich, 3))).toBe(4);
   });
 
   it("maps markdown offsets at styled edges onto document text", () => {
@@ -880,8 +886,67 @@ describe("composer rich text document model", () => {
     // document text is "a bold c" (flat), markdown has the markers.
     expect(flatToMarkdown(map, 2)).toBe(4);
     expect(flatToMarkdown(map, 6)).toBe(10);
-    expect(collapsedToFlat(map, 3)).toBe(2);
-    expect(collapsedToFlat(map, 9)).toBe(6);
+    expect(markdownToFlat(map, 3)).toBe(2);
+    expect(markdownToFlat(map, 9)).toBe(6);
+  });
+
+  it("chips only the skills the provider has and leaves other $names as text", () => {
+    const value = "run $babysit then echo $HOME and $notaskill done";
+    const known = (name: string) =>
+      name === "babysit" ? { label: "Babysit", description: null } : null;
+    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
+    doc.check();
+    const map = serializeEditorDoc(doc);
+    expect(map.value).toBe(value);
+    expect(map.runs.filter((run) => run.kind === "token").map((run) => run.nodeName)).toEqual([
+      "composer-skill",
+    ]);
+    expect(doc.textContent).toBe("run  then echo $HOME and $notaskill done");
+    // A caret after `$HOME` sits after the same five characters in the document.
+    const afterHome = value.indexOf("$HOME") + "$HOME".length;
+    const flat = markdownToFlat(map, afterHome);
+    expect(doc.textBetween(flatToPm(map, flat) - 5, flatToPm(map, flat))).toBe("$HOME");
+    // Any offset inside the chip source lands after the chip.
+    expect(markdownToFlat(map, value.indexOf("$babysit") + 3)).toBe("run ".length + 1);
+  });
+
+  it("re-chips for a new skill list by replacing only the affected nodes", () => {
+    const value = "run $babysit then **echo $HOME now** and $deploy done";
+    const metaFor = (known: ReadonlyArray<string>) => (name: string) =>
+      known.includes(name) ? { label: name, description: null } : null;
+    const chipNames = (doc: ProseMirrorNode) => {
+      const names: string[] = [];
+      doc.descendants((node) => {
+        if (node.type.name === "composer-skill") names.push(node.attrs.skillName);
+      });
+      return names;
+    };
+    const reconcile = (doc: ProseMirrorNode, known: ReadonlyArray<string>) => {
+      const transform = new Transform(doc);
+      for (const { from, to, node } of skillChipReplacements(doc, metaFor(known))) {
+        transform.replaceWith(from, to, node);
+      }
+      transform.doc.check();
+      return transform.doc;
+    };
+
+    const codex = ProseMirrorNode.fromJSON(schema, buildDocJson(value, metaFor(["babysit"])));
+    expect(chipNames(codex)).toEqual(["babysit"]);
+    expect(skillChipReplacements(codex, metaFor(["babysit"]))).toEqual([]);
+
+    // The next provider has $deploy and $HOME but not $babysit.
+    const claude = reconcile(codex, ["deploy", "HOME"]);
+    expect(chipNames(claude)).toEqual(["HOME", "deploy"]);
+    expect(serializeEditorDoc(claude).value).toBe(value);
+    // The new chip keeps the formatting of the text it replaced.
+    const home = claude.nodeAt(
+      serializeEditorDoc(claude).runs.find((run) => run.kind === "token")!.pmPos,
+    )!;
+    expect(home.marks.map((mark) => mark.type.name)).toEqual(["bold"]);
+
+    const none = reconcile(claude, []);
+    expect(chipNames(none)).toEqual([]);
+    expect(serializeEditorDoc(none).value).toBe(value);
   });
 });
 
