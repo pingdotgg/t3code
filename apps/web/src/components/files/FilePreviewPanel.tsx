@@ -1,7 +1,6 @@
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
-  EditorId,
   EnvironmentId,
   ResolvedKeybindingsConfig,
   ScopedThreadRef,
@@ -27,10 +26,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
-import { OpenInPicker } from "~/components/chat/OpenInPicker";
+import { OpenInPicker, shouldShowOpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
-import { useRemoteOpenState } from "~/remoteOpen";
+import { useIsDesktopLocalEnvironment, useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
@@ -101,7 +100,6 @@ interface FilePreviewPanelProps {
   threadRef: ScopedThreadRef;
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
-  availableEditors: ReadonlyArray<EditorId>;
   revealLine: number | null;
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
@@ -913,7 +911,6 @@ export default function FilePreviewPanel({
   threadRef,
   composerDraftTarget,
   keybindings,
-  availableEditors,
   revealLine,
   revealRequestId,
   onOpenFile,
@@ -927,6 +924,13 @@ export default function FilePreviewPanel({
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
+  const isDesktopLocalEnvironment = useIsDesktopLocalEnvironment(environmentId);
+  const showOpenInPicker = shouldShowOpenInPicker({
+    environmentId,
+    primaryEnvironmentId,
+    isDesktopLocalEnvironment,
+    remoteOpenMode: remoteOpenState.mode,
+  });
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -1116,13 +1120,12 @@ export default function FilePreviewPanel({
               />
             </div>
           </ScrollArea>
-          {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          {absolutePath && showOpenInPicker ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
-              availableEditors={availableEditors}
               openInCwd={absolutePath}
+              openInLine={file.isNotFile ? undefined : (revealLine ?? 1)}
               compact
               enableShortcut={false}
             />

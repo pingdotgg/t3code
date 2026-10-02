@@ -88,6 +88,37 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens WSL editor URLs", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openExternal(
+        "vscode://vscode-remote/wsl+Debian/home/user/project",
+      );
+
+      assert.equal(result, true);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["vscode://vscode-remote/wsl+Debian/home/user/project"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open remote editor URLs without a host", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("vscode://vscode-remote/wsl+"),
+        electronShell.openExternal("vscode://vscode-remote/ssh-remote+"),
+      ]);
+
+      assert.deepEqual(results, [false, false]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens Zed's ssh deep link", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
