@@ -1024,6 +1024,110 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("ClaudeAdapterV2 append-system-prompt launch args", () => {
+  const startTurnWithLaunchArgs = (launchArgs: string) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" });
+      yield* fileSystem.writeFileString(path.join(cwd, "extra.md"), "code word: pineapple");
+      let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+      const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem,
+        path,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-append"),
+          open: (input) =>
+            Effect.sync(() => {
+              openedOptions = input.options;
+              return {
+                messages: Stream.never,
+                offer: () => Effect.void,
+                setModel: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              };
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        ...CLAUDE_TEST_RUNTIME_POLICY,
+        cwd,
+      });
+      const threadId = ThreadId.make("thread-claude-append");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-append"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const exit = yield* runtime
+        .startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-append"),
+            text: "What is the code word?",
+            attachments: [],
+            runtimePolicy,
+          }),
+        )
+        .pipe(Effect.exit);
+      return { exit, openedOptions };
+    });
+
+  it.effect("folds the file and inline text into the system prompt append", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { exit, openedOptions } = yield* startTurnWithLaunchArgs(
+          `--append-system-prompt-file extra.md --append-system-prompt "inline text"`,
+        );
+        assert.isTrue(Exit.isSuccess(exit));
+        const systemPrompt = openedOptions?.systemPrompt;
+        if (
+          typeof systemPrompt !== "object" ||
+          systemPrompt === null ||
+          !("append" in systemPrompt)
+        ) {
+          return assert.fail("expected a preset system prompt with an append");
+        }
+        assert.isTrue(
+          systemPrompt.append?.endsWith("\n\ncode word: pineapple\n\ninline text"),
+          systemPrompt.append,
+        );
+        assert.isUndefined(openedOptions?.extraArgs?.["append-system-prompt"]);
+        assert.isUndefined(openedOptions?.extraArgs?.["append-system-prompt-file"]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("fails the turn when the file cannot be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { exit, openedOptions } = yield* startTurnWithLaunchArgs(
+          "--append-system-prompt-file missing.md",
+        );
+        assert.isTrue(Exit.isFailure(exit));
+        assert.isUndefined(openedOptions);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 approval cancellation", () => {
   it.effect("observes an approval signal that was already aborted", () =>
     Effect.gen(function* () {

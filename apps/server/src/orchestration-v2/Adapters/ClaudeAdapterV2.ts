@@ -784,6 +784,8 @@ export function makeClaudeQueryOptions(input: {
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
+  /** Contents of the `--append-system-prompt-file` launch arg, read by the caller. */
+  readonly appendSystemPromptFileText?: string;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
@@ -791,6 +793,14 @@ export function makeClaudeQueryOptions(input: {
     "dangerously-skip-permissions": launchArgSkipPermissions,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  // The SDK sends systemPrompt.append on initialize and the CLI assigns it over
+  // the text these launch args loaded, so their text joins that append instead.
+  // A flag without a value is left for the CLI to report.
+  const launchArgAppendSystemPrompt = extraArgs["append-system-prompt"] ?? undefined;
+  if (launchArgAppendSystemPrompt !== undefined) delete extraArgs["append-system-prompt"];
+  if (input.appendSystemPromptFileText !== undefined) {
+    delete extraArgs["append-system-prompt-file"];
+  }
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
@@ -866,9 +876,14 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
-      append:
+      append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+          (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        input.appendSystemPromptFileText,
+        launchArgAppendSystemPrompt,
+      ]
+        .filter((part) => part !== undefined && part !== "")
+        .join("\n\n"),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -6779,6 +6794,30 @@ export function makeClaudeAdapterV2(
             return existing;
           }
 
+          // Read before closing the live query, so a bad path leaves it intact.
+          // A missing file fails the turn, as it fails the CLI, instead of
+          // starting a session silently missing the text.
+          const appendSystemPromptFile = parseCliArgs(adapterOptions.settings.launchArgs).flags[
+            "append-system-prompt-file"
+          ];
+          const appendSystemPromptFileText =
+            typeof appendSystemPromptFile === "string"
+              ? yield* fileSystem
+                  .readFileString(
+                    path.resolve(turnInput.runtimePolicy.cwd ?? ".", appendSystemPromptFile),
+                  )
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver: CLAUDE_PROVIDER,
+                          detail: `Failed to read --append-system-prompt-file '${appendSystemPromptFile}'`,
+                          payload: cause,
+                        }),
+                    ),
+                  )
+              : undefined;
+
           // openQuery owns one live process. Closing it for another native
           // thread kills that sibling's CLI; it can never emit a roster clear,
           // so drop its process-scoped Waiting/wake state immediately. Closing
@@ -6828,6 +6867,7 @@ export function makeClaudeAdapterV2(
                 canUseTool,
                 onUserDialog,
                 supportedDialogKinds: ["resume_return"],
+                ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
               }),
             })
             .pipe(
