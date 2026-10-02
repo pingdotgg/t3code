@@ -12,7 +12,6 @@ import {
   hasUnseenCompletion,
   isContextMenuPointerDown,
   isCollapsedSettledRow,
-  isSettledSidebarThread,
   orderItemsByPreferredIds,
   partitionSettledSidebarRows,
   resolveProjectStatusIndicator,
@@ -1637,27 +1636,6 @@ function buildSettledRows(
     resolveThreadStatus: (thread) => resolveThreadStatusPill({ thread, lastVisitedAt: null }),
   }).rowViews;
 }
-
-describe("isSettledSidebarThread", () => {
-  it("treats an explicit settled override on a quiet thread as settled", () => {
-    expect(
-      isSettledSidebarThread(makeSummary({ settledOverride: "settled" }), { now: SETTLED_NOW }),
-    ).toBe(true);
-  });
-
-  it("lets a live blocker defeat a stale settled override", () => {
-    expect(
-      isSettledSidebarThread(
-        makeSummary({ settledOverride: "settled", hasPendingApprovals: true }),
-        { now: SETTLED_NOW },
-      ),
-    ).toBe(false);
-  });
-
-  it("treats threads without the override as active", () => {
-    expect(isSettledSidebarThread(makeSummary(), { now: SETTLED_NOW })).toBe(false);
-  });
-});
 
 describe("isCollapsedSettledRow", () => {
   it("fades a quiet settled thread", () => {

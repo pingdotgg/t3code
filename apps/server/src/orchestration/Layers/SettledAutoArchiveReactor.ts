@@ -69,7 +69,6 @@ export const sweepOnce = Effect.gen(function* () {
 }) satisfies Effect.Effect<void, never, SweepServices>;
 
 const makeReactor = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
   const serverSettings = yield* ServerSettingsService;
   const guards = yield* AutomaticArchiveGuardRegistry;
 
@@ -100,14 +99,9 @@ const makeReactor = Effect.gen(function* () {
   );
   yield* Effect.forkScoped(Stream.runForEach(serverSettings.streamChanges, () => refreshAfterDays));
 
+  // Day-granularity needs no fresher trigger than the sweep: a thread that
+  // becomes due at the moment it settles is picked up within one interval.
   yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
-  // A re-settle preserves the original `settledAt`, so a thread can become due
-  // at the moment it settles — sweep promptly instead of waiting out the timer.
-  yield* Effect.forkScoped(
-    Stream.runForEach(engine.streamDomainEvents, (event) =>
-      event.type === "thread.settled" ? sweepOnce : Effect.void,
-    ),
-  );
 });
 
 export const layer = Layer.effectDiscard(makeReactor);

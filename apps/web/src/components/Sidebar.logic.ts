@@ -770,28 +770,6 @@ export function sortProjectsForSidebar<
 }
 
 /**
- * Whether a v1 sidebar row counts as settled: an explicit settled override
- * that no blocker defeats (`canSettle` fails while approvals, input, queued
- * turns, or running work are outstanding, so a stale override can never hide
- * a thread that needs attention).
- */
-export function isSettledSidebarThread(
-  thread: Pick<
-    SidebarThreadSummary,
-    | "hasPendingApprovals"
-    | "hasPendingUserInput"
-    | "hasPendingQueuedTurn"
-    | "latestUserMessageAt"
-    | "latestTurn"
-    | "session"
-    | "settledOverride"
-  >,
-  input: { readonly now: string },
-): boolean {
-  return effectiveSettled(thread, { now: input.now });
-}
-
-/**
  * Minimal row shape the settled partition needs. Kept structural (instead of
  * importing `SidebarThreadRowView`) because `sidebarThreadTree` already
  * imports this module.
@@ -835,12 +813,10 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
  */
 export function isCollapsedSettledRow(input: {
   readonly status: ThreadStatusPill | null;
-  readonly thread: Parameters<typeof isSettledSidebarThread>[0];
+  readonly thread: SidebarThreadSummary;
   readonly now: string;
 }): boolean {
-  return (
-    !isActiveThreadStatus(input.status) && isSettledSidebarThread(input.thread, { now: input.now })
-  );
+  return !isActiveThreadStatus(input.status) && effectiveSettled(input.thread, { now: input.now });
 }
 
 /**
@@ -880,7 +856,7 @@ export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow
     const root = block[0]!;
     const isSettledSubtree =
       !block.some((row) => isActiveThreadStatus(row.status)) &&
-      isSettledSidebarThread(root.thread, { now: input.now });
+      effectiveSettled(root.thread, { now: input.now });
     if (input.pinnedThreadKeys?.has(root.threadKey) === true) {
       pinnedBlocks.push(block);
       // A pin is an explicit order override, so the block stays leading —
