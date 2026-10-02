@@ -1987,26 +1987,6 @@ code {
   overflow-wrap: anywhere;
 }
 
-/* Fit the available pane, but retain horizontal scrolling when there are too
-   many columns to read comfortably. The legacy cell expansion state is kept
-   intact underneath, so switching Fit tables off restores it. */
-.chat-markdown .chat-markdown-table-container[data-fit="true"] table {
-  table-layout: fixed;
-  min-width: calc(var(--table-column-count, 1) * 7.5rem);
-}
-
-.chat-markdown .chat-markdown-table-container[data-fit="true"] :is(th, td) {
-  /* Legacy expansion writes inline min-widths to headers. */
-  min-width: 0 !important;
-  max-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: normal;
-  overflow: visible;
-  text-overflow: clip;
-  vertical-align: top;
-}
-
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);

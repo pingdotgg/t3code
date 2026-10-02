@@ -1,17 +1,14 @@
 import { ArrowLeftRightIcon, MinusIcon, PlusIcon } from "lucide-react";
 import { useId, type CSSProperties } from "react";
 
-import { THREAD_WIDTH_STEP, useFitTables, useThreadWidth } from "~/hooks/useThreadWidth";
-import { Switch } from "../ui/switch";
+import { THREAD_WIDTH_STEP, useThreadWidth } from "~/hooks/useThreadWidth";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 
-/** Adjust conversation width and optional table wrapping without leaving the thread. */
+/** Adjust conversation width without leaving the thread. */
 export function ThreadWidthControl() {
   const [expansion, setExpansion] = useThreadWidth();
   const sliderId = useId();
-  const fitId = useId();
-  const [fitTables, setFitTables] = useFitTables();
   const sliderStyle = {
     "--settings-slider-progress": `${expansion}%`,
     "--settings-slider-fill-offset": `${0.5 - expansion / 100}rem`,
@@ -71,13 +68,6 @@ export function ThreadWidthControl() {
               <span>100%</span>
             </div>
           </div>
-          <label
-            htmlFor={fitId}
-            className="flex cursor-pointer items-center justify-between gap-3 border-t border-border pt-3 text-sm"
-          >
-            Fit tables
-            <Switch id={fitId} size="sm" checked={fitTables} onCheckedChange={setFitTables} />
-          </label>
         </div>
       </PopoverPopup>
     </Popover>

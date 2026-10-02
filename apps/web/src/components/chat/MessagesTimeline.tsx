@@ -241,6 +241,7 @@ import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextC
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
+import { useThreadWidth } from "~/hooks/useThreadWidth";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -940,6 +941,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
+  const [threadWidthExpansion] = useThreadWidth();
   const {
     target: readyCitationRequest,
     positioning: citationPositioning,
@@ -1140,7 +1142,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length, listIdentityKey, reportContentOverflow, chatWidth]);
+  }, [
+    timelineViewportElement,
+    rows.length,
+    listIdentityKey,
+    reportContentOverflow,
+    chatWidth,
+    threadWidthExpansion,
+  ]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({

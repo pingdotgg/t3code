@@ -13,13 +13,18 @@ export function normalizeThreadWidth(value: unknown): number {
     : 0;
 }
 
-/** Interpolate the original 48rem cap toward the available chat pane width. */
+/** Expand the configured Appearance width toward the available chat pane width. */
 export function threadWidthStyle(expansion: number): CSSProperties {
   // Percentages resolve against the chat pane, including when a right
   // panel takes space. w-full keeps narrow panes at their original width.
   const ratio = normalizeThreadWidth(expansion) / 100;
   return {
-    "--thread-content-max-width": `calc(48rem * ${1 - ratio} + 100% * ${ratio})`,
+    "--thread-content-max-width":
+      ratio === 0
+        ? "var(--chat-max-width, 48rem)"
+        : ratio === 1
+          ? "100%"
+          : `calc(var(--chat-max-width, 48rem) * ${1 - ratio} + 100% * ${ratio})`,
   } as CSSProperties;
 }
 
@@ -35,17 +40,4 @@ export function useThreadWidth() {
     [setStored],
   );
   return [normalizeThreadWidth(stored), setExpansion] as const;
-}
-
-export const FIT_TABLES_STORAGE_KEY = "t3code:fit-tables";
-
-/** Opt into table wrapping while preserving existing table behavior. */
-export function useFitTables() {
-  const [stored, setStored] = useLocalStorage<unknown, unknown>(
-    FIT_TABLES_STORAGE_KEY,
-    false,
-    Schema.Unknown,
-  );
-  const setFitTables = useCallback((value: boolean) => setStored(value), [setStored]);
-  return [typeof stored === "boolean" ? stored : false, setFitTables] as const;
 }

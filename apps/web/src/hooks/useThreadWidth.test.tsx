@@ -2,23 +2,17 @@ import { act, useEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-import {
-  FIT_TABLES_STORAGE_KEY,
-  threadWidthStyle,
-  useFitTables,
-  THREAD_WIDTH_STORAGE_KEY,
-  useThreadWidth,
-} from "./useThreadWidth";
+import { threadWidthStyle, THREAD_WIDTH_STORAGE_KEY, useThreadWidth } from "./useThreadWidth";
 
-it("maps the preference onto the shared message and composer width variable", () => {
+it("expands the Appearance width without replacing its zero-percent default", () => {
   expect(threadWidthStyle(0)).toEqual({
-    "--thread-content-max-width": "calc(48rem * 1 + 100% * 0)",
+    "--thread-content-max-width": "var(--chat-max-width, 48rem)",
   });
   expect(threadWidthStyle(50)).toEqual({
-    "--thread-content-max-width": "calc(48rem * 0.5 + 100% * 0.5)",
+    "--thread-content-max-width": "calc(var(--chat-max-width, 48rem) * 0.5 + 100% * 0.5)",
   });
   expect(threadWidthStyle(100)).toEqual({
-    "--thread-content-max-width": "calc(48rem * 0 + 100% * 1)",
+    "--thread-content-max-width": "100%",
   });
 });
 
@@ -139,72 +133,3 @@ it("clamps controls at the endpoints and quantizes every adjustment to five perc
     expect(current[0]).toBe(expected);
   }
 });
-
-let fit: ReturnType<typeof useFitTables>;
-let otherFit: ReturnType<typeof useFitTables>;
-function FitReader({ secondary = false }: { secondary?: boolean }) {
-  const value = useFitTables();
-  useEffect(() => {
-    if (secondary) otherFit = value;
-    else fit = value;
-  }, [secondary, value]);
-  return null;
-}
-it("preserves existing table behavior by default and synchronizes opt-in across consumers", async () => {
-  await act(() => {
-    renderer = create(
-      <>
-        <FitReader />
-        <FitReader secondary />
-        <Reader />
-      </>,
-    );
-  });
-  expect(fit[0]).toBe(false);
-  await act(() => fit[1](true));
-  expect(otherFit[0]).toBe(true);
-  expect(saved.get(FIT_TABLES_STORAGE_KEY)).toBe("true");
-  expect(current[0]).toBe(0);
-  await act(() => otherFit[1](false));
-  expect(fit[0]).toBe(false);
-});
-it.each([true, false])(
-  "preserves an explicit Fit tables %s choice across navigation and restart",
-  async (enabled) => {
-    saved.set(FIT_TABLES_STORAGE_KEY, JSON.stringify(enabled));
-    await act(() => {
-      renderer = create(<FitReader />);
-    });
-    expect(fit[0]).toBe(enabled);
-    await act(() => fit[1](!enabled));
-    await act(() => renderer!.unmount());
-    await act(() => {
-      renderer = create(<FitReader />);
-    });
-    expect(fit[0]).toBe(!enabled);
-  },
-);
-it("updates tables when another window changes the fit preference", async () => {
-  await act(() => {
-    renderer = create(<FitReader />);
-  });
-  saved.set(FIT_TABLES_STORAGE_KEY, "true");
-  await act(() => {
-    const event = new Event("storage");
-    Object.defineProperty(event, "key", { value: FIT_TABLES_STORAGE_KEY });
-    events.dispatchEvent(event);
-  });
-  expect(fit[0]).toBe(true);
-});
-it.each(["{}", "null", '"false"'])(
-  "defaults safely with invalid Fit tables storage %s",
-  async (value) => {
-    saved.set(FIT_TABLES_STORAGE_KEY, value);
-    await act(() => {
-      renderer = create(<FitReader />);
-    });
-    expect(fit[0]).toBe(false);
-    await act(() => fit[1](true));
-    expect(fit[0]).toBe(true);
-  },
-);

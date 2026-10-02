@@ -238,11 +238,6 @@ Android opens a compatible installed file viewer.
 ## Thread width
 
 Use **Width** in the thread header to expand the conversation and composer in
-5% steps. **0%** keeps the original reading width; **100%** uses the available
-chat pane. The preference stays on this device across threads and reloads, and
+5% steps. **0%** keeps your **Settings → Appearance → Chat width** choice;
+**100%** uses the available chat pane. The preference stays on this device across threads and reloads, and
 the content adapts when side panels open or the window shrinks.
-
-**Fit tables** in the same menu is off by default. Enable it to wrap cells to use that width. Tables with many
-columns retain horizontal scrolling to keep cells readable. Turn it off to
-restore the existing per-table expand/collapse behavior. This preference also
-stays on this device.
