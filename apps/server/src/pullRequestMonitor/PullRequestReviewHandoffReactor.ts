@@ -233,7 +233,6 @@ const makeReactor = Effect.gen(function* () {
       // Settings read errors propagate to process(): retried transiently like submit
       // failures so a transient settings outage cannot silently drop the findings.
       const settings = yield* serverSettings.getSettings;
-      if (settings.autoMonitorPullRequestsOnCreate !== true) return;
       const readModel = yield* engine.getReadModel();
       const projectId = (readModel.threads.find((entry) => entry.id === event.payload.threadId)
         ?.projectId ?? null) as ProjectId | null;
@@ -243,7 +242,21 @@ const makeReactor = Effect.gen(function* () {
         result: event.payload.result,
       });
       if (review === null) return;
-      yield* monitors.submitFindings(handoffToSubmitInput(review));
+      const reference = {
+        projectId: review.projectId,
+        repository: review.repository,
+        number: review.number,
+      };
+      const current = yield* monitors.status({ reference });
+      // Finding visibility is unconditional. Monitoring startup is separate: never
+      // resume a stopped monitor just because a child review completed.
+      const startMonitoring =
+        settings.autoMonitorPullRequestsOnCreate === true &&
+        (current.monitor === null || current.monitor.enabled);
+      yield* monitors.submitFindings({
+        ...handoffToSubmitInput(review),
+        startMonitoring,
+      });
     });
 
   const process = (event: OrchestrationEvent) =>

@@ -18,6 +18,7 @@ import {
   reconcileFeedbackItem,
 } from "../../pullRequestMonitor/feedbackReconciliation.ts";
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
+import { PullRequestMonitorService } from "../../pullRequestMonitor/PullRequestMonitorService.ts";
 import { computeReadiness } from "../../pullRequestMonitor/readiness.ts";
 import { buildWakePrompt } from "../../pullRequestMonitor/wakePrompt.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -169,6 +170,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const pullRequests = yield* PullRequestService;
   const monitorFeedback = yield* PullRequestMonitorFeedbackService;
+  const pullRequestMonitors = yield* PullRequestMonitorService;
   const serverSettings = yield* ServerSettingsService;
   const wakeScope = yield* Effect.scope;
   const drainingThreadIds = new Set<ThreadId>();
@@ -300,6 +302,21 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       }
 
       const origin = nextQueuedTurn.origin;
+      if (origin?.kind === "pull-request-monitor") {
+        const mayDeliver = yield* pullRequestMonitors.canDeliverAutomation({
+          reference: {
+            projectId: thread.projectId,
+            repository: origin.repository,
+            number: origin.number,
+          },
+          threadId,
+        });
+        if (!mayDeliver) {
+          // A pause/ownership loss stops execution, not visibility. Leave the
+          // already-persisted queued finding intact for a later resume/recovery.
+          return;
+        }
+      }
       if (origin?.kind === "pull-request-monitor" && origin.headSha !== undefined) {
         const observedHeadSha = origin.headSha;
         const now = new Date();

@@ -589,8 +589,8 @@ export const layer = Layer.effect(
 
     const revalidateForDelivery = (monitor: PullRequestMonitorRecord) =>
       Effect.gen(function* () {
-        if (!monitor.enabled || monitor.status === "stopped" || monitor.status === "terminal") {
-          return yield* monitorError("Monitor is not active for delivery.");
+        if (monitor.status === "terminal") {
+          return yield* monitorError("Pull request is no longer open.");
         }
         if (!monitor.ownerThreadId) {
           return yield* monitorError("Monitor has no owner thread for delivery.");
@@ -653,9 +653,7 @@ export const layer = Layer.effect(
             validated.failure instanceof Error
               ? validated.failure.message
               : String(validated.failure);
-          const suppressedByRevalidation = /no longer open|no owner thread|not active/i.test(
-            message,
-          );
+          const suppressedByRevalidation = /no longer open/i.test(message);
           const terminal = suppressedByRevalidation || attemptCount >= MAX_DELIVERY_ATTEMPTS;
           if (suppressedByRevalidation) {
             yield* feedbackStore.setDeliveryCircuitState({
@@ -908,11 +906,12 @@ export const layer = Layer.effect(
       const now = yield* isoNow();
       let before: { updatedAt: string; monitorId: PullRequestMonitorId } | undefined;
       while (true) {
-        const monitors = yield* monitorStore.listEnabledPage({
+        const pendingMonitors = yield* monitorStore.listPendingFeedbackPage({
           limit: 500,
           ...(before ? { before } : {}),
         });
-        for (const monitor of monitors) {
+        for (const pendingMonitor of pendingMonitors) {
+          const { monitor } = pendingMonitor;
           if (!monitor.ownerThreadId) continue;
           const state = yield* feedbackStore.getState(monitor.id);
           if (state.pendingRevisionIds.length === 0) continue;
@@ -958,10 +957,10 @@ export const layer = Layer.effect(
           });
         }
 
-        if (monitors.length < 500) break;
-        const last = monitors[monitors.length - 1];
+        if (pendingMonitors.length < 500) break;
+        const last = pendingMonitors[pendingMonitors.length - 1];
         if (!last) break;
-        before = { updatedAt: last.updatedAt, monitorId: last.id };
+        before = { updatedAt: last.updatedAt, monitorId: last.monitor.id };
       }
     }).pipe(Effect.ignore);
 

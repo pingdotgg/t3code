@@ -25,6 +25,7 @@ import { describe, expect, it } from "vitest";
 import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
+import { PullRequestMonitorService } from "../../pullRequestMonitor/PullRequestMonitorService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { QueuedTurnReactor } from "../Services/QueuedTurnReactor.ts";
 import { QueuedTurnReactorLive } from "./QueuedTurnReactor.ts";
@@ -330,6 +331,8 @@ async function runReactor(
     };
     readonly providerInstances?: ServerSettings["providerInstances"];
     readonly optIn?: boolean;
+    readonly monitorEnabled?: boolean;
+    readonly autoMonitorPullRequestsOnCreate?: boolean;
     readonly enableAfterStart?: boolean;
     readonly delegationIdleStallThresholdMs?: number;
   },
@@ -454,10 +457,17 @@ async function runReactor(
       listReports: () => Effect.die("unused"),
     }),
   );
+  const monitorLayer = Layer.succeed(PullRequestMonitorService, {
+    canDeliverAutomation: () =>
+      Effect.succeed(
+        (options?.monitorEnabled ?? true) && (options?.autoMonitorPullRequestsOnCreate ?? true),
+      ),
+  } as unknown as PullRequestMonitorService["Service"]);
   const layer = QueuedTurnReactorLive.pipe(
     Layer.provide(engineLayer),
     Layer.provide(pullRequestLayer(snapshot, options?.snapshotError, options?.snapshotDelayMs)),
     Layer.provide(feedbackLayer),
+    Layer.provide(monitorLayer),
     Layer.provideMerge(
       ServerSettingsService.layerTest({
         copilotAutomaticPrFeedback: {
@@ -1857,6 +1867,37 @@ describe("QueuedTurnReactor", () => {
     ]);
   });
 
+  it("keeps parent feedback queued while monitoring is paused or policy-disabled", async () => {
+    const state = queuedReadModel({
+      origin: {
+        kind: "pull-request-monitor",
+        repository: "acme/app",
+        number: 42,
+        headSha: "head-current",
+        sourceRevision: "review:head-current",
+        events: [{ kind: "review-finding", sourceId: "finding-1", detail: "Review finding" }],
+        deliveryId: "review-delivery",
+      },
+    });
+
+    const stopped = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: false,
+    });
+    const policyDisabled = await runReactor(state, monitorSnapshot("head-current"), {
+      autoMonitorPullRequestsOnCreate: false,
+    });
+    const resumed = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: true,
+      autoMonitorPullRequestsOnCreate: true,
+    });
+
+    expect(stopped).toEqual([]);
+    expect(policyDisabled).toEqual([]);
+    expect(
+      resumed.filter((command) => command.type === "thread.queued-turn.dispatch"),
+    ).toMatchObject([{ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }]);
+  });
+
   it("keeps disabled feedback pending without recording a failure", async () => {
     const commands = await runReactor(
       queuedReadModel({
@@ -1957,6 +1998,57 @@ describe("QueuedTurnReactor", () => {
     );
     expect(commands.map((command) => command.type)).toEqual(["thread.queued-turn.dispatch"]);
   });
+
+  it.each([
+    "codex",
+    "copilot",
+    "claudeAgent",
+    "cursor",
+    "opencode",
+    "pi",
+    "copilot-acp-native",
+  ] as const)(
+    "dispatches queued parent review feedback through the shared path for the %s driver",
+    async (driver) => {
+      const instanceId = ProviderInstanceId.make(
+        driver === "copilot" || driver === "copilot-acp-native" ? "copilot" : `review-${driver}`,
+      );
+      const readModel = queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          headSha: "head-current",
+          sourceRevision: "review:head-current",
+          events: [{ kind: "review-finding", sourceId: "finding-1", detail: "Finding" }],
+          deliveryId: "review-delivery",
+        },
+      });
+      const thread = readModel.threads[0]!;
+      const commands = await runReactor(
+        {
+          ...readModel,
+          threads: [
+            {
+              ...thread,
+              modelSelection: { instanceId, model: "test-review-model" },
+            },
+          ],
+        },
+        monitorSnapshot("head-current"),
+        {
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make(driver), enabled: true },
+          },
+          optIn: true,
+        },
+      );
+
+      expect(commands.filter((command) => command.type === "thread.queued-turn.dispatch")).toEqual([
+        expect.objectContaining({ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }),
+      ]);
+    },
+  );
 
   it("recognizes custom instances of the Copilot ACP driver", async () => {
     const commands = await runReactor(

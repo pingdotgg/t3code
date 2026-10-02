@@ -415,6 +415,19 @@ it("returns only active chats associated with the monitored pull request", () =>
         deletedAt: null,
       },
       {
+        id: ThreadId.make("active-manual-link"),
+        projectId,
+        title: "Manual PR link",
+        pullRequest: null,
+        pullRequests: [
+          {
+            pullRequest: { number: 42, url: "https://github.com/acme/app/pull/42" },
+          },
+        ],
+        archivedAt: null,
+        deletedAt: null,
+      },
+      {
         id: ThreadId.make("archived"),
         projectId,
         title: "Archived",
@@ -426,7 +439,10 @@ it("returns only active chats associated with the monitored pull request", () =>
     { projectId, repository: "acme/app", number: 42 },
   );
 
-  assert.deepStrictEqual(candidates, [{ threadId: ThreadId.make("owner"), title: "Fix PR" }]);
+  assert.deepStrictEqual(candidates, [
+    { threadId: ThreadId.make("owner"), title: "Fix PR" },
+    { threadId: ThreadId.make("active-manual-link"), title: "Manual PR link" },
+  ]);
 });
 
 layer("PullRequestMonitorService", (it) => {
@@ -1863,6 +1879,163 @@ layer("PullRequestMonitorService", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps review findings visible on a stopped, owner-recovered monitor without enabling it",
+    () =>
+      Effect.gen(function* () {
+        const monitors = yield* PullRequestMonitorService;
+        const feedback = yield* PullRequestMonitorFeedbackService;
+        const feedbackStore = yield* PullRequestMonitorFeedbackStore.make;
+        const owner = ThreadId.make("review-feedback-recovered-owner");
+        const reviewer = ThreadId.make("review-feedback-child");
+        const reference = { projectId, repository: "acme/app", number: 73 } as const;
+        const association = {
+          number: reference.number,
+          url: `https://github.com/${reference.repository}/pull/${reference.number}`,
+        };
+        seedThread(owner, "/tmp/owner", association);
+        seedThread(reviewer);
+        currentSnapshot = sampleSnapshot({ number: reference.number, url: association.url });
+
+        const submitted = yield* monitors.submitFindings({
+          reference,
+          reviewThreadId: reviewer,
+          reviewedHeadSha: "reviewed-head-73",
+          startMonitoring: false,
+          findings: [
+            {
+              key: "paused-review-finding",
+              title: "Persist while paused",
+              detail: "The parent needs to see this without starting a turn.",
+              severity: "major",
+            },
+          ],
+        });
+        const context = yield* monitors.context({ monitorId: submitted.monitor.id });
+        const status = yield* monitors.status({ monitorId: submitted.monitor.id });
+
+        assert.strictEqual(submitted.monitor.enabled, false);
+        assert.strictEqual(submitted.monitor.status, "stopped");
+        assert.strictEqual(submitted.ownerThreadId, owner);
+        assert.isFalse(yield* monitors.canDeliverAutomation({ reference, threadId: owner }));
+        assert.strictEqual(
+          context.items.some((item) => item.summary.includes("Persist while paused")),
+          true,
+        );
+        assert.strictEqual(status.ownerCandidates.length, 1);
+        const state = yield* feedbackStore.getState(submitted.monitor.id);
+        yield* feedbackStore.appendPendingRevisionIds({
+          monitorId: submitted.monitor.id,
+          revisionIds: state.pendingRevisionIds,
+          debounceUntil: "1970-01-01T00:00:00.000Z",
+          updatedAt: "1970-01-01T00:00:00.000Z",
+        });
+        dispatchedCommands.length = 0;
+        const queueCountBefore = queuedMessages.length;
+        yield* feedback.flushDueDeliveries;
+        const deliveries = yield* feedbackStore.listDeliveries({ monitorId: submitted.monitor.id });
+        assert.strictEqual(deliveries[0]?.status, "delivered");
+        assert.isTrue(
+          dispatchedCommands.some(
+            (command) => command.type === "thread.queued-turn.create" && command.threadId === owner,
+          ),
+        );
+        assert.strictEqual(queuedMessages.length, queueCountBefore + 1);
+        assert.include(queuedMessages.at(-1) ?? "", "Persist while paused");
+        assert.isFalse(dispatchedCommands.some((command) => command.type === "thread.turn.start"));
+        const queueCommands = dispatchedCommands.filter(
+          (command) => command.type === "thread.queued-turn.create",
+        ).length;
+        yield* feedback.flushDueDeliveries;
+        assert.strictEqual(
+          dispatchedCommands.filter((command) => command.type === "thread.queued-turn.create")
+            .length,
+          queueCommands,
+        );
+        yield* monitors.start({ ...reference, ownerThreadId: owner });
+        assert.isTrue(yield* monitors.canDeliverAutomation({ reference, threadId: owner }));
+        currentSettings = { ...defaultSettings, autoMonitorPullRequestsOnCreate: false };
+        const policyDisabled = yield* monitors
+          .canDeliverAutomation({ reference, threadId: owner })
+          .pipe(Effect.ensuring(Effect.sync(() => (currentSettings = defaultSettings))));
+        assert.isFalse(policyDisabled);
+        currentSnapshot = sampleSnapshot();
+      }),
+  );
+
+  it.effect("preserves review findings without choosing between ambiguous active owners", () =>
+    Effect.gen(function* () {
+      const monitors = yield* PullRequestMonitorService;
+      const feedback = yield* PullRequestMonitorFeedbackService;
+      const feedbackStore = yield* PullRequestMonitorFeedbackStore.make;
+      const ownerA = ThreadId.make("ambiguous-review-owner-a");
+      const ownerB = ThreadId.make("ambiguous-review-owner-b");
+      const reviewer = ThreadId.make("ambiguous-review-child");
+      const number = 74;
+      const url = `https://github.com/acme/app/pull/${number}`;
+      seedThread(ownerA, "/tmp/owner-a", { number, url });
+      seedThread(ownerB, "/tmp/owner-b", { number, url });
+      seedThread(reviewer);
+      currentSnapshot = sampleSnapshot({ number, url });
+
+      const submitted = yield* monitors.submitFindings({
+        reference: { projectId, repository: "acme/app", number },
+        reviewThreadId: reviewer,
+        startMonitoring: false,
+        findings: [
+          {
+            key: "ambiguous-review-owner-finding",
+            title: "Owner is ambiguous",
+            detail: "Persist it for the PR surface without sending it to either thread.",
+            severity: "major",
+          },
+        ],
+      });
+      const status = yield* monitors.status({ monitorId: submitted.monitor.id });
+      const context = yield* monitors.context({ monitorId: submitted.monitor.id });
+
+      assert.isNull(submitted.ownerThreadId);
+      assert.deepStrictEqual(
+        status.ownerCandidates.map((candidate) => candidate.threadId).sort(),
+        [ownerA, ownerB].sort(),
+      );
+      assert.strictEqual(context.items.length, 1);
+      const feedbackState = yield* feedbackStore.getState(submitted.monitor.id);
+      assert.deepStrictEqual(feedbackState.pendingRevisionIds, [submitted.findings[0]!.revisionId]);
+      yield* feedbackStore.appendPendingRevisionIds({
+        monitorId: submitted.monitor.id,
+        revisionIds: feedbackState.pendingRevisionIds,
+        debounceUntil: "1970-01-01T00:00:00.000Z",
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      });
+      assert.isFalse(dispatchedCommands.some((command) => command.type === "thread.turn.start"));
+
+      // Human ownership resolution unblocks delivery without creating a new review revision.
+      yield* monitors.transferOwnership({
+        monitorId: submitted.monitor.id,
+        toThreadId: ownerA,
+        reason: "selected after ambiguous review handoff",
+      });
+      const recovered = yield* monitors.status({ monitorId: submitted.monitor.id });
+      assert.strictEqual(recovered.monitor?.ownerThreadId, ownerA);
+      const pendingMonitors = yield* (yield* PullRequestMonitorStore.make).listPendingFeedbackPage({
+        limit: 500,
+      });
+      assert.isTrue(pendingMonitors.some((pending) => pending.monitor.id === submitted.monitor.id));
+      yield* feedback.flushDueDeliveries;
+      const deliveries = yield* feedbackStore.listDeliveries({ monitorId: submitted.monitor.id });
+      assert.strictEqual(deliveries[0]?.targetThreadId, ownerA);
+      assert.strictEqual(deliveries[0]?.status, "delivered");
+      assert.isTrue(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.queued-turn.create" && command.threadId === ownerA,
+        ),
+      );
+      assert.isFalse(dispatchedCommands.some((command) => command.type === "thread.turn.start"));
+      currentSnapshot = sampleSnapshot();
+    }),
+  );
+
   it.effect("persists immutable acceptance provenance with the finding revision", () =>
     Effect.gen(function* () {
       const monitors = yield* PullRequestMonitorService;
@@ -2065,35 +2238,105 @@ layer("PullRequestMonitorService", (it) => {
     }),
   );
 
-  it.effect("ignores findings reviewed against a stale pull request head", () =>
+  it.effect("preserves findings and reviewed-head provenance when the PR advances mid-review", () =>
     Effect.gen(function* () {
       const monitors = yield* PullRequestMonitorService;
+      const feedback = yield* PullRequestMonitorFeedbackService;
+      const feedbackStore = yield* PullRequestMonitorFeedbackStore.make;
+      const owner = ThreadId.make("thr_stale_findings_owner");
       const reviewer = ThreadId.make("thr_stale_findings_review");
+      seedThread(owner);
       seedThread(reviewer);
-
-      const submitted = yield* monitors.submitFindings({
+      const input = {
         reference: { projectId, repository: "acme/app", number: 64 },
         reviewThreadId: reviewer,
+        ownerThreadId: owner,
         reviewedHeadSha: "stale-head",
         findings: [
           {
             key: "stale-finding",
             title: "Stale finding",
             detail: "This finding reviewed an earlier revision.",
-            severity: "major",
+            severity: "major" as const,
+            provenance: {
+              findingId: "finding-1",
+              reviewedHeadSha: "stale-head",
+              diffHash: "reviewed-diff-hash",
+              path: "src/stale.ts",
+              side: "new" as const,
+              startLine: 4,
+              endLine: 5,
+            },
           },
         ],
-      });
+      };
+
+      const submitted = yield* monitors.submitFindings(input);
 
       assert.strictEqual(submitted.monitor.headSha, "deadbeef");
-      assert.deepEqual(submitted.findings, []);
+      assert.strictEqual(submitted.findings.length, 1);
+      assert.isTrue(submitted.findings[0]!.created);
       const context = yield* monitors.context({
         monitorId: submitted.monitor.id,
         includeClosed: true,
       });
       assert.strictEqual(
         context.items.some((item) => item.summary.includes("Stale finding")),
-        false,
+        true,
+      );
+      const revision = context.revisions?.find(
+        (entry) => entry.id === submitted.findings[0]!.revisionId,
+      );
+      assert.strictEqual(revision?.sourceRevision, "review:stale-head");
+      const exact = context.findingDetails?.find(
+        (entry) => entry.revisionId === submitted.findings[0]!.revisionId,
+      );
+      assert.strictEqual(exact?.reviewedHeadSha, "stale-head");
+      assert.strictEqual(exact?.finding?.provenance?.reviewedHeadSha, "stale-head");
+
+      const state = yield* feedbackStore.getState(submitted.monitor.id);
+      yield* feedbackStore.appendPendingRevisionIds({
+        monitorId: submitted.monitor.id,
+        revisionIds: state.pendingRevisionIds,
+        debounceUntil: "1970-01-01T00:00:00.000Z",
+        updatedAt: "1970-01-01T00:00:00.000Z",
+      });
+      dispatchedCommands.length = 0;
+      const queuedBefore = queuedMessages.length;
+      yield* feedback.flushDueDeliveries;
+      const parentMessage = queuedMessages
+        .slice(queuedBefore)
+        .find((text) => text.includes("Stale finding"));
+      assert.isDefined(parentMessage);
+      assert.include(parentMessage!, "Head: deadbeef");
+      assert.include(parentMessage!, "Compare reviewedHeadSha with the current code.");
+      assert.isTrue(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.queued-turn.create" && command.threadId === owner,
+        ),
+      );
+      assert.isFalse(dispatchedCommands.some((command) => command.type === "thread.turn.start"));
+
+      // A handoff retry/replay for this reviewed revision must not fork another ledger revision.
+      const replay = yield* monitors.submitFindings(input);
+      assert.strictEqual(replay.findings[0]?.revisionId, submitted.findings[0]?.revisionId);
+      assert.isFalse(replay.findings[0]?.created);
+      const afterReplay = yield* monitors.context({
+        monitorId: submitted.monitor.id,
+        includeClosed: true,
+      });
+      assert.strictEqual(
+        afterReplay.revisions?.filter((entry) => entry.id === submitted.findings[0]!.revisionId)
+          .length,
+        1,
+      );
+      const queuedReviewMessages = dispatchedCommands.filter(
+        (command) => command.type === "thread.queued-turn.create",
+      ).length;
+      yield* feedback.flushDueDeliveries;
+      assert.strictEqual(
+        dispatchedCommands.filter((command) => command.type === "thread.queued-turn.create").length,
+        queuedReviewMessages,
       );
     }),
   );

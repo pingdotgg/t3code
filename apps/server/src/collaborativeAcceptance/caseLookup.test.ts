@@ -7,7 +7,7 @@ import {
   type PullRequestRef,
 } from "@t3tools/contracts";
 
-import { selectCurrentAcceptanceCase } from "./caseLookup.ts";
+import { selectCurrentAcceptanceCaseForPullRequest } from "./caseLookup.ts";
 
 const pullRequest: PullRequestRef = {
   projectId: ProjectId.make("project-1"),
@@ -78,12 +78,11 @@ const record = (input: {
   }) as unknown as CollaborativeAcceptanceRecord;
 
 it("selects the sole active case over historical terminal history", () => {
-  const result = selectCurrentAcceptanceCase({
+  const result = selectCurrentAcceptanceCaseForPullRequest({
     records: [
       record({ caseId: "case-old", lifecycle: "accepted" }),
       record({ caseId: "case-current", lifecycle: "awaiting-review", headSha: "head-2" }),
     ],
-    threadId: ThreadId.make("thread-1"),
     pullRequest,
   });
 
@@ -94,7 +93,7 @@ it("selects the sole active case over historical terminal history", () => {
 });
 
 it("returns not-found when only terminal or differently associated cases exist", () => {
-  const result = selectCurrentAcceptanceCase({
+  const result = selectCurrentAcceptanceCaseForPullRequest({
     records: [
       record({ caseId: "case-old", lifecycle: "accepted" }),
       record({ caseId: "case-other-pr", lifecycle: "awaiting-review", repository: "owner/other" }),
@@ -102,9 +101,9 @@ it("returns not-found when only terminal or differently associated cases exist",
         caseId: "case-other-thread",
         lifecycle: "awaiting-review",
         parentThreadId: "thread-2",
+        repository: "owner/other",
       }),
     ],
-    threadId: ThreadId.make("thread-1"),
     pullRequest,
   });
 
@@ -112,12 +111,11 @@ it("returns not-found when only terminal or differently associated cases exist",
 });
 
 it("fails closed when more than one active case matches the durable identity", () => {
-  const result = selectCurrentAcceptanceCase({
+  const result = selectCurrentAcceptanceCaseForPullRequest({
     records: [
       record({ caseId: "case-b", lifecycle: "awaiting-review" }),
       record({ caseId: "case-a", lifecycle: "awaiting-review" }),
     ],
-    threadId: ThreadId.make("thread-1"),
     pullRequest,
   });
 
@@ -128,7 +126,7 @@ it("fails closed when more than one active case matches the durable identity", (
 });
 
 it("keeps the case identity stable across head movement but rejects PR reassociation", () => {
-  const result = selectCurrentAcceptanceCase({
+  const result = selectCurrentAcceptanceCaseForPullRequest({
     records: [
       record({ caseId: "case-head-moved", lifecycle: "awaiting-review", headSha: "head-3" }),
       record({
@@ -137,7 +135,6 @@ it("keeps the case identity stable across head movement but rejects PR reassocia
         repository: "owner/reassociated",
       }),
     ],
-    threadId: ThreadId.make("thread-1"),
     pullRequest,
   });
 
@@ -146,6 +143,48 @@ it("keeps the case identity stable across head movement but rejects PR reassocia
     assert.equal(result.record.case.caseId, CollaborativeAcceptanceCaseId.make("case-head-moved"));
     assert.equal(result.record.case.currentCandidate.headSha, "head-3");
   }
+});
+
+it("resolves the unique active case by PR across parent threads, ignoring historical accepted cases", () => {
+  const result = selectCurrentAcceptanceCaseForPullRequest({
+    records: [
+      record({
+        caseId: "case-historical-creator",
+        lifecycle: "accepted",
+        parentThreadId: "archived-recovered-creator",
+      }),
+      record({
+        caseId: "case-active-associated-owner",
+        lifecycle: "awaiting-review",
+        parentThreadId: "active-manual-owner",
+      }),
+    ],
+    pullRequest,
+  });
+
+  assert.deepStrictEqual(result, {
+    _tag: "selected",
+    record: record({
+      caseId: "case-active-associated-owner",
+      lifecycle: "awaiting-review",
+      parentThreadId: "active-manual-owner",
+    }),
+  });
+});
+
+it("fails closed when active cases for one PR have different parent threads", () => {
+  const result = selectCurrentAcceptanceCaseForPullRequest({
+    records: [
+      record({ caseId: "case-b", lifecycle: "awaiting-review", parentThreadId: "thread-b" }),
+      record({ caseId: "case-a", lifecycle: "awaiting-review", parentThreadId: "thread-a" }),
+    ],
+    pullRequest,
+  });
+
+  assert.deepStrictEqual(result, {
+    _tag: "ambiguous",
+    caseIds: ["case-a", "case-b"].map((caseId) => CollaborativeAcceptanceCaseId.make(caseId)),
+  });
 });
 
 function expectRecord(caseId: string): CollaborativeAcceptanceRecord {

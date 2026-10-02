@@ -165,9 +165,8 @@ export const pullRequestQueryKeys = {
     ] as const,
   collaborativeAcceptanceStatus: (
     environmentId: EnvironmentId | null,
-    threadId: ThreadId | null,
     caseId: CollaborativeAcceptanceCaseId | null,
-  ) => ["collaborative-acceptance", environmentId ?? null, threadId, caseId] as const,
+  ) => ["collaborative-acceptance", environmentId ?? null, caseId] as const,
   collaborativeAcceptanceLookup: (
     environmentId: EnvironmentId | null,
     threadId: ThreadId | null,
@@ -650,11 +649,7 @@ export function collaborativeAcceptanceStatusQueryOptions(input: {
   readonly enabled?: boolean;
 }) {
   return queryOptions({
-    queryKey: pullRequestQueryKeys.collaborativeAcceptanceStatus(
-      input.environmentId,
-      input.threadId,
-      input.caseId,
-    ),
+    queryKey: pullRequestQueryKeys.collaborativeAcceptanceStatus(input.environmentId, input.caseId),
     staleTime: PULL_REQUEST_STALE_TIME_MS,
     refetchInterval: (query) => collaborativeAcceptancePollingInterval(query.state.data ?? null),
     enabled: input.enabled ?? true,
@@ -715,7 +710,6 @@ function collaborativeAcceptanceMutationOptions<TInput>(input: {
       await input.queryClient.invalidateQueries({
         queryKey: pullRequestQueryKeys.collaborativeAcceptanceStatus(
           input.environmentId,
-          record.case.parentThreadId,
           record.case.caseId,
         ),
       });
