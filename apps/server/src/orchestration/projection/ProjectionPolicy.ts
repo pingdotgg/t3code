@@ -66,15 +66,21 @@ export function terminalTurnStateForSessionStatus(status: string): "error" | "in
 }
 
 /**
- * Provider sessions omit `activeMessageId` while the same turn stays active.
- * Both projections must preserve the previous value in that case instead of
- * clearing it.
+ * Provider sessions omit `activeMessageId` while the same turn stays active, and
+ * they can also report session state between the server's turn start and the
+ * provider's own `turn.started` notification. Both projections must keep the
+ * previously authenticated active message in those cases instead of clearing it.
+ * Only a turn that actually ended releases the active message.
  */
 export function shouldPreserveActiveMessageId(input: {
+  readonly previousActiveTurnId: string | null;
   readonly activeTurnId: string | null;
   readonly activeMessageId: string | null | undefined;
 }): boolean {
-  return input.activeTurnId !== null && input.activeMessageId === undefined;
+  if (input.activeMessageId !== undefined) {
+    return false;
+  }
+  return input.previousActiveTurnId === null || input.activeTurnId !== null;
 }
 
 export interface InitialThreadPullRequest {
