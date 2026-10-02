@@ -306,6 +306,7 @@ describe("MessagesTimeline", () => {
 
   it("visibly distinguishes messages sent from another thread", async () => {
     const text = "Please address these review findings.";
+    const ownMessageText = "I’ll take care of the fixes here.";
     const screen = await render(
       <AppAtomRegistryProvider>
         <MessagesTimeline
@@ -329,6 +330,18 @@ describe("MessagesTimeline", () => {
                 streaming: false,
               },
             },
+            {
+              id: "user-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:01:00.000Z",
+              message: {
+                id: MessageId.make("user-message"),
+                role: "user",
+                text: ownMessageText,
+                createdAt: "2026-04-13T12:01:00.000Z",
+                streaming: false,
+              },
+            },
           ]}
         />
       </AppAtomRegistryProvider>,
@@ -337,10 +350,16 @@ describe("MessagesTimeline", () => {
     try {
       const message = page.getByText(text, { exact: true }).element().closest(".group");
       expect(message).not.toBeNull();
-      expect(message!.classList.contains("bg-violet-500/15")).toBe(true);
-      expect(message!.classList.contains("border-violet-400/45")).toBe(true);
-      expect(getComputedStyle(message!).backgroundColor).toContain("/ 0.15)");
+      expect(message!.classList.contains("bg-violet-500/20")).toBe(true);
+      expect(message!.classList.contains("border-violet-400/55")).toBe(true);
+      expect(getComputedStyle(message!).backgroundColor).toContain("/ 0.2)");
       await expect.element(page.getByText("Review thread", { exact: true })).toBeVisible();
+      const ownMessage = page
+        .getByText(ownMessageText, { exact: true })
+        .element()
+        .closest(".group");
+      expect(ownMessage?.classList.contains("bg-secondary")).toBe(true);
+      expect(ownMessage?.classList.contains("bg-violet-500/20")).toBe(false);
     } finally {
       await screen.unmount();
     }

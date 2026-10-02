@@ -744,7 +744,7 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                 className={cn(
                   "group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
                   row.message.origin?.kind === "cross-thread" &&
-                    "border-violet-400/45 bg-violet-500/15",
+                    "border-violet-400/55 bg-violet-500/20",
                   row.message.origin?.kind === "pull-request-monitor" &&
                     "border-sky-400/30 bg-gradient-to-br from-sky-500/[0.07] via-sky-500/[0.02] to-transparent",
                 )}
