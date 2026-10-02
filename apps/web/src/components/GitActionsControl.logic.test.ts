@@ -4,6 +4,7 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   formatGitActionElapsed,
+  hasGitActionMenuContent,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -956,6 +957,43 @@ describe("when: ref has no upstream configured", () => {
         dialogAction: "create_pr",
       },
     ]);
+  });
+});
+
+describe("hasGitActionMenuContent", () => {
+  it("is false when a clean, up-to-date ref leaves every menu action disabled", () => {
+    const menuItems = buildMenuItems(status(), false);
+    assert.isFalse(
+      hasGitActionMenuContent({ menuItems, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("is true when any menu action is enabled", () => {
+    const menuItems = buildMenuItems(status({ hasWorkingTreeChanges: true }), false);
+    assert.isTrue(
+      hasGitActionMenuContent({ menuItems, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("is true when publishing is offered even though every action is disabled", () => {
+    const menuItems = buildMenuItems(
+      status({ hasPrimaryRemote: false, hasUpstream: false }),
+      false,
+      false,
+    );
+    assert.isTrue(
+      hasGitActionMenuContent({ menuItems, canPublishRepository: true, hasStatusError: false }),
+    );
+  });
+
+  it("is true when the menu has a status error to show", () => {
+    assert.isTrue(
+      hasGitActionMenuContent({
+        menuItems: buildMenuItems(null, false),
+        canPublishRepository: false,
+        hasStatusError: true,
+      }),
+    );
   });
 });
 
