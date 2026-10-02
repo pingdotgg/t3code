@@ -30,10 +30,9 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import {
-  clearPersistedServerRuntimeState,
-  readPersistedServerRuntimeState,
-} from "../serverRuntimeState.ts";
+import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -347,7 +346,7 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
     config: ServerConfig.ServerConfig["Service"],
   ) {
     const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-    if (Option.isNone(runtimeState)) {
+    if (Option.isNone(runtimeState) || !isProcessAlive(runtimeState.value.pid)) {
       return Option.none<{ readonly origin: string }>();
     }
 
@@ -368,7 +367,6 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       origin: runtimeState.value.origin,
       cause: attempted.failure,
     });
-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },
 );
@@ -414,6 +412,9 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       );
     }
 
+    // A failed request is not proof the server stopped. Claim ownership before
+    // building the offline command model or writing to the shared event store.
+    yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath);
     const offlineRuntimeLayer = ProjectCliRuntimeLive.pipe(
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
@@ -430,8 +431,10 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       yield* Console.log(output);
     }).pipe(Effect.provide(offlineRuntimeLayer));
   }).pipe(
+    Effect.scoped,
     Effect.provide(
       Layer.mergeAll(EnvironmentAuth.runtimeLayer, WorkspacePaths.layer).pipe(
+        Layer.provideMerge(ProcessRunner.layer),
         Layer.provideMerge(FetchHttpClient.layer),
         Layer.provide(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),

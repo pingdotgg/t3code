@@ -15,6 +15,7 @@ import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { acquireServerOwnershipLock } from "../serverOwnershipLock.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
@@ -251,6 +252,28 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
+  it.effect("refuses a fresh install beside an active state-directory owner", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands } = yield* makeHarness();
+      const path = yield* Path.Path;
+      const before = yield* service.status;
+      yield* Effect.acquireRelease(
+        Effect.promise(() =>
+          acquireServerOwnershipLock(path.join(path.dirname(path.dirname(statePath)), "userdata")),
+        ),
+        (lock) => Effect.sync(() => lock.close()),
+      );
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error._tag).toBe("ServerAlreadyRunningError");
+      expect(yield* fs.exists(before.unitPath)).toBe(false);
+      expect(yield* fs.exists(statePath)).toBe(false);
+      expect(commands.some((command) => command.includes("--version"))).toBe(false);
+      expect(commands.some((command) => command.includes("daemon-reload"))).toBe(false);
+    }),
+  );
+
   it.effect(
     "fails before installing files or validating a runtime when lingering needs an administrator",
     () =>

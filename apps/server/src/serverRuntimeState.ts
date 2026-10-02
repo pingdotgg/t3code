@@ -18,6 +18,8 @@ export const PersistedServerRuntimeState = Schema.Struct({
   // Dev is single-origin: browsers must pair through this URL, not `origin`.
   devUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
+  // Present only on servers that hold the state-directory ownership lock.
+  ownerId: Schema.optional(Schema.String),
   /**
    * Set when the boot-service launcher supervises this server. Lets a CLI
    * tell a service-managed server apart from one started by hand, which is
@@ -30,7 +32,7 @@ export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Typ
 export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
   {
-    operation: Schema.Literals(["persist", "read", "decode", "clear"]),
+    operation: Schema.Literals(["persist", "read", "decode"]),
     statePath: Schema.String,
     cause: Schema.Defect(),
   },
@@ -87,31 +89,6 @@ export const persistServerRuntimeState = (input: {
     ),
   );
 
-export const clearPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs.remove(path, { force: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerRuntimeStateError({
-            operation: "clear",
-            statePath: path,
-            cause,
-          }),
-      ),
-      Effect.catchTags({
-        ServerRuntimeStateError: (error) =>
-          Effect.logWarning(error.message).pipe(
-            Effect.annotateLogs({
-              operation: error.operation,
-              statePath: error.statePath,
-              cause: error,
-            }),
-          ),
-      }),
-    );
-  });
-
 /**
  * Report whether the pid recorded in a persisted runtime state is still
  * running. Signal 0 delivers nothing; it only reports whether the pid exists.
@@ -119,6 +96,7 @@ export const clearPersistedServerRuntimeState = (path: string) =>
  * alive.
  */
 export const isProcessAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;

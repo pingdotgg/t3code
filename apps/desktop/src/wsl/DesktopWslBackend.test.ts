@@ -145,15 +145,27 @@ describe("DesktopWslBackend", () => {
         throw new Error("Expected WSL backend registration");
       }
       const recordFailure = spec.onPreflightFailed;
+      const recordOwnershipFailure = spec.onStateDirOwned;
       const clearFailure = spec.onReady;
       assert.isDefined(recordFailure);
+      assert.isDefined(recordOwnershipFailure);
       assert.isDefined(clearFailure);
-      if (recordFailure === undefined || clearFailure === undefined) {
+      if (
+        recordFailure === undefined ||
+        recordOwnershipFailure === undefined ||
+        clearFailure === undefined
+      ) {
         throw new Error("Expected WSL backend callbacks");
       }
 
       assert.isFalse(yield* recordFailure({ reason: "Node.js not found", fatal: true }));
       assert.deepEqual(yield* backend.lastPreflightError, Option.some("Node.js not found"));
+
+      yield* recordOwnershipFailure();
+      assert.include(
+        Option.getOrThrow(yield* backend.lastPreflightError),
+        "owns this distro's T3 home",
+      );
 
       yield* clearFailure(new URL("http://127.0.0.1:41773"));
       assert.deepEqual(yield* backend.lastPreflightError, Option.none());

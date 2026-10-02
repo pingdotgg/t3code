@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { acquireServerOwnershipLock } from "./serverOwnershipLock.ts";
 
 import type {
   PendingServiceUpdate,
@@ -33,6 +34,14 @@ import {
 const HANDOFF_DELAY_MS = 2_000;
 const PREPARED_TIMEOUT_MS = 120_000;
 const TERMINATE_GRACE_MS = 5_000;
+// Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in contracts/desktopBootstrap.
+// Keep the standalone launcher independent of the Effect-backed contracts.
+const STATE_DIR_OWNED_EXIT_CODE = 78;
+
+const isOwnershipConflict = (cause: unknown): cause is Error =>
+  cause instanceof Error &&
+  (("errcode" in cause && cause.errcode === 5) ||
+    ("code" in cause && (cause.code === "SQLITE_BUSY" || cause.code === "T3_STATE_DIR_OWNED")));
 
 type TerminalStatus = "committed" | "rolled-back" | "failed";
 type ChildRole = "active" | "trial";
@@ -112,25 +121,32 @@ async function syncDirectory(directory: string): Promise<void> {
  * database writes from an earlier attempt by the same trial.
  */
 async function backupDatabaseOnce(baseDir: string, pending: PendingServiceUpdate): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
-
-  const stagingDir = `${backupDir}.staging`;
-  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
-  await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+  const ownership = await acquireServerOwnershipLock(NodePath.dirname(pending.dbPath), {
+    guardLegacyOwner: true,
+  });
   try {
-    for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${pending.dbPath}${suffix}`;
-      if (suffix !== "" && !(await pathExists(source))) continue;
-      const destination = databaseBackupFile(stagingDir, suffix);
-      await NodeFSP.copyFile(source, destination);
-      await syncFile(destination);
+    const backupDir = databaseBackupDir(baseDir, pending.id);
+    if (await pathExists(backupDir)) return;
+
+    const stagingDir = `${backupDir}.staging`;
+    await NodeFSP.rm(stagingDir, { recursive: true, force: true });
+    await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
+    try {
+      for (const suffix of DB_FILE_SUFFIXES) {
+        const source = `${pending.dbPath}${suffix}`;
+        if (suffix !== "" && !(await pathExists(source))) continue;
+        const destination = databaseBackupFile(stagingDir, suffix);
+        await NodeFSP.copyFile(source, destination);
+        await syncFile(destination);
+      }
+      await NodeFSP.rename(stagingDir, backupDir);
+      await syncDirectory(NodePath.dirname(backupDir));
+    } catch (cause) {
+      await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
+      throw cause;
     }
-    await NodeFSP.rename(stagingDir, backupDir);
-    await syncDirectory(NodePath.dirname(backupDir));
-  } catch (cause) {
-    await NodeFSP.rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
-    throw cause;
+  } finally {
+    ownership.close();
   }
 }
 
@@ -159,21 +175,28 @@ async function restoreDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
 ): Promise<void> {
-  const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  const ownership = await acquireServerOwnershipLock(NodePath.dirname(pending.dbPath), {
+    guardLegacyOwner: true,
+  });
+  try {
+    const backupDir = databaseBackupDir(baseDir, pending.id);
+    if (!(await pathExists(backupDir))) return;
 
-  await markDatabaseRestorePending(backupDir);
-  for (const suffix of DB_FILE_SUFFIXES) {
-    const target = `${pending.dbPath}${suffix}`;
-    const source = databaseBackupFile(backupDir, suffix);
-    if (await pathExists(source)) {
-      await NodeFSP.copyFile(source, target);
-      await syncFile(target);
-    } else {
-      await NodeFSP.rm(target, { force: true });
+    await markDatabaseRestorePending(backupDir);
+    for (const suffix of DB_FILE_SUFFIXES) {
+      const target = `${pending.dbPath}${suffix}`;
+      const source = databaseBackupFile(backupDir, suffix);
+      if (await pathExists(source)) {
+        await NodeFSP.copyFile(source, target);
+        await syncFile(target);
+      } else {
+        await NodeFSP.rm(target, { force: true });
+      }
     }
+    await syncDirectory(NodePath.dirname(pending.dbPath));
+  } finally {
+    ownership.close();
   }
-  await syncDirectory(NodePath.dirname(pending.dbPath));
 }
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
@@ -312,9 +335,43 @@ export class Launcher {
   #enqueue(transition: () => Promise<void>): void {
     this.#transitions = this.#transitions
       .then(transition, transition)
-      .catch((cause: unknown) =>
-        this.#fatal(cause instanceof Error ? cause : new Error(String(cause))),
-      );
+      .catch((cause: unknown) => this.#handleFailure(cause));
+  }
+
+  async #handleFailure(cause: unknown): Promise<void> {
+    const error = cause instanceof Error ? cause : new Error(String(cause));
+    if (isOwnershipConflict(error)) {
+      try {
+        await this.#suspendForOwnership();
+      } catch (cause) {
+        await this.#fatal(cause instanceof Error ? cause : new Error(String(cause)));
+      }
+      return;
+    }
+    await this.#fatal(error);
+  }
+
+  async #suspendForOwnership(): Promise<void> {
+    this.#clearTimer();
+    const pending = this.#state.update;
+    if (pending?.status === "pending") {
+      // Another owner may have written since the backup. Cancel this trial
+      // without restoring it; an explicit restart must never replay that
+      // stale snapshot over the intervening owner's accepted writes.
+      const next: ServiceState = {
+        ...this.#state,
+        update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
+      };
+      await writeServiceState(this.#statePath, next);
+      this.#state = next;
+    }
+    if (this.#stopRequested || this.#stopping) return;
+    // A Promise and signal listeners do not keep standalone Node alive.
+    // Keep one referenced idle handle; stop/fatal both clear it.
+    this.#timer = setInterval(() => {}, 2_147_483_647);
+    process.stderr.write(
+      "[service-launcher] Another server owns this T3 home; waiting for a service restart. Stop that server, then restart this service.\n",
+    );
   }
 
   async #fatal(error: Error): Promise<void> {
@@ -351,6 +408,7 @@ export class Launcher {
       // before this queued stop tears it down. That replacement owns the
       // pre-activation tunnel cleanup path and observes the marker above.
       this.#stopping = true;
+      this.#clearTimer();
       const child = this.#child?.process;
       this.#child = null;
       if (child !== undefined) await terminateChild(child, signal);
@@ -402,7 +460,10 @@ export class Launcher {
     // The previous child is dead here, so all three SQLite files are quiescent.
     try {
       await backupDatabaseOnce(this.#baseDir, pending);
-    } catch {
+    } catch (cause) {
+      // Preserve the first refusal even if that owner stops before a second
+      // acquisition. Its writes may have invalidated an existing snapshot.
+      if (isOwnershipConflict(cause)) throw cause;
       await this.#returnToPrevious(pending, "failed", "db-backup-failed");
       return;
     }
@@ -579,6 +640,12 @@ export class Launcher {
   ): Promise<void> {
     if (this.#child !== child || this.#stopping) return;
     this.#child = null;
+    if (code === STATE_DIR_OWNED_EXIT_CODE && signal === null) {
+      // Stay idle until explicitly restarted or stopped. Returning a failure
+      // would make systemd/launchd repeatedly launch another refused server.
+      await this.#suspendForOwnership();
+      return;
+    }
     if (child.role === "trial") {
       this.#clearTimer();
       const pending = this.#state.update;

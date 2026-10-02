@@ -301,6 +301,11 @@ export const layer = Layer.effect(
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      onStateDirOwned: () =>
+        electronDialog.showErrorBox(
+          "Another server owns this T3 home",
+          "The desktop backend could not start because another T3 Code server is using the same data directory. Finish active agent work and stop the background service or server, then reopen the desktop. You can also use a separate T3CODE_HOME and pair with the running environment.",
+        ),
     });
 
     const instancesRef = yield* SynchronizedRef.make<
