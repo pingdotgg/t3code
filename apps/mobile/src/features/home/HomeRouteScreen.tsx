@@ -157,6 +157,7 @@ export function HomeRouteScreen() {
           options={{
             ...getConnectionAwareBrandHeaderOptions({
               headerWidth: windowWidth,
+              trailingItemCount: 2,
               onOpenEnvironments: () =>
                 navigation.navigate("SettingsSheet", {
                   screen: "SettingsContent",
@@ -184,6 +185,12 @@ export function HomeRouteScreen() {
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",
               params: { screen: "Settings" },
+            })
+          }
+          onOpenUsage={() =>
+            navigation.navigate("SettingsSheet", {
+              screen: "SettingsContent",
+              params: { screen: "SettingsUsage", params: { tab: "limits" } },
             })
           }
           onSearchQueryChange={setSearchQuery}

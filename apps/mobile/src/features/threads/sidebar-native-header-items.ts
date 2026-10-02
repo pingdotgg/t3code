@@ -33,13 +33,14 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
 
 /**
  * Right-side UINavigationBar items for the sidebar column: the thread list
- * filter/sort menu plus the settings button, sharing one glass capsule —
+ * filter menu, usage and settings buttons, sharing one glass capsule —
  * the Messages-style grouped header buttons.
  */
 export function createSidebarHeaderItems(input: {
   readonly filterIcon: string;
   readonly filterMenu: HomeListFilterMenu;
   readonly onOpenSettings: () => void;
+  readonly onOpenUsage: () => void;
 }): NativeStackHeaderItem[] {
   return [
     withNativeGlassHeaderItem({
@@ -51,6 +52,13 @@ export function createSidebarHeaderItems(input: {
         title: input.filterMenu.title,
         items: toNativeHeaderMenuItems(input.filterMenu.items),
       },
+    }),
+    withNativeGlassHeaderItem({
+      type: "button",
+      label: "",
+      accessibilityLabel: "Open usage",
+      icon: sfSymbolIcon("chart.bar.xaxis"),
+      onPress: input.onOpenUsage,
     }),
     withNativeGlassHeaderItem({
       type: "button",

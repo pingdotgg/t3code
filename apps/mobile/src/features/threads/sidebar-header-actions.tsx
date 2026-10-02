@@ -3,11 +3,12 @@ import { Pressable, View } from "react-native";
 
 export interface SidebarHeaderActionsProps {
   readonly onOpenSettings: () => void;
+  readonly onOpenUsage: () => void;
 }
 
 function FallbackHeaderButton(props: {
   readonly accessibilityLabel: string;
-  readonly icon: "gearshape" | "square.and.pencil";
+  readonly icon: "chart.bar.xaxis" | "gearshape" | "square.and.pencil";
   readonly onPress: () => void;
 }) {
   return (
@@ -31,6 +32,11 @@ function FallbackHeaderButton(props: {
 export function SidebarHeaderActions(props: SidebarHeaderActionsProps) {
   return (
     <View className="flex-row items-center gap-0.5">
+      <FallbackHeaderButton
+        accessibilityLabel="Open usage"
+        icon="chart.bar.xaxis"
+        onPress={props.onOpenUsage}
+      />
       <FallbackHeaderButton
         accessibilityLabel="Open settings"
         icon="gearshape"

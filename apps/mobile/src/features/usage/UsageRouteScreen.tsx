@@ -1,7 +1,7 @@
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
-import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
+import { type StaticScreenProps, useIsFocused, useNavigation } from "@react-navigation/native";
 import { cursorKeychainAccessEnvironments } from "@t3tools/client-runtime/state/usage";
 import {
   isCompatibleUsageContractVersion,
@@ -72,8 +72,9 @@ const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keyc
  * period; Limits is the live subscription quota, which has no period. Both
  * pull to refresh, each refreshing its own data.
  */
-export function UsageRouteScreen() {
-  const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
+export function UsageRouteScreen({
+  route,
+}: StaticScreenProps<{ readonly tab?: UsageTab } | undefined>) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   // Preserve the Limits default while honoring explicit widget/navigation links.
