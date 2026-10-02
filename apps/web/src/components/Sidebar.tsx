@@ -2338,8 +2338,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProject, project],
   );
 
-  // Settle actions live here (rather than threaded through row props) so the
-  // right-click menu is the single v1 surface that offers them.
   const { settleThread, unsettleThread } = useThreadActions();
   const primaryDescriptor = usePrimaryEnvironmentDescriptor();
   const remoteEnvironmentDescriptors = useSavedEnvironmentRuntimeStore((state) => state.byId);

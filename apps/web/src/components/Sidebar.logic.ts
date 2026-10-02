@@ -805,12 +805,6 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
-/**
- * Settle toggle for the v1 right-click menu. Labels match SidebarV2
- * ("Settle thread" / "Reopen thread"); the same root-status rule as the
- * sidebar partition decides which (if either) shows, and stale environments
- * whose server predates thread.settle offer neither.
- */
 export function resolveSettleMenuItems(input: {
   readonly status: ThreadStatusPill | null;
   readonly thread: SidebarThreadSummary;
@@ -827,12 +821,6 @@ export function resolveSettleMenuItems(input: {
   return [];
 }
 
-/**
- * Collapsed-project single-row counterpart to `partitionSettledSidebarRows`:
- * the active route renders alone while its project is collapsed, so the same
- * root-status rule applies — a pill (failed turn, unseen completion) keeps
- * the row full-strength even when the settled override survives.
- */
 export function isCollapsedSettledRow(input: {
   readonly status: ThreadStatusPill | null;
   readonly thread: SidebarThreadSummary;
