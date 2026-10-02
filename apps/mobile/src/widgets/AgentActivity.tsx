@@ -80,7 +80,7 @@ export function AgentActivity(
   // fields as idle rather than throwing inside the widget JS runtime.
   const receivedActivities = Array.isArray(props.activities) ? props.activities : [];
   const activeCount =
-    props.activeCount === null
+    props.activeCount === null || (typeof props.activeCount === "number" && props.activeCount < 0)
       ? null
       : typeof props.activeCount === "number"
         ? props.activeCount

@@ -34,7 +34,7 @@ describe("agentActivityTimeline", () => {
     expect(timeline[0]?.props).toEqual(props);
     expect(timeline[1]?.props).toEqual({
       ...props,
-      activeCount: null,
+      activeCount: -1,
       isExpired: true,
       subtitle: "Open T3 to refresh",
       activities: [{ ...row, phase: "stale", status: "Out of date" }],
@@ -71,13 +71,19 @@ describe("agentActivityTimeline", () => {
   it("publishes an already old observation as expired immediately", () => {
     const timeline = agentActivityTimeline(props, props.expiresAt);
     expect(timeline).toHaveLength(1);
-    expect(timeline[0]?.props).toMatchObject({ activeCount: null, isExpired: true });
+    expect(timeline[0]?.props).toMatchObject({ activeCount: -1, isExpired: true });
   });
 
   it("preserves the disconnected distinction until its original deadline", () => {
     const timeline = agentActivityTimeline({ ...props, isStale: true }, now);
     expect(timeline[0]?.props).toMatchObject({ isStale: true, activeCount: 1 });
-    expect(timeline[1]?.props).toMatchObject({ isStale: true, isExpired: true, activeCount: null });
+    expect(timeline[1]?.props).toMatchObject({ isStale: true, isExpired: true, activeCount: -1 });
+  });
+
+  it("encodes unavailable counts without nulls rejected by native widget storage", () => {
+    const timeline = agentActivityTimeline({ ...props, activeCount: null }, now);
+    expect(timeline.map((entry) => entry.props.activeCount)).toEqual([-1, -1]);
+    expect(JSON.stringify(timeline)).not.toContain(":null");
   });
 
   it("does not schedule signed-out idle content to expire", () => {
