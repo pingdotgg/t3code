@@ -191,6 +191,7 @@ function makeAllocations(
     origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
     updatedAt: "2026-05-25T00:00:00.000Z",
     generation: 1,
+    tunnelReleasedAt: null,
   },
 ): ManagedEndpointAllocations.ManagedEndpointAllocations["Service"] {
   return {
@@ -477,6 +478,7 @@ describe("EnvironmentConnector", () => {
             origin: null,
             updatedAt: "2026-05-25T00:00:00.000Z",
             generation: 1,
+            tunnelReleasedAt: null,
           }),
         }),
       ),
@@ -547,7 +549,38 @@ describe("EnvironmentConnector", () => {
         error: "Managed endpoint health request failed: Environment is unavailable.",
         traceId: expect.any(String),
       });
+      expect(result).not.toHaveProperty("offlineReason");
     }).pipe(Effect.provide(connectorTestLayer(execute)));
+  });
+
+  it.effect("reports a released tunnel as the reason an environment is offline", () => {
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(request, new Response("tunnel not found", { status: 530 })),
+      );
+    const allocations = makeAllocations({
+      userId: "user_123",
+      environmentId: "env-connector-test",
+      hostname: "env.example.test",
+      tunnelId: "tunnel-id",
+      tunnelName: "tunnel-name",
+      dnsRecordId: "dns-record-id",
+      readyAt: "2026-05-25T00:00:00.000Z",
+      origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      updatedAt: "2026-05-25T00:00:00.000Z",
+      generation: 2,
+      tunnelReleasedAt: "2026-05-26T00:00:00.000Z",
+    });
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      const result = yield* connector.status({
+        userId: "user_123",
+        environmentId: "env-connector-test",
+      });
+
+      expect(result).toMatchObject({ status: "offline", offlineReason: "tunnel_released" });
+    }).pipe(Effect.provide(connectorTestLayer(execute, { allocations })));
   });
 
   it.effect("rejects health responses with a mismatched top-level environment id", () => {

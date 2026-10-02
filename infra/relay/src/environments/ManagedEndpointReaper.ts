@@ -387,6 +387,8 @@ export const make = Effect.gen(function* () {
               expectedTunnelId: candidate.tunnel.id,
               expectedInactiveBefore: candidate.inactiveBefore,
               expectedStatus: candidate.status,
+              // Only a legacy host needs an update to recover; tell its user so.
+              ...(candidate.legacy ? { markReleased: true } : {}),
             })
             .pipe(Effect.result);
           if (result._tag === "Failure") {

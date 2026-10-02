@@ -823,6 +823,14 @@ export type RelayEnvironmentConnectResponse = typeof RelayEnvironmentConnectResp
 export const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
 export type RelayEnvironmentStatusValue = typeof RelayEnvironmentStatusValue.Type;
 
+/**
+ * Why an environment is offline, when the relay knows more than "the host
+ * did not answer". `tunnel_released`: the relay deleted the environment's
+ * idle tunnel, and the host needs a current T3 Code build to get a new one.
+ */
+export const RelayEnvironmentOfflineReason = Schema.Literals(["tunnel_released"]);
+export type RelayEnvironmentOfflineReason = typeof RelayEnvironmentOfflineReason.Type;
+
 export const RelayEnvironmentStatusResponse = Schema.Struct({
   environmentId: EnvironmentId,
   endpoint: RelayManagedEndpoint,
@@ -830,6 +838,7 @@ export const RelayEnvironmentStatusResponse = Schema.Struct({
   checkedAt: TrimmedNonEmptyString,
   descriptor: Schema.optional(ExecutionEnvironmentDescriptor),
   error: Schema.optional(TrimmedNonEmptyString),
+  offlineReason: Schema.optional(RelayEnvironmentOfflineReason),
   traceId: Schema.optional(TrimmedNonEmptyString),
 });
 export type RelayEnvironmentStatusResponse = typeof RelayEnvironmentStatusResponse.Type;

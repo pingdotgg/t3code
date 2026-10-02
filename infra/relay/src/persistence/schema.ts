@@ -97,6 +97,8 @@ export const relayManagedEndpointAllocations = pgTable(
     readyAt: varchar("ready_at", { length: 64 }),
     recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
     recoveryEnvironmentPublicKey: text("recovery_environment_public_key"),
+    // Set when cleanup deletes the recorded tunnel; cleared when a tunnel is recorded again.
+    tunnelReleasedAt: varchar("tunnel_released_at", { length: 64 }),
     origin: jsonb("origin").$type<RelayManagedEndpointOrigin>(),
     generation: integer("generation").notNull().default(0),
     createdAt: varchar("created_at", { length: 64 }).notNull(),
