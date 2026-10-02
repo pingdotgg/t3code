@@ -226,7 +226,7 @@ const hostSpawn = Effect.fn("LocalDeviceHost.hostSpawn")(function* (
   const sdk = yield* androidSdk;
   return {
     command:
-      command === "emulator" && sdk.root
+      command === "emulator" && sdk.root && sdk.emulator
         ? path.join(sdk.root, "emulator", hostPlatform === "win32" ? "emulator.exe" : "emulator")
         : command,
     env: deviceHostEnvironment(environment, sdk.root, hostPlatform, path),

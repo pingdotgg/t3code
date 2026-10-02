@@ -199,6 +199,14 @@ describe("host spawn targets", () => {
     }),
   );
 
+  it.effect("preserves PATH lookup when the detected SDK has adb but no emulator", () =>
+    Effect.gen(function* () {
+      const target = yield* spawnTarget("emulator", new Set([`${SDK_ROOT}/platform-tools/adb`]));
+      expect(target.command).toBe("emulator");
+      expect(target.env.ANDROID_HOME).toBe(SDK_ROOT);
+    }),
+  );
+
   it.effect("leaves commands other than the emulator alone", () =>
     Effect.gen(function* () {
       const target = yield* spawnTarget("xcrun", new Set(sdkFiles(SDK_ROOT)));
