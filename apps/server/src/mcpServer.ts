@@ -3064,29 +3064,66 @@ async function serveMcp(options: McpServeOptions): Promise<void> {
   }
 }
 
-export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: string }) =>
-  Effect.promise(() =>
+export interface McpCliInvocation {
+  readonly cliCommand: string;
+  readonly cliArgsPrefix: ReadonlyArray<string>;
+}
+
+/**
+ * Resolves how to invoke the T3 CLI, honoring the documented
+ * `T3_MCP_CLI_COMMAND` / `T3_MCP_CLI_ARGS_PREFIX` overrides before falling back
+ * to running this process's entry point directly. Every in-process caller that
+ * shells out to the CLI (the stdio server and the `t3-code` delegation
+ * toolkit) must resolve it here so an override applies uniformly instead of
+ * only on the stdio path.
+ */
+export const resolveMcpCliInvocation = (
+  environment: NodeJS.ProcessEnv = process.env,
+  runtime: { readonly execPath: string; readonly entryPath: string | undefined } = {
+    execPath: process.execPath,
+    entryPath: process.argv[1],
+  },
+): McpCliInvocation => {
+  const configuredCommand = environment.T3_MCP_CLI_COMMAND?.trim();
+  if (configuredCommand) {
+    return { cliCommand: configuredCommand, cliArgsPrefix: parseCliArgsPrefix(environment) };
+  }
+  if (runtime.entryPath === undefined) {
+    return { cliCommand: "t3", cliArgsPrefix: [] };
+  }
+  return {
+    cliCommand: runtime.execPath,
+    cliArgsPrefix: [runtime.entryPath, ...parseCliArgsPrefix(environment)],
+  };
+};
+
+const parseCliArgsPrefix = (environment: NodeJS.ProcessEnv): ReadonlyArray<string> => {
+  const raw = environment.T3_MCP_CLI_ARGS_PREFIX?.trim();
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
+  }
+  if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+    throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
+  }
+  return parsed;
+};
+
+export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: string }) => {
+  const cli = resolveMcpCliInvocation();
+  return Effect.promise(() =>
     serveMcp({
       cwd: path.resolve(input.cwd),
       toolsets: normalizeToolsets(input.toolsets),
       threadId: process.env.T3_MCP_THREAD_ID,
-      cliCommand: process.env.T3_MCP_CLI_COMMAND?.trim() || "t3",
-      cliArgsPrefix: (() => {
-        const raw = process.env.T3_MCP_CLI_ARGS_PREFIX?.trim();
-        if (!raw) return [];
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
-        }
-        if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
-          throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
-        }
-        return parsed;
-      })(),
+      cliCommand: cli.cliCommand,
+      cliArgsPrefix: cli.cliArgsPrefix,
     }),
   );
+};
 
 /** Exposed for tests. */
 export const __testing = {

@@ -56,10 +56,10 @@ interface ToolOutcome {
 }
 
 /**
- * Every legacy tool shells out to the T3 CLI. `cliCommand` is derived from
- * `process.argv[1]`, so pointing it at a script that echoes its argv lets a
- * test assert the exact command a provider request produced instead of mocking
- * the implementation away.
+ * Every legacy tool shells out to the T3 CLI. Resolved through the same
+ * `T3_MCP_CLI_COMMAND` override the stdio server honors, so pointing that at a
+ * script which echoes its argv lets a test assert the exact command a provider
+ * request produced instead of mocking the implementation away.
  */
 const withFakeCli = <A, E, R>(use: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -68,12 +68,26 @@ const withFakeCli = <A, E, R>(use: Effect.Effect<A, E, R>) =>
     yield* Effect.promise(() =>
       writeFile(script, "process.stdout.write(process.argv.slice(2).join('\\n'));\n"),
     );
-    const previousArgv = process.argv[1] ?? "";
-    process.argv[1] = script;
+    const previousCommand = process.env.T3_MCP_CLI_COMMAND;
+    const previousPrefix = process.env.T3_MCP_CLI_ARGS_PREFIX;
+    // `T3_MCP_CLI_COMMAND` names the executable; `T3_MCP_CLI_ARGS_PREFIX` is the
+    // JSON argv prefix that reaches it. Setting both mirrors how a deployment
+    // wraps or relocates the CLI.
+    process.env.T3_MCP_CLI_COMMAND = process.execPath;
+    process.env.T3_MCP_CLI_ARGS_PREFIX = JSON.stringify([script]);
     return yield* use.pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          process.argv[1] = previousArgv;
+          if (previousCommand === undefined) {
+            delete process.env.T3_MCP_CLI_COMMAND;
+          } else {
+            process.env.T3_MCP_CLI_COMMAND = previousCommand;
+          }
+          if (previousPrefix === undefined) {
+            delete process.env.T3_MCP_CLI_ARGS_PREFIX;
+          } else {
+            process.env.T3_MCP_CLI_ARGS_PREFIX = previousPrefix;
+          }
         }),
       ),
     );

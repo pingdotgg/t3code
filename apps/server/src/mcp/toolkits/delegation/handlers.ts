@@ -12,6 +12,7 @@ import {
   linkPullRequestTool,
   listThreadPullRequestsTool,
   reportToParentTool,
+  resolveMcpCliInvocation,
   sendToThreadTool,
   setChildWaitTool,
   switchWorkspaceTool,
@@ -53,15 +54,22 @@ const resolveServeOptions = Effect.fn("DelegationToolkit.resolveServeOptions")(f
   const binding = yield* directory
     .getBinding(threadId)
     .pipe(Effect.mapError((cause) => toolError(`Could not read thread binding: ${String(cause)}`)));
-  const entryPath = process.argv[1];
+  // `cwd` is the thread's own worktree, which is also what `t3-tools` hands the
+  // legacy helpers. It comes from the thread's checkpoint binding rather than a
+  // provider session directory, because a provider session's cwd is itself
+  // derived from that binding (`resolveThreadWorkspaceCwd`) and can never be a
+  // subdirectory of the thread's checkout. Delegation targets the thread, not
+  // whichever provider happens to be driving it.
+  const cwd = context.value.worktreePath ?? context.value.workspaceRoot;
+  const cli = resolveMcpCliInvocation();
   const options: McpServeOptions = {
-    cwd: context.value.worktreePath ?? context.value.workspaceRoot,
+    cwd,
     // The legacy functions are invoked directly, so this set is not an
     // availability filter here. It only has to satisfy the contract shape.
     toolsets: new Set(["delegate_work"]),
     threadId,
-    cliCommand: entryPath !== undefined ? process.execPath : "t3",
-    ...(entryPath !== undefined ? { cliArgsPrefix: [entryPath] } : {}),
+    cliCommand: cli.cliCommand,
+    ...(cli.cliArgsPrefix.length > 0 ? { cliArgsPrefix: cli.cliArgsPrefix } : {}),
     cliBaseDir: serverConfig.baseDir,
     runtimeMode:
       Option.isSome(binding) && binding.value.runtimeMode !== undefined
