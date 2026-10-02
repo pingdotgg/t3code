@@ -434,6 +434,9 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    speechProjectCustomWords: speechProjectCustomWordsPatch,
+    // Already translated into `projectSettingsOverrides` above; the legacy
+    // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
@@ -595,6 +598,14 @@ export function applyServerSettingsPatch(
               ]),
             ),
           },
+        }
+      : {}),
+    ...(speechProjectCustomWordsPatch !== undefined
+      ? {
+          speechProjectCustomWords: mergeSettingsEntries(
+            current.speechProjectCustomWords,
+            speechProjectCustomWordsPatch,
+          ),
         }
       : {}),
     ...(projectSettingsOverridesPatch !== undefined

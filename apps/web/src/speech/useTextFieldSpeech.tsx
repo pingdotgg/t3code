@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -16,6 +16,7 @@ import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 /** Bind dictation to a plain-text draft and keep the insertion cursor in that editor. */
 export function useTextFieldSpeech(input: {
   environmentId: EnvironmentId;
+  projectId?: ProjectId | undefined;
   ownerKey: string;
   text: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -29,6 +30,7 @@ export function useTextFieldSpeech(input: {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const speech = useEnvironmentSpeechInput({
     environmentId: input.environmentId,
+    projectId: input.projectId,
     ownerKey: input.ownerKey,
     draftText: input.text,
     readDraft: () => {

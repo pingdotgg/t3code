@@ -8,6 +8,8 @@ export const browserApiCorsAllowedHeaders = [
   "content-type",
   "dpop",
   ORCHESTRATION_PROTOCOL_HEADER,
+  "x-t3-project-name",
+  "x-t3-project-id",
 ] as const;
 
 export const DESKTOP_RENDERER_ORIGINS = ["t3code://app", "t3code-dev://app"] as const;

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { ProjectId } from "./baseSchemas.ts";
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
@@ -97,6 +98,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     modelUnloadTimeout: SpeechModelUnloadTimeout,
     gpuDevices: Schema.Array(SpeechGpuDevice),
     customWords: SpeechCustomWords,
+    projectCustomWords: Schema.optionalKey(SpeechCustomWords),
     removeFillerWords: Schema.Boolean,
   }),
 ]);
@@ -106,7 +108,10 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
   text: Schema.String,
 });
 
-export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
+export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({
+  words: SpeechCustomWords,
+  projectId: Schema.optionalKey(ProjectId),
+});
 export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
@@ -117,6 +122,7 @@ export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
 export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
 export const EnvironmentSpeechTranslationRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
+  dictionary: Schema.optionalKey(SpeechCustomWords),
   transcript: Schema.String.check(Schema.isMaxLength(100_000)),
   draft: Schema.Struct({
     text: Schema.String.check(Schema.isMaxLength(100_000)),

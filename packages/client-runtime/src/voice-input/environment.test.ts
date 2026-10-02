@@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { FetchHttpClient } from "effect/unstable/http";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
   PrimaryConnectionTarget,
@@ -91,5 +91,25 @@ it.effect("does not send browser cookies with bearer-authenticated voice request
       expect.objectContaining({ redirect: "error" }),
     );
     expect(credentials).toBeUndefined();
+  }),
+);
+
+it.effect("sends the originating project to a remote transcription environment", () =>
+  Effect.gen(function* () {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("x-t3-project-id")).toBe("project-one");
+      expect(new Headers(init?.headers).get("x-t3-project-name")).toBe("T3 Code");
+      return Response.json({ text: "hello" });
+    });
+    yield* transcribeEnvironmentPcm(
+      prepared("https://remote.example"),
+      new Uint8Array(4),
+      "T3 Code",
+      ProjectId.make("project-one"),
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    expect(fetch).toHaveBeenCalledOnce();
   }),
 );

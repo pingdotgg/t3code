@@ -377,6 +377,7 @@ export interface ChatComposerProps {
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
   projectName?: string | undefined;
+  projectId?: ProjectId | undefined;
 
   phase: SessionPhase;
   canInterrupt: boolean;
@@ -735,6 +736,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
   const composerContextActions = {
     environmentId,
+    projectId: props.projectId,
     cwd: gitCwd ?? undefined,
     expandImage: (imageId: string) => {
       const preview = buildExpandedImagePreview(composerImages, imageId);
@@ -1845,6 +1847,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectName: props.projectName,
+    projectId: props.projectId,
     ownerKey: JSON.stringify([composerDraftTarget, activePendingProgress?.activeQuestion?.id]),
     draftText: prompt,
     readDraft: () => {

@@ -7,7 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
-import { ServerSettingsError } from "@t3tools/contracts";
+import { ProjectId, ServerSettingsError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -947,5 +947,99 @@ it.effect("failed CPU fallback is disposed", () =>
       cause: failure,
     });
     expect(native.dispose).toHaveBeenCalledTimes(2);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("keeps project words separate and combines only the selected project's hints", () =>
+  Effect.gen(function* () {
+    native.supportsInitialPrompt = true;
+    const speech = yield* SpeechService.SpeechService;
+    const first = ProjectId.make("project-one");
+    const second = ProjectId.make("project-two");
+    yield* speech.updateCustomWords([{ term: "GitHub", aliases: [] }]);
+    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: ["pair a keet"] }], first);
+    yield* speech.updateCustomWords([{ term: "Moonshine", aliases: [] }], second);
+    expect(yield* speech.getStatus(first)).toMatchObject({
+      customWords: [{ term: "GitHub", aliases: [] }],
+      projectCustomWords: [{ term: "Parakeet", aliases: ["pair a keet"] }],
+    });
+    native.transcribe.mockResolvedValueOnce({ text: "pair a keet" });
+    expect(yield* speech.transcribe(pcm(), undefined, first)).toBe("Parakeet");
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      family: { kind: "whisper", initialPrompt: "Parakeet, GitHub" },
+    });
+    yield* speech.transcribe(pcm(), undefined, second);
+    expect(native.transcribe.mock.calls[1]?.[1]).toMatchObject({
+      family: { kind: "whisper", initialPrompt: "Moonshine, GitHub" },
+    });
+    yield* speech.updateCustomWords([], first);
+    expect(yield* speech.getStatus(first)).toMatchObject({
+      projectCustomWords: [],
+      customWords: [{ term: "GitHub", aliases: [] }],
+    });
+  }).pipe(Effect.provide(layer)),
+);
+it.effect("rejects project words and misspellings already in the shared dictionary", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.updateCustomWords([{ term: "GitHub", aliases: ["get hub"] }]);
+    const result = yield* speech
+      .updateCustomWords([{ term: "Other", aliases: ["GET HUB"] }], ProjectId.make("project-one"))
+      .pipe(Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(yield* speech.getStatus(ProjectId.make("project-one"))).toMatchObject({
+      projectCustomWords: [],
+    });
+  }).pipe(Effect.provide(layer)),
+);
+it.effect("uses project misspellings in live transcription", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const id = ProjectId.make("project-one");
+    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: ["pair a keet"] }], id);
+    native.feed.mockResolvedValueOnce({
+      revision: 1,
+      text: { committed: "", tentative: "pair a keet" },
+    });
+    const result = yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream(undefined, id);
+      return yield* stream.feed(pcm());
+    }).pipe(Effect.scoped);
+    expect(result.text?.tentative).toBe("Parakeet");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("prevents adding a shared word that is already project-specific", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const id = ProjectId.make("project-one");
+    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: [] }], id);
+    const result = yield* speech
+      .updateCustomWords([{ term: "parakeet", aliases: [] }])
+      .pipe(Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(yield* speech.getStatus(id)).toMatchObject({
+      customWords: [],
+      projectCustomWords: [{ term: "Parakeet", aliases: [] }],
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("rejects shared additions that would silently truncate a project's dictionary", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const id = ProjectId.make("project-one");
+    yield* speech.updateCustomWords(
+      Array.from({ length: 100 }, (_, index) => ({ term: `Project term ${index}`, aliases: [] })),
+      id,
+    );
+    const result = yield* speech
+      .updateCustomWords([{ term: "New shared term", aliases: [] }])
+      .pipe(Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(yield* speech.getStatus(id)).toMatchObject({
+      customWords: [],
+      projectCustomWords: expect.arrayContaining([{ term: "Project term 99", aliases: [] }]),
+    });
   }).pipe(Effect.provide(layer)),
 );

@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ProjectId,
 } from "@t3tools/contracts";
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import { AuthFilesystemWriteScope } from "@t3tools/contracts";
@@ -134,6 +135,7 @@ interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | undefined;
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   threadRef: ScopedThreadRef;
@@ -650,6 +652,7 @@ function useEditableAfterHighlight(file: FileContents) {
 
 interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
+  projectId?: ProjectId | undefined;
   cwd: string;
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -668,6 +671,7 @@ interface FileSelectionOverride {
 
 function EditableFileSurface({
   environmentId,
+  projectId,
   cwd,
   relativePath,
   composerDraftTarget,
@@ -896,6 +900,7 @@ function EditableFileSurface({
               <div className="py-1">
                 {annotation.metadata.entries.map((entry) => (
                   <DiffCommentAnnotation
+                    projectId={projectId}
                     environmentId={environmentId}
                     ownerKey={JSON.stringify([
                       environmentId,
@@ -996,6 +1001,7 @@ export default function FilePreviewPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   relativePath: requestedPath,
   attachment,
   threadRef,
@@ -1516,6 +1522,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
+                  projectId={projectId}
                   key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   cwd={cwd}

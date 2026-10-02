@@ -27,13 +27,14 @@ export function AssistantCitationCommentEditor({
   const [comment, setComment] = useState(citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
-  const { environmentId } = use(ComposerContextActionsContext);
+  const { environmentId, projectId } = use(ComposerContextActionsContext);
   const updateComment = (text: string) => {
     setComment(text);
     onDraftChange?.(text);
   };
   const speech = useTextFieldSpeech({
     environmentId: environmentId ?? citation.environmentId,
+    projectId,
     ownerKey: JSON.stringify([
       environmentId,
       citation.threadId,

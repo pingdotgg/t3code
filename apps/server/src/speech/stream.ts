@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  ProjectId,
   SPEECH_STREAM_PATH,
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   SpeechStreamCommand,
@@ -15,6 +16,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SpeechService from "./SpeechService.ts";
 
+const decodeProjectId = Schema.decodeOption(ProjectId);
 const decodeCommand = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamCommand));
 
 /** One socket owns one stream. Audio is processed and acknowledged in arrival order. */
@@ -22,6 +24,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
   speech: Pick<SpeechService.SpeechService["Service"], "startStream">,
   projectName?: string,
+  projectId?: ProjectId,
 ) {
   const scope = yield* Scope.Scope;
   const writer = yield* socket.writer;
@@ -63,7 +66,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   const reader = yield* socket.reader;
   yield* Effect.gen(function* () {
     yield* Effect.gen(function* () {
-      stream = yield* speech.startStream(projectName).pipe(Scope.provide(scope));
+      stream = yield* speech.startStream(projectName, projectId).pipe(Scope.provide(scope));
       yield* send({ type: "ready" });
     }).pipe(
       Effect.catch(() =>
@@ -107,8 +110,16 @@ export const speechStreamRouteLayer = Layer.unwrap(
         const projectName = new URL(request.url, "http://localhost").searchParams
           .get("projectName")
           ?.slice(0, 200);
+        const projectIdValue = new URL(request.url, "http://localhost").searchParams.get(
+          "projectId",
+        );
+        const decodedProjectId =
+          projectIdValue === null ? undefined : decodeProjectId(projectIdValue);
+        const projectId =
+          decodedProjectId && decodedProjectId._tag === "Some" ? decodedProjectId.value : undefined;
+        if (projectIdValue !== null && !projectId) return HttpServerResponse.empty({ status: 400 });
         const socket = yield* request.upgrade;
-        yield* runSpeechSocket(socket, speech, projectName).pipe(Effect.scoped);
+        yield* runSpeechSocket(socket, speech, projectName, projectId).pipe(Effect.scoped);
         return HttpServerResponse.empty();
       }),
     );

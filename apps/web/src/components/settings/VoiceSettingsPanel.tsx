@@ -20,7 +20,9 @@ import type {
   SpeechCustomWords,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
+import { EnvironmentRequestInvalidError } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import {
   AudioLinesIcon,
   CheckIcon,
@@ -29,6 +31,7 @@ import {
   GlobeIcon,
   HardDriveIcon,
   LanguagesIcon,
+  LayersIcon,
   RefreshCwIcon,
   TargetIcon,
   Trash2Icon,
@@ -56,9 +59,11 @@ import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { TranscriptionTest } from "./TranscriptionTest";
 
+const isInvalidDictionaryRequest = Schema.is(EnvironmentRequestInvalidError);
 const SYSTEM_DEFAULT = "system-default";
 const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
@@ -291,6 +296,13 @@ function ModelCard(props: {
 }
 
 export function VoiceSettingsPanel() {
+  const settingsScope = useOptionalSettingsScope();
+  const projectId =
+    settingsScope?.target?.projectId ??
+    (settingsScope?.scope.kind === "project" || settingsScope?.scope.kind === "checkout"
+      ? settingsScope.scope.members[0]?.id
+      : undefined);
+  const projectLabel = settingsScope?.scope.label ?? "this project";
   const clientSettingsHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
@@ -307,6 +319,7 @@ export function VoiceSettingsPanel() {
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
+    readonly projectId?: typeof projectId;
   } | null>(null);
   const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
@@ -344,13 +357,15 @@ export function VoiceSettingsPanel() {
     }
   }, []);
 
-  const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
+  const connectionEpoch = useRef<{ prepared: typeof prepared; projectId: typeof projectId } | null>(
+    null,
+  );
   useLayoutEffect(() => {
-    connectionEpoch.current = { prepared };
+    connectionEpoch.current = { prepared, projectId };
     return () => {
       connectionEpoch.current = null;
     };
-  }, [prepared]);
+  }, [prepared, projectId]);
 
   const refreshModels = useCallback(async () => {
     if (!prepared) return;
@@ -358,17 +373,17 @@ export function VoiceSettingsPanel() {
     if (epoch?.prepared !== prepared) return;
     try {
       const [nextStatus, nextModels] = await Promise.all([
-        runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
+        runtime.runPromise(getEnvironmentSpeechStatus(prepared, projectId)),
         runtime.runPromise(getEnvironmentSpeechModels(prepared)),
       ]);
       if (connectionEpoch.current !== epoch) return;
-      setStatus({ prepared, value: nextStatus });
+      setStatus({ prepared, projectId, value: nextStatus });
       setModels(nextModels.models);
     } catch (error) {
       if (connectionEpoch.current !== epoch) return;
       throw error;
     }
-  }, [prepared]);
+  }, [prepared, projectId]);
 
   useEffect(() => {
     void refreshMicrophones();
@@ -449,7 +464,42 @@ export function VoiceSettingsPanel() {
       "Selected microphone (Unavailable)")
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
-  const customWords = currentStatus?.supported ? currentStatus.customWords : [];
+  const acceptStatus = (value: EnvironmentSpeechStatus) => {
+    if (!prepared) return;
+    setStatus((previous) => ({
+      prepared,
+      projectId,
+      value:
+        value.supported &&
+        value.projectCustomWords === undefined &&
+        previous?.prepared === prepared &&
+        previous.projectId === projectId &&
+        previous.value.supported &&
+        previous.value.projectCustomWords !== undefined
+          ? { ...value, projectCustomWords: previous.value.projectCustomWords }
+          : value,
+    }));
+  };
+  const sharedWords = currentStatus?.supported ? currentStatus.customWords : [];
+  const projectWords =
+    currentStatus?.supported && status?.projectId === projectId
+      ? (currentStatus.projectCustomWords ?? [])
+      : [];
+  const editableWords = projectId ? projectWords : sharedWords;
+  const sharedSpellings = new Set(
+    sharedWords.flatMap(({ term, aliases }) =>
+      [term, ...aliases].map((value) => value.toLocaleLowerCase()),
+    ),
+  );
+  const visibleProjectWords = projectWords.filter(
+    ({ term }) => !sharedSpellings.has(term.toLocaleLowerCase()),
+  );
+  const customWords = projectId ? [...visibleProjectWords, ...sharedWords] : sharedWords;
+  const dictionaryUnavailable =
+    settingsScope?.scope.kind === "unavailable" ||
+    (projectId !== undefined &&
+      (status?.projectId !== projectId ||
+        (currentStatus?.supported && currentStatus.projectCustomWords === undefined)));
   const removeFillerWords = currentStatus?.supported ? currentStatus.removeFillerWords : true;
   const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
   const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
@@ -457,19 +507,40 @@ export function VoiceSettingsPanel() {
   const normalizedCustomWord = normalizeDictionaryTerm(customWordDraft);
   const bulkWords = prepareBulkWords(bulkWordsDraft, customWords);
   const updateCustomWords = (words: SpeechCustomWords, onSuccess?: () => void) => {
-    if (!prepared) return;
+    if (!prepared || dictionaryUnavailable) return;
+    const epoch = connectionEpoch.current;
     setOperation("custom-words");
-    void runtime
-      .runPromise(updateEnvironmentSpeechCustomWords(prepared, words))
+    const save = async () => {
+      const ids = projectId
+        ? [...new Set(settingsScope?.scope.members.map((member) => member.id) ?? [projectId])]
+            .filter((id) => id !== projectId)
+            .concat(projectId)
+        : [undefined];
+      let value = await runtime.runPromise(
+        updateEnvironmentSpeechCustomWords(prepared, words, ids[0]),
+      );
+      for (const id of ids.slice(1))
+        value = await runtime.runPromise(updateEnvironmentSpeechCustomWords(prepared, words, id));
+      return value;
+    };
+    void save()
       .then((value) => {
-        setStatus({ prepared, value });
+        if (connectionEpoch.current !== epoch) return;
+        setStatus({ prepared, projectId, value });
         onSuccess?.();
       })
       .catch((error) => {
         toastManager.add({
           type: "error",
           title: "Could not update dictionary",
-          description: error instanceof Error ? error.message : String(error),
+          description:
+            isInvalidDictionaryRequest(error) && error.reason === "dictionary_conflict"
+              ? "A word or misspelling is already used in a shared or project dictionary. Remove it there before adding it here."
+              : isInvalidDictionaryRequest(error) && error.reason === "dictionary_limit"
+                ? "Shared and project words together cannot exceed 100 words."
+                : error instanceof Error
+                  ? error.message
+                  : String(error),
         });
       })
       .finally(() => setOperation(null));
@@ -486,19 +557,20 @@ export function VoiceSettingsPanel() {
       )
     )
       return;
-    updateCustomWords([...customWords, { term: normalizedCustomWord, aliases: [] }]);
-    setCustomWordDraft("");
+    updateCustomWords([...editableWords, { term: normalizedCustomWord, aliases: [] }], () =>
+      setCustomWordDraft(""),
+    );
   };
   const addBulkWords = () => {
     if (!currentStatus?.supported || operation !== null || bulkWords.entries.length === 0) return;
-    updateCustomWords([...customWords, ...bulkWords.entries], () => {
+    updateCustomWords([...editableWords, ...bulkWords.entries], () => {
       setBulkWordsDraft("");
       setBulkWordsOpen(false);
     });
   };
   const addAlias = (term: string, draft: string) => {
     updateCustomWords(
-      customWords.map((entry) =>
+      editableWords.map((entry) =>
         entry.term === term ? { ...entry, aliases: [...entry.aliases, draft] } : entry,
       ),
       () => setAliasDrafts((drafts) => ({ ...drafts, [term]: "" })),
@@ -727,7 +799,7 @@ export function VoiceSettingsPanel() {
                 setOperation("language");
                 void runtime
                   .runPromise(updateEnvironmentSpeechLanguage(prepared, value))
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .then(acceptStatus)
                   .catch((error) => {
                     toastManager.add({
                       type: "error",
@@ -786,7 +858,7 @@ export function VoiceSettingsPanel() {
                 setOperation("translation");
                 void runtime
                   .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .then(acceptStatus)
                   .catch((error) => {
                     toastManager.add({
                       type: "error",
@@ -953,6 +1025,42 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("dictionary")}
+          title={
+            <span className="inline-flex items-center gap-1">
+              Dictionary
+              <Popover>
+                <PopoverTrigger
+                  render={<Button type="button" size="icon-micro" variant="ghost-muted" />}
+                  aria-label="Show dictionary sources"
+                >
+                  <LayersIcon className="size-3" />
+                </PopoverTrigger>
+                <PopoverContent align="start" width="md">
+                  <div className="space-y-2 text-xs">
+                    {projectId ? (
+                      <div className="flex justify-between gap-3">
+                        <span>{projectLabel}</span>
+                        <span className="text-muted-foreground">
+                          {visibleProjectWords.length} project words
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="flex justify-between gap-3">
+                      <span>All projects</span>
+                      <span className="text-muted-foreground">
+                        {sharedWords.length} shared words
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground">
+                      {projectId
+                        ? "Project and shared words are both supplied to the transcription model."
+                        : "These words are used in every project."}
+                    </p>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </span>
+          }
           description="Give the transcription model names and uncommon terms to recognize. The current project's name is included automatically. If a term is transcribed incorrectly, add that version to correct future transcripts."
           control={
             <div className="w-full max-w-80">
@@ -962,7 +1070,9 @@ export function VoiceSettingsPanel() {
                   maxLength={50}
                   placeholder="Add a word or phrase"
                   aria-label="Add a word or phrase"
-                  disabled={!currentStatus?.supported || operation !== null}
+                  disabled={
+                    !currentStatus?.supported || dictionaryUnavailable || operation !== null
+                  }
                   onChange={(event) => setCustomWordDraft(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
@@ -975,6 +1085,7 @@ export function VoiceSettingsPanel() {
                   size="sm"
                   disabled={
                     !currentStatus?.supported ||
+                    dictionaryUnavailable ||
                     !normalizedCustomWord ||
                     normalizedCustomWord.length > 50 ||
                     customWords.some(({ term, aliases }) =>
@@ -991,12 +1102,21 @@ export function VoiceSettingsPanel() {
                   Add
                 </Button>
               </div>
+              {projectId &&
+              normalizedCustomWord &&
+              sharedSpellings.has(normalizedCustomWord.toLocaleLowerCase()) ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Already in your shared dictionary.
+                </p>
+              ) : null}
               <div className="mt-1 flex justify-end">
                 <Button
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  disabled={!currentStatus?.supported || operation !== null}
+                  disabled={
+                    !currentStatus?.supported || dictionaryUnavailable || operation !== null
+                  }
                   aria-expanded={bulkWordsOpen}
                   onClick={() => setBulkWordsOpen((open) => !open)}
                 >
@@ -1014,7 +1134,7 @@ export function VoiceSettingsPanel() {
                 maxLength={10_000}
                 placeholder={"T3 Code\nAnother name\nTechnical term"}
                 aria-label="Words to add"
-                disabled={!currentStatus?.supported || operation !== null}
+                disabled={!currentStatus?.supported || dictionaryUnavailable || operation !== null}
                 onChange={(event) => setBulkWordsDraft(event.target.value)}
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1035,6 +1155,7 @@ export function VoiceSettingsPanel() {
                   size="sm"
                   disabled={
                     !currentStatus?.supported ||
+                    dictionaryUnavailable ||
                     bulkWords.entries.length === 0 ||
                     operation !== null
                   }
@@ -1052,6 +1173,9 @@ export function VoiceSettingsPanel() {
               </p>
               <div aria-label="Dictionary entries" className="flex flex-wrap gap-1.5">
                 {customWords.map(({ term, aliases }) => {
+                  const inherited = Boolean(
+                    projectId && sharedWords.some((entry) => entry.term === term),
+                  );
                   const draft = (aliasDrafts[term] ?? "")
                     .replace(/[<>"']/g, "")
                     .replace(/\s+/g, " ")
@@ -1065,7 +1189,7 @@ export function VoiceSettingsPanel() {
                     <Popover key={term}>
                       <PopoverTrigger
                         render={<Button type="button" size="xs" variant="secondary" />}
-                        aria-label={`Edit misspellings for ${term}`}
+                        aria-label={`${inherited ? "View" : "Edit"} misspellings for ${term}`}
                       >
                         {term}
                         {aliases.length > 0 ? (
@@ -1075,89 +1199,125 @@ export function VoiceSettingsPanel() {
                       <PopoverContent align="start" sideOffset={6} width="md">
                         <div className="mb-3 flex items-center justify-between gap-2">
                           <span className="text-sm font-medium">{term}</span>
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            disabled={operation !== null}
-                            aria-label={`Remove ${term}`}
-                            onClick={() =>
-                              updateCustomWords(customWords.filter((item) => item.term !== term))
-                            }
-                          >
-                            <Trash2Icon className="size-3.5" />
-                          </Button>
+                          {!inherited ? (
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              disabled={operation !== null}
+                              aria-label={`Remove ${term}`}
+                              onClick={() =>
+                                updateCustomWords(
+                                  editableWords.filter((item) => item.term !== term),
+                                )
+                              }
+                            >
+                              <Trash2Icon className="size-3.5" />
+                            </Button>
+                          ) : null}
                         </div>
+                        <p className="mb-3 text-xs text-muted-foreground">
+                          {inherited || !projectId
+                            ? "Shared across all projects"
+                            : `Only used in ${projectLabel}`}
+                        </p>
                         <div className="space-y-2">
-                          <p className="text-xs text-muted-foreground">
-                            Add common misspellings to correct them to {term} in the transcript.
-                          </p>
+                          {!inherited ? (
+                            <p className="text-xs text-muted-foreground">
+                              Add common misspellings to correct them to {term} in the transcript.
+                            </p>
+                          ) : null}
                           {aliases.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
-                              {aliases.map((alias) => (
-                                <Button
-                                  key={alias}
-                                  type="button"
-                                  size="xs"
-                                  variant="secondary"
-                                  disabled={operation !== null}
-                                  aria-label={`Remove alias ${alias} from ${term}`}
-                                  onClick={() =>
-                                    updateCustomWords(
-                                      customWords.map((entry) =>
-                                        entry.term === term
-                                          ? {
-                                              ...entry,
-                                              aliases: entry.aliases.filter(
-                                                (value) => value !== alias,
-                                              ),
-                                            }
-                                          : entry,
-                                      ),
-                                    )
-                                  }
-                                >
-                                  {alias}
-                                  <XIcon className="ml-1 size-3" />
-                                </Button>
-                              ))}
+                              {aliases.map((alias) =>
+                                inherited ? (
+                                  <Badge key={alias} variant="outline">
+                                    {alias}
+                                  </Badge>
+                                ) : (
+                                  <Button
+                                    key={alias}
+                                    type="button"
+                                    size="xs"
+                                    variant="secondary"
+                                    disabled={operation !== null}
+                                    aria-label={`Remove alias ${alias} from ${term}`}
+                                    onClick={() =>
+                                      updateCustomWords(
+                                        editableWords.map((entry) =>
+                                          entry.term === term
+                                            ? {
+                                                ...entry,
+                                                aliases: entry.aliases.filter(
+                                                  (value) => value !== alias,
+                                                ),
+                                              }
+                                            : entry,
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    {alias}
+                                    <XIcon className="ml-1 size-3" />
+                                  </Button>
+                                ),
+                              )}
                             </div>
                           ) : null}
-                          <div className="flex max-w-80 gap-1.5">
-                            <Input
-                              value={aliasDrafts[term] ?? ""}
-                              maxLength={50}
-                              placeholder="Common mis-transcription"
-                              aria-label={`Transcribed as for ${term}`}
-                              disabled={operation !== null || aliases.length >= 8}
-                              onChange={(event) =>
-                                setAliasDrafts((drafts) => ({
-                                  ...drafts,
-                                  [term]: event.target.value,
-                                }))
-                              }
-                              onKeyDown={(event) => {
-                                if (
-                                  event.key !== "Enter" ||
-                                  !draft ||
-                                  used ||
-                                  aliases.length >= 8 ||
-                                  operation !== null
-                                )
-                                  return;
-                                event.preventDefault();
-                                addAlias(term, draft);
-                              }}
-                            />
+                          {inherited ? (
                             <Button
                               type="button"
                               size="sm"
-                              disabled={!draft || used || aliases.length >= 8 || operation !== null}
-                              onClick={() => addAlias(term, draft)}
+                              variant="outline"
+                              onClick={() =>
+                                settingsScope?.selectScope({
+                                  ...settingsScope.search,
+                                  project: undefined,
+                                  checkout: undefined,
+                                })
+                              }
                             >
-                              Add
+                              Edit in All projects
                             </Button>
-                          </div>
+                          ) : (
+                            <div className="flex max-w-80 gap-1.5">
+                              <Input
+                                value={aliasDrafts[term] ?? ""}
+                                maxLength={50}
+                                placeholder="Common mis-transcription"
+                                aria-label={`Transcribed as for ${term}`}
+                                disabled={operation !== null || aliases.length >= 8}
+                                onChange={(event) =>
+                                  setAliasDrafts((drafts) => ({
+                                    ...drafts,
+                                    [term]: event.target.value,
+                                  }))
+                                }
+                                onKeyDown={(event) => {
+                                  if (
+                                    event.key !== "Enter" ||
+                                    !draft ||
+                                    used ||
+                                    aliases.length >= 8 ||
+                                    operation !== null
+                                  )
+                                    return;
+                                  event.preventDefault();
+                                  addAlias(term, draft);
+                                }}
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={
+                                  !draft || used || aliases.length >= 8 || operation !== null
+                                }
+                                onClick={() => addAlias(term, draft)}
+                              >
+                                Add
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       </PopoverContent>
                     </Popover>
@@ -1180,7 +1340,7 @@ export function VoiceSettingsPanel() {
                 setOperation("filler-words");
                 void runtime
                   .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
-                  .then((value) => setStatus({ prepared, value }))
+                  .then(acceptStatus)
                   .catch((error) => {
                     toastManager.add({
                       type: "error",
@@ -1213,7 +1373,7 @@ export function VoiceSettingsPanel() {
                       value as SpeechModelUnloadTimeout,
                     ),
                   )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .then(acceptStatus)
                   .catch((error) => {
                     toastManager.add({
                       type: "error",
@@ -1265,7 +1425,7 @@ export function VoiceSettingsPanel() {
                   .runPromise(
                     updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
                   )
-                  .then((nextStatus) => setStatus({ prepared, value: nextStatus }))
+                  .then(acceptStatus)
                   .catch((error) => {
                     toastManager.add({
                       type: "error",

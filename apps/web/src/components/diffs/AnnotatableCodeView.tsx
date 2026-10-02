@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import type {
   AnnotationSide,
   CodeViewDiffItem,
@@ -74,6 +74,7 @@ function appendAnnotationEntry(
 
 interface AnnotatableCodeViewProps {
   environmentId?: EnvironmentId;
+  projectId?: ProjectId | undefined;
   codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
@@ -107,6 +108,7 @@ interface DiffSelectionContext {
 
 export function AnnotatableCodeView({
   environmentId,
+  projectId,
   codeViewKey,
   files,
   pendingFiles,
@@ -294,6 +296,7 @@ export function AnnotatableCodeView({
           >
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
+                projectId={projectId}
                 {...(environmentId ? { environmentId } : {})}
                 ownerKey={JSON.stringify([
                   environmentId,

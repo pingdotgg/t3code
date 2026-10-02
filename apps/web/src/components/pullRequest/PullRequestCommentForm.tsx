@@ -43,6 +43,7 @@ export function PullRequestCommentForm({
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const speech = useTextFieldSpeech({
     environmentId,
+    projectId: reference.projectId,
     ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
     text: body,
     textareaRef,

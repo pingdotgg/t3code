@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
+  ProjectId,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechStreamText,
@@ -41,6 +42,7 @@ type DraftInput = {
 type HookInput = {
   readonly environmentId: EnvironmentId;
   readonly projectName?: string | undefined;
+  readonly projectId?: ProjectId | undefined;
   readonly ownerKey: string;
   readonly draftText: string;
   readonly readDraft: () => DraftInput;
@@ -140,6 +142,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     let controller: VoiceInputController<true>;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
+      getProjectId: () => latestInputRef.current.projectId,
       getProjectName: () => {
         const name = latestInputRef.current.projectName;
         return name && name.length <= 200 ? name : undefined;
@@ -164,11 +167,24 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       ...(postProcessingEnabled && postProcessingPrepared
         ? {
             postProcess: async (transcript, options) => {
+              const dictionary = input.projectId
+                ? await runtime.runPromise(
+                    getEnvironmentSpeechStatus(prepared, input.projectId),
+                    options,
+                  )
+                : undefined;
               const result = await runtime.runPromise(
-                postProcessEnvironmentTranscript(postProcessingPrepared, transcript, {
-                  text: options.draft.text,
-                  selection: options.draft.selection,
-                }),
+                postProcessEnvironmentTranscript(
+                  postProcessingPrepared,
+                  transcript,
+                  {
+                    text: options.draft.text,
+                    selection: options.draft.selection,
+                  },
+                  dictionary?.supported
+                    ? [...(dictionary.projectCustomWords ?? []), ...dictionary.customWords]
+                    : undefined,
+                ),
                 options,
               );
               return result.text;
@@ -201,7 +217,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [postProcessingEnabled, postProcessingPrepared, prepared]);
+  }, [postProcessingEnabled, postProcessingPrepared, prepared, input.projectId]);
 
   useEffect(() => {
     if (!prepared) return;

@@ -13,6 +13,13 @@ const mocks = vi.hoisted(() => ({
     translateToEnglish: false,
     effectiveLanguage: "en",
   },
+  scope: null as null | {
+    target: { projectId: string } | null;
+    scope: { label: string; kind: string; members: { id: string }[] };
+    search: { project: string };
+    selectScope: ReturnType<typeof vi.fn>;
+  },
+  projectWords: [] as { term: string; aliases: string[] }[],
   customWords: [] as { term: string; aliases: string[] }[],
   connection: {},
   settings: {
@@ -29,6 +36,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
       ...mocks.speechStatus,
       gpuDevices: [{ id: '["vulkan","gpu-1"]', name: "Test GPU" }],
       customWords: mocks.customWords,
+      projectCustomWords: mocks.projectWords,
     }),
   updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   updateEnvironmentSpeechCustomWords: mocks.saveWords,
@@ -50,6 +58,7 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
     }),
   cancelEnvironmentSpeechModelDownload: mocks.cancel,
 }));
+vi.mock("./SettingsScopeContext", () => ({ useOptionalSettingsScope: () => mocks.scope }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: (select: (settings: typeof mocks.settings) => unknown) =>
     select(mocks.settings),
@@ -121,6 +130,8 @@ afterEach(async () => {
     effectiveLanguage: "en",
   };
   mocks.customWords = [];
+  mocks.projectWords = [];
+  mocks.scope = null;
   mocks.settings.voiceTranscriptionEnvironmentId = null;
   mocks.settings.voiceMicrophone = "";
 });
@@ -281,7 +292,7 @@ it("bulk adds normalized words and reports skipped entries", async () => {
     .find((button) => button.children.join("") === "Add 2 words");
   expect(addBulk).toBeDefined();
   await act(async () => addBulk!.props.onClick());
-  expect(mocks.saveWords).toHaveBeenCalledWith(mocks.connection, words);
+  expect(mocks.saveWords).toHaveBeenCalledWith(mocks.connection, words, undefined);
   expect(root.root.findAllByProps({ "aria-label": "Words to add" })).toHaveLength(0);
   expect(root.root.findByProps({ "aria-label": "Edit misspellings for New Name" })).toBeDefined();
 });
@@ -588,4 +599,50 @@ it("shows cancellation errors without clearing the download state", async () => 
     }),
   );
   expect(root.root.findByProps({ "aria-label": "Cancel Model download" })).toBeDefined();
+});
+
+it("adds words for an offline project without copying shared words and blocks shared duplicates", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", {});
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  mocks.scope = {
+    target: null,
+    scope: { label: "T3 Code", kind: "project", members: [{ id: "project-one" }] },
+    search: { project: "project-one" },
+    selectScope: vi.fn(),
+  };
+  mocks.customWords = [{ term: "GitHub", aliases: ["get hub"] }];
+  mocks.projectWords = [{ term: "Effect", aliases: [] }];
+  mocks.saveWords.mockResolvedValue({
+    supported: true,
+    acceleration: "auto",
+    language: "auto",
+    effectiveLanguage: "en",
+    gpuDevices: [],
+    customWords: mocks.customWords,
+    projectCustomWords: [...mocks.projectWords, { term: "Parakeet", aliases: [] }],
+  });
+  await act(async () => {
+    root = create(createElement(VoiceSettingsPanel));
+  });
+  expect(root.root.findAllByProps({ "aria-label": "Transcribed as for GitHub" })).toHaveLength(0);
+  expect(root.root.findAllByProps({ "aria-label": "Remove GitHub" })).toHaveLength(0);
+  await act(async () =>
+    root.root.findByProps({ children: "Edit in All projects" }).props.onClick(),
+  );
+  expect(mocks.scope.selectScope).toHaveBeenCalledWith({ project: undefined, checkout: undefined });
+  const input = root.root.findByProps({ "aria-label": "Add a word or phrase" });
+  await act(async () => input.props.onChange({ target: { value: "github" } }));
+  await act(async () => input.props.onKeyDown({ key: "Enter", preventDefault: vi.fn() }));
+  expect(mocks.saveWords).not.toHaveBeenCalled();
+  await act(async () => input.props.onChange({ target: { value: "Parakeet" } }));
+  await act(async () => input.props.onKeyDown({ key: "Enter", preventDefault: vi.fn() }));
+  expect(mocks.saveWords).toHaveBeenCalledWith(
+    mocks.connection,
+    [
+      { term: "Effect", aliases: [] },
+      { term: "Parakeet", aliases: [] },
+    ],
+    "project-one",
+  );
 });

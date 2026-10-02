@@ -64,9 +64,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.status")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech.status.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
-          );
+          return yield* speech
+            .getStatus(args.headers["x-t3-project-id"])
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
         }),
       )
       .handle(
@@ -139,8 +139,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.updateCustomWords")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech.updateCustomWords(args.payload.words).pipe(
+          return yield* speech.updateCustomWords(args.payload.words, args.payload.projectId).pipe(
             Effect.catchTags({
+              SpeechDictionaryConflictError: () =>
+                failEnvironmentInvalidRequest("dictionary_conflict"),
+              SpeechDictionaryLimitError: () => failEnvironmentInvalidRequest("dictionary_limit"),
               SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
@@ -226,7 +229,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               transcript: args.payload.transcript,
               draft: args.payload.draft,
               cwd,
-              settings,
+              settings: args.payload.dictionary
+                ? { ...settings, speechCustomWords: args.payload.dictionary }
+                : settings,
             });
           }).pipe(
             Effect.scoped,
@@ -244,7 +249,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
             return yield* failEnvironmentInvalidRequest("invalid_audio");
           }
           const text = yield* speech
-            .transcribe(args.payload, args.headers["x-t3-project-name"])
+            .transcribe(
+              args.payload,
+              args.headers["x-t3-project-name"],
+              args.headers["x-t3-project-id"],
+            )
             .pipe(
               Effect.catchTags({
                 SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),

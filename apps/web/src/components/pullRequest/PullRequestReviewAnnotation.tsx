@@ -327,6 +327,7 @@ export function ReviewThreadCard({
             replying ? (
               <SpeechTextField
                 environmentId={environmentId}
+                projectId={reference.projectId}
                 ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
                 text={reply}
                 textareaRef={replyRef}

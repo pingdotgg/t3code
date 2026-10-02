@@ -45,6 +45,10 @@ The current project's name is included automatically when transcribing in its th
 If transcription repeatedly writes a term differently, add that spelling as an alias
 under the preferred term. Only preferred terms are sent as recognition hints; aliases
 correct matching words and phrases in the transcript.
+Select **All projects** to add shared words, or select a project to add words used
+only in that project. Project words are used together with shared words. Shared
+words can be inspected in project view; edit them in **All projects**. Each project
+can use up to 100 shared and project words combined.
 The words are stored on the selected transcription environment and apply to every
 web or desktop client that uses it.
 

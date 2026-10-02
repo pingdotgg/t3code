@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   SpeechTextField,
   TextFieldSpeechControls,
@@ -23,6 +23,7 @@ interface DiffCommentSecondaryAction {
 
 interface DiffCommentAnnotationProps {
   environmentId?: EnvironmentId;
+  projectId?: ProjectId | undefined;
   ownerKey?: string;
   kind: "draft" | "comment";
   rangeLabel: string;
@@ -40,6 +41,7 @@ interface DiffCommentAnnotationProps {
 
 export function DiffCommentAnnotation({
   environmentId,
+  projectId,
   ownerKey,
   kind,
   rangeLabel,
@@ -170,6 +172,7 @@ export function DiffCommentAnnotation({
   return environmentId ? (
     <SpeechTextField
       environmentId={environmentId}
+      projectId={projectId}
       ownerKey={ownerKey ?? rangeLabel}
       text={displayedText}
       textareaRef={textareaRef}
