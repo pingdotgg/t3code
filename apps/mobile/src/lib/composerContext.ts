@@ -127,11 +127,18 @@ export function pullRequestComposerContext(
 }
 
 /** Native editors collapse the canonical source range to a single atomic attachment. */
-export function composerContextEditorTokens(text: string, tokens: readonly ComposerInlineToken[]) {
+export function composerContextEditorTokens(
+  text: string,
+  tokens: readonly ComposerInlineToken[],
+  knownSkills: { has(name: string): boolean },
+) {
   const references = collectComposerContextReferences(text);
   return [
     ...tokens.filter(
-      (token) => !references.some((ref) => token.start < ref.end && token.end > ref.start),
+      (token) =>
+        // `$HOME` and other `$name` text that is not one of the provider's skills stays prose.
+        (token.type !== "skill" || knownSkills.has(token.value)) &&
+        !references.some((ref) => token.start < ref.end && token.end > ref.start),
     ),
     ...references.map((ref) => ({
       type: "context" as const,
