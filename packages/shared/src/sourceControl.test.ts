@@ -110,6 +110,23 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     });
   });
 
+  it("does not reuse SSH ports for HTTPS provider URLs", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("ssh://git@gitlab.example.test:24/group/repo.git"),
+    ).toEqual({
+      kind: "gitlab",
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://gitlab.example.test",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("ssh://git@code.example.test:24/team/project.git"),
+    ).toEqual({
+      kind: "unknown",
+      name: "code.example.test",
+      baseUrl: "https://code.example.test",
+    });
+  });
+
   it("matches self-hosted providers by complete DNS labels", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("https://github.example.com/owner/repo.git")?.kind,
@@ -207,4 +224,18 @@ it("keeps a GitLab identity's whole path, because a nested group is part of the 
     name: "service",
   });
   expect(selector).toBe("group/subgroup/service");
+});
+
+it("puts owner and name back together for an identity recorded before displayName", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "github",
+    owner: "t3tools",
+    name: "t3code",
+  });
+  expect(selector).toBe("t3tools/t3code");
+});
+
+it("names nothing for a project with no remote to name it by", () => {
+  expect(sourceControlRepositorySelector(null)).toBeNull();
+  expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
 });

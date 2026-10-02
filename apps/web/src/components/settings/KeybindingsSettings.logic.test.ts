@@ -17,6 +17,53 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("lists composer, provider, and pull request commands with editable defaults", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    for (const command of [
+      "composer.host",
+      "composer.effort",
+      "composer.mode",
+      "composer.workspace",
+      "composer.branch",
+      "composer.previousWorktree",
+      "modelPicker.previousProvider",
+      "modelPicker.nextProvider",
+      "thread.copyReference",
+      "pullRequest.copyNumber",
+    ]) {
+      expect(rows.find((row) => row.command === command)).toMatchObject({
+        source: "Default",
+        conflicts: [],
+      });
+    }
+  });
+  it.each(["pu", "pull request", "copy link", "thread id"])(
+    "finds the copy link shortcut with %s",
+    (query) => {
+      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      expect(rows).toContainEqual(
+        expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
+      );
+    },
+  );
+  it("orders Usage bindings and command choices like the page", () => {
+    const expected = [
+      "usage.cost",
+      "usage.tokens",
+      "usage.limits",
+      "usage.period.day",
+      "usage.period.week",
+      "usage.period.month",
+      "usage.period.quarter",
+      "usage.open",
+    ];
+    const bindings = DEFAULT_RESOLVED_KEYBINDINGS.toReversed();
+    expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+    expect(
+      buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
+    ).toEqual(expected);
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
@@ -64,6 +111,31 @@ describe("KeybindingsSettings.logic", () => {
         "Win32",
       ),
     ).toBe("mod+shift+k");
+  });
+
+  it.each([
+    ["k", "KeyK", "k"],
+    ["Tab", "Tab", "tab"],
+    ["F5", "F5", "f5"],
+  ])("captures %s without a modifier", (key, code, expected) => {
+    const noModifiers = { metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
+    expect(keybindingFromKeyboardEvent({ key, code, ...noModifiers }, "MacIntel")).toBe(expected);
+  });
+
+  it("waits for a key when only a modifier is pressed", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        {
+          key: "Meta",
+          code: "MetaLeft",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        "MacIntel",
+      ),
+    ).toBeNull();
   });
 
   it.each([
@@ -181,7 +253,15 @@ describe("KeybindingsSettings.logic", () => {
     const options = buildWhenVariableOptions();
 
     expect(options).toEqual(
-      expect.arrayContaining(["terminalFocus", "terminalOpen", "modelPickerOpen", "true", "false"]),
+      expect.arrayContaining([
+        "terminalFocus",
+        "terminalOpen",
+        "isWeb",
+        "isDesktop",
+        "modelPickerOpen",
+        "true",
+        "false",
+      ]),
     );
     expect(options).not.toContain("customModeActive");
   });
@@ -206,6 +286,7 @@ describe("KeybindingsSettings.logic", () => {
         "chat.new",
         "rightPanel.toggleMaximized",
         "thread.stop",
+        "usage.open",
         "script.setup-db.run",
       ]),
     );

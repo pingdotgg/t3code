@@ -4,6 +4,7 @@ import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3t
 import {
   createOpencodeClient,
   type Agent,
+  type Command,
   type FilePartInput,
   type Model,
   type OpencodeClient,
@@ -77,7 +78,6 @@ export function resolveOpenCodeServerPassword(
     : input.environment.OPENCODE_SERVER_PASSWORD;
 }
 
-const OPENCODE_SERVER_READY_PREFIX = "opencode server listening";
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
@@ -187,7 +187,23 @@ export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
   readonly skills: ReadonlyArray<OpenCodeSkill>;
+  readonly commands?: ReadonlyArray<OpenCodeSlashCommand>;
 }
+
+export type OpenCodeSlashCommand = Pick<Command, "name" | "description" | "source" | "hints">;
+
+/** Command templates stay in OpenCode, which expands arguments and runs MCP prompts. */
+export const loadOpenCodeCommands = (client: OpencodeClient) =>
+  runOpenCodeSdk("command.list", (signal) => client.command.list(undefined, { signal })).pipe(
+    Effect.map((result): ReadonlyArray<OpenCodeSlashCommand> =>
+      (result.data ?? []).map(({ name, description, source, hints }) => ({
+        name,
+        ...(description === undefined ? {} : { description }),
+        ...(source === undefined ? {} : { source }),
+        hints,
+      })),
+    ),
+  );
 
 export interface ParsedOpenCodeModelSlug {
   readonly providerID: string;
@@ -272,11 +288,8 @@ export interface OpenCodeRuntimeShape {
 
 function parseServerUrlFromOutput(output: string): string | null {
   for (const line of output.split("\n")) {
-    if (!line.startsWith(OPENCODE_SERVER_READY_PREFIX)) {
-      continue;
-    }
-    const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
-    return match?.[1] ?? null;
+    const match = line.match(/server listening on\s+(https?:\/\/[^\s]+)/i);
+    if (match?.[1]) return match[1];
   }
   return null;
 }
@@ -923,9 +936,24 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     loadOpenCodeSkills(client).pipe(Effect.orElseSucceed((): ReadonlyArray<OpenCodeSkill> => []));
 
   const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client), loadSkills(client)], {
-      concurrency: "unbounded",
-    }).pipe(Effect.map(([providerList, agents, skills]) => ({ providerList, agents, skills })));
+    Effect.all(
+      [
+        loadProviders(client),
+        loadAgents(client),
+        loadSkills(client),
+        loadOpenCodeCommands(client).pipe(Effect.orElseSucceed(() => [])),
+      ],
+      {
+        concurrency: "unbounded",
+      },
+    ).pipe(
+      Effect.map(([providerList, agents, skills, commands]) => ({
+        providerList,
+        agents,
+        skills,
+        commands,
+      })),
+    );
 
   const loadInventoryFromCli: OpenCodeRuntimeShape["loadInventoryFromCli"] = (input) =>
     Effect.gen(function* () {

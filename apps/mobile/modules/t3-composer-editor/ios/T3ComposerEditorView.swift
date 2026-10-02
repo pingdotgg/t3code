@@ -45,6 +45,11 @@ private struct ComposerChipStyle {
   let textColor: UIColor
 }
 
+private enum ComposerEnterBehavior: String {
+  case send
+  case newline
+}
+
 private final class ComposerTextAttachment: NSTextAttachment {
   let source: String
   let label: String
@@ -93,10 +98,12 @@ private final class ComposerTextView: UITextView {
   var isReadOnly = false
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.max
+  var enterBehavior: ComposerEnterBehavior = .send
   private var bypassTextPasteInterception = false
 
   override var keyCommands: [UIKeyCommand]? {
     var commands = super.keyCommands ?? []
+    guard !isReadOnly, markedTextRange == nil else { return commands }
     let submit = UIKeyCommand(
       input: "\r",
       modifierFlags: .command,
@@ -105,6 +112,25 @@ private final class ComposerTextView: UITextView {
     submit.discoverabilityTitle = "Send Message"
     submit.wantsPriorityOverSystemBehavior = true
     commands.append(submit)
+    if enterBehavior == .send {
+      let submitOnReturn = UIKeyCommand(
+        input: "\r",
+        modifierFlags: [],
+        action: #selector(submitMessage(_:))
+      )
+      submitOnReturn.discoverabilityTitle = "Send Message"
+      submitOnReturn.wantsPriorityOverSystemBehavior = true
+      commands.append(submitOnReturn)
+
+      let newline = UIKeyCommand(
+        input: "\r",
+        modifierFlags: .shift,
+        action: #selector(insertNewline(_:))
+      )
+      newline.discoverabilityTitle = "New Line"
+      newline.wantsPriorityOverSystemBehavior = true
+      commands.append(newline)
+    }
     if textPasteThresholdBytes > 0 {
       let pasteAsText = UIKeyCommand(
         input: "v",
@@ -119,7 +145,13 @@ private final class ComposerTextView: UITextView {
   }
 
   @objc private func submitMessage(_ sender: UIKeyCommand) {
+    guard !isReadOnly, markedTextRange == nil else { return }
     onSubmit?()
+  }
+
+  @objc private func insertNewline(_ sender: UIKeyCommand) {
+    guard !isReadOnly, markedTextRange == nil else { return }
+    insertText("\n")
   }
 
   @objc private func pasteInline(_ sender: UIKeyCommand) {
@@ -132,6 +164,9 @@ private final class ComposerTextView: UITextView {
   }
 
   override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+    if action == #selector(submitMessage(_:)) || action == #selector(insertNewline(_:)) {
+      return isEditable && !isReadOnly && markedTextRange == nil
+    }
     if isReadOnly && Self.readOnlyActions.contains(NSStringFromSelector(action)) {
       return false
     }
@@ -401,6 +436,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var iconImages: [String: UIImage] = [:]
   private var pendingIconUris = Set<String>()
   private var tokensNeedRebuild = false
+  private var chipsNeedMeasuredWidth = false
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -536,6 +572,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   public override func layoutSubviews() {
     super.layoutSubviews()
     textView.frame = bounds
+    if chipsNeedMeasuredWidth, bounds.width > 0 {
+      chipsNeedMeasuredWidth = false
+      applyControlledDocument(force: true)
+    }
     let placeholderX = textView.textContainerInset.left + textView.textContainer.lineFragmentPadding
     let placeholderY = textView.textContainerInset.top
     let placeholderWidth = max(
@@ -655,6 +695,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func setSpellCheck(_ spellCheck: Bool) {
     textView.spellCheckingType = spellCheck ? .yes : .no
+  }
+
+  func setEnterBehavior(_ behavior: String) {
+    textView.enterBehavior = ComposerEnterBehavior(rawValue: behavior) ?? .send
   }
 
   func setTextPasteThresholdBytes(_ threshold: Int) {
@@ -931,7 +975,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     // `maximumWidth` does, so the chip always fits the line it sits on.
     let availableWidth = textView.textContainer.size.width > 0
       ? textView.textContainer.size.width - textView.textContainer.lineFragmentPadding * 2
-      : UIScreen.main.bounds.width
+      : (textView.window?.bounds.width ?? bounds.width)
+    if availableWidth <= 0 {
+      chipsNeedMeasuredWidth = true
+    }
     let maximumLabelWidth = max(chipFontSize * 3, availableWidth - padding * 2 - iconWidth - iconGap)
     paragraph.lineBreakMode = .byTruncatingMiddle
     attributedLabel.addAttribute(

@@ -289,6 +289,9 @@ const Proto: Omit<ExecutionPlan<any>, "steps"> = {
     return effect.contextWith((context: Context.Context<any>) =>
       effect.succeed(makeProto(self.steps.map((step) => ({
         ...step,
+        while: step.while
+          ? (input: any) => effect.provideContext(step.while!(input), context)
+          : undefined,
         provide: Layer.isLayer(step.provide)
           ? Layer.provide(step.provide, Layer.succeedContext(context))
           : step.provide

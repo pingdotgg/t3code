@@ -1,0 +1,46 @@
+---
+/**
+ * Schema.org JSON-LD for the site: an `Organization` (with `sameAs` pointing
+ * at our social profiles so search engines link them to the brand) and the
+ * `WebSite` it publishes. Emitted on every page — marketing and docs — so the
+ * knowledge-panel signals don't depend on which URL gets crawled first.
+ *
+ * URLs are always built against `Astro.site` (the canonical origin), never
+ * the request host, so mirrors and previews describe production.
+ */
+const site = Astro.site ?? new URL("https://alchemy.run");
+const organizationId = new URL("/#organization", site).href;
+
+const SOCIAL_PROFILES = {
+  github: "https://github.com/alchemy-run/alchemy",
+  x: "https://x.com/alchemy_run",
+  discord: "https://discord.gg/jwKw8dBJdN",
+  npm: "https://www.npmjs.com/package/alchemy",
+} as const;
+
+const organization = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "@id": organizationId,
+  name: "Alchemy",
+  url: site.href,
+  logo: new URL("/alchemy-logo-512-white-bg.png", site).href,
+  sameAs: Object.values(SOCIAL_PROFILES),
+};
+
+const website = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "@id": new URL("/#website", site).href,
+  name: "Alchemy",
+  url: site.href,
+  publisher: { "@id": organizationId },
+};
+
+// `</script` inside a JSON string would end the block early; escape `<`.
+const json = (value: unknown) =>
+  JSON.stringify(value).replaceAll("<", "\\u003c");
+---
+
+<script is:inline type="application/ld+json" set:html={json(organization)} />
+<script is:inline type="application/ld+json" set:html={json(website)} />

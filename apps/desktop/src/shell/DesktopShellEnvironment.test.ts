@@ -136,12 +136,18 @@ describe("DesktopShellEnvironment", () => {
       yield* runShellEnvironment({
         env,
         platform: "darwin",
-        handler: () =>
-          envOutput({
+        handler: (command) => {
+          assert.equal(command._tag, "StandardCommand");
+          if (command._tag !== "StandardCommand") return "";
+          const script = command.args.join(" ");
+          assert.include(script, "__T3CODE_ENV_ANDROID_HOME_START__");
+          assert.include(script, "__T3CODE_ENV_ANDROID_SDK_ROOT_START__");
+          return envOutput({
             PATH: "/usr/bin",
             ANDROID_HOME: "/Volumes/Work/android-sdk",
             ANDROID_SDK_ROOT: "/Volumes/Work/android-sdk",
-          }),
+          });
+        },
       });
 
       assert.equal(env.ANDROID_HOME, "/Volumes/Work/android-sdk");
@@ -416,16 +422,6 @@ describe("DesktopShellEnvironment", () => {
       assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
     }),
   );
-
-  it("resolves dbus runtime dir candidates with existence checks", () => {
-    const busPath = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
-      env: { XDG_RUNTIME_DIR: "/tmp/stale-runtime" },
-      uid: 1000,
-      exists: (path) => path === "/run/user/1000/bus",
-    });
-
-    assert.equal(busPath, "unix:path=/run/user/1000/bus");
-  });
 
   it.effect("logs command failures with safe probe context and the exact cause", () => {
     const env: NodeJS.ProcessEnv = {

@@ -14,15 +14,18 @@ import type { ResourceClassLike, ResourceLike } from "../Resource.ts";
  * implementation, making provider mode a first-class, per-run *and*
  * per-resource concern:
  *
- * - The `Provider(type)` service placed in context is the variant for the
- *   run's default mode (`AlchemyContext.dev ? "local" : "live"`), so
- *   existing lookups keep working unchanged.
- * - Both variants are additionally exposed via
- *   {@link ProviderService.modes} as lazy, memoized builders. The
- *   non-default variant (and its mode-specific dependency layers, composed
- *   inside the thunk) is only constructed when something actually demands
- *   it — e.g. deleting a `providerMode: "local"` state row during a live
- *   deploy.
+ * - The `Provider(type)` service placed in context delegates to the
+ *   variant for the run's default mode (`AlchemyContext.dev ? "local" :
+ *   "live"`). `findProvider` resolves the concrete variant, including its
+ *   optional lifecycle methods and metadata.
+ * - Both variants are exposed via {@link ProviderService.modes} as lazy,
+ *   memoized builders. NEITHER is constructed at registration: a variant
+ *   (and the mode-specific dependency layers composed inside its thunk) is
+ *   built the first time something demands it — planning a resource of
+ *   this type, deleting a state row stamped with its mode, a nuke scan. A
+ *   dual provider whose resources never appear in a run costs nothing, and
+ *   in dev the sidecar process a local variant spawns only starts once a
+ *   resource of its type is actually planned.
  *
  * Laziness mechanics: the layer is a {@link Layer.fromBuildMemo}, so the
  * build itself is memoized by layer identity (one provider instance — and
@@ -129,14 +132,27 @@ export const dual = <
         local: Effect.orDie(cached.local),
       };
 
-      // The default-mode variant builds eagerly — matching today's cost
-      // profile (`select` built exactly this variant) and guaranteeing the
-      // registered service has real method presence (`provider.read`,
-      // `provider.precreate`, ...) for Plan's capability checks.
-      const defaultService = yield* cached[defaultMode];
+      // Every engine path resolves a concrete variant through
+      // `providerForMode` and reads optional-method presence (`read`,
+      // `precreate`, `tail`, `logs`), `version`, `stables` and `nuke`
+      // there. The registered service therefore only needs the required
+      // lifecycle methods for structural provider checks and direct
+      // registration access — each forwarding to the default
+      // variant, built on first call.
+      const variant = modes[defaultMode];
 
       return Context.make(Provider(cls.Type) as any, {
-        ...defaultService,
+        aliases: "Aliases" in cls ? cls.Aliases : undefined,
+        diff: (input) =>
+          Effect.flatMap(variant, (service) =>
+            service.diff === undefined ? Effect.void : service.diff(input),
+          ),
+        reconcile: (input) =>
+          Effect.flatMap(variant, (service) => service.reconcile(input)),
+        delete: (input) =>
+          Effect.flatMap(variant, (service) => service.delete(input)),
+        list: (...args) =>
+          Effect.flatMap(variant, (service) => service.list(...args)),
         mode: defaultMode,
         modes,
         localDataPlane: input.dataPlane,
