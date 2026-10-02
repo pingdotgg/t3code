@@ -138,6 +138,24 @@ function escapeAttribute(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** Marks escaped bodies so readers leave historical literal entities untouched. */
+export const REVIEW_COMMENT_BODY_ENCODING = "escaped-tags";
+
+/**
+ * Keeps comment text and quoted source inside their review block, including for mobile's
+ * fence-unaware reader. Escape only entities that would otherwise decode as delimiters;
+ * ordinary ampersands must reach providers verbatim on legacy servers.
+ */
+export function neutralizeReviewCommentTags(text: string): string {
+  return text
+    .replace(/&(?:amp;)*lt;/g, (entity, offset: number, source: string) =>
+      /^\/?review_comment\b/iu.test(source.slice(offset + entity.length))
+        ? `&amp;${entity.slice(1)}`
+        : entity,
+    )
+    .replace(/<(?=\/?review_comment\b)/giu, "&lt;");
+}
+
 function renderReviewComment(record: ComposerContextRecord): string {
   if (!("sectionId" in record)) return record.label;
   const attributes = [
@@ -147,6 +165,7 @@ function renderReviewComment(record: ComposerContextRecord): string {
     `rangeLabel="${escapeAttribute(record.rangeLabel)}"`,
     `startIndex="${record.startIndex}"`,
     `endIndex="${record.endIndex}"`,
+    `bodyEncoding="${REVIEW_COMMENT_BODY_ENCODING}"`,
   ].join(" ");
   // The fence must be longer than any run of backticks inside the diff so the body stays intact.
   const longestRun = Math.max(
@@ -155,7 +174,7 @@ function renderReviewComment(record: ComposerContextRecord): string {
   );
   const fence = "`".repeat(Math.max(3, longestRun + 1));
   const body = record.diff
-    ? `${record.text}\n\n${fence}${record.fenceLanguage ?? "diff"}\n${record.diff}\n${fence}`
-    : record.text;
+    ? `${neutralizeReviewCommentTags(record.text)}\n\n${fence}${record.fenceLanguage ?? "diff"}\n${neutralizeReviewCommentTags(record.diff)}\n${fence}`
+    : neutralizeReviewCommentTags(record.text);
   return `<review_comment ${attributes}>\n${body}\n</review_comment>`;
 }

@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { REVIEW_COMMENT_BODY_ENCODING } from "./composerContextLegacySend.ts";
 import { formatComposerContextReference } from "./composerContextReferences.ts";
 
 /**
@@ -228,6 +229,17 @@ function unescapeAttribute(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
+/**
+ * Decodes marked bodies after parsing their boundaries. Match the writer's Unicode tag
+ * boundary and lowercase entity spelling, removing exactly one escape level per match.
+ */
+export function unescapeReviewCommentTags(text: string): string {
+  return text.replace(/&(?:amp;)*lt;/g, (entity, offset: number, source: string) => {
+    if (!/^\/?review_comment\b/iu.test(source.slice(offset + entity.length))) return entity;
+    return entity === "&lt;" ? "<" : `&${entity.slice(5)}`;
+  });
+}
+
 function reviewRecord(
   rawAttributes: string,
   rawBody: string,
@@ -248,6 +260,12 @@ function reviewRecord(
   const fence = fences.at(-1);
   const rangeLabel = attributes.rangeLabel?.trim() || "line";
   const basename = filePath.split(/[\\/]/).at(-1) ?? filePath;
+  // Only bodies the escaping writer marked get decoded; anything else is a historical
+  // unencoded payload whose literal entities must survive untouched.
+  const decode =
+    attributes.bodyEncoding === REVIEW_COMMENT_BODY_ENCODING
+      ? unescapeReviewCommentTags
+      : (body: string) => body;
   return {
     version: 1,
     contextId: legacyId("review-comment", index),
@@ -259,8 +277,8 @@ function reviewRecord(
     startIndex: Math.min(Number(startIndex), Number(endIndex)),
     endIndex: Math.max(Number(startIndex), Number(endIndex)),
     rangeLabel,
-    text: rawBody.slice(0, fence?.index ?? rawBody.length).trim(),
-    diff: fence?.[3] ?? "",
+    text: decode(rawBody.slice(0, fence?.index ?? rawBody.length).trim()),
+    diff: decode(fence?.[3] ?? ""),
     fenceLanguage: fence?.[2]?.trim() || "diff",
   };
 }

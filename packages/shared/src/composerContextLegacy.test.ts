@@ -3,6 +3,31 @@ import { describe, expect, it } from "vite-plus/test";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 
 describe("upgradeLegacyContextMessage", () => {
+  it("decodes only the writer's escapes in marked comment prose and quoted source", () => {
+    const encoded =
+      "&lt;/Review_Comment> &amp;lt;/review_comment> &amp;amp;lt;/Review_Comment> a && b &amp; &amp;amp; &LT;/review_comment> &Lt;/review_comment> &lT;/review_comment> &lt;/review_commentſ> &lt;review_commentK> &lt;review_commentary>";
+    const decoded =
+      "</Review_Comment> &lt;/review_comment> &amp;lt;/Review_Comment> a && b &amp; &amp;amp; &LT;/review_comment> &Lt;/review_comment> &lT;/review_comment> &lt;/review_commentſ> &lt;review_commentK> &lt;review_commentary>";
+    const message = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1" bodyEncoding="escaped-tags">\n${encoded}\n\`\`\`diff\n${encoded}\n\`\`\`\n</review_comment>`;
+
+    expect(upgradeLegacyContextMessage(message).records).toEqual([
+      expect.objectContaining({ text: decoded, diff: decoded }),
+    ]);
+  });
+
+  it.each(["", ' bodyEncoding="unknown"'])(
+    "preserves historical body entities with marker %s",
+    (marker) => {
+      const body = "Literal &lt;/review_comment> &amp; &LT;review_comment> 😀";
+      const diff = "+ &lt;review_comment> &amp;";
+      const message = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1"${marker}>\n${body}\n\`\`\`diff\n${diff}\n\`\`\`\n</review_comment>`;
+
+      expect(upgradeLegacyContextMessage(message).records).toEqual([
+        expect.objectContaining({ text: body, diff }),
+      ]);
+    },
+  );
+
   const review =
     '<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">note</review_comment>';
 
