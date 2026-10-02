@@ -214,6 +214,7 @@ export interface WsRpcClient {
     readonly sessionCommand: RpcUnaryMethod<typeof WS_METHODS.providerSessionCommand>;
     readonly listSkills: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListSkills>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
+    readonly replaceKeybindingRules: RpcUnaryMethod<typeof WS_METHODS.serverReplaceKeybindingRules>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
     readonly updateSettings: (
       patch: ServerSettingsPatch,
@@ -227,6 +228,7 @@ export interface WsRpcClient {
   };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
+    readonly getThreadSnapshot: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getThreadSnapshot>;
     readonly getShellSnapshot: RpcUnaryNoArgMethod<
       typeof ORCHESTRATION_WS_METHODS.getShellSnapshot
     >;
@@ -525,6 +527,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       listSkills: () => transport.request((client) => client[WS_METHODS.serverListSkills]({})),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),
+      replaceKeybindingRules: (input) =>
+        transport.request((client) => client[WS_METHODS.serverReplaceKeybindingRules](input)),
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),
       updateSettings: (patch) =>
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
@@ -554,6 +558,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         ),
     },
     orchestration: {
+      getThreadSnapshot: (input) =>
+        transport.request((client) => client[ORCHESTRATION_WS_METHODS.getThreadSnapshot](input)),
       dispatchCommand: (input) =>
         transport.request((client) => client[ORCHESTRATION_WS_METHODS.dispatchCommand](input)),
       getShellSnapshot: () =>

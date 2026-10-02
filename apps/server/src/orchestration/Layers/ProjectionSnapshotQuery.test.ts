@@ -2083,6 +2083,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           updatedAt: "2026-04-04T00:00:02.000Z",
         },
       ]);
+      const archivedResult = yield* searchTranscript("needle", undefined, true);
+      assert.deepStrictEqual(
+        archivedResult.matches.map((match) => match.threadId),
+        [ThreadId.make("thread-archived")],
+      );
+      const scopedArchivedResult = yield* searchTranscript(
+        "needle",
+        [ThreadId.make("thread-active")],
+        true,
+      );
+      assert.deepStrictEqual(scopedArchivedResult.matches, []);
+      yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-04T00:00:05.000Z' WHERE thread_id = 'thread-archived'`;
+      const deletedResult = yield* searchTranscript("needle", undefined, true);
+      assert.deepStrictEqual(deletedResult.matches, []);
     }),
   );
 

@@ -652,7 +652,7 @@ describe("CheckpointStoreLive diff cache", () => {
     }),
   );
 
-  it.effect("retains the byte-budget boundary only until the 30-second TTL", () =>
+  it.effect("retains the byte-budget boundary only until the 5-minute TTL", () =>
     Effect.gen(function* () {
       const diff = "x".repeat(128 * 1024);
       const test = makeDiffCacheTestLayer({ diffResult: diff });
@@ -665,10 +665,10 @@ describe("CheckpointStoreLive diff cache", () => {
       yield* Effect.gen(function* () {
         const checkpointStore = yield* CheckpointStore;
         expect(yield* checkpointStore.diffCheckpoints(input)).toBe(diff);
-        yield* TestClock.adjust("29 seconds");
+        yield* TestClock.adjust("4 minutes");
         expect(yield* checkpointStore.diffCheckpoints(input)).toBe(diff);
         expect(test.getDiffCalls()).toBe(1);
-        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("1 minute");
         expect(yield* checkpointStore.diffCheckpoints(input)).toBe(diff);
         expect(test.getDiffCalls()).toBe(2);
       }).pipe(Effect.provide(test.layer));
@@ -1009,6 +1009,59 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
       }),
     );
 
+    it.effect("keeps foreign commits out of a diff whose base switched branches", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const sharedPath = path.join(tmp, "shared.md");
+        yield* writeTextFile(sharedPath, buildNumberedLines(30));
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add shared"]);
+        const baseBranch = yield* git(tmp, ["rev-parse", "--abbrev-ref", "HEAD"]);
+
+        const checkpointStore = yield* CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-checkout-base");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 2);
+
+        yield* git(tmp, ["checkout", "-b", "thread-branch"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+
+        // Foreign work lands on another branch (e.g. the base moves forward
+        // while the turn is running).
+        yield* git(tmp, ["checkout", "-b", "other-branch", baseBranch]);
+        const foreignContents = replaceLine(buildNumberedLines(30), 1, "foreign change");
+        yield* writeTextFile(sharedPath, foreignContents);
+        yield* git(tmp, ["commit", "-am", "foreign commit"]);
+
+        // The workspace switches to a branch that already contains the foreign
+        // work — no rebase/merge/pull in the turn window, only a checkout —
+        // then authors the turn change on top.
+        yield* git(tmp, ["checkout", "-b", "moved-branch", "other-branch"]);
+        yield* writeTextFile(sharedPath, replaceLine(foreignContents, 25, "turn change"));
+        yield* git(tmp, ["commit", "-am", "turn commit"]);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+
+        const diff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(diff).toContain("+turn change");
+        expect(diff).not.toContain("+foreign change");
+
+        const files = yield* checkpointStore.diffCheckpointFiles({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+        const shared = files.find((file) => file.path === "shared.md");
+        expect(shared?.additions).toBe(1);
+        expect(shared?.deletions).toBe(1);
+      }),
+    );
+
     it.effect("keeps turn-authored commits that a mid-turn push left a remote ref on", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
@@ -1247,6 +1300,46 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
             deletions: 0,
           },
         ]);
+      }),
+    );
+
+    it.effect("reports copies from a modified source as copied rather than added", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-copy-summary");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        const pristine = buildNumberedLines(30);
+        yield* writeTextFile(path.join(tmp, "README.md"), pristine);
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "expand readme"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* writeTextFile(path.join(tmp, "README.md"), replaceLine(pristine, 5, "changed"));
+        yield* writeTextFile(path.join(tmp, "copied.md"), pristine);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: toCheckpointRef,
+        });
+
+        const files = yield* checkpointStore.diffCheckpointFiles({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+
+        expect(files.find((file) => file.path === "copied.md")).toEqual({
+          path: "copied.md",
+          previousPath: "README.md",
+          kind: "copied",
+          additions: 0,
+          deletions: 0,
+        });
       }),
     );
 

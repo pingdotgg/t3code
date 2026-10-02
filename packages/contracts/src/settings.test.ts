@@ -8,6 +8,7 @@ import {
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
+  DEFAULT_COMPOSER_META_FONT_SIZE,
   DEFAULT_MESSAGE_PREVIEW_LINE_LIMITS,
   DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_CODE_FONT_SIZE,
@@ -253,6 +254,22 @@ describe("ClientSettings.sidebarFontSize", () => {
 
     it("rejects invalid sidebar icon size patches", () => {
       expect(() => decodeClientSettingsPatch({ sidebarIconSize: 25 })).toThrow();
+    });
+  });
+
+  describe("ClientSettings.composerMetaFontSize", () => {
+    it("defaults the under-composer metadata line to 11px", () => {
+      expect(DEFAULT_CLIENT_SETTINGS.composerMetaFontSize).toBe(DEFAULT_COMPOSER_META_FONT_SIZE);
+      expect(decodeClientSettings({}).composerMetaFontSize).toBe(DEFAULT_COMPOSER_META_FONT_SIZE);
+      expect(DEFAULT_COMPOSER_META_FONT_SIZE).toBe(11);
+    });
+
+    it("accepts valid composer metadata font size patches", () => {
+      expect(decodeClientSettingsPatch({ composerMetaFontSize: 9 }).composerMetaFontSize).toBe(9);
+    });
+
+    it("rejects invalid composer metadata font size patches", () => {
+      expect(() => decodeClientSettingsPatch({ composerMetaFontSize: 25 })).toThrow();
     });
   });
 

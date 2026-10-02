@@ -1083,6 +1083,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.delegatedThreadModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection ?? null,
   );
+  const isDefaultModelDirty = !Equal.equals(
+    settings.defaultModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.defaultModelSelection ?? null,
+  );
   // A provider surface is "dirty" if either the legacy per-kind
   // `settings.providers[kind]` struct differs from defaults (for users
   // on pre-migration data) or the new `settings.providerInstances` map
@@ -1138,6 +1142,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.inputFontSize !== DEFAULT_UNIFIED_SETTINGS.inputFontSize
         ? ["Input font size"]
+        : []),
+      ...(settings.composerMetaFontSize !== DEFAULT_UNIFIED_SETTINGS.composerMetaFontSize
+        ? ["Composer metadata font size"]
         : []),
       ...(settings.sidebarFontSize !== DEFAULT_UNIFIED_SETTINGS.sidebarFontSize
         ? ["Sidebar font size"]
@@ -1210,12 +1217,14 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(isDelegatedThreadModelDirty ? ["Delegated thread model"] : []),
+      ...(isDefaultModelDirty ? ["Default model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
       isDelegatedThreadModelDirty,
+      isDefaultModelDirty,
       settings.autoOpenPlanSidebar,
       settings.browserAutoShowFloatingPreview,
       settings.browserRecordingFrameRate,
@@ -1223,6 +1232,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.chatFontSize,
       settings.messagePreviewLineLimits,
       settings.codeFontSize,
+      settings.composerMetaFontSize,
       settings.statusLineFontSize,
       settings.inputFontSize,
       settings.confirmThreadArchive,

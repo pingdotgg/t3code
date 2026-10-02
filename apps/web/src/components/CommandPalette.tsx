@@ -9,12 +9,14 @@ import {
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowDownIcon,
+  ArchiveIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
   CornerLeftUpIcon,
@@ -37,11 +39,13 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { useArchivedThreadSnapshots } from "../archivedThreadsState";
 import { readEnvironmentApi } from "../environmentApi";
 import { readPrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
+  readEnvironmentConnection,
 } from "../environments/runtime";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
@@ -72,12 +76,14 @@ import { cn, isMacPlatform, isWindowsPlatform, newCommandId, newProjectId } from
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
+  mapThreadShell,
   useStore,
 } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
   ADDON_ICON_CLASS,
+  ARCHIVED_PALETTE_SCOPE,
   buildBrowseGroups,
   buildProjectActionItems,
   buildRootGroups,
@@ -128,6 +134,8 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const EMPTY_THREAD_SEARCH_ITEMS: ReadonlyArray<CommandPaletteActionItem> = [];
 const EMPTY_COMMAND_PALETTE_GROUPS: ReadonlyArray<CommandPaletteGroup> = [];
+const EMPTY_ENVIRONMENT_IDS: ReadonlyArray<EnvironmentId> = [];
+const EMPTY_TRANSCRIPT_SEARCH_ITEMS: TranscriptSearchItem[] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
 const TRANSCRIPT_SEARCH_DEBOUNCE_MS = 125;
 
@@ -237,6 +245,8 @@ function PaletteScopeChip(props: {
           cwd={props.project.cwd}
           className="size-3.5 shrink-0 text-muted-foreground/80"
         />
+      ) : props.scope.kind === "archived" ? (
+        <ArchiveIcon className="size-3.5 shrink-0 text-muted-foreground/80" />
       ) : (
         <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground/80" />
       )}
@@ -269,7 +279,10 @@ function OpenCommandPaletteDialog() {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [scopes, setScopes] = useState<PaletteScope[]>([]);
-  const [transcriptSearchItems, setTranscriptSearchItems] = useState<TranscriptSearchItem[]>([]);
+  const [transcriptSearchResult, setTranscriptSearchResult] = useState<{
+    archived: boolean;
+    items: TranscriptSearchItem[];
+  }>({ archived: false, items: EMPTY_TRANSCRIPT_SEARCH_ITEMS });
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const queryClient = useQueryClient();
@@ -278,7 +291,20 @@ function OpenCommandPaletteDialog() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const activeThreads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
+  const searchArchived = scopes.some((scope) => scope.kind === "archived");
+  const addScope = useCallback((scope: PaletteScope): void => {
+    setScopes((previous) =>
+      previous.some((active) => isSamePaletteScope(active, scope))
+        ? previous
+        : [...previous, scope],
+    );
+    setHighlightedItemValue(null);
+  }, []);
+  const transcriptSearchItems =
+    transcriptSearchResult.archived === searchArchived
+      ? transcriptSearchResult.items
+      : EMPTY_TRANSCRIPT_SEARCH_ITEMS;
   const allTranscriptSearchEnvironmentIds = useStore(
     useShallow((state) => [
       ...new Set([
@@ -293,6 +319,20 @@ function OpenCommandPaletteDialog() {
     const scoped = selectPaletteScopeEnvironmentIds(scopes);
     return scoped ?? allTranscriptSearchEnvironmentIds;
   }, [allTranscriptSearchEnvironmentIds, scopes]);
+  const archivedState = useArchivedThreadSnapshots(
+    searchArchived ? transcriptSearchEnvironmentIds : EMPTY_ENVIRONMENT_IDS,
+  );
+  const threads = useMemo(
+    () =>
+      searchArchived
+        ? archivedState.snapshots.flatMap(({ environmentId, snapshot }) =>
+            snapshot.threads
+              .filter((thread) => thread.archivedAt !== null)
+              .map((thread) => mapThreadShell(thread, environmentId).summary),
+          )
+        : activeThreads,
+    [activeThreads, archivedState.snapshots, searchArchived],
+  );
   const keybindings = useServerKeybindings();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
@@ -421,11 +461,11 @@ function OpenCommandPaletteDialog() {
       currentView !== null ||
       isBrowsing
     ) {
-      setTranscriptSearchItems([]);
+      setTranscriptSearchResult({ archived: searchArchived, items: EMPTY_TRANSCRIPT_SEARCH_ITEMS });
       return;
     }
 
-    setTranscriptSearchItems([]);
+    setTranscriptSearchResult({ archived: searchArchived, items: EMPTY_TRANSCRIPT_SEARCH_ITEMS });
     let current = true;
     const timer = window.setTimeout(() => {
       void Promise.allSettled(
@@ -438,6 +478,7 @@ function OpenCommandPaletteDialog() {
                 api.orchestration
                   .searchTranscript({
                     query: normalizedQuery,
+                    ...(searchArchived ? { archived: true } : {}),
                     ...(threadIds ? { threadIds: [...threadIds] } : {}),
                   })
                   .then((result) =>
@@ -450,9 +491,19 @@ function OpenCommandPaletteDialog() {
         }),
       ).then((results) => {
         if (!current) return;
-        setTranscriptSearchItems(
-          results.flatMap((result) => (result.status === "fulfilled" ? result.value : [])),
-        );
+        if (searchArchived && results.some((result) => result.status === "rejected")) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not search archived conversations",
+              description: "Some environments could not be searched. Try again after reconnecting.",
+            }),
+          );
+        }
+        setTranscriptSearchResult({
+          archived: searchArchived,
+          items: results.flatMap((result) => (result.status === "fulfilled" ? result.value : [])),
+        });
       });
     }, TRANSCRIPT_SEARCH_DEBOUNCE_MS);
 
@@ -465,6 +516,7 @@ function OpenCommandPaletteDialog() {
     isBrowsing,
     deferredQuery,
     scopedThreadIdsByEnvironment,
+    searchArchived,
     transcriptSearchEnvironmentIds,
   ]);
 
@@ -564,7 +616,7 @@ function OpenCommandPaletteDialog() {
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
       const latestThread = getLatestThreadForProject(
-        threads.filter((thread) => thread.environmentId === project.environmentId),
+        activeThreads.filter((thread) => thread.environmentId === project.environmentId),
         project.id,
         settings.sidebarThreadSortOrder,
       );
@@ -582,7 +634,7 @@ function OpenCommandPaletteDialog() {
         ...DEFAULT_NEW_THREAD_WORKSPACE,
       });
     },
-    [handleNewThread, navigate, settings.sidebarThreadSortOrder, threads],
+    [activeThreads, handleNewThread, navigate, settings.sidebarThreadSortOrder],
   );
 
   const renderProjectFavicon = useCallback(
@@ -603,12 +655,33 @@ function OpenCommandPaletteDialog() {
           projects,
           valuePrefix: "project",
           icon: renderProjectFavicon,
-          runProject: openProjectFromSearch,
-        }),
+          runProject: async (project) => {
+            if (searchArchived) {
+              addScope({
+                kind: "project",
+                environmentId: project.environmentId,
+                projectId: project.id,
+                label: project.name,
+              });
+              setQuery("");
+              inputRef.current?.focus();
+            } else {
+              await openProjectFromSearch(project);
+            }
+          },
+        }).map((item) => (searchArchived ? { ...item, keepOpen: true } : item)),
         scopes,
         threads,
       ),
-    [openProjectFromSearch, projects, renderProjectFavicon, scopes, threads],
+    [
+      addScope,
+      openProjectFromSearch,
+      projects,
+      renderProjectFavicon,
+      scopes,
+      searchArchived,
+      threads,
+    ],
   );
 
   const projectThreadItems = useMemo(
@@ -642,25 +715,51 @@ function OpenCommandPaletteDialog() {
   );
   const shouldBuildThreadSearchItems =
     currentView === null && !isActionsOnly && deferredQuery.trim().length > 0;
+  const openThreadFromSearch = useCallback(
+    async (ref: ScopedThreadRef & { messageId?: string }) => {
+      if (searchArchived) {
+        const connection = readEnvironmentConnection(ref.environmentId);
+        if (!connection) throw new Error("The thread's environment is disconnected.");
+        const snapshot = await connection.client.orchestration.getThreadSnapshot({
+          threadId: ref.threadId,
+        });
+        useStore.getState().syncServerThreadDetail(snapshot.thread, ref.environmentId);
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(ref),
+        search: (previous) => (ref.messageId ? { ...previous, message: ref.messageId } : previous),
+      });
+    },
+    [navigate, searchArchived],
+  );
   const buildThreadItems = useCallback(
     (limit?: number) =>
       buildThreadActionItems({
         threads,
+        archived: searchArchived,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: settings.sidebarThreadSortOrder,
-        icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        icon: searchArchived ? (
+          <ArchiveIcon className={ITEM_ICON_CLASS} />
+        ) : (
+          <MessageSquareIcon className={ITEM_ICON_CLASS} />
+        ),
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
-        runThread: async (thread) => {
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
-          });
-        },
+        runThread: async (thread) =>
+          openThreadFromSearch(scopeThreadRef(thread.environmentId, thread.id)),
         ...(limit === undefined ? {} : { limit }),
       }),
-    [activeThreadId, navigate, projectTitleById, settings.sidebarThreadSortOrder, threads],
+    [
+      activeThreadId,
+      openThreadFromSearch,
+      projectTitleById,
+      searchArchived,
+      settings.sidebarThreadSortOrder,
+      threads,
+    ],
   );
   const threadSearchItems = useMemo(
     () =>
@@ -680,15 +779,6 @@ function OpenCommandPaletteDialog() {
       threads,
     ).slice(0, RECENT_THREAD_LIMIT);
   }, [buildThreadItems, scopes, threadSearchItems, threads]);
-
-  const addScope = useCallback((scope: PaletteScope): void => {
-    setScopes((previous) =>
-      previous.some((active) => isSamePaletteScope(active, scope))
-        ? previous
-        : [...previous, scope],
-    );
-    setHighlightedItemValue(null);
-  }, []);
 
   const removeScope = useCallback((scope: PaletteScope): void => {
     setScopes((previous) => previous.filter((active) => !isSamePaletteScope(active, scope)));
@@ -845,6 +935,24 @@ function OpenCommandPaletteDialog() {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
+  if (!searchArchived) {
+    actionItems.push({
+      kind: "action",
+      value: "action:search-archived",
+      searchTerms: ["archived", "archive", "search archived threads"],
+      title: "Search archived threads",
+      description: "Only archived threads",
+      icon: <ArchiveIcon className={ITEM_ICON_CLASS} />,
+      scope: ARCHIVED_PALETTE_SCOPE,
+      keepOpen: true,
+      run: async () => {
+        addScope(ARCHIVED_PALETTE_SCOPE);
+        setQuery("");
+        inputRef.current?.focus();
+      },
+    });
+  }
+
   if (projects.length > 0) {
     const activeProjectTitle = currentProjectId
       ? (projectTitleById.get(currentProjectId) ?? null)
@@ -920,7 +1028,10 @@ function OpenCommandPaletteDialog() {
     },
   });
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  const rootGroups = buildRootGroups({
+    actionItems: searchArchived ? [] : actionItems,
+    recentThreadItems,
+  });
   const activeGroups = currentView ? currentView.groups : rootGroups;
 
   const filteredActiveGroups = useMemo(
@@ -959,13 +1070,7 @@ function OpenCommandPaletteDialog() {
       matches: filterTranscriptMatchesByScopes(transcriptSearchItems, scopes, threads),
       metadataGroups: filteredGroups,
       icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-      runThread: async (ref) => {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(ref),
-          search: (previous) => ({ ...previous, message: ref.messageId }),
-        });
-      },
+      runThread: openThreadFromSearch,
     });
     return items.length > 0
       ? { value: "conversation-matches", label: "Conversation matches", items }
@@ -974,8 +1079,9 @@ function OpenCommandPaletteDialog() {
     currentView,
     filteredGroups,
     isActionsOnly,
-    navigate,
+    openThreadFromSearch,
     scopes,
+    searchArchived,
     threads,
     transcriptSearchItems,
   ]);
@@ -1353,9 +1459,11 @@ function OpenCommandPaletteDialog() {
               {scopes.map((scope) => (
                 <PaletteScopeChip
                   key={
-                    scope.kind === "project"
-                      ? `project:${scope.environmentId}:${scope.projectId}`
-                      : `thread:${scope.environmentId}:${scope.threadId}`
+                    scope.kind === "archived"
+                      ? "archived"
+                      : scope.kind === "project"
+                        ? `project:${scope.environmentId}:${scope.projectId}`
+                        : `thread:${scope.environmentId}:${scope.threadId}`
                   }
                   scope={scope}
                   project={
@@ -1433,6 +1541,21 @@ function OpenCommandPaletteDialog() {
           </div>
         </div>
         <CommandPanel className="max-h-[min(28rem,70vh)] bg-chat-background">
+          {searchArchived && archivedState.error ? (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-2 px-3 py-2 text-sm text-destructive"
+            >
+              <span>Could not load archived threads: {archivedState.error}</span>
+              <Button variant="outline" size="xs" onClick={archivedState.refresh}>
+                Retry
+              </Button>
+            </div>
+          ) : searchArchived && archivedState.isLoading && threads.length === 0 ? (
+            <div role="status" className="px-3 py-2 text-sm text-muted-foreground">
+              Loading archived threads...
+            </div>
+          ) : null}
           <CommandPaletteResults
             groups={displayedGroups}
             highlightedItemValue={highlightedItemValue}

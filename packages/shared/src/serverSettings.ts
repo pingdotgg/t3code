@@ -94,6 +94,8 @@ function applyProviderInstanceMutations(
  * Applies a server settings patch while treating textGenerationModelSelection and
  * delegatedThreadModelSelection as replace-on-provider/model updates. This prevents
  * stale nested options from surviving a reset patch that intentionally omits options.
+ * defaultModelSelection is always a wholesale replace (including null to clear) so
+ * a saved selection without options cannot inherit options from a previous value.
  */
 export function applyServerSettingsPatch(
   current: ServerSettings,
@@ -101,15 +103,17 @@ export function applyServerSettingsPatch(
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
   const delegatedPatch = patch.delegatedThreadModelSelection;
-  const { providerInstanceMutations, ...mergeablePatch } = patch;
+  const { providerInstanceMutations, defaultModelSelection, ...mergeablePatch } = patch;
   const next = deepMerge(current, mergeablePatch);
+  const nextWithDefault =
+    defaultModelSelection !== undefined ? { ...next, defaultModelSelection } : next;
   const nextWithReplacements =
     patch.providerInstances !== undefined
       ? {
-          ...next,
+          ...nextWithDefault,
           providerInstances: patch.providerInstances,
         }
-      : next;
+      : nextWithDefault;
   const withTextGeneration = !selectionPatch
     ? nextWithReplacements
     : (() => {

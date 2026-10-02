@@ -63,21 +63,26 @@ function requestKeyOf(request: ProgressiveListRequest): string {
  * honest "Load more" continuation takes over instead of silently discarding
  * the rest. One slice per environment at a time keeps request fanout bounded
  * to the environment count.
+ *
+ * Two generation invariants keep rapid filter/search changes from mixing
+ * result sets: every `queryFn` closes over the same render's `request` value
+ * its `queryKey` was built from (never a mutable ref, so delayed executions,
+ * retries, and refetches cannot fetch one query into another key's cache
+ * entry), and every continuation binds its cursors to the request generation
+ * that issued them, discarding the page if the request moved on while it was
+ * in flight.
  */
 export function useProgressivePullRequestLists(
   environmentIds: readonly EnvironmentId[],
   request: ProgressiveListRequest,
 ): ProgressiveLists {
   const requestKey = requestKeyOf(request);
-  const requestRef = useRef(request);
-  requestRef.current = request;
 
   const baseQueries = useQueries({
     queries: environmentIds.map((environmentId) =>
       queryOptions({
         queryKey: pullRequestQueryKeys.list(environmentId, request),
-        queryFn: () =>
-          ensureEnvironmentApi(environmentId).pullRequests.list({ ...requestRef.current }),
+        queryFn: () => ensureEnvironmentApi(environmentId).pullRequests.list({ ...request }),
         staleTime: 30_000,
         placeholderData: keepPreviousData,
         refetchOnWindowFocus: true,
@@ -123,12 +128,18 @@ export function useProgressivePullRequestLists(
       const last = lastPageOf(environmentId);
       const cursors = last?.nextCursors;
       if (!cursors || Object.keys(cursors).length === 0) return;
+      // Bind the continuation to the request generation that issued these
+      // cursors. If the filter/search moves on while the slice is in flight,
+      // the page is discarded on landing instead of mixing two queries' rows.
+      const requestAtCall = request;
+      const requestKeyAtCall = requestKey;
       setFetchingMore((previous) => new Map(previous).set(key, true));
       try {
         const page = await ensureEnvironmentApi(environmentId).pullRequests.list({
-          ...requestRef.current,
+          ...requestAtCall,
           cursors,
         });
+        if (lastRequestKeyRef.current !== requestKeyAtCall) return;
         setExtraPages((previous) => {
           const next = new Map(previous);
           next.set(key, [...(next.get(key) ?? []), page]);
@@ -141,16 +152,18 @@ export function useProgressivePullRequestLists(
           return next;
         });
       } catch (error) {
+        if (lastRequestKeyRef.current !== requestKeyAtCall) return;
         setPageErrors((previous) => new Map(previous).set(key, error));
       } finally {
         setFetchingMore((previous) => {
+          if (!previous.has(key)) return previous;
           const next = new Map(previous);
           next.delete(key);
           return next;
         });
       }
     },
-    [extraPages, fetchingMore, lastPageOf],
+    [extraPages, fetchingMore, lastPageOf, request, requestKey],
   );
 
   const autoFetch = useCallback(() => {

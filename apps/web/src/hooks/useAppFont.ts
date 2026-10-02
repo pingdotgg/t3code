@@ -3,6 +3,7 @@ import {
   DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_COMPOSER_META_FONT_SIZE,
   DEFAULT_PULL_REQUESTS_BODY_FONT_SIZE,
   DEFAULT_INPUT_FONT_SIZE,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
@@ -88,6 +89,7 @@ export function applyCodeFont(font: CodeFont): void {
 export function applyFontSizes(sizes: {
   codeFontSize: FontSize;
   chatFontSize: FontSize;
+  composerMetaFontSize: FontSize;
   statusLineFontSize: FontSize;
   sidebarFontSize: FontSize;
   sidebarMetaFontSize: FontSize;
@@ -103,6 +105,7 @@ export function applyFontSizes(sizes: {
   const style = document.documentElement.style;
   style.setProperty("--app-code-font-size", `${sizes.codeFontSize}px`);
   style.setProperty("--app-chat-font-size", `${sizes.chatFontSize}px`);
+  style.setProperty("--app-composer-meta-font-size", `${sizes.composerMetaFontSize}px`);
   style.setProperty("--app-status-line-font-size", `${sizes.statusLineFontSize}px`);
   style.setProperty("--app-sidebar-font-size", `${sizes.sidebarFontSize}px`);
   style.setProperty("--app-sidebar-meta-font-size", `${sizes.sidebarMetaFontSize}px`);
@@ -225,6 +228,10 @@ if (typeof document !== "undefined") {
   applyFontSizes({
     codeFontSize: normalizeFontSize(storedSettings?.codeFontSize, DEFAULT_CODE_FONT_SIZE),
     chatFontSize: normalizeFontSize(storedSettings?.chatFontSize, DEFAULT_CHAT_FONT_SIZE),
+    composerMetaFontSize: normalizeFontSize(
+      storedSettings?.composerMetaFontSize,
+      DEFAULT_COMPOSER_META_FONT_SIZE,
+    ),
     statusLineFontSize: normalizeFontSize(
       storedSettings?.statusLineFontSize,
       DEFAULT_STATUS_LINE_FONT_SIZE,
@@ -249,6 +256,7 @@ export function useAppFont() {
   const codeFont = useSettings((settings) => settings.codeFont);
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
+  const composerMetaFontSize = useSettings((settings) => settings.composerMetaFontSize);
   const statusLineFontSize = useSettings((settings) => settings.statusLineFontSize);
   const sidebarFontSize = useSettings((settings) => settings.sidebarFontSize);
   const sidebarMetaFontSize = useSettings((settings) => settings.sidebarMetaFontSize);
@@ -272,6 +280,7 @@ export function useAppFont() {
     applyFontSizes({
       codeFontSize,
       chatFontSize,
+      composerMetaFontSize,
       statusLineFontSize,
       sidebarFontSize,
       sidebarMetaFontSize,
@@ -283,6 +292,7 @@ export function useAppFont() {
   }, [
     chatFontSize,
     codeFontSize,
+    composerMetaFontSize,
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,
@@ -328,6 +338,7 @@ export function useAppFont() {
     codeFont,
     codeFontSize,
     chatFontSize,
+    composerMetaFontSize,
     statusLineFontSize,
     sidebarFontSize,
     sidebarMetaFontSize,

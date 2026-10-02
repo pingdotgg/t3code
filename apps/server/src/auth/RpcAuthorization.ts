@@ -29,6 +29,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.providerSessionCommand]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverListSkills]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpsertKeybinding]: AuthOrchestrationOperateScope,
+  [WS_METHODS.serverReplaceKeybindingRules]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverRemoveKeybinding]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthOrchestrationOperateScope,

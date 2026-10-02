@@ -16,8 +16,10 @@ import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsWorkflowsRouteImport } from './routes/settings.workflows'
+import { Route as SettingsStorageRouteImport } from './routes/settings.storage'
 import { Route as SettingsPullRequestCollaborationRouteImport } from './routes/settings.pull-request-collaboration'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
@@ -62,6 +64,11 @@ const SettingsWorkflowsRoute = SettingsWorkflowsRouteImport.update({
   path: '/workflows',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsStorageRoute = SettingsStorageRouteImport.update({
+  id: '/storage',
+  path: '/storage',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsPullRequestCollaborationRoute =
   SettingsPullRequestCollaborationRouteImport.update({
     id: '/pull-request-collaboration',
@@ -71,6 +78,11 @@ const SettingsPullRequestCollaborationRoute =
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
+  id: '/keybindings',
+  path: '/keybindings',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -133,8 +145,10 @@ export interface FileRoutesByFullPath {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -151,8 +165,10 @@ export interface FileRoutesByTo {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -172,8 +188,10 @@ export interface FileRoutesById {
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/pull-request-collaboration': typeof SettingsPullRequestCollaborationRoute
+  '/settings/storage': typeof SettingsStorageRoute
   '/settings/workflows': typeof SettingsWorkflowsRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -194,8 +212,10 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/pull-request-collaboration'
+    | '/settings/storage'
     | '/settings/workflows'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -212,8 +232,10 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/pull-request-collaboration'
+    | '/settings/storage'
     | '/settings/workflows'
     | '/'
     | '/$environmentId/$threadId'
@@ -232,8 +254,10 @@ export interface FileRouteTypes {
     | '/settings/archived'
     | '/settings/connections'
     | '/settings/general'
+    | '/settings/keybindings'
     | '/settings/providers'
     | '/settings/pull-request-collaboration'
+    | '/settings/storage'
     | '/settings/workflows'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
@@ -301,6 +325,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsWorkflowsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/storage': {
+      id: '/settings/storage'
+      path: '/storage'
+      fullPath: '/settings/storage'
+      preLoaderRoute: typeof SettingsStorageRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/pull-request-collaboration': {
       id: '/settings/pull-request-collaboration'
       path: '/pull-request-collaboration'
@@ -313,6 +344,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/settings/providers'
       preLoaderRoute: typeof SettingsProvidersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/keybindings': {
+      id: '/settings/keybindings'
+      path: '/keybindings'
+      fullPath: '/settings/keybindings'
+      preLoaderRoute: typeof SettingsKeybindingsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/general': {
@@ -402,8 +440,10 @@ interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsPullRequestCollaborationRoute: typeof SettingsPullRequestCollaborationRoute
+  SettingsStorageRoute: typeof SettingsStorageRoute
   SettingsWorkflowsRoute: typeof SettingsWorkflowsRoute
 }
 
@@ -412,8 +452,10 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsPullRequestCollaborationRoute: SettingsPullRequestCollaborationRoute,
+  SettingsStorageRoute: SettingsStorageRoute,
   SettingsWorkflowsRoute: SettingsWorkflowsRoute,
 }
 

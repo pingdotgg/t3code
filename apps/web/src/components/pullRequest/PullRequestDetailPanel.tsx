@@ -485,8 +485,10 @@ export function PullRequestDetailPanel({
   readonly reference: PullRequestRef;
   readonly listEntry?: PullRequestListEntry | null;
   /**
-   * Whether this panel's surface is the visible one. Hidden surfaces keep
-   * cached answers but perform no optional reads or polling until shown.
+   * Whether this panel is the one the reader is looking at. Opened surfaces stay mounted so
+   * their scroll position and folded rows survive a tab switch, which would otherwise leave every
+   * backgrounded panel polling GitHub on its own schedule — one conversation read per open
+   * surface per interval, forever, with a single surface visible.
    */
   readonly visible?: boolean;
   readonly onClose: () => void;
@@ -560,6 +562,12 @@ export function PullRequestDetailPanel({
       environmentId,
       reference,
     }),
+    // A backgrounded panel keeps its last answer but stops asking for a new one: the reader is
+    // looking at another surface, and a conversation read is one host request per interval.
+    // Gated on the tab as well as visibility, so the collaboration tab and hidden surfaces
+    // never fetch — only summary, timeline, and code need the conversation. Returning to a
+    // needing tab re-asks through the enabled transition when the held answer is stale (and
+    // costs nothing when it is fresh), so no separate resume-fetch is needed.
     enabled: activityNeeded,
     // While GitHub's quota is exhausted every poll fails identically; back
     // off to the server's failure cooldown instead of re-walking the review

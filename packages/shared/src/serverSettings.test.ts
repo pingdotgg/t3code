@@ -187,6 +187,50 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the global default model without leaking stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+        { id: "reasoningEffort", value: "high" },
+      ]),
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        defaultModelSelection: createModelSelection(
+          ProviderInstanceId.make("copilot"),
+          "gpt-6-sol",
+        ),
+      }).defaultModelSelection,
+    ).toEqual({
+      instanceId: "copilot",
+      model: "gpt-6-sol",
+    });
+  });
+
+  it("clears the global default model back to null", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4"),
+    };
+
+    expect(
+      applyServerSettingsPatch(current, { defaultModelSelection: null }).defaultModelSelection,
+    ).toBeNull();
+  });
+
+  it("preserves the global default model when the patch omits it", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4"),
+    };
+
+    expect(applyServerSettingsPatch(current, {}).defaultModelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.4",
+    });
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

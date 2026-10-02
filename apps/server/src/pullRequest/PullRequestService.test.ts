@@ -473,6 +473,51 @@ it.effect("keeps listings cached for mutations that only change one pull request
   }),
 );
 
+it.effect(
+  "answers a conversation poll inside the client's refresh interval without spending a host read",
+  () =>
+    Effect.gen(function* () {
+      let activityCalls = 0;
+      const reference = { projectId: project.id, repository: "acme/web", number: 42 };
+      const service = yield* makeService({
+        provider: providerWith({
+          getChangeRequestActivity: () => {
+            activityCalls += 1;
+            return Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            });
+          },
+        }),
+      });
+
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // The focused detail panel re-reads its conversation every 30s. A cache shorter than that
+      // interval is read exactly once and then misses forever, so each poll becomes a fresh host
+      // read — a conversation read is the most expensive one on the page, because it walks review
+      // threads and their comments.
+      yield* TestClock.adjust("31 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // A second surface opening the same conversation inside the window must not spend anything.
+      yield* TestClock.adjust("5 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 1);
+
+      // Past both cache layers it does refresh, or the conversation would never update. The
+      // persisted layer holds a read for a minute, so the refresh lands after that.
+      yield* TestClock.adjust("30 seconds");
+      yield* service.activity(reference);
+      assert.strictEqual(activityCalls, 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+);
+
 it.effect("holds a rate-limit failure briefly instead of calling gh on every read", () =>
   Effect.gen(function* () {
     let detailCalls = 0;
