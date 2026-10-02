@@ -6,6 +6,7 @@ import {
   buildTemporaryWorktreeBranchName,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
+  resolveAutoFeatureBranchName,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
   WORKTREE_BRANCH_PREFIX,
@@ -272,5 +273,21 @@ describe("applyGitStatusStreamEvent", () => {
       behindCount: 1,
       pr: null,
     });
+  });
+});
+
+describe("resolveAutoFeatureBranchName", () => {
+  it.each([
+    [[], "topic", "feature/topic"],
+    [["feature/topic", "feature/topic-2"], "topic", "feature/topic-3"],
+    [["feature"], "topic", "feature-2/topic"],
+    [["feature/topic"], "topic/child", "feature/topic-2/child"],
+    [["feature/topic/child"], "topic", "feature/topic-2"],
+    [["feature/topic/child", "feature/topic-2/child"], "topic", "feature/topic-3"],
+    [["feature", "feature-2/topic", "feature-2/topic-2/child"], "topic", "feature-2/topic-3"],
+    [["FEATURE/TOPIC"], "topic/child", "feature/topic-2/child"],
+    [["feature/topic-other"], "topic", "feature/topic"],
+  ])("avoids branch and namespace collisions for %j", (existing, preferred, expected) => {
+    expect(resolveAutoFeatureBranchName(existing as string[], preferred as string)).toBe(expected);
   });
 });

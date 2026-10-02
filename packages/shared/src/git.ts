@@ -69,16 +69,28 @@ export function resolveAutoFeatureBranchName(
   );
   const existingNames = new Set(existingBranchNames.map((refName) => refName.toLowerCase()));
 
-  if (!existingNames.has(resolvedBase)) {
-    return resolvedBase;
+  // Git refs cannot be both a branch and a parent directory for another branch.
+  const namespaces = new Set<string>();
+  for (const name of existingNames) {
+    for (let slash = name.indexOf("/"); slash !== -1; slash = name.indexOf("/", slash + 1)) {
+      namespaces.add(name.slice(0, slash));
+    }
   }
-
-  let suffix = 2;
-  while (existingNames.has(`${resolvedBase}-${suffix}`)) {
-    suffix += 1;
+  const parts = resolvedBase.split("/");
+  const resolved: string[] = [];
+  for (const [index, part] of parts.entries()) {
+    const prefix = resolved.length === 0 ? "" : `${resolved.join("/")}/`;
+    let candidate = part;
+    let suffix = 2;
+    while (
+      existingNames.has(`${prefix}${candidate}`) ||
+      (index === parts.length - 1 && namespaces.has(`${prefix}${candidate}`))
+    ) {
+      candidate = `${part}-${suffix++}`;
+    }
+    resolved.push(candidate);
   }
-
-  return `${resolvedBase}-${suffix}`;
+  return resolved.join("/");
 }
 
 /**
