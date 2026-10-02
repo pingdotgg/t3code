@@ -107,7 +107,7 @@ const prepareBulkWords = (draft: string, words: SpeechCustomWords) => {
   return { entries, duplicates, tooLong, overLimit, invalid };
 };
 const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
-const languageLabel = (code: string) => languageNames.of(code) ?? code;
+const languageLabel = (code: string) => (code === "all" ? "All" : (languageNames.of(code) ?? code));
 // Ethnologue 2026 total speakers, for languages that map clearly to our model codes.
 // https://en.wikipedia.org/wiki/List_of_languages_by_total_number_of_speakers#Ethnologue_(2026)
 const rankedLanguageCodes = [
@@ -509,21 +509,24 @@ export function VoiceSettingsPanel() {
   const languages = [...new Set(currentModels.flatMap((model) => model.languages))].sort(
     compareLanguages,
   );
+  const languageOptions = ["all", ...languages];
   const searchTerm = languageSearch.trim().toLocaleLowerCase();
   const matchingLanguages = searchTerm
-    ? languages.filter(
+    ? languageOptions.filter(
         (code) =>
           code.toLocaleLowerCase().includes(searchTerm) ||
           languageLabel(code).toLocaleLowerCase().includes(searchTerm),
       )
-    : languages;
+    : languageOptions;
   const language =
-    selectedLanguage?.environmentId === environmentId && languages.includes(selectedLanguage.code)
+    selectedLanguage?.environmentId === environmentId &&
+    languageOptions.includes(selectedLanguage.code)
       ? selectedLanguage.code
       : (activeModel?.languages[0] ?? languages[0]);
-  const modelsForLanguage = currentModels.filter((model) =>
-    model.languages.includes(language ?? ""),
-  );
+  const modelsForLanguage =
+    language === "all"
+      ? currentModels
+      : currentModels.filter((model) => model.languages.includes(language ?? ""));
   const modelSearchTerm = modelSearch.trim().toLocaleLowerCase();
   const visibleModels = modelsForLanguage
     .filter(
@@ -847,7 +850,9 @@ export function VoiceSettingsPanel() {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <div className="space-y-2 p-3">
                 <p className="text-xs text-muted-foreground">
-                  Models for {language ? languageLabel(language) : "this environment"}
+                  {language === "all"
+                    ? "All models"
+                    : `Models for ${language ? languageLabel(language) : "this environment"}`}
                 </p>
                 <div className="flex items-center gap-1">
                   <Input
