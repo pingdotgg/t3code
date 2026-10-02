@@ -196,7 +196,9 @@ export class SharedBrowserChatGPT {
               : composerElement instanceof HTMLTextAreaElement
                 ? "textarea"
                 : undefined;
-          const lockdownAlert = [...document.querySelectorAll('[role="alert"], [data-sonner-toast]')].find(
+          const lockdownAlert = [
+            ...document.querySelectorAll('[role="alert"], [role="status"], [data-sonner-toast]'),
+          ].find(
             (element) => visible(element) && /couldn['’]t check lockdown mode/i.test(element.innerText),
           );
           const retryButton = [...(lockdownAlert?.querySelectorAll("button") ?? [])].find((button) =>
@@ -258,9 +260,7 @@ export class SharedBrowserChatGPT {
             composerText,
             login,
             challenge,
-            lockdownMessage: /couldn['’]t check lockdown mode/i.test(body)
-              ? "Couldn't check Lockdown mode"
-              : "",
+            lockdownMessage: lockdownAlert?.innerText ?? "",
             retryButtonPoint,
             sendButtonSelector,
             assistantCount: answers.length,
