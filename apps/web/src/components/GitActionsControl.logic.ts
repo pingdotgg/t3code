@@ -232,6 +232,21 @@ export function buildMenuItems(
   ];
 }
 
+// The menu has nothing to offer when every action row is disabled, publishing
+// is unavailable, and there is no status error to read. The primary button
+// already carries the hint for that state, so the trigger can rest disabled.
+export function hasGitActionMenuContent(input: {
+  menuItems: readonly GitActionMenuItem[];
+  canPublishRepository: boolean;
+  hasStatusError: boolean;
+}): boolean {
+  return (
+    input.canPublishRepository ||
+    input.hasStatusError ||
+    input.menuItems.some((item) => !item.disabled)
+  );
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,

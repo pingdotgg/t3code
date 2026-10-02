@@ -55,6 +55,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   buildMenuItems,
   formatGitActionElapsed,
+  hasGitActionMenuContent,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
   type GitActionProgressPresentation,
   type GitActionIconName,
@@ -1615,6 +1616,13 @@ export default function GitActionsControl({
   );
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const isGitActionMenuDisabled =
+    isGitActionRunning ||
+    !hasGitActionMenuContent({
+      menuItems: gitActionMenuItems,
+      canPublishRepository,
+      hasStatusError: gitStatusError !== null,
+    });
 
   const initializeGit = () => {
     void (async () => {
@@ -1761,7 +1769,7 @@ export default function GitActionsControl({
                 if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
               }}
             >
-              <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
+              <MenuSubTrigger density="touch" disabled={isGitActionMenuDisabled}>
                 <SourceControlIcon className="size-4" />
                 <MenuItemLabel>Git actions</MenuItemLabel>
               </MenuSubTrigger>
@@ -1904,7 +1912,7 @@ export default function GitActionsControl({
                       panel={isPanel}
                     />
                   }
-                  disabled={isGitActionRunning}
+                  disabled={isGitActionMenuDisabled}
                 >
                   <ChevronDownIcon
                     aria-hidden="true"
