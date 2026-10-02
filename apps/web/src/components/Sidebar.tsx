@@ -64,6 +64,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
+  parseScopedThreadKey,
 } from "@t3tools/client-runtime";
 import {
   isAtomCommandInterrupted,
@@ -172,13 +173,17 @@ import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isCollapsedSettledRow,
+  isThreadContextDragOutsideList,
   resolveFilteredSidebarProjects,
+  resolvePinnedDragEndShouldReorder,
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarDraftPreview,
   resolveExistingThreadDraftPreview,
+  resolveThreadContextDragRefs,
+  shouldIgnoreThreadContextDragStart,
   shouldRenderSidebarDraft,
   resolveThreadRowClassName,
   resolveSidebarThreadClickKind,
@@ -186,6 +191,7 @@ import {
   filterSidebarThreads,
   partitionSettledSidebarRows,
   SIDEBAR_THREAD_FILTER_LABELS,
+  THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -227,6 +233,12 @@ import {
 } from "../sidebarThreadTree";
 import { compactSidebarTimeLabel } from "./SidebarV2.logic";
 import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
+import {
+  dropThreadContext,
+  endThreadContextDrag,
+  moveThreadContextDrag,
+} from "./chat/threadContextDrag";
 import { resolveThreadPullRequests, ThreadPullRequestsPopover } from "./ThreadPullRequestsPopover";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -256,6 +268,244 @@ const SIDEBAR_MENU_ICON_CLASS = "size-[length:var(--app-sidebar-icon-size)]";
 
 /** Root threads mounted per project before the tail sentinel grows the window. */
 const SIDEBAR_THREAD_WINDOW_SIZE = 30;
+
+/**
+ * Thread-context drag gesture (sidebar → composer).
+ *
+ * Every real thread row — pinned roots and unpinned/nested rows alike —
+ * arms this pointer gesture alongside the per-project pinned `DndContext`s.
+ * Past the activation distance the row stays put (dnd-kit keeps owning any
+ * reorder preview); once the pointer exits the thread list horizontally the
+ * bridge ghost takes over, and releasing over a composer form dispatches the
+ * drop event. Releasing anywhere else, returning to the list, or cancelling
+ * (Escape, blur, unmount) clears the ghost and never reorders.
+ *
+ * Ghost position lives in the bridge's external store, so pointer moves
+ * re-render only the ghost — never the sidebar list.
+ */
+const THREAD_CONTEXT_DRAG_LIST_SELECTOR = "[data-thread-context-list]";
+
+interface SidebarThreadContextDragSource {
+  readonly threadKey: string;
+  readonly title: string;
+  readonly threadRef: ScopedThreadRef;
+}
+
+let activeThreadContextGesture: {
+  readonly pointerId: number;
+  readonly source: SidebarThreadContextDragSource;
+  readonly startX: number;
+  readonly startY: number;
+  readonly listEl: Element | null;
+  activated: boolean;
+  outside: boolean;
+  cleanup: () => void;
+} | null = null;
+
+/**
+ * Set when a context drop dispatched during the current gesture so the
+ * pinned `onDragEnd` firing after release can stand down even under the
+ * nested per-project `DndContext`s. Consumed (cleared) by the next pinned
+ * drag end.
+ */
+let consumedThreadContextDrop = false;
+
+function cancelActiveThreadContextGesture(): void {
+  activeThreadContextGesture?.cleanup();
+}
+
+function resolveThreadContextDragPayload(activeKey: string): {
+  readonly refs: ScopedThreadRef[];
+  readonly count: number;
+} {
+  const selectedKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
+  const keys = resolveThreadContextDragRefs({
+    activeKey,
+    selectedKeys,
+    parseScopedKey: parseScopedThreadKey,
+  });
+  const refs: ScopedThreadRef[] = [];
+  for (const key of keys) {
+    const ref = parseScopedThreadKey(key);
+    if (ref) refs.push(ref);
+  }
+  return { refs, count: Math.max(1, refs.length) };
+}
+
+function startSidebarThreadContextGesture(
+  event: React.PointerEvent,
+  source: SidebarThreadContextDragSource,
+): void {
+  if (activeThreadContextGesture) return;
+  const nativeTarget = event.target instanceof Element ? event.target : null;
+  if (
+    shouldIgnoreThreadContextDragStart({
+      button: event.button,
+      isPrimary: event.nativeEvent.isPrimary,
+      closest: (selector) => nativeTarget?.closest(selector) ?? null,
+    })
+  ) {
+    return;
+  }
+  const currentTarget = event.currentTarget instanceof Element ? event.currentTarget : null;
+  const listEl = currentTarget?.closest(THREAD_CONTEXT_DRAG_LIST_SELECTOR) ?? null;
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const pointerId = event.nativeEvent.pointerId;
+
+  const gesture = {
+    pointerId,
+    source,
+    startX,
+    startY,
+    listEl,
+    activated: false,
+    outside: false,
+    cleanup: () => {},
+  };
+  activeThreadContextGesture = gesture;
+
+  const suppressReleaseClick = () => {
+    const suppress = (click: Event) => {
+      click.stopPropagation();
+      document.removeEventListener("click", suppress, { capture: true });
+    };
+    document.addEventListener("click", suppress, { capture: true });
+    // A release outside the document never produces that click; a fresh
+    // press ends the suppression instead of eating a future click.
+    const clearOnPress = () => {
+      document.removeEventListener("click", suppress, { capture: true });
+      document.removeEventListener("pointerdown", clearOnPress, { capture: true });
+    };
+    document.addEventListener("pointerdown", clearOnPress, { capture: true });
+  };
+
+  const cleanup = () => {
+    if (activeThreadContextGesture !== gesture) return;
+    activeThreadContextGesture = null;
+    document.removeEventListener("pointermove", onMove, { capture: true });
+    document.removeEventListener("pointerup", onUp, { capture: true });
+    document.removeEventListener("pointercancel", onCancel, { capture: true });
+    document.removeEventListener("keydown", onKeyDown, { capture: true });
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("pagehide", onWindowBlur);
+    window.removeEventListener("resize", onWindowBlur);
+    endThreadContextDrag();
+  };
+  gesture.cleanup = cleanup;
+
+  const cancel = () => {
+    const wasActive = gesture.activated;
+    cleanup();
+    // A cancelled press must not navigate on release; an untouched press
+    // keeps plain-click behavior.
+    if (wasActive) suppressReleaseClick();
+  };
+
+  const pointFromEvent = (native: PointerEvent) => ({ x: native.clientX, y: native.clientY });
+
+  const onMove = (native: Event) => {
+    if (!(native instanceof PointerEvent) || native.pointerId !== pointerId) return;
+    const point = pointFromEvent(native);
+    if (!gesture.activated) {
+      // A release outside the window can be missed: never arm when the
+      // initiating button is no longer held.
+      if ((native.buttons & 1) === 0) {
+        cleanup();
+        return;
+      }
+      const distance = Math.hypot(point.x - startX, point.y - startY);
+      if (distance <= THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE) return;
+      gesture.activated = true;
+      // Rows are `select-none`; clearing here keeps the drag from
+      // accumulating a stray selection. Clicks never reach this path.
+      document.getSelection()?.removeAllRanges();
+      suppressReleaseClick();
+    } else if (native.cancelable) {
+      native.preventDefault();
+    }
+    const bounds = listEl?.getBoundingClientRect();
+    const outside = bounds ? isThreadContextDragOutsideList(point, bounds) : true;
+    if (!outside) {
+      if (gesture.outside) {
+        // Back over the list: drop the ghost so the dnd-kit reorder preview
+        // resumes underneath.
+        gesture.outside = false;
+        endThreadContextDrag();
+      }
+      return;
+    }
+    gesture.outside = true;
+    const title = source.title.trim() || "Thread";
+    const { count } = resolveThreadContextDragPayload(source.threadKey);
+    moveThreadContextDrag(point, { title, count });
+  };
+
+  const onUp = (native: Event) => {
+    if (!(native instanceof PointerEvent) || native.pointerId !== pointerId) return;
+    const wasOutside = gesture.activated && gesture.outside;
+    const point =
+      native instanceof PointerEvent ? pointFromEvent(native) : { x: startX, y: startY };
+    cleanup();
+    if (!wasOutside) return;
+    const { refs } = resolveThreadContextDragPayload(source.threadKey);
+    // Integration seam: pass `{ enabled: <composer-can-accept> }` once the
+    // composer exposes it; the bridge honors the gate without new contracts.
+    // The return reports receiver acceptance — found target alone is not
+    // success — and only decides the ghost; it never reorders pins.
+    if (refs.length > 0) {
+      dropThreadContext(point, refs);
+    }
+    consumedThreadContextDrop = true;
+  };
+
+  const onCancel = (native: Event) => {
+    if (native instanceof PointerEvent && native.pointerId !== pointerId) return;
+    cancel();
+  };
+
+  const onKeyDown = (native: Event) => {
+    if (native instanceof KeyboardEvent && native.code === "Escape") cancel();
+  };
+
+  const onVisibilityChange = () => {
+    if (document.hidden) cancel();
+  };
+
+  const onWindowBlur = () => {
+    cancel();
+  };
+
+  document.addEventListener("pointermove", onMove, { passive: false, capture: true });
+  document.addEventListener("pointerup", onUp, { capture: true });
+  document.addEventListener("pointercancel", onCancel, { capture: true });
+  document.addEventListener("keydown", onKeyDown, { capture: true });
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("blur", onWindowBlur);
+  window.addEventListener("pagehide", onWindowBlur);
+  window.addEventListener("resize", onWindowBlur);
+}
+
+function useSidebarThreadContextDragSource(
+  source: SidebarThreadContextDragSource,
+): (event: React.PointerEvent) => void {
+  const sourceRef = useRef(source);
+  useLayoutEffect(() => {
+    sourceRef.current = source;
+  }, [source]);
+  useEffect(() => {
+    const ownedKey = source.threadKey;
+    return () => {
+      if (activeThreadContextGesture?.source.threadKey === ownedKey) {
+        cancelActiveThreadContextGesture();
+      }
+    };
+  }, [source.threadKey]);
+  return useCallback((event: React.PointerEvent) => {
+    startSidebarThreadContextGesture(event, sourceRef.current);
+  }, []);
+}
 
 /**
  * Zero-height tail marker that grows the thread window once it scrolls near the
@@ -462,6 +712,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     virtualAgentRun?.parentThreadId ?? thread.id,
   );
   const threadKey = scopedThreadKey(threadRef);
+  const contextDragPointerDown = useSidebarThreadContextDragSource({
+    threadKey,
+    title: thread.title,
+    threadRef,
+  });
   const pendingTurnKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
   const pendingTurn = usePendingTurnStore(
     (state) => state.pendingByThreadKey[pendingTurnKey] ?? null,
@@ -808,6 +1063,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       data-thread-prewarm-key={threadKey}
       onMouseLeave={handleMouseLeave}
       onBlurCapture={handleBlurCapture}
+      onPointerDownCapture={contextDragPointerDown}
       {...sortable?.attributes}
       {...sortable?.listeners}
     >
@@ -1278,6 +1534,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
 
   const content = (
     <SidebarMenuSub
+      data-thread-context-list="true"
       className={`my-0 mx-0 w-full translate-x-0 gap-0.5 overflow-hidden border-l-0 py-0 ${
         // Half a project-chevron slot of indent: enough to read threads as
         // nested under the project, without pushing titles into the middle of
@@ -1361,8 +1618,22 @@ const PinnedThreadDragContext = memo(function PinnedThreadDragContext({
   const handlePinnedThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
       const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      reorderPinnedThreads(projectKey, String(active.id), String(over.id));
+      const overId = over ? String(over.id) : null;
+      // A context drop releasing over (or outside) the list never reorders,
+      // even with the nested per-project DndContexts mounted.
+      const wasContextDrag = consumedThreadContextDrop;
+      consumedThreadContextDrop = false;
+      if (
+        !resolvePinnedDragEndShouldReorder({
+          wasContextDrag,
+          activeId: String(active.id),
+          overId,
+        }) ||
+        overId === null
+      ) {
+        return;
+      }
+      reorderPinnedThreads(projectKey, String(active.id), overId);
     },
     [projectKey, reorderPinnedThreads],
   );
@@ -4167,6 +4438,13 @@ export default function Sidebar() {
   }, [clearSelection]);
 
   useEffect(() => {
+    return () => {
+      cancelActiveThreadContextGesture();
+      endThreadContextDrag();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isElectron) return;
     const bridge = window.desktopBridge;
     if (
@@ -4286,6 +4564,7 @@ export default function Sidebar() {
 
   return (
     <>
+      <ThreadContextDragGhost />
       <SidebarHoverThreadPrewarmer />
       <SidebarChromeHeader isElectron={isElectron} />
 

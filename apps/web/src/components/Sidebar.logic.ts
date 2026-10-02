@@ -891,3 +891,85 @@ export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow
     settledThreadKeys,
   };
 }
+
+/**
+ * Sidebar thread-context drag: pointer-gesture gating for dragging a thread
+ * row out of the list to attach it as composer context.
+ *
+ * The gesture coexists with the per-project pinned `DndContext`s: vertical
+ * moves inside the list keep the reorder preview, while a horizontal exit
+ * past the list edge switches to the context ghost. A context drop never
+ * reorders — `resolvePinnedDragEndShouldReorder` is the single decision
+ * point both paths share.
+ */
+
+/** Pointer travel before a press becomes a context drag. Matches dnd-kit's pinned distance. */
+export const THREAD_CONTEXT_DRAG_ACTIVATION_DISTANCE = 6;
+
+/** Presses that must never start the gesture: native controls and row actions. */
+const THREAD_CONTEXT_DRAG_INTERACTIVE_SELECTOR = [
+  "button",
+  "input",
+  "a",
+  "textarea",
+  "select",
+  "[data-thread-selection-safe]",
+  "[contenteditable]",
+  "[role='menu']",
+  "[role='dialog']",
+].join(", ");
+
+export function isThreadRowEligibleForContextDrag(input: {
+  readonly isDraft: boolean;
+  readonly isPinned: boolean;
+}): { readonly eligible: boolean } {
+  // Drafts are unsent composer state, not threads: they navigate, never drag.
+  // Every real row — pinned roots and unpinned/nested rows alike — can drag.
+  void input.isPinned;
+  return { eligible: !input.isDraft };
+}
+
+export function shouldIgnoreThreadContextDragStart(input: {
+  readonly button: number;
+  readonly isPrimary: boolean;
+  readonly closest: (selector: string) => unknown;
+}): boolean {
+  // Only the primary button starts the gesture; right/middle clicks and
+  // multi-touch pointers keep their click, selection, and menu behavior.
+  if (!input.isPrimary || input.button !== 0) return true;
+  return input.closest(THREAD_CONTEXT_DRAG_INTERACTIVE_SELECTOR) != null;
+}
+
+export function resolveThreadContextDragRefs(input: {
+  readonly activeKey: string;
+  readonly selectedKeys: readonly string[];
+  readonly parseScopedKey: (key: string) => unknown;
+}): string[] {
+  // The multi-selection travels when the picked-up row is part of it;
+  // otherwise only the picked-up row does. Unparseable keys never leak into
+  // the drop payload.
+  const keys = input.selectedKeys.includes(input.activeKey)
+    ? [...input.selectedKeys]
+    : [input.activeKey];
+  return keys.filter((key) => input.parseScopedKey(key) != null);
+}
+
+export function isThreadContextDragOutsideList(
+  point: { readonly x: number; readonly y: number },
+  bounds: { readonly left: number; readonly right: number },
+): boolean {
+  void point.y;
+  return point.x < bounds.left || point.x > bounds.right;
+}
+
+export function resolvePinnedDragEndShouldReorder(input: {
+  readonly wasContextDrag: boolean;
+  readonly activeId: string;
+  readonly overId: string | null;
+}): boolean {
+  // Releasing a context gesture — on a composer target or on empty space —
+  // never reorders pins, including under the nested per-project DndContexts.
+  if (input.wasContextDrag) return false;
+  if (input.overId === null || input.overId === input.activeId) return false;
+  return true;
+}
