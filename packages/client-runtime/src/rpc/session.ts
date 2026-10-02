@@ -395,5 +395,4 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   return RpcSessionFactory.of({ connect });
 });
 
-export const layerWithOptions = (options: RpcSessionOptions) =>
-  Layer.effect(RpcSessionFactory, make(options));
+export const layer = (options: RpcSessionOptions) => Layer.effect(RpcSessionFactory, make(options));

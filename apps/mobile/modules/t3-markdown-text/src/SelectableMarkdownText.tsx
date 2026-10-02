@@ -6,6 +6,7 @@ import {
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
+  nativeMarkdownWithAuthoredWindowsPaths,
   nativeMarkdownWithPreservedSoftBreaks,
 } from "./nativeMarkdownText";
 import { MarkdownImageRendererContext, NativeMarkdownBlock } from "./NativeMarkdownBlock";
@@ -51,11 +52,10 @@ export function SelectableMarkdownText({
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
   const chunks = useMemo(() => {
-    const parsedDocument = parseMarkdownWithOptions(markdown, {
-      gfm: true,
-      html: true,
-      math: false,
-    });
+    const parsedDocument = nativeMarkdownWithAuthoredWindowsPaths(
+      parseMarkdownWithOptions(markdown, { gfm: true, html: true, math: false }),
+      markdown,
+    );
     const document = preserveSoftBreaks
       ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument)
       : parsedDocument;

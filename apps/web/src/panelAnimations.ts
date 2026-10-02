@@ -31,43 +31,6 @@ export function usePanelNavigationSuppression(navigationKey: string): boolean {
   return suppressed;
 }
 
-export function observeResponsiveBreakpointFade(options: {
-  target: HTMLElement;
-  container: HTMLElement;
-  active: boolean;
-  durationMs: PanelAnimationDurationMs;
-  breakpoint: { value: number; unit: "px" | "rem" };
-}): () => void {
-  const { target, container, active, durationMs, breakpoint } = options;
-  if (!active || typeof ResizeObserver === "undefined") return () => {};
-
-  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
-  const breakpointPx =
-    breakpoint.unit === "px"
-      ? breakpoint.value
-      : breakpoint.value * (Number.isFinite(rootFontSize) ? rootFontSize : 16);
-  let expanded = container.getBoundingClientRect().width >= breakpointPx;
-  let animation: Animation | null = null;
-
-  const observer = new ResizeObserver(([entry]) => {
-    if (!entry) return;
-    const nextExpanded = entry.contentRect.width >= breakpointPx;
-    if (nextExpanded === expanded) return;
-    expanded = nextExpanded;
-    animation?.cancel();
-    animation = target.animate([{ opacity: 0 }, { opacity: 1 }], {
-      duration: Math.min(100, durationMs),
-      easing: "ease-out",
-    });
-  });
-
-  observer.observe(container);
-  return () => {
-    observer.disconnect();
-    animation?.cancel();
-  };
-}
-
 export function usePanelAnimationSettings(): {
   active: boolean;
   durationMs: PanelAnimationDurationMs;

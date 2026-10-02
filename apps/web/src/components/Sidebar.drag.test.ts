@@ -254,6 +254,42 @@ describe("sidebar collision detection", () => {
 
 describe("sidebar drag projection", () => {
   it.each([
+    ["a2", "a1"],
+    ["p", "a1"],
+    ["s", sidebarMarkerId("pinned-header")],
+    ["z", sidebarMarkerId("settled-header")],
+  ])("restores every row and marker when dragging %s out after hovering %s", (active, over) => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("snoozed-header"),
+      thread("z", "snoozed"),
+      settledHeader,
+      marker("settled-placeholder"),
+      thread("s", "settled"),
+    ];
+    const input = {
+      items,
+      settledOrder: ["z", "s"],
+      settledExpanded: true,
+      boundaryLabelHeight: 24,
+      snoozedThreadCount: 1,
+    };
+    const reordered = preview(input, active, over);
+    expect([...reordered.values()].some((transform) => transform?.y !== 0)).toBe(true);
+
+    const restored = preview({ ...input, enabled: false }, active, over);
+    for (const transform of restored.values()) expect(transform).toEqual(stationary);
+
+    // Returning to the sidebar resumes the same live reorder preview.
+    expect(preview({ ...input, enabled: true }, active, over)).toEqual(reordered);
+  });
+
+  it.each([
     ["a1", "a2"],
     ["a1", sidebarMarkerId("settled-header")],
     ["z", "a2"],
