@@ -25,6 +25,11 @@ vi.mock("../ui/toast", async (importOriginal) => ({
   toastManager: { add: toastAddMock },
 }));
 
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => vi.fn(),
+}));
+
 vi.mock("~/environmentApi", () => ({
   readEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
   ensureEnvironmentApi: vi.fn(() => ({ assets: { createUrl: createAssetUrlMock } })),
@@ -294,6 +299,48 @@ describe("MessagesTimeline", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .not.toBeInTheDocument();
       await expect.element(page.getByRole("button", { name: "Expand Work log (1)" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("visibly distinguishes messages sent from another thread", async () => {
+    const text = "Please address these review findings.";
+    const screen = await render(
+      <AppAtomRegistryProvider>
+        <MessagesTimeline
+          {...buildProps()}
+          timelineEntries={[
+            {
+              id: "cross-thread-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              message: {
+                id: MessageId.make("cross-thread-message"),
+                role: "user",
+                text,
+                origin: {
+                  kind: "cross-thread",
+                  sourceThreadId: ThreadId.make("review-thread"),
+                  sourceMessageId: MessageId.make("review-request"),
+                  sourceThreadTitle: "Review thread",
+                },
+                createdAt: "2026-04-13T12:00:00.000Z",
+                streaming: false,
+              },
+            },
+          ]}
+        />
+      </AppAtomRegistryProvider>,
+    );
+
+    try {
+      const message = page.getByText(text, { exact: true }).element().closest(".group");
+      expect(message).not.toBeNull();
+      expect(message!.classList.contains("bg-violet-500/15")).toBe(true);
+      expect(message!.classList.contains("border-violet-400/45")).toBe(true);
+      expect(getComputedStyle(message!).backgroundColor).toContain("/ 0.15)");
+      await expect.element(page.getByText("Review thread", { exact: true })).toBeVisible();
     } finally {
       await screen.unmount();
     }

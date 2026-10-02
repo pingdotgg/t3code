@@ -744,7 +744,7 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                 className={cn(
                   "group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
                   row.message.origin?.kind === "cross-thread" &&
-                    "border-violet-400/30 bg-gradient-to-br from-violet-500/[0.07] via-violet-500/[0.02] to-transparent",
+                    "border-violet-400/45 bg-violet-500/15",
                   row.message.origin?.kind === "pull-request-monitor" &&
                     "border-sky-400/30 bg-gradient-to-br from-sky-500/[0.07] via-sky-500/[0.02] to-transparent",
                 )}
@@ -1063,10 +1063,13 @@ function CrossThreadProvenance({
   if (!canNavigate) {
     return (
       <span
-        className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-muted-foreground/40"
+        className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-violet-700/80 dark:text-violet-300/80"
         title={`Source chat unavailable: ${sourceTitle}`}
       >
-        <CornerDownRightIcon className="size-2.5 shrink-0 text-violet-400/40" aria-hidden="true" />
+        <CornerDownRightIcon
+          className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300"
+          aria-hidden="true"
+        />
         <span className="truncate">{sourceTitle}</span>
       </span>
     );
@@ -1075,7 +1078,7 @@ function CrossThreadProvenance({
   return (
     <button
       type="button"
-      className="group/origin mb-1 mr-2 inline-flex max-w-[80%] cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-muted-foreground/45 transition-colors hover:text-muted-foreground/85 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
+      className="group/origin mb-1 mr-2 inline-flex max-w-[80%] cursor-pointer items-center gap-1 rounded text-[length:var(--app-status-line-font-size)] text-violet-700 dark:text-violet-300 transition-colors hover:text-violet-800 dark:hover:text-violet-200 focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-violet-500/60"
       title={`Open source chat: ${sourceTitle}`}
       aria-label={`Open source chat ${sourceTitle} at the initiating message`}
       onClick={() => {
@@ -1090,7 +1093,7 @@ function CrossThreadProvenance({
       }}
     >
       <CornerDownRightIcon
-        className="size-2.5 shrink-0 text-violet-400/50 transition-colors group-hover/origin:text-violet-400/90"
+        className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300 transition-colors group-hover/origin:text-violet-800 dark:group-hover/origin:text-violet-200"
         aria-hidden="true"
       />
       <span className="truncate decoration-current/30 underline-offset-2 group-hover/origin:underline">
