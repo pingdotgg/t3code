@@ -4,6 +4,7 @@ import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3t
 
 import {
   buildModelOptions,
+  buildThreadModelOptions,
   groupByProvider,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
@@ -407,5 +408,88 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
+  });
+});
+
+describe("existing-thread model options", () => {
+  const selection = { instanceId: ProviderInstanceId.make("codex_work"), model: "gpt-5.6-sol" };
+  const provider = (instanceId: string, driver: string, groupKey?: string) => ({
+    instanceId,
+    driver,
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    models: [{ slug: "gpt-5.6-sol", name: "Sol", capabilities: null }],
+    ...(groupKey ? { continuation: { groupKey } } : {}),
+    requiresNewThreadForModelChange: false,
+  });
+  const work = provider("codex_work", "codex", "codex:shared");
+  const personal = provider("codex_personal", "codex", "codex:shared");
+  const config = (providers: ReadonlyArray<ReturnType<typeof provider>>) =>
+    ({ providers }) as unknown as ServerConfig;
+  const instanceIds = (serverConfig: ServerConfig | null) =>
+    buildThreadModelOptions(serverConfig, selection).map((option) => option.selection.instanceId);
+
+  it("offers another account that can continue the same native conversation", () => {
+    expect(instanceIds(config([work, personal]))).toEqual(["codex_work", "codex_personal"]);
+  });
+
+  it("hides separate session stores and other drivers even with the same group key", () => {
+    expect(
+      instanceIds(
+        config([
+          work,
+          personal,
+          provider("codex_separate", "codex", "codex:separate"),
+          provider("claude", "claudeAgent", "codex:shared"),
+        ]),
+      ),
+    ).toEqual(["codex_work", "codex_personal"]);
+  });
+
+  it("keeps the existing instance when continuation metadata is missing", () => {
+    expect(instanceIds(config([provider("codex_work", "codex"), personal]))).toEqual([
+      "codex_work",
+    ]);
+    expect(instanceIds(config([work, provider("codex_personal", "codex")]))).toEqual([
+      "codex_work",
+    ]);
+    expect(instanceIds(null)).toEqual(["codex_work"]);
+  });
+
+  it("does not offer a compatible account that is disabled or signed out", () => {
+    expect(instanceIds(config([work, { ...personal, enabled: false }]))).toEqual(["codex_work"]);
+    expect(
+      instanceIds(config([work, { ...personal, auth: { status: "unauthenticated" } }])),
+    ).toEqual(["codex_work"]);
+  });
+
+  it("hides compatible accounts while their authentication is unconfirmed", () => {
+    expect(instanceIds(config([work, { ...personal, auth: { status: "unknown" } }]))).toEqual([
+      "codex_work",
+    ]);
+  });
+
+  it("retains the current account when its authentication is unconfirmed", () => {
+    expect(instanceIds(config([{ ...work, auth: { status: "unknown" } }, personal]))).toEqual([
+      "codex_work",
+      "codex_personal",
+    ]);
+  });
+
+  it("honors providers that require a new thread for model changes", () => {
+    expect(
+      instanceIds(config([work, { ...personal, requiresNewThreadForModelChange: true }])),
+    ).toEqual(["codex_work"]);
+    expect(
+      instanceIds(config([{ ...work, requiresNewThreadForModelChange: true }, personal])),
+    ).toEqual(["codex_work"]);
+  });
+
+  it("leaves the new-thread catalog unrestricted", () => {
+    const serverConfig = config([work, provider("claude", "claudeAgent", "claude:shared")]);
+    expect(
+      buildModelOptions(serverConfig, null).map((option) => option.selection.instanceId),
+    ).toEqual(["codex_work", "claude"]);
   });
 });

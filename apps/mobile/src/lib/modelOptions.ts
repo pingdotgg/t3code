@@ -147,6 +147,29 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
+export function buildThreadModelOptions(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection,
+): ReadonlyArray<ModelOption> {
+  const currentProvider = config?.providers.find(
+    (provider) => provider.instanceId === selection.instanceId,
+  );
+  return buildModelOptions(config, selection).filter((option) => {
+    if (option.selection.instanceId === selection.instanceId) return true;
+    const groupKey = currentProvider?.continuation?.groupKey;
+    if (!groupKey || currentProvider.requiresNewThreadForModelChange) return false;
+    const nextProvider = config?.providers.find(
+      (provider) => provider.instanceId === option.selection.instanceId,
+    );
+    return (
+      nextProvider?.driver === currentProvider.driver &&
+      nextProvider.auth.status === "authenticated" &&
+      nextProvider.continuation?.groupKey === groupKey &&
+      !nextProvider.requiresNewThreadForModelChange
+    );
+  });
+}
+
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
