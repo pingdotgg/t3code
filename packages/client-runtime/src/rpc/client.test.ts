@@ -2,15 +2,18 @@ import {
   EnvironmentId,
   CommandId,
   MessageId,
+  PreviewTabId,
   ThreadId,
   ORCHESTRATION_WS_METHODS,
   type ServerConfig,
   type CapabilityClientOrchestrationCommand,
+  type PreviewAutomationStreamEvent,
   type RelayClientInstallProgressEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -94,6 +97,75 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("re-registers a completed preview host without replaying its timed-out action", () =>
+    Effect.gen(function* () {
+      const firstCompleted = yield* Deferred.make<void>();
+      const requests: string[] = [];
+      const connections: string[] = [];
+      let attempts = 0;
+      const client = {
+        [WS_METHODS.previewAutomationConnect]: () =>
+          Stream.suspend(() => {
+            attempts += 1;
+            const connected: PreviewAutomationStreamEvent = {
+              type: "connected",
+              connectionId: `connection-${attempts}`,
+            };
+            return attempts === 1
+              ? Stream.make(connected, {
+                  type: "request",
+                  connectionId: connected.connectionId,
+                  request: {
+                    requestId: "timed-out-action",
+                    operation: "click",
+                    threadId: ThreadId.make("thread-1"),
+                    tabId: PreviewTabId.make("tab-1"),
+                    input: {},
+                    timeoutMs: 1_000,
+                  },
+                } satisfies PreviewAutomationStreamEvent).pipe(
+                  Stream.ensuring(Deferred.succeed(firstCompleted, undefined)),
+                )
+              : Stream.succeed(connected).pipe(Stream.concat(Stream.never));
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const consumer = yield* subscribe(WS_METHODS.previewAutomationConnect, {
+        clientId: "preview-host",
+        environmentId: TARGET.environmentId,
+      }).pipe(
+        Stream.runForEach((event) => {
+          if (event.type === "request") {
+            requests.push(event.request.requestId);
+            return Effect.void;
+          }
+          connections.push(event.connectionId);
+          return Effect.void;
+        }),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(firstCompleted);
+      yield* TestClock.adjust("999 millis");
+      expect(attempts).toBe(1);
+      yield* TestClock.adjust("1 millis");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (attempts >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(attempts).toBe(2);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (connections.length >= 2) break;
+        yield* Effect.yieldNow;
+      }
+      expect(connections).toEqual(["connection-1", "connection-2"]);
+      expect(requests).toEqual(["timed-out-action"]);
+      yield* Fiber.interrupt(consumer);
+    }),
+  );
+
   it("preserves inline images and requires explicit capabilities for stored attachments", () => {
     const capabilitiesFor = (attachments: ReadonlyArray<unknown>) =>
       requiredRpcCapabilities(ORCHESTRATION_WS_METHODS.dispatchCommand, {

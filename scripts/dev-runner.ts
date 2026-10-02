@@ -275,6 +275,17 @@ export function createDevRunnerEnv({
       VITE_WS_URL: `ws://${loopbackHost}:${serverPort}`,
     };
 
+    if (mode === "dev" || mode === "dev:web") {
+      // Browser dev is single-origin: the web server proxies HTTP and WebSocket
+      // requests to the backend, so clients must derive both URLs from the page.
+      // The positive marker keeps Vite from restoring values loaded from .env.
+      delete output.VITE_HTTP_URL;
+      delete output.VITE_WS_URL;
+      output.T3CODE_SINGLE_ORIGIN_DEV = "1";
+    } else {
+      delete output.T3CODE_SINGLE_ORIGIN_DEV;
+    }
+
     if (isDesktopMode) {
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
