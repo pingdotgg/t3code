@@ -1,5 +1,6 @@
 import type {
   OrchestrationCommand,
+  OrchestrationMessage,
   OrchestrationQueuedTurn,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -120,9 +121,12 @@ export function requireThread(input: {
 }
 
 // Shared by the two probes below: they ask different questions but must agree on
-// which messages count as "the provider never got a turn".
-function hasFailedTurnStartSinceLatestUserMessage(thread: OrchestrationThread): boolean {
-  const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
+// which messages count as "the provider never got a turn". Takes the message the
+// caller already resolved rather than re-scanning `thread.messages`.
+function hasFailedTurnStart(
+  thread: OrchestrationThread,
+  latestUserMessage: OrchestrationMessage | undefined,
+): boolean {
   if (!latestUserMessage) {
     return false;
   }
@@ -157,7 +161,7 @@ export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
   if (!latestUserMessage) {
     return false;
   }
-  if (hasFailedTurnStartSinceLatestUserMessage(thread)) {
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
@@ -183,7 +187,7 @@ export function threadHasQueuedTurnStart(
   ) {
     return false;
   }
-  if (hasFailedTurnStartSinceLatestUserMessage(thread)) {
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   return thread.latestTurn === null || thread.latestTurn.completedAt === null
