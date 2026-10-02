@@ -2,10 +2,11 @@ import AgentActivity, {
   AgentActivityWidget,
   type AgentActivityProps,
 } from "../../widgets/AgentActivity";
+import { agentActivityTimeline } from "../../widgets/agentActivityTimeline";
 
 export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
   try {
-    AgentActivityWidget.updateSnapshot(props);
+    AgentActivityWidget.updateTimeline(agentActivityTimeline(props, Date.now()));
     return true;
   } catch {
     // Personal-team builds have no widget extension.

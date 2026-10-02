@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import {
   type RelayDeviceRegistrationRequest,
   type RelayAgentActivitySnapshotResponse,
@@ -38,6 +39,7 @@ import {
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
+import { AGENT_ACTIVITY_FRESHNESS_MS } from "../../widgets/agentActivityTimeline";
 import {
   getAgentLiveActivities,
   publishAgentActivityWidget,
@@ -149,6 +151,9 @@ let liveWidgetSubscription: (() => void) | null = null;
 let liveWidgetActivities: LiveWidgetActivities = new Map();
 let observedWidgetActivities: LiveWidgetActivities = new Map();
 let relayWidgetSnapshot: RelayAgentActivitySnapshotResponse | null = null;
+let relayWidgetConfirmedAt: number | null = null;
+const widgetShellObservations = new Map<EnvironmentId, EnvironmentShellState>();
+const widgetShellConfirmedAt = new Map<EnvironmentId, number>();
 let publishedWidgetContent: string | null = null;
 let activeDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
@@ -215,6 +220,7 @@ export function setAgentAwarenessRelayTokenProvider(
     androidDeviceReplayedAt = null;
     stopLiveWidgetObserver();
     relayWidgetSnapshot = null;
+    relayWidgetConfirmedAt = null;
     deviceRegistrationGeneration++;
     activeDeviceRegistration = null;
     pendingDeviceRegistration = null;
@@ -274,6 +280,7 @@ export function setAgentAwarenessRelayTokenProvider(
 export function releaseAgentAwarenessRelayTokenProvider(): void {
   stopLiveWidgetObserver();
   relayWidgetSnapshot = null;
+  relayWidgetConfirmedAt = null;
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
@@ -552,6 +559,7 @@ function publishRegularWidget(props: AgentActivityProps): void {
   const content = JSON.stringify({
     activeCount: props.activeCount,
     isStale: props.isStale,
+    expiresAt: props.expiresAt,
     activities: props.activities.map(({ updatedAt: _updatedAt, ...row }) => row),
   });
   if (content === publishedWidgetContent) return;
@@ -562,6 +570,11 @@ function publishReconciledWidget(): void {
   if (!relayTokenProvider) return;
   if (relayWidgetSnapshot === null && observedWidgetActivities.size === 0) return;
   const result = reconcileWidgetActivity(observedWidgetActivities, relayWidgetSnapshot);
+  const confirmations = [...observedWidgetActivities.keys()].map(
+    (id) => widgetShellConfirmedAt.get(id) ?? 0,
+  );
+  if (relayWidgetConfirmedAt !== null) confirmations.push(relayWidgetConfirmedAt);
+  const confirmedAt = Math.min(...confirmations);
   publishRegularWidget({
     title: "T3 Code",
     subtitle:
@@ -572,6 +585,7 @@ function publishReconciledWidget(): void {
           : "No active agents",
     activeCount: result.activeCount,
     isStale: [...observedWidgetActivities.keys()].some((id) => !liveWidgetActivities.has(id)),
+    expiresAt: confirmedAt + AGENT_ACTIVITY_FRESHNESS_MS,
     updatedAt: new Date().toISOString(),
     activities: result.activities,
   });
@@ -580,8 +594,14 @@ function publishReconciledWidget(): void {
 function stopLiveWidgetObserver(clearObservations = true): void {
   liveWidgetSubscription?.();
   liveWidgetSubscription = null;
-  liveWidgetActivities = new Map();
-  if (clearObservations) observedWidgetActivities = new Map();
+  // Suspending observation does not disconnect a healthy environment. Keep
+  // its last freshness state and let the native timeline expire it on time.
+  if (clearObservations) {
+    liveWidgetActivities = new Map();
+    observedWidgetActivities = new Map();
+    widgetShellObservations.clear();
+    widgetShellConfirmedAt.clear();
+  }
   widgetRefreshGeneration++;
 }
 
@@ -601,9 +621,22 @@ function startLiveWidgetObserver(): void {
       const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
       const observed = new Map(observedWidgetActivities);
       for (const environmentId of observed.keys()) {
-        if (catalog.entries.get(environmentId)?.enabled !== true) observed.delete(environmentId);
+        if (catalog.entries.get(environmentId)?.enabled !== true) {
+          observed.delete(environmentId);
+          widgetShellObservations.delete(environmentId);
+          widgetShellConfirmedAt.delete(environmentId);
+        }
       }
-      for (const [environmentId, rows] of activities) observed.set(environmentId, rows);
+      for (const [environmentId, rows] of activities) {
+        const shell = appAtomRegistry.get(environmentShell.stateValueAtom(environmentId));
+        if (widgetShellObservations.get(environmentId) !== shell) {
+          widgetShellObservations.set(environmentId, shell);
+          // Coalesce streaming shell updates within a minute. Timer-driven
+          // atom recomputations alone cannot confirm an unchanged shell.
+          widgetShellConfirmedAt.set(environmentId, Math.floor(Date.now() / 60_000) * 60_000);
+        }
+        observed.set(environmentId, rows);
+      }
       observedWidgetActivities = observed;
       publishReconciledWidget();
       if (
@@ -754,6 +787,7 @@ function refreshAgentActivityWidget(): Effect.Effect<
     const expectedDeviceGeneration = deviceRegistrationGeneration;
     const expectedRefreshGeneration = ++widgetRefreshGeneration;
     const readStartedWith = observedWidgetActivities;
+    const readStartedAt = Date.now();
     const snapshot = yield* readAgentActivitySnapshot();
     if (expectedDeviceGeneration !== deviceRegistrationGeneration || !relayTokenProvider) {
       return null;
@@ -763,7 +797,7 @@ function refreshAgentActivityWidget(): Effect.Effect<
     if (snapshot) {
       observedWidgetActivities = retainUnconfirmedWidgetActivities(
         observedWidgetActivities,
-        liveWidgetActivities,
+        AppState.currentState === "active" ? liveWidgetActivities : new Map(),
         readStartedWith,
         snapshot,
       );
@@ -782,6 +816,9 @@ function refreshAgentActivityWidget(): Effect.Effect<
         break;
       }
       relayWidgetSnapshot = widgetSnapshot;
+      // A response confirms its request's observation time, not the later
+      // arrival time. Failed and superseded reads never renew the timeline.
+      relayWidgetConfirmedAt = readStartedAt;
       publishReconciledWidget();
     }
     return snapshot;
@@ -1123,6 +1160,7 @@ export function updateAgentAwarenessRegistrationPreferences(
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   stopLiveWidgetObserver();
   relayWidgetSnapshot = null;
+  relayWidgetConfirmedAt = null;
   publishedWidgetContent = null;
   environmentConnections.clear();
   pushTokenSubscription?.remove();

@@ -47,6 +47,8 @@ export interface AgentActivityProps {
   readonly subtitle: string;
   readonly activeCount: number | null;
   readonly isStale?: boolean;
+  readonly isExpired?: boolean;
+  readonly expiresAt?: number;
   readonly updatedAt: string;
   readonly activities: ReadonlyArray<AgentActivityRowProps>;
 }
@@ -172,7 +174,11 @@ export function AgentActivity(
   // terminal row): every presentation — header text, tint, count slots,
   // minimal glyph — must agree, and a failure anywhere should dominate a
   // newer success.
-  const allDone = activeCount === 0;
+  const allDone =
+    activeCount === 0 ||
+    (props.isExpired === true &&
+      activities.length > 0 &&
+      activities.every((row) => row.phase === "completed" || row.phase === "failed"));
   const hasRows = activities.length > 0;
   const doneLabel = failedRow ? "Failed" : hasRows ? "Done" : "Idle";
   const outcomeLabel = failedRow
@@ -185,28 +191,28 @@ export function AgentActivity(
   // the two parts in-line so the attention half can carry the accent color;
   // `summary` is the short form for tight spots (expanded center, watch card).
   const agentWord = activeCount === 1 ? "agent" : "agents";
-  const countLabel =
-    activeCount === null
-      ? "Activity count unavailable"
-      : allDone
-        ? outcomeLabel
-        : isSystemStale
-          ? "Agent status out of date"
-          : `${activeCount} active ${agentWord}`;
-  const agentsLabel = props.isStale ? `Last observed: ${countLabel}` : countLabel;
+  const countLabel = allDone
+    ? outcomeLabel
+    : props.isExpired || isSystemStale
+      ? "Agent status out of date"
+      : activeCount === null
+        ? "Activity count unavailable"
+        : `${activeCount} active ${agentWord}`;
+  const agentsLabel =
+    props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
     attentionRows.length > 0
       ? `${attentionRows.length} need${attentionRows.length === 1 ? "s" : ""} attention`
       : "";
-  const currentLabel =
-    activeCount === null
-      ? "Count unavailable"
-      : allDone
-        ? doneLabel
-        : isSystemStale
-          ? "Out of date"
-          : `${activeCount} active`;
-  const activeLabel = props.isStale ? `Last observed: ${currentLabel}` : currentLabel;
+  const currentLabel = allDone
+    ? doneLabel
+    : props.isExpired || isSystemStale
+      ? "Out of date"
+      : activeCount === null
+        ? "Count unavailable"
+        : `${activeCount} active`;
+  const activeLabel =
+    props.isStale && !props.isExpired ? `Last observed: ${currentLabel}` : currentLabel;
   const summary = attentionSuffix || activeLabel;
 
   // Any registered scheme variant routes back to this app; taps are delivered
@@ -336,13 +342,18 @@ export function AgentActivity(
               lineLimit(1),
             ]}
           >
-            {row0.threadTitle}
+            {props.isExpired ? "Open T3 to refresh" : row0.threadTitle}
           </Text>
           <Spacer minLength={6} />
           <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
             {row0.status}
           </Text>
         </HStack>
+      ) : null}
+      {props.isExpired && !row0 ? (
+        <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground)]}>
+          Open T3 to refresh
+        </Text>
       ) : null}
     </VStack>
   );
@@ -425,6 +436,13 @@ export function AgentActivity(
               </Text>
             </HStack>
           ) : null}
+          {props.isExpired ? (
+            <Text
+              modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground), lineLimit(1)]}
+            >
+              Open T3 to refresh
+            </Text>
+          ) : null}
           <Spacer minLength={0} />
         </VStack>
       );
@@ -487,6 +505,17 @@ export function AgentActivity(
         {row0 ? renderHomeRow(row0) : null}
         {row1 ? <Divider modifiers={[padding({ vertical: 7, leading: 26 })]} /> : null}
         {row1 ? renderHomeRow(row1) : null}
+        {props.isExpired ? (
+          <Text
+            modifiers={[
+              font({ size: 11 }),
+              foregroundStyle(secondaryForeground),
+              padding({ top: 4 }),
+            ]}
+          >
+            Open T3 to refresh
+          </Text>
+        ) : null}
         <Spacer minLength={0} />
       </VStack>
     );

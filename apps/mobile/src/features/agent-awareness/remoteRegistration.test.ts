@@ -65,6 +65,10 @@ import {
 } from "./remoteRegistration";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import { publishAgentActivityWidget } from "./agentLiveActivity";
+import {
+  agentActivityTimeline,
+  AGENT_ACTIVITY_FRESHNESS_MS,
+} from "../../widgets/agentActivityTimeline";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import {
@@ -2639,7 +2643,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       appStateMock.currentState = "background";
       for (const listener of appStateMock.listeners) listener("background");
       const publishedBeforeBackground = vi.mocked(publishAgentActivityWidget).mock.calls.length;
-      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall?.[0]?.isStale).toBe(true);
+      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall?.[0]?.isStale).toBe(false);
       setLiveShell("ready");
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publishedBeforeBackground);
       appStateMock.currentState = "active";
@@ -2655,7 +2659,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
   });
 
   it.effect(
-    "marks retained observations stale when a background relay read cannot validate them",
+    "keeps the original deadline when a background relay read cannot validate retained observations",
     () => {
       addLiveEnvironment();
       setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
@@ -2670,7 +2674,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
           expect.objectContaining({
             activeCount: 1,
-            isStale: true,
+            isStale: false,
             activities: [expect.objectContaining({ threadTitle: "Live task" })],
           }),
         );
@@ -2713,6 +2717,206 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(publishAgentActivityWidget).toHaveBeenCalledTimes(count + 1);
     }).pipe(Effect.provide(snapshotRelayLayer(() => Effect.succeed({ aggregate: null }))));
   });
+
+  it.effect(
+    "does not renew disconnected work from a fresh read of an older relay observation",
+    () =>
+      Effect.gen(function* () {
+        const now = Date.parse("2026-10-02T12:00:00.000Z");
+        const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+        addLiveEnvironment();
+        setLiveShell("running");
+        setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+        backgroundRuntime.pending.length = 0;
+        const layer = snapshotRelayLayer(() => Effect.succeed({ aggregate: null }));
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+        const deadline = vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt;
+
+        clock.mockReturnValue(now + 60_000);
+        setLiveShell("running", "cached");
+        yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+        const retained = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+        expect(retained).toMatchObject({ isStale: true, expiresAt: deadline });
+        expect(retained.activities[0]?.threadTitle).toBe("Live task");
+
+        appStateMock.currentState = "background";
+        for (const listener of appStateMock.listeners) listener("background");
+        expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0]).toMatchObject({
+          isStale: true,
+          expiresAt: deadline,
+        });
+      }),
+  );
+
+  it("renews a confirmed live shell but not an unrelated atom recomputation", () => {
+    const now = Date.parse("2026-10-02T12:00:00.000Z");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    addLiveEnvironment();
+    setLiveShell("running");
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+    const original = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+    expect(original.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
+    const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
+
+    clock.mockReturnValue(now + 60_000);
+    const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
+    setTestAtom(environmentCatalog.catalogValueAtom, { ...catalog });
+    expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
+
+    setLiveShell("running");
+    expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+      now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS,
+    );
+    expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications + 1);
+  });
+
+  it.effect("renews unchanged confirmed relay content, but not a failed read", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-10-02T12:00:00.000Z");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+      backgroundRuntime.pending.length = 0;
+      const layer = snapshotRelayLayer();
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+      const original = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+      expect(original.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
+
+      clock.mockReturnValue(now + 60_000);
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+      const renewed = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+      expect(renewed.activities).toEqual(original.activities);
+      expect(renewed.expiresAt).toBe(now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS);
+      const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
+
+      clock.mockReturnValue(now + 120_000);
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(
+          snapshotRelayLayer(() =>
+            Effect.fail(
+              new ManagedRelay.ManagedRelayRequestFailedError({
+                action: "read relay agent activity snapshot",
+                transportFailed: true,
+                cause: new Error("offline"),
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
+      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+        renewed.expiresAt,
+      );
+    }),
+  );
+
+  it.effect("does not renew expiration when an older unchanged relay read finishes last", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-10-02T12:00:00.000Z");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+      backgroundRuntime.pending.length = 0;
+      const older = yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(
+          snapshotRelayLayer(() =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.as(activeAgentActivitySnapshot),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      clock.mockReturnValue(now + 60_000);
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(snapshotRelayLayer()),
+      );
+      const publications = vi.mocked(publishAgentActivityWidget).mock.calls.length;
+      clock.mockReturnValue(now + 120_000);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(older);
+      expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications);
+      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+        now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a slow read's original deadline instead of freshening it on arrival", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-10-02T12:00:00.000Z");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+      backgroundRuntime.pending.length = 0;
+      const refresh = yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(
+          snapshotRelayLayer(() =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Deferred.await(finish)),
+              Effect.as(activeAgentActivitySnapshot),
+            ),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      clock.mockReturnValue(now + AGENT_ACTIVITY_FRESHNESS_MS + 1);
+      yield* Deferred.succeed(finish, undefined);
+      yield* Fiber.join(refresh);
+      const publication = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+      expect(publication.expiresAt).toBe(now + AGENT_ACTIVITY_FRESHNESS_MS);
+      expect(agentActivityTimeline(publication, Date.now())).toEqual([
+        {
+          date: new Date(Date.now()),
+          props: expect.objectContaining({ isExpired: true, activeCount: null }),
+        },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("renews unchanged live observations and preserves their deadline on background", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-10-02T12:00:00.000Z");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      addLiveEnvironment();
+      setLiveShell("running");
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+      backgroundRuntime.pending.length = 0;
+      const layer = snapshotRelayLayer(({ excludedEnvironmentIds }) =>
+        Effect.succeed({ aggregate: null, excludedEnvironmentIds: excludedEnvironmentIds ?? [] }),
+      );
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+      const original = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+
+      clock.mockReturnValue(now + 60_000);
+      setLiveShell("running");
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(Effect.provide(layer));
+      const renewed = vi.mocked(publishAgentActivityWidget).mock.lastCall![0];
+      expect(renewed.activities.map(({ updatedAt: _updatedAt, ...row }) => row)).toEqual(
+        original.activities.map(({ updatedAt: _updatedAt, ...row }) => row),
+      );
+      expect(renewed.expiresAt).toBe(now + 60_000 + AGENT_ACTIVITY_FRESHNESS_MS);
+
+      clock.mockReturnValue(now + 120_000);
+      appStateMock.currentState = "background";
+      for (const listener of appStateMock.listeners) listener("background");
+      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0]).toMatchObject({
+        isStale: false,
+        expiresAt: renewed.expiresAt,
+      });
+      const timeline = agentActivityTimeline(renewed, Date.now());
+      expect(timeline[0]?.props.isExpired).toBeUndefined();
+      expect(timeline[1]?.date.getTime()).toBe(renewed.expiresAt);
+      expect(timeline[1]?.props.activities[0]).toMatchObject({
+        phase: "stale",
+        status: "Out of date",
+      });
+    }),
+  );
 
   it.effect("detaches the shell publisher on sign-out and provider release", () => {
     addLiveEnvironment();
