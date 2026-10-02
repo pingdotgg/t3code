@@ -10,6 +10,18 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Vite's `?worker` transform does not run under Vitest, so a real worker
+    // bundle would be evaluated as a plain module and throw `self is not
+    // defined` at import time, failing collection for any test whose import
+    // graph reaches a Web Worker. Keep those imports inert instead.
+    alias: [
+      {
+        find: /^.*\?worker$/,
+        replacement: NodeURL.fileURLToPath(
+          new URL("./apps/web/src/testSupport/webWorkerStub.ts", import.meta.url),
+        ),
+      },
+    ],
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
