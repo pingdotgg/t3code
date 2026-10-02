@@ -14,9 +14,9 @@ import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2
 import * as OpenCode2TextGeneration from "@t3tools/provider-opencode/server/v2/textGeneration";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
 
-const decodeReplayEntries = Schema.decodeSync(
-  Schema.fromJsonString(Schema.Array(ProviderReplayEntry)),
-);
+const ReplayEntriesJson = Schema.fromJsonString(Schema.Array(ProviderReplayEntry));
+const encodeReplayEntries = Schema.encodeEffect(ReplayEntriesJson);
+const decodeReplayEntries = Schema.decodeEffect(ReplayEntriesJson);
 
 const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -47,8 +47,9 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
 
   it.effect("cleans a transcript through a temporary session and removes it", () =>
     Effect.gen(function* () {
-      const entries = decodeReplayEntries(
-        JSON.stringify(OPENCODE2_TITLE_GENERATION)
+      const entriesJson = yield* encodeReplayEntries(OPENCODE2_TITLE_GENERATION);
+      const entries = yield* decodeReplayEntries(
+        entriesJson
           .replaceAll("generateThreadTitle", "generateTranscriptionPostProcessing")
           .replaceAll(
             '\\"title\\": \\"Fix OAuth Login Redirect Loop\\"',
