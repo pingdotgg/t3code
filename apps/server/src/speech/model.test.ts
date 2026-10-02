@@ -161,7 +161,7 @@ it("reuses verification only while the model file and expected digest are unchan
     expect(read).toHaveBeenCalledTimes(1);
     expect(fetchModel).toHaveBeenCalledTimes(1);
     await NodeFSP.writeFile(path, Buffer.alloc(bytes.length));
-    await NodeFSP.utimes(path, new Date(0), new Date(0));
+    await NodeFSP.utimes(path, 0, 0);
     expect(await NodeFSP.readFile(await downloadSpeechModel(directory, model))).toEqual(bytes);
     expect(read).toHaveBeenCalledTimes(3);
     expect(fetchModel).toHaveBeenCalledTimes(2);

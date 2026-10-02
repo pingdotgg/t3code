@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - verifies isolated native worker processes and their exit events.
 import * as NodeModule from "node:module";
 import { expect, it, vi } from "vite-plus/test";
 import * as NodeChildProcess from "node:child_process";
