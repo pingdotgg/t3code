@@ -893,10 +893,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       thread?.worktreePath ?? bootstrap?.createThread?.worktreePath ?? project?.workspaceRoot;
     // This is the command worker itself, not dispatch(). Release after the
     // committed pending state is visible, before the provider starts its turn.
-    // A bootstrap source snapshot takes its own short checkout lock during
-    // capture; don't recursively acquire the same (non-reentrant) lock here.
-    if (bootstrap?.createThread?.sourceWorktreePath !== undefined) {
-      return worktreeProcess;
+    const sourceWorktreePath = bootstrap?.createThread?.sourceWorktreePath;
+    if (cwd && sourceWorktreePath !== undefined) {
+      // Avoid re-acquiring CheckoutCoordinator's non-reentrant lock only when
+      // both paths resolve to the same checkout root.
+      return coordinator.withCheckoutUnlessSameRoot(cwd, sourceWorktreePath, worktreeProcess);
     }
     return cwd ? coordinator.withCheckout(cwd, worktreeProcess) : worktreeProcess;
   };

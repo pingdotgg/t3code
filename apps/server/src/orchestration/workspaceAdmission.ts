@@ -218,27 +218,12 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     repositoryKey,
     threadWorkspaceKey,
   );
-  const gitProcess = (args: ReadonlyArray<string>, timeoutMs = 5_000) =>
-    Effect.tryPromise({
-      try: () =>
-        runProcess("git", ["-C", gitRoot, ...args], {
-          allowNonZeroExit: true,
-          maxBufferBytes: 64 * 1024,
-          timeoutMs,
-        }),
-      catch: allocationError,
-    });
   const allocationError = (cause: unknown) =>
     new OrchestrationCommandInvariantError({
       commandType: command.type,
       detail: `Unable to allocate isolated workspace '${worktreePath}' for thread '${threadId}': ${cause instanceof Error ? cause.message : String(cause)}`,
     });
-
-  yield* Effect.tryPromise({
-    try: () => mkdir(path.dirname(worktreePath), { recursive: true }),
-    catch: allocationError,
-  });
-  const existing = yield* Effect.tryPromise({
+  const existingWorkspace = yield* Effect.tryPromise({
     try: () =>
       runProcess("git", ["-C", worktreePath, "rev-parse", "--show-toplevel"], {
         allowNonZeroExit: true,
@@ -247,90 +232,105 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
       }),
     catch: allocationError,
   });
-  if (existing.code === 0) {
-    const [existingCommonDir, expectedCommonDir, existingBranch] = yield* Effect.all(
-      [
-        Effect.tryPromise({
-          try: () =>
-            runProcess("git", ["-C", worktreePath, "rev-parse", "--git-common-dir"], {
-              allowNonZeroExit: true,
-              maxBufferBytes: 16 * 1024,
-              timeoutMs: 5_000,
-            }),
-          catch: allocationError,
-        }),
-        gitProcess(["rev-parse", "--git-common-dir"]),
-        Effect.tryPromise({
-          try: () =>
-            runProcess("git", ["-C", worktreePath, "symbolic-ref", "--short", "-q", "HEAD"], {
-              allowNonZeroExit: true,
-              maxBufferBytes: 16 * 1024,
-              timeoutMs: 5_000,
-            }),
-          catch: allocationError,
-        }),
-      ],
-      { concurrency: "unbounded" },
-    );
-    if (existingCommonDir.code !== 0 || existingBranch.code !== 0) {
-      return yield* allocationError(
-        new Error("existing workspace is not a checked-out Git worktree"),
-      );
-    }
-    const canonicalCommonDir = yield* Effect.tryPromise({
-      try: () =>
-        canonicalizeWorktreePath(path.resolve(worktreePath, existingCommonDir.stdout.trim())),
-      catch: allocationError,
-    });
-    const canonicalExpectedCommonDir = yield* Effect.tryPromise({
-      try: () => canonicalizeWorktreePath(path.resolve(gitRoot, expectedCommonDir.stdout.trim())),
-      catch: allocationError,
-    });
-    if (
-      canonicalCommonDir !== canonicalExpectedCommonDir ||
-      existingBranch.stdout.trim() !== branch
-    ) {
-      return yield* allocationError(
-        new Error(
-          `existing workspace belongs to common Git directory '${canonicalCommonDir}' and branch '${existingBranch.stdout.trim()}', expected '${canonicalExpectedCommonDir}' and '${branch}'`,
-        ),
-      );
-    }
-  } else {
-    let sourceRevision = sourceBranch;
-    if (createThread?.sourceWorktreePath !== undefined) {
-      sourceRevision = yield* createWorkspaceSnapshotCommit(createThread.sourceWorktreePath).pipe(
-        Effect.mapError((cause) =>
-          allocationError(
-            new Error(
-              `could not snapshot source worktree '${createThread.sourceWorktreePath}': ${cause instanceof Error ? cause.message : String(cause)}`,
-            ),
-          ),
-        ),
-      );
-    }
-    const existingBranch = yield* gitProcess(["show-ref", "--verify", `refs/heads/${branch}`]);
-    if (existingBranch.code === 0) {
-      const branchRevision = yield* gitProcess(["rev-parse", `refs/heads/${branch}`]);
-      if (branchRevision.stdout.trim() !== sourceRevision) {
-        return yield* allocationError(
+
+  let sourceSnapshotRevision: string | undefined;
+  if (existingWorkspace.code !== 0 && createThread?.sourceWorktreePath !== undefined) {
+    // This capture runs on the single orchestration command worker and stalls
+    // later commands. No caller may hold a source checkout lock while awaiting
+    // orchestration dispatch (scar 381); capture itself holds the lock briefly.
+    sourceSnapshotRevision = yield* createWorkspaceSnapshotCommit(
+      createThread.sourceWorktreePath,
+    ).pipe(
+      Effect.mapError((cause) =>
+        allocationError(
           new Error(
-            `branch '${branch}' already exists at '${branchRevision.stdout.trim()}', not the requested source revision '${sourceRevision}'`,
+            `could not snapshot source worktree '${createThread.sourceWorktreePath}': ${cause instanceof Error ? cause.message : String(cause)}`,
           ),
+        ),
+      ),
+    );
+  }
+
+  yield* Effect.tryPromise({
+    try: async () => {
+      await mkdir(path.dirname(worktreePath), { recursive: true });
+      const existing = await runProcess(
+        "git",
+        ["-C", worktreePath, "rev-parse", "--show-toplevel"],
+        {
+          allowNonZeroExit: true,
+          maxBufferBytes: 16 * 1024,
+          timeoutMs: 5_000,
+        },
+      );
+      if (existing.code === 0) {
+        const [existingCommonDir, expectedCommonDir, existingBranch] = await Promise.all([
+          runProcess("git", ["-C", worktreePath, "rev-parse", "--git-common-dir"], {
+            allowNonZeroExit: true,
+            maxBufferBytes: 16 * 1024,
+            timeoutMs: 5_000,
+          }),
+          runProcess("git", ["-C", gitRoot, "rev-parse", "--git-common-dir"], {
+            allowNonZeroExit: false,
+            maxBufferBytes: 16 * 1024,
+            timeoutMs: 5_000,
+          }),
+          runProcess("git", ["-C", worktreePath, "symbolic-ref", "--short", "-q", "HEAD"], {
+            allowNonZeroExit: true,
+            maxBufferBytes: 16 * 1024,
+            timeoutMs: 5_000,
+          }),
+        ]);
+        if (existingCommonDir.code !== 0 || existingBranch.code !== 0) {
+          throw new Error("existing workspace is not a checked-out Git worktree");
+        }
+        const canonicalCommonDir = await canonicalizeWorktreePath(
+          path.resolve(worktreePath, existingCommonDir.stdout.trim()),
+        );
+        const canonicalExpectedCommonDir = await canonicalizeWorktreePath(
+          path.resolve(gitRoot, expectedCommonDir.stdout.trim()),
+        );
+        if (
+          canonicalCommonDir !== canonicalExpectedCommonDir ||
+          existingBranch.stdout.trim() !== branch
+        ) {
+          throw new Error(
+            `existing workspace belongs to common Git directory '${canonicalCommonDir}' and branch '${existingBranch.stdout.trim()}', expected '${canonicalExpectedCommonDir}' and '${branch}'`,
+          );
+        }
+        return;
+      }
+      const sourceRevision =
+        createThread?.sourceWorktreePath === undefined ? sourceBranch : sourceSnapshotRevision;
+      if (!sourceRevision) {
+        throw new Error(
+          `could not resolve source revision from '${createThread?.sourceWorktreePath ?? sourceBranch}'`,
         );
       }
-    }
-    const worktreeArguments =
-      existingBranch.code === 0
-        ? ["worktree", "add", worktreePath, branch]
-        : ["worktree", "add", "-b", branch, worktreePath, sourceRevision];
-    const result = yield* gitProcess(worktreeArguments, 30_000);
-    if (result.code !== 0) {
-      return yield* allocationError(
-        new Error(result.stderr.trim() || `git worktree add failed with code ${result.code}`),
+      const existingBranch = await runProcess(
+        "git",
+        ["-C", gitRoot, "show-ref", "--verify", `refs/heads/${branch}`],
+        {
+          allowNonZeroExit: true,
+          maxBufferBytes: 16 * 1024,
+          timeoutMs: 5_000,
+        },
       );
-    }
-  }
+      const worktreeArguments =
+        existingBranch.code === 0
+          ? ["-C", gitRoot, "worktree", "add", worktreePath, branch]
+          : ["-C", gitRoot, "worktree", "add", "-b", branch, worktreePath, sourceRevision];
+      const result = await runProcess("git", worktreeArguments, {
+        allowNonZeroExit: true,
+        maxBufferBytes: 64 * 1024,
+        timeoutMs: 30_000,
+      });
+      if (result.code !== 0) {
+        throw new Error(result.stderr.trim() || `git worktree add failed with code ${result.code}`);
+      }
+    },
+    catch: allocationError,
+  });
   const nextCommand =
     command.type === "thread.create"
       ? { ...command, branch, worktreePath }
