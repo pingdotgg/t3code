@@ -26,7 +26,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
@@ -152,15 +152,15 @@ export class VcsAutoPullPolicy extends Context.Reference<{
 export const autoPullPolicyLayer = Layer.effect(
   VcsAutoPullPolicy,
   Effect.gen(function* () {
-    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const projects = yield* ProjectStore.ProjectStoreV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     return {
       isEnabled: Effect.fn("VcsAutoPullPolicy.isEnabled")(
         function* (cwd: string) {
-          const project = yield* snapshots.getActiveProjectByWorkspaceRoot(cwd);
+          const project = yield* projects.findActiveByWorkspaceRoot(cwd);
           if (project._tag === "None") return false;
           const settings = yield* serverSettings.getSettings;
-          return resolveProjectSettings(settings, project.value.id).settings.defaultAutoPull;
+          return resolveProjectSettings(settings, project.value.projectId).settings.defaultAutoPull;
         },
         Effect.orElseSucceed(() => false),
       ),
@@ -541,13 +541,13 @@ export const make = Effect.gen(function* () {
         const demandCwds = yield* Ref.get(demandCwdsRef);
         const shouldRun =
           needsInitialRefresh ||
-          (yield* Effect.all(
-            [...demandCwds.keys()].map((demandCwd) =>
+          (yield* Effect.forEach(
+            [...demandCwds.keys()],
+            (demandCwd) =>
               backgroundPolicy.shouldRunScopeWork({
                 type: "vcs-status",
                 cwd: demandCwd,
               }),
-            ),
             { concurrency: "unbounded" },
           )).some(Boolean);
         if (!shouldRun) {

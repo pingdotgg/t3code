@@ -1,4 +1,5 @@
 import type {
+  BranchNamingOptions,
   VcsRef,
   SourceControlProviderInfo,
   VcsStatusLocalResult,
@@ -39,6 +40,24 @@ export function sanitizeBranchFragment(raw: string): string {
     .replace(/[./_-]+$/g, "");
 
   return branchFragment.length > 0 ? branchFragment : "update";
+}
+
+/** Custom naming preserves the model's complete ref; Git validates it on rename. */
+export function formatGeneratedBranchName(raw: string, naming?: BranchNamingOptions): string {
+  if (naming?.mode === "custom") return raw.trim();
+  const branch = sanitizeBranchFragment(raw);
+  if (naming?.mode !== "static") return branch;
+  const prefix = naming.prefix
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[^a-zA-Z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter(Boolean)
+    .join("/");
+  return prefix ? `${prefix}/${branch}` : branch;
 }
 
 /**
@@ -263,6 +282,19 @@ function deriveLocalBranchNameCandidatesFromRemoteRef(
   }
 
   return [...candidates];
+}
+
+// Git rejects ASCII space and the ASCII control characters (tab, newline and
+// friends) in ref names, so the picker's "Create new ref" entry can only fail
+// for a typed name like "new branch". Replacing runs of those with a dash makes
+// the name usable without reimplementing check-ref-format: names invalid for
+// other reasons still surface the git error. Only the whitespace git actually
+// rejects is replaced — git accepts U+00A0 and friends, and rewriting those
+// would silently create a ref the user never asked for. Case and existing
+// dashes are left alone, since ref names are case sensitive and consecutive
+// dashes are valid.
+export function sanitizeNewRefName(rawName: string): string {
+  return rawName.trim().replace(/[ \t\n\r\f\v]+/g, "-");
 }
 
 /**

@@ -11,7 +11,14 @@ export const SHOWCASE_PROJECT_ID = "t3code";
 export const SHOWCASE_THREAD_ID = "remote-command-center";
 export const SHOWCASE_TERMINAL_ID = "term-1";
 
-export const SHOWCASE_SCENES = ["threads", "thread", "terminal", "review", "environments"] as const;
+export const SHOWCASE_SCENES = [
+  "threads",
+  "thread",
+  "terminal",
+  "review",
+  "environments",
+  "agent-activity",
+] as const;
 export type ShowcaseScene = (typeof SHOWCASE_SCENES)[number];
 
 const PROJECTOR_NAMES = [
@@ -649,7 +656,7 @@ export async function seedShowcaseEnvironment(input: {
   if (!primaryProject) throw new Error("The primary showcase workspace is not configured.");
   const workspaceRoot = workspaceRoots.get(primaryProject.id);
   if (!workspaceRoot) throw new Error("The primary showcase workspace is not configured.");
-  const dbPath = NodePath.join(input.baseDir, "userdata", "state.sqlite");
+  const dbPath = NodePath.join(input.baseDir, "userdata", "statev2.sqlite");
   if (primaryProject.id === SHOWCASE_PROJECT_ID) {
     await seedT3CodeWorkspace(workspaceRoot);
   }

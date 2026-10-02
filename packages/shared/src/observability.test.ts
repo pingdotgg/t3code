@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -16,9 +17,11 @@ import * as Tracer from "effect/Tracer";
 import {
   causeErrorTag,
   compactTraceAttributes,
+  decodeOtlpTraceRecords,
   errorTag,
   makeLocalFileTracer,
   makeTraceSink,
+  type EffectTraceRecord,
   type TraceRecord,
   type TraceSinkFlushStats,
   OtlpHeadersFromString,
@@ -138,7 +141,155 @@ describe("truncateTraceAttributes", () => {
   });
 });
 
+describe("decodeOtlpTraceRecords", () => {
+  it("clamps oversized renderer span and event attributes", () => {
+    const long = "x".repeat(2_000);
+    const clamped = `${"x".repeat(500)}…[truncated]`;
+    const [record] = decodeOtlpTraceRecords({
+      resourceSpans: [
+        {
+          resource: { attributes: [], droppedAttributesCount: 0 },
+          scopeSpans: [
+            {
+              scope: { name: "effect" },
+              spans: [
+                {
+                  traceId: "11111111111111111111111111111111",
+                  spanId: "2222222222222222",
+                  parentSpanId: undefined,
+                  name: "client.span",
+                  kind: 1,
+                  startTimeUnixNano: "1000000",
+                  endTimeUnixNano: "2000000",
+                  attributes: [{ key: "payload", value: { stringValue: long } }],
+                  droppedAttributesCount: 0,
+                  events: [
+                    {
+                      name: "log",
+                      timeUnixNano: "1500000",
+                      attributes: [{ key: "effect.cause", value: { stringValue: long } }],
+                      droppedAttributesCount: 0,
+                    },
+                  ],
+                  droppedEventsCount: 0,
+                  status: { code: 1 },
+                  links: [],
+                  droppedLinksCount: 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    assert.equal(record?.attributes["payload"], clamped);
+    assert.equal(record?.events[0]?.attributes["effect.cause"], clamped);
+  });
+});
+
 describe("observability", () => {
+  it.effect(
+    "preserves successful results without retaining them in sampled or unsampled spans",
+    () =>
+      Effect.gen(function* () {
+        for (const sampled of [true, false]) {
+          const delegates: Array<Tracer.Span> = [];
+          const records: Array<EffectTraceRecord> = [];
+          const tracer = yield* makeLocalFileTracer({
+            filePath: "unused",
+            maxBytes: 1024,
+            maxFiles: 1,
+            batchWindowMs: 10_000,
+            sink: {
+              filePath: "unused",
+              push: (record) => {
+                if (record.type === "effect-span") records.push(record);
+              },
+              flush: Effect.void,
+              close: () => Effect.void,
+            },
+            delegate: Tracer.make({
+              span: (options) => {
+                const span = new Tracer.NativeSpan({ ...options, sampled });
+                delegates.push(span);
+                return span;
+              },
+            }),
+          });
+          const payload = { turnItems: [{ output: [{ text: "synthetic-result" }] }] };
+          let span: Tracer.Span | undefined;
+          const result = yield* Effect.gen(function* () {
+            span = yield* Effect.currentSpan;
+            return payload;
+          }).pipe(
+            Effect.withSpan("read-thread-projection"),
+            Effect.provideService(Tracer.Tracer, tracer),
+          );
+          assert.strictEqual(result, payload);
+          assert.isDefined(span);
+          for (const completed of [span!, ...delegates]) {
+            assert.equal(completed.status._tag, "Ended");
+            if (completed.status._tag === "Ended") {
+              assert.deepStrictEqual(completed.status.exit, Exit.void);
+            }
+          }
+          assert.deepStrictEqual(
+            records.map((record) => record.exit),
+            sampled ? [{ _tag: "Success" }] : [],
+          );
+        }
+      }),
+  );
+
+  it.effect("preserves failure and interruption causes in spans and exported traces", () =>
+    Effect.gen(function* () {
+      for (const cause of [Cause.fail({ _tag: "SyntheticFailure" }), Cause.interrupt()]) {
+        const delegates: Array<Tracer.Span> = [];
+        const records: Array<EffectTraceRecord> = [];
+        const tracer = yield* makeLocalFileTracer({
+          filePath: "unused",
+          maxBytes: 1024,
+          maxFiles: 1,
+          batchWindowMs: 10_000,
+          sink: {
+            filePath: "unused",
+            push: (record) => {
+              if (record.type === "effect-span") records.push(record);
+            },
+            flush: Effect.void,
+            close: () => Effect.void,
+          },
+          delegate: Tracer.make({
+            span: (options) => {
+              const span = new Tracer.NativeSpan(options);
+              delegates.push(span);
+              return span;
+            },
+          }),
+        });
+        let span: Tracer.Span | undefined;
+        const result = yield* Effect.gen(function* () {
+          span = yield* Effect.currentSpan;
+          return yield* Effect.failCause(cause);
+        }).pipe(
+          Effect.withSpan("failed-operation"),
+          Effect.provideService(Tracer.Tracer, tracer),
+          Effect.exit,
+        );
+        assert.isTrue(Exit.isFailure(result));
+        assert.isDefined(span);
+        for (const completed of [span!, ...delegates]) {
+          assert.equal(completed.status._tag, "Ended");
+          if (completed.status._tag === "Ended") {
+            assert.strictEqual(completed.status.exit, result);
+          }
+        }
+        assert.equal(records[0]?.exit._tag, Cause.hasInterrupts(cause) ? "Interrupted" : "Failure");
+      }
+    }),
+  );
+
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
     const array: Array<unknown> = ["alpha"];
     array.push(array);

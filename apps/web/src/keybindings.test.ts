@@ -226,6 +226,33 @@ describe("settle thread shortcut", () => {
   });
 });
 
+describe("thread undo shortcut", () => {
+  it("resolves mod+z with nothing editable focused", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "z", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false, editableFocus: false },
+      }),
+      "thread.undo",
+    );
+  });
+
+  it("leaves native undo alone inside text fields and terminals", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "z", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Win32",
+        context: { editableFocus: true },
+      }),
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "z", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Win32",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+});
+
 describe("copy thread reference shortcut", () => {
   it("resolves Cmd+Shift+C on macOS and Ctrl+Shift+C elsewhere", () => {
     assert.equal(
@@ -651,6 +678,13 @@ describe("chat/editor shortcuts", () => {
         platform: "Linux",
       }),
     );
+    assert.isFalse(
+      isOpenFavoriteEditorShortcut(
+        event({ key: "o", metaKey: true, repeat: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+    );
   });
 
   it("matches commandPalette.toggle shortcut outside terminal focus", () => {
@@ -667,6 +701,38 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "commandPalette.toggle",
+    );
+  });
+
+  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
+    const bindings = compile([
+      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "threadPanel.toggle",
+    );
+  });
+
+  it("matches themeEditor.toggle on macOS and Windows", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "themeEditor.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", ctrlKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Win32" },
+      ),
+      "themeEditor.toggle",
     );
   });
 
@@ -701,25 +767,6 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "projectSearch.toggle",
-    );
-  });
-
-  it("matches themeEditor.toggle on macOS and Windows", () => {
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "t", metaKey: true, altKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "MacIntel" },
-      ),
-      "themeEditor.toggle",
-    );
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "t", ctrlKey: true, altKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "Win32" },
-      ),
-      "themeEditor.toggle",
     );
   });
 
@@ -886,6 +933,25 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("navigates history with mod+[ and mod+] outside the terminal", () => {
+    const back = event({ key: "[", code: "BracketLeft", metaKey: true });
+    const forward = event({ key: "]", code: "BracketRight", ctrlKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "MacIntel" }),
+      "navigation.back",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(forward, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux" }),
+      "navigation.forward",
+    );
+    assert.isNull(
+      resolveShortcutCommand(back, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(
@@ -1028,6 +1094,20 @@ describe("isRichTextBoldShortcut", () => {
   it("matches Mod+B without extra modifiers", () => {
     assert.isTrue(isRichTextBoldShortcut(event({ key: "b", metaKey: true })));
     assert.isTrue(isRichTextBoldShortcut(event({ key: "B", ctrlKey: true })));
+  });
+
+  it("matches the B key on non-Latin layouts, like the sidebar toggle does", () => {
+    const cyrillicB = event({ key: "и", code: "KeyB", ctrlKey: true });
+    assert.isTrue(isRichTextBoldShortcut(cyrillicB));
+    assert.strictEqual(
+      resolveShortcutCommand(cyrillicB, DEFAULT_BINDINGS, { platform: "Win32" }),
+      "sidebar.toggle",
+    );
+  });
+
+  it("follows the letter a Latin layout types, not the physical key", () => {
+    assert.isFalse(isRichTextBoldShortcut(event({ key: "x", code: "KeyB", ctrlKey: true })));
+    assert.isTrue(isRichTextBoldShortcut(event({ key: "b", code: "KeyN", ctrlKey: true })));
   });
 
   it("ignores shifted, alted, bare, and non-keydown presses", () => {
@@ -1200,6 +1280,31 @@ describe("composer and pull request shortcuts", () => {
   ] as const;
 
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`separates queued steering and background start on ${platform}`, () => {
+      const modifier = {
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      };
+      const queuedKey = event({ key: "Enter", shiftKey: true, ...modifier });
+      const backgroundKey = event({ key: "Enter", altKey: true, ...modifier });
+      assert.strictEqual(
+        resolveShortcutCommand(queuedKey, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, draftThreadRoute: false },
+        }),
+        "thread.steerQueuedMessage",
+      );
+      assert.strictEqual(
+        resolveShortcutCommand(backgroundKey, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, draftThreadRoute: true, composerFocus: true },
+        }),
+        "composer.sendBackground",
+      );
+    });
+  }
+
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
     it.each(shortcuts)(
       `resolves %s on ${platform} and leaves terminal input alone`,
       (key, command) => {
@@ -1224,6 +1329,25 @@ describe("composer and pull request shortcuts", () => {
         );
       },
     );
+  }
+
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`edits the last queued message with Alt+ArrowUp from the composer on ${platform}`, () => {
+      const input = event({ key: "ArrowUp", altKey: true });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { composerFocus: true },
+        }),
+        "thread.editQueuedMessage",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { composerFocus: false },
+        }),
+      );
+    });
   }
 
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
@@ -1330,4 +1454,61 @@ describe("composer and pull request shortcuts", () => {
       );
     });
   }
+});
+
+describe("Usage shortcuts", () => {
+  it("scopes letter shortcuts to Usage", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "t" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { usagePageOpen: true },
+      }),
+      "usage.tokens",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "t" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
+
+  it.each(["Linux", "MacIntel"])(
+    "preserves desktop numbered thread shortcuts on Usage on %s",
+    (platform) => {
+      const shortcut = event({
+        key: "2",
+        ctrlKey: platform === "Linux",
+        metaKey: platform === "MacIntel",
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { usagePageOpen: true, isDesktop: true },
+        }),
+        "thread.jump.2",
+      );
+      assert.isNotNull(
+        shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "thread.jump.2", {
+          platform,
+          context: { usagePageOpen: true, isDesktop: true },
+        }),
+      );
+    },
+  );
+
+  it("matches shifted number keys for periods and only on Usage", () => {
+    const shortcut = event({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { usagePageOpen: true },
+      }),
+      "usage.period.day",
+    );
+    assert.isNull(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+      }),
+    );
+  });
 });

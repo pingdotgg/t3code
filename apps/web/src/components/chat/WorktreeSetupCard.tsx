@@ -19,8 +19,10 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
+import { WorkLogRow } from "./WorkLog";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -55,12 +57,12 @@ function useNowWhile(active: boolean): number {
 }
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
-  const className = "size-4 shrink-0 stroke-[1.8]";
+  const className = "size-4 shrink-0 stroke-2";
   switch (status) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
     case "running":
-      return <Spinner className={className} />;
+      return <Spinner size="md" className="shrink-0" />;
     case "failed":
       return <XIcon aria-hidden className={className} />;
     case "warning":
@@ -185,40 +187,38 @@ function StageRow({
           ? `${stage.percent}%`
           : stage.detail;
   return (
-    <div
-      ref={running ? observeVisibleAnimation : undefined}
-      className={cn(
-        "relative flex min-h-6 min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-0.5 py-0.5 text-sm leading-relaxed",
-        stageRowClassName(stage.status),
-      )}
+    <WorkLogRow
       data-worktree-setup-stage={stage.id}
       data-worktree-setup-status={stage.status}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <StageIcon status={stage.status} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing ? (
-        <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
-          {trailing}
+      icon={
+        <span className={cn("text-icon-muted", stage.status === "pending" && "opacity-40")}>
+          <StageIcon status={stage.status} />
         </span>
-      ) : null}
-      {elapsed !== null && stage.status !== "skipped" && stage.status !== "pending" ? (
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {formatDuration(elapsed)}
+      }
+      label={
+        <span
+          ref={running ? observeVisibleAnimation : undefined}
+          className={cn("relative block truncate", stageRowClassName(stage.status))}
+        >
+          {label}
+          {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
         </span>
-      ) : null}
-      {running ? (
-        <ShimmerOverlay>
-          <span className="flex min-h-6 items-center gap-1.5 px-0.5 py-0.5">
-            <span className="flex size-6 shrink-0 items-center justify-center">
-              <StageIcon status={stage.status} />
+      }
+      trailing={
+        <>
+          {trailing ? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+              {trailing}
             </span>
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-          </span>
-        </ShimmerOverlay>
-      ) : null}
-    </div>
+          ) : null}
+          {elapsed !== null && stage.status !== "skipped" && stage.status !== "pending" ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {formatDuration(elapsed)}
+            </span>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -239,7 +239,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   return (
     <pre
       className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-[11px] leading-relaxed select-text",
+        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
         failed
           ? "border-destructive/20 bg-error-surface text-destructive-foreground"
           : "border-border bg-code text-muted-foreground",
@@ -260,19 +260,25 @@ function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
       {snapshot.branch ? (
         <>
           <dt className="text-foreground/80">Branch</dt>
-          <dd className="truncate font-mono">{snapshot.branch}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.branch} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.baseRef ? (
         <>
           <dt className="text-foreground/80">Base</dt>
-          <dd className="truncate font-mono">{snapshot.baseRef}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.baseRef} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.worktreePath ? (
         <>
           <dt className="text-foreground/80">Path</dt>
-          <dd className="truncate font-mono">{snapshot.worktreePath}</dd>
+          <dd className="min-w-0 font-mono">
+            <MiddleTruncate value={snapshot.worktreePath} className="flex" />
+          </dd>
         </>
       ) : null}
       {snapshot.setupScript ? (
@@ -305,24 +311,23 @@ function CollapsedSummaryRow({
         : "done";
   const label = headerLabel(snapshot);
   return (
-    <div
-      className={cn(
-        "flex min-h-6 min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 text-sm leading-relaxed",
-        stageRowClassName(status),
-      )}
+    <WorkLogRow
       data-worktree-setup-stage="summary"
       data-worktree-setup-status={status}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <StageIcon status={status} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {totalElapsed !== null ? (
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {formatDuration(totalElapsed)}
+      icon={
+        <span className="text-icon-muted">
+          <StageIcon status={status} />
         </span>
-      ) : null}
-    </div>
+      }
+      label={<span className={stageRowClassName(status)}>{label}</span>}
+      trailing={
+        totalElapsed !== null ? (
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {formatDuration(totalElapsed)}
+          </span>
+        ) : null
+      }
+    />
   );
 }
 

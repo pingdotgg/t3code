@@ -1,20 +1,22 @@
+import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import * as Clock from "effect/Clock";
+import * as Random from "effect/Random";
+import * as Semaphore from "effect/Semaphore";
+import * as StorageCleanup from "./storageCleanup.ts";
+import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  EnvironmentHttpApi,
-  ProviderDriverKind,
-  type RepositoryIdentity,
-} from "@t3tools/contracts";
+import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -29,6 +31,7 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   httpCompressionLayer,
+  untracedRequestsLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
@@ -38,24 +41,17 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import * as SqlitePersistence from "./persistence/Layers/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
-import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
-import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
+import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
-import * as CodexResetCredit from "./provider/Layers/codexResetCredit.ts";
+import * as ResetCreditCoordinator from "./provider/Layers/resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
-import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
-import { ProviderAuthServiceLive } from "./provider/Layers/ProviderAuthService.ts";
-import { AntigravityInstallation } from "./provider/AntigravityInstallation.ts";
-import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
-import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
-import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
+import * as OpenCodeServerLedger from "./provider/OpenCodeServerLedger.ts";
+import { AcpRegistryCatalogLive } from "./provider/Layers/AcpRegistryCatalog.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -78,21 +74,19 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
-import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
-import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
-import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
-import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
-import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
-import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
-import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
-import * as StorageCleanup from "./storageCleanup.ts";
-import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
-import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
+import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as CodexInstallation from "./provider/CodexInstallation.ts";
+import * as ProviderInstanceRegistry from "./provider/Services/ProviderInstanceRegistry.ts";
+import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
@@ -112,23 +106,34 @@ import * as SourceControlProviderRegistry from "./sourceControl/SourceControlPro
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
-import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
+import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
+import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   connectHttpApiLayer,
   pendingServiceUpdateExists,
-  reconcileDesiredCloudLink,
+  reconcileDesiredCloudLinkIfStillDesired,
+  recoverManagedCloudTunnel,
+  registerManagedCloudTunnelRecovery,
+  startManagedCloudTunnelIfOriginConfirmed,
   releaseManagedTunnelOnShutdown,
 } from "./cloud/http.ts";
 import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
 import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import {
+  MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
+  MANAGED_TUNNEL_RECOVERY_COOLDOWN,
+  managedTunnelStartupAction,
+  retryManagedTunnelRegistration,
+} from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -143,23 +148,35 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
-import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
-import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import {
+  OrchestrationEventInfrastructureLayerLive,
+  OrchestrationV2ProductionLayerLive,
+  ProjectServiceLayerLive,
+  ProjectSetupScriptRunnerLayerLive,
+} from "./orchestration-v2/runtimeLayer.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as ResourceCleanupService from "./orchestration-v2/ResourceCleanupService.ts";
+import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
+import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
+import * as RunFinalizationService from "./orchestration-v2/RunFinalizationService.ts";
+import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
-import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
+import { orchestrationHttpApiLayer } from "./orchestration-v2/http.ts";
+import { projectHttpApiLayer } from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
-import { forkParked, ServerActivation } from "./serverActivation.ts";
+import * as ServerActivation from "./serverActivation.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
-export const HTTP_ROUTER_CONFIG = {
+const HTTP_ROUTER_CONFIG = {
   maxParamLength: 512,
 } as const;
 
@@ -169,7 +186,8 @@ export const HTTP_ROUTER_CONFIG = {
 // those finalizers get a chance to run.
 const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
 const ResourceAttributionLayerLive = ResourceAttribution.layer;
-const ApplicationObservabilityLive = ObservabilityLive.pipe(
+const ApplicationObservabilityLive = EventLoopMonitor.layer.pipe(
+  Layer.provideMerge(ObservabilityLive),
   Layer.provideMerge(ResourceAttributionLayerLive),
 );
 
@@ -177,7 +195,7 @@ const PtyAdapterLive = NodePtyAdapter.layer;
 
 const ServerSettingsLayerLive = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
-  Layer.provideMerge(SqlitePersistenceLayerLive),
+  Layer.provideMerge(SqlitePersistence.layerConfig),
 );
 
 const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
@@ -243,36 +261,7 @@ const HttpServerLive = Layer.unwrap(
 
 const PlatformServicesLive = NodeServices.layer;
 
-const ReactorLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(OrchestrationReactorLive),
-  Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(CheckpointReactorLive),
-  Layer.provideMerge(StorageCleanup.layer),
-  Layer.provideMerge(ThreadDeletionReactorLive),
-  Layer.provideMerge(ThreadSettlementReactor.layer),
-  Layer.provideMerge(PullRequestSyncReactor.layer),
-  Layer.provideMerge(ThreadPullRequestReactor.layer),
-  Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-  Layer.provideMerge(RuntimeReceiptBusLive),
-);
-
-const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
-  Layer.provide(ProviderSessionRuntime.layer),
-);
-
-// `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
-// by looking up the default `ProviderInstance` per driver in the instance
-// registry. Adapter construction itself moved inside each driver's
-// `create()`; `ProviderEventLoggers.layer` owns the shared native/canonical
-// NDJSON writers and is provided at the outer runtime layer so both
-// `ProviderService` and the per-instance drivers read the same logger pair.
-const ProviderLayerLive = ProviderServiceLive.pipe(
-  Layer.provide(ProviderAdapterRegistryLive),
-  Layer.provideMerge(ProviderSessionDirectoryLayerLive),
-);
-
-const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
+const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -338,7 +327,9 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
 );
 
 const GitManagerLayerLive = GitManager.layer.pipe(
-  Layer.provideMerge(ProjectSetupScriptRunner.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
+  // Per-project git settings resolve the acting thread's project.
+  Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
+  Layer.provideMerge(ProjectSetupScriptRunnerLayerLive),
   Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
@@ -382,16 +373,18 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(GitWorkflowLayerLive),
+      // Auto-pull reads the project row. The orchestration runtime also
+      // consumes the broadcaster (run finalization), so the policy cannot read
+      // the store from the runtime's output.
       Layer.provide(
-        VcsStatusBroadcaster.autoPullPolicyLayer.pipe(Layer.provide(ServerSettingsLayerLive)),
+        VcsStatusBroadcaster.autoPullPolicyLayer.pipe(Layer.provide(ProjectStore.layer)),
       ),
     ),
   ),
 );
 
-const CheckpointingLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(CheckpointDiffQuery.layer),
-  Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
+const CheckpointStoreLayerLive = CheckpointStore.layer.pipe(
+  Layer.provide(VcsDriverRegistryLayerLive),
 );
 
 const PortScannerLayerLive = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
@@ -449,30 +442,57 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
-  // Subscribes to `account.rate-limits.updated` so usage bars track live
-  // telemetry instead of waiting for the next status probe.
-  Layer.provideMerge(ProviderUsageLimitsIngestionLive),
-  Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
+  Layer.provide(ProviderEventIngestor.analyticsLive),
+  Layer.provide(CheckpointStoreLayerLive),
+  Layer.provide(GitWorkflowLayerLive),
+  Layer.provide(ResourceCleanupService.live),
+  Layer.provide(
+    RunFinalizationService.observerLive.pipe(
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(PullRequestServiceLive),
+      Layer.provide(ProjectServiceLayerLive),
+    ),
+  ),
 );
 
-const AntigravityInstallationRefreshLive = Layer.effectDiscard(
+const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
+  Layer.provideMerge(CheckpointStoreLayerLive),
+  Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
+);
+
+// Automatic thread settlement (#8600): a server-owned sweep evaluates
+// inactivity and merged pull requests, then settles through the orchestrator
+// so every client sees the same shelf.
+const ThreadSettlementWorkerLive = Layer.effectDiscard(
+  ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
+).pipe(Layer.provide(PullRequestServiceLive), Layer.provide(ProjectionStoreV2.layer));
+
+const ThreadPullRequestWorkerLive = Layer.effectDiscard(
+  ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
+).pipe(Layer.provide(PullRequestServiceLive));
+
+const ProviderInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
-    const installation = yield* AntigravityInstallation;
-    const instances = yield* ProviderInstanceRegistry;
-    const providers = yield* ProviderRegistry;
-    yield* installation.changes.pipe(
-      Stream.map((state) => state.installedVersion),
-      Stream.changes,
-      Stream.drop(1),
-      Stream.runForEach(() =>
+    const antigravity = yield* AntigravityInstallation.AntigravityInstallation;
+    const codex = yield* CodexInstallation.CodexInstallation;
+    const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const providers = yield* ProviderRegistry.ProviderRegistry;
+    yield* Stream.merge(
+      antigravity.changes.pipe(
+        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+        Stream.drop(1),
+      ),
+      codex.changes.pipe(
+        Stream.changesWith((a, b) => a.installedVersion === b.installedVersion),
+        Stream.drop(1),
+      ),
+    ).pipe(
+      Stream.runForEach((state) =>
         instances.listInstances.pipe(
           Effect.flatMap((entries) =>
             Effect.forEach(
-              entries.filter(
-                (instance) => instance.driverKind === ProviderDriverKind.make("antigravity"),
-              ),
+              entries.filter((instance) => instance.driverKind === state.driver),
               (instance) => providers.refreshInstance(instance.instanceId),
               { discard: true },
             ),
@@ -484,20 +504,38 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  Layer.provideMerge(AntigravityInstallationRefreshLive),
-  Layer.provideMerge(ProviderAuthServiceLive),
-  // Core Services
-  Layer.provideMerge(ServerSettingsLayerLive),
-  Layer.provideMerge(CheckpointingLayerLive),
-  // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
-  // GitHub-hosted pull request media with the repository's credential.
-  Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive, GitHubCli.layer),
+const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
+  AgentAwarenessRelay.layer,
+  ThreadSettlementWorkerLive,
+  Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
+    Layer.provide(ProjectionStoreV2.layer),
   ),
+  ThreadPullRequestWorkerLive,
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+      yield* service.start();
+    }),
+  ).pipe(
+    Layer.provideMerge(PullRequestSyncReactor.layer),
+    Layer.provide(PullRequestServiceLive),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
+  // Subscribes to `account.rate-limits.updated` so usage bars track live
+  // telemetry instead of waiting for the next status probe.
+  ProviderUsageLimitsIngestionLive,
+  ProviderInstallationRefreshLive,
+  ReplayMarkers.layer,
+).pipe(
+  // Core Services
+  Layer.provideMerge(OrchestrationApplicationLayerLive),
+  Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
+  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  Layer.provideMerge(ServerSettingsLayerLive),
+  // The asset route uses the registry's GitHub credential for private PR media.
+  Layer.provideMerge(Layer.mergeAll(SourceControlProviderRegistryLayerLive, GitHubCli.layer)),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
   // Both read a user-owned file out of the state directory and stream changes
@@ -512,26 +550,40 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-).pipe(
-  Layer.provideMerge(AntigravityInstallation.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      AntigravityInstallation.AntigravityInstallation.layer,
+      CodexInstallation.CodexInstallation.layer,
+    ),
+  ),
+);
+
+const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
+  Layer.provideMerge(PtyAdapterLive),
+  // Search, prepare, status inspection, and turn launch share one registry
+  // cache so every client and provider instance sees the same prepared agents.
+  Layer.provideMerge(AcpRegistryCatalogLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
-  // drivers (native stream, written from inside each `<X>Adapter`) and
-  // `ProviderService` (canonical stream, written after event normalization).
+  // V2 drivers and the orchestration runtime. Provide resource attribution so
+  // the rewritten telemetry pipeline can account for logical NDJSON writes.
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
   // `ModelManifest.layer` is the legacy-model classification data, refreshed
   // from the repo's `model-manifest.json` on `main` and applied by the
   // Codex/Claude drivers.
   Layer.provideMerge(
-    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
+    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, ResetCreditCoordinator.layer),
   ),
   // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
   // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
   // the rewritten registry reads snapshots off the instance registry and
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+  Layer.provideMerge(
+    OpenCodeRuntime.OpenCodeRuntimeLive.pipe(Layer.provide(OpenCodeServerLedger.layer)),
+  ),
   Layer.provideMerge(WorkspaceLayerLive),
+  Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolverLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
@@ -569,13 +621,14 @@ const commandReadinessLayer = HttpRouter.middleware(
   { global: true },
 );
 
-export const makeRoutesLayer = Layer.mergeAll(
+const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
+      Layer.provide(projectHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
@@ -586,7 +639,16 @@ export const makeRoutesLayer = Layer.mergeAll(
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
-  McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
+  // The MCP session registry is provided globally (shared with V2 provider
+  // sessions) rather than inline here. The orchestrator toolkit resolves
+  // delegation targets through the same live adapter facade the V2
+  // orchestrator uses, so MCP capability reporting can never drift from
+  // what dispatch can actually serve.
+  McpHttpServer.layer.pipe(
+    Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+  ),
+  // Last, so no route layer can replace the server's one TracerDisabledWhen.
+  untracedRequestsLayer,
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
@@ -603,7 +665,7 @@ const makeServerLayer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const activation = yield* Deferred.make<void>();
     const awaitActivation = Deferred.await(activation);
-    const activationLayer = Layer.succeed(ServerActivation, awaitActivation);
+    const activationLayer = Layer.succeed(ServerActivation.ServerActivation, awaitActivation);
     const runtimeStateParked = yield* Deferred.make<void>();
     const tailscaleParked = yield* Deferred.make<void>();
     const cloudLinkParked = yield* Deferred.make<void>();
@@ -708,10 +770,6 @@ const makeServerLayer = Layer.unwrap(
       : Layer.empty;
     const cloudDesiredLinkReconcileLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        if (!hasCloudPublicConfig) {
-          yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
-          return;
-        }
         const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
           Effect.timeout("10 seconds"),
           Effect.tap((released) =>
@@ -735,38 +793,189 @@ const makeServerLayer = Layer.unwrap(
         if (cleanupBeforeActivation) {
           yield* Effect.addFinalizer(() => releaseManagedTunnel);
         }
-        yield* forkParked(
+        yield* ServerActivation.forkParked(
           Effect.gen(function* () {
             if (!cleanupBeforeActivation) {
               yield* Effect.addFinalizer(() => releaseManagedTunnel);
             }
-            if (!(yield* CloudCliState.readCliDesiredCloudLink)) return;
             const server = yield* HttpServer.HttpServer;
             const address = server.address;
             if (typeof address === "string" || !("port" in address)) return;
+            const localOrigin = `http://127.0.0.1:${address.port}`;
+            const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
+            const recoveryLock = yield* Semaphore.make(1);
+            let lastRecoveryAtMillis = 0;
+            const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
+              recoveryLock.withPermits(1)(
+                Effect.gen(function* () {
+                  const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
+                  const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
+                  if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+                  lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
+                }).pipe(
+                  Effect.andThen(
+                    recoverManagedCloudTunnel(localOrigin, config, {
+                      retryRuntimeFailures: true,
+                    }),
+                  ),
+                  Effect.retry({
+                    while: (error) =>
+                      shouldRetryCloudLink(error) &&
+                      error._tag !== "EnvironmentCloudEndpointUnavailableError",
+                    schedule: Schedule.exponential("1 second").pipe(
+                      Schedule.modifyDelay(({ duration }) =>
+                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                      ),
+                      Schedule.jittered,
+                    ),
+                  }),
+                  Effect.tap((recovered) =>
+                    recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
+                  ),
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterrupts(cause)
+                      ? Effect.interrupt
+                      : Effect.logWarning("Failed to recover the T3 Connect managed tunnel", {
+                          cause,
+                        }),
+                  ),
+                ),
+              );
+            yield* endpointRuntime.recoveryRequests.pipe(
+              Stream.runForEach(recoverManagedTunnel),
+              Effect.forkScoped,
+            );
             // No settling delay before the first attempt: routes are already
             // serving by the time activation opens this gate (the startup
             // sequence awaits routesReady), and the retry schedule below
             // covers anything this sleep used to hedge against. Every
             // millisecond here is dead time on the path to remote
             // reachability after a restart.
-            yield* reconcileDesiredCloudLink(`http://127.0.0.1:${address.port}`).pipe(
-              Effect.retry({
-                while: shouldRetryCloudLink,
-                schedule: Schedule.exponential("1 second").pipe(
-                  Schedule.modifyDelay(({ duration }) =>
-                    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+            const wantsCliLink = hasCloudPublicConfig
+              ? yield* CloudCliState.readCliDesiredCloudLink.pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to read the desired T3 Connect link", { cause }).pipe(
+                      Effect.as(false),
+                    ),
                   ),
-                  Schedule.upTo({ duration: "10 minutes" }),
-                ),
-              }),
-              Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+                )
+              : false;
+            // A failed read must not end this fiber before it registers
+            // recovery and starts consuming recovery requests. "managed" is
+            // what a missing value means, so it is the safe fallback.
+            const desiredCliLinkMode = wantsCliLink
+              ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to read the desired T3 Connect link mode", {
+                      cause,
+                    }).pipe(Effect.as("managed" as const)),
+                  ),
+                )
+              : null;
+            // A publish-only link must not expose the host, even if a managed
+            // config from an earlier link is still stored.
+            const startedConfirmed =
+              desiredCliLinkMode === "publish_only"
+                ? false
+                : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                        cause,
+                      }).pipe(Effect.as(false)),
+                    ),
+                  );
+            const startStoredManagedTunnel = startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
+              requireConfirmedOrigin: false,
+            }).pipe(
+              Effect.tap((started) =>
+                started
+                  ? Effect.logWarning(
+                      "T3 Connect started the stored tunnel without relay confirmation",
+                    )
+                  : Effect.void,
+              ),
               Effect.catch((cause) =>
-                Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
-                  message: cause.message,
-                }),
+                Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
+              ),
+              Effect.asVoid,
+            );
+            const registerManagedTunnel = retryManagedTunnelRegistration(
+              registerManagedCloudTunnelRecovery(localOrigin, {
+                retryRuntimeFailures: true,
+              }),
+              (error) =>
+                shouldRetryCloudLink(error) &&
+                error._tag !== "EnvironmentCloudEndpointUnavailableError",
+              startedConfirmed ? Effect.void : startStoredManagedTunnel,
+            ).pipe(
+              Effect.tap((result) =>
+                result.status === "ready"
+                  ? Effect.logInfo("T3 Connect managed tunnel recovery registered")
+                  : Effect.void,
+              ),
+              Effect.catchCause((cause) =>
+                Cause.hasInterrupts(cause)
+                  ? Effect.interrupt
+                  : Effect.logWarning("Failed to register T3 Connect managed tunnel recovery", {
+                      cause,
+                    }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
+            // A host without a confirmed marker is on its first boot after the
+            // upgrade. Spread those registrations so an auto-update wave does
+            // not hit the relay all at once.
+            if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
+              const jitter = yield* Random.nextIntBetween(
+                0,
+                Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
+              );
+              yield* Effect.sleep(Duration.millis(jitter));
+            }
+            const registration =
+              desiredCliLinkMode === "publish_only"
+                ? { status: "not_linked" as const }
+                : yield* registerManagedTunnel;
+            // A terminal registration failure also allows the stored config
+            // to start. Transient outages use the fallback above and keep
+            // registration retrying in this scoped startup fiber.
+            if (registration.status === "unavailable" && !startedConfirmed) {
+              yield* startStoredManagedTunnel;
+            }
+            const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
+            if (startupAction.action === "request_recovery") {
+              yield* endpointRuntime.requestRecovery(startupAction.config);
+            }
+            if (startupAction.action === "reconcile_link") {
+              const reconciledMode = yield* reconcileDesiredCloudLinkIfStillDesired(
+                localOrigin,
+              ).pipe(
+                Effect.retry({
+                  while: shouldRetryCloudLink,
+                  schedule: Schedule.exponential("1 second").pipe(
+                    Schedule.modifyDelay(({ duration }) =>
+                      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                    ),
+                    Schedule.upTo({ duration: "10 minutes" }),
+                  ),
+                }),
+                Effect.tap((mode) =>
+                  mode === null
+                    ? Effect.void
+                    : Effect.logInfo("T3 Connect desired link reconciled on startup"),
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+              if (reconciledMode === "managed") {
+                const afterReconcile = yield* registerManagedTunnel;
+                if (afterReconcile.status === "recovery_required") {
+                  yield* endpointRuntime.requestRecovery(afterReconcile.config);
+                }
+              }
+            }
           }),
         );
         yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
@@ -797,10 +1006,16 @@ const makeServerLayer = Layer.unwrap(
       runtimeStateLayer.pipe(Layer.provide(launcherLayer)),
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      HeapSnapshot.layer,
     );
 
     return serverApplicationLayer.pipe(
       Layer.provideMerge(runtimeServicesLive),
+      Layer.provideMerge(
+        McpSessionRegistry.layer.pipe(
+          Layer.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+        ),
+      ),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
       Layer.provideMerge(HttpServerLive),

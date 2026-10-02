@@ -291,13 +291,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.flatMap(() => Effect.fail(configSubscriptionEndedError)),
       ),
     ).pipe(
-      Effect.flatMap((config) =>
-        config.environment.environmentId === connection.environmentId
-          ? Effect.succeed(config)
-          : environmentMismatchError({
-              expected: connection.environmentId,
-              actual: config.environment.environmentId,
-            }),
+      Effect.filterOrElse(
+        (config) => config.environment.environmentId === connection.environmentId,
+        (config) =>
+          environmentMismatchError({
+            expected: connection.environmentId,
+            actual: config.environment.environmentId,
+          }),
       ),
       Effect.withSpan("environment.initialSync"),
     );
@@ -395,5 +395,4 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
   return RpcSessionFactory.of({ connect });
 });
 
-export const layerWithOptions = (options: RpcSessionOptions) =>
-  Layer.effect(RpcSessionFactory, make(options));
+export const layer = (options: RpcSessionOptions) => Layer.effect(RpcSessionFactory, make(options));

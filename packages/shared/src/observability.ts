@@ -498,13 +498,15 @@ class LocalFileSpan implements Tracer.Span {
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {
+    // Cached lookup fibers retain parent spans. Traces need success status, not result payloads.
+    const traceExit = ExitRuntime.isSuccess(exit) ? ExitRuntime.void : exit;
     this.status = {
       _tag: "Ended",
       startTime: this.status.startTime,
       endTime,
-      exit,
+      exit: traceExit,
     };
-    this.delegate.end(endTime, exit);
+    this.delegate.end(endTime, traceExit);
 
     if (this.sampled) {
       this.push(spanToTraceRecord(this));
@@ -668,7 +670,7 @@ function decodeAttributes(
     entries[attribute.key] = decodeValue(attribute.value);
   }
 
-  return compactTraceAttributes(entries);
+  return truncateTraceAttributes(compactTraceAttributes(entries));
 }
 
 function decodeValue(input: OtlpResource.AnyValue | null | undefined): unknown {

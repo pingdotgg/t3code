@@ -27,11 +27,12 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button, InlineButton } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
-import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
   PullRequestActorLabel,
   PullRequestDiffStat,
+  PullRequestLabelChip,
   PullRequestMetaLine,
   pullRequestChecksStatePresentation,
   resolvePullRequestState,
@@ -71,12 +72,12 @@ export function PullRequestListGhost({
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-3 py-2"
+          className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-3 py-2.5"
         >
           <GhostBar className="size-4 rounded-full" />
           <div className="min-w-0 space-y-1.5">
-            <GhostBar className={cn("h-3.5", TITLE_WIDTHS[index % TITLE_WIDTHS.length])} />
-            <GhostBar className={META_WIDTHS[index % META_WIDTHS.length]} />
+            <GhostBar className={cn("h-4", TITLE_WIDTHS[index % TITLE_WIDTHS.length])} />
+            <GhostBar className={cn("h-3.5", META_WIDTHS[index % META_WIDTHS.length])} />
           </div>
           <div className="flex flex-col items-end gap-1.5">
             <GhostBar className="w-12" />
@@ -168,13 +169,9 @@ export function PullRequestDetailGhost({
                 <span className="min-w-0 truncate font-medium">{seed.repository}</span>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  className={cn(
-                    "font-medium underline-offset-2 hover:underline",
-                    statePresentation?.toneClassName,
-                  )}
                   aria-label={`Open pull request #${seed.number} on host`}
                 >
-                  #{seed.number}
+                  <span className={statePresentation?.toneClassName}>#{seed.number}</span>
                   <ExternalLinkIcon aria-hidden className="size-2.5" />
                 </InlineButton>
               </>
@@ -218,11 +215,7 @@ export function PullRequestDetailGhost({
               <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                 {seed ? (
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel
-                      actor={seed.author ?? null}
-                      className="font-medium"
-                      tooltip={false}
-                    />
+                    <PullRequestActorLabel actor={seed.author ?? null} tooltip={false} />
                     <span>updated {formatRelativeTimeLabel(seed.updatedAt)}</span>
                   </PullRequestMetaLine>
                 ) : (
@@ -252,7 +245,9 @@ export function PullRequestDetailGhost({
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
                   {seed ? (
                     <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      <code className="min-w-0 truncate">{seed.baseBranch}</code>
+                      <code className="flex min-w-0">
+                        <MiddleTruncate value={seed.baseBranch} />
+                      </code>
                     </span>
                   ) : (
                     <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
@@ -356,29 +351,21 @@ export function PullRequestDetailGhost({
               <span className="flex min-w-0 flex-wrap items-center gap-1 text-foreground">
                 {entry?.labels ? (
                   entry.labels.length > 0 ? (
-                    entry.labels.map((label) => {
-                      const color = pullRequestLabelColor(label.color);
-                      return (
-                        <span
-                          key={label.name}
-                          className="inline-flex max-w-48 items-center gap-1.5 truncate rounded-full bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
-                        >
-                          <span
-                            aria-hidden
-                            className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                            {...(color ? { style: { backgroundColor: color } } : {})}
-                          />
-                          <span className="truncate">{label.name}</span>
-                        </span>
-                      );
-                    })
+                    entry.labels.map((label) => (
+                      <PullRequestLabelChip
+                        key={label.name}
+                        label={label}
+                        size="default"
+                        className="max-w-48"
+                      />
+                    ))
                   ) : (
                     <span className="text-muted-foreground">None</span>
                   )
                 ) : (
                   <>
-                    <GhostBar className="h-4 w-24 rounded-full" />
-                    <GhostBar className="h-4 w-20 rounded-full" />
+                    <GhostBar className="h-4.5 w-24" />
+                    <GhostBar className="h-4.5 w-20" />
                   </>
                 )}
                 <Button size="icon-xs" variant="ghost" disabled aria-label="Labels loading">

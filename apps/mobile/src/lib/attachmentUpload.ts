@@ -20,8 +20,8 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { environmentSession } from "../state/session";
-import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
+import { retainComposerAttachmentFileForPreview } from "./composerAttachmentPreviewRetention";
 import {
   isComposerImageAttachment,
   isFileBackedComposerAttachment,
@@ -276,7 +276,7 @@ async function uploadFileBytes(
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
-      file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
+      await file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
         encoding: "base64",
       });
     }

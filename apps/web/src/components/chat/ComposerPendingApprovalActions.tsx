@@ -1,7 +1,7 @@
 import {
-  type ApprovalRequestId,
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import { memo } from "react";
 import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
@@ -11,11 +11,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
-  requestId: ApprovalRequestId;
+  requestId: RuntimeRequestId;
   isResponding: boolean;
+  canRespond: boolean;
   options?: ReadonlyArray<ProviderApprovalOption> | undefined;
   onRespondToApproval: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -30,6 +31,7 @@ const DEFAULT_APPROVAL_OPTIONS = [
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  canRespond,
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
@@ -48,7 +50,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             key={option.decision}
             size="xs"
             variant={option.decision === "accept" ? "default" : "outline"}
-            disabled={isResponding}
+            disabled={isResponding || !canRespond}
             aria-description={option.warning}
             onClick={() => void onRespondToApproval(requestId, option.decision)}
           >
@@ -59,9 +61,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         return option.warning ? (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
-            <TooltipPopup side="top" className="max-w-72 text-xs leading-snug">
-              {option.warning}
-            </TooltipPopup>
+            <TooltipPopup side="top">{option.warning}</TooltipPopup>
           </Tooltip>
         ) : (
           button
@@ -75,12 +75,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           >
             <EllipsisIcon />
           </MenuTrigger>
-          <MenuPopup
-            {...composerFloatingLayerProps}
-            side="top"
-            align="end"
-            className="w-56 max-w-[calc(100vw-2rem)]"
-          >
+          <MenuPopup {...composerFloatingLayerProps} side="top" align="end">
             {moreOptions.map((option) => {
               const item = (
                 <MenuItem
@@ -98,9 +93,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               return option.warning ? (
                 <Tooltip key={option.decision}>
                   <TooltipTrigger render={item} />
-                  <TooltipPopup side="top" className="max-w-64 text-xs leading-snug">
-                    {option.warning}
-                  </TooltipPopup>
+                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
                 </Tooltip>
               ) : (
                 item
