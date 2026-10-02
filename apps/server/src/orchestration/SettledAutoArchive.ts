@@ -10,6 +10,8 @@
 import {
   CommandId,
   DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type ThreadId,
@@ -21,12 +23,18 @@ import { collectActiveThreadSubtree } from "./threadHierarchy.ts";
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 // `thread.unsettled` projects `settledAt` back to null, so any new activity
-// restarts the clock from the next settle.
+// restarts the clock from the next settle. Out-of-range values clamp to the
+// documented 1-90 contract (a stored 0 must not archive everything on the
+// next sweep); fractional days floor to whole days.
 export function normalizeSettledAutoArchiveAfterDays(value: unknown): number | null {
   if (value === null || value === undefined) return null;
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS;
+  }
+  return Math.min(
+    MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+    Math.max(MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS, Math.floor(value)),
+  );
 }
 
 // Server-side mirror of `effectiveSnoozed`/`threadRaisedHandWhileSnoozed` in

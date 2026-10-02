@@ -231,6 +231,13 @@ describe("normalizeSettledAutoArchiveAfterDays", () => {
     expect(normalizeSettledAutoArchiveAfterDays("soon")).toBe(2);
     expect(normalizeSettledAutoArchiveAfterDays(Number.NaN)).toBe(2);
   });
+
+  it("clamps out-of-range values to the 1-90 contract", () => {
+    expect(normalizeSettledAutoArchiveAfterDays(0)).toBe(1);
+    expect(normalizeSettledAutoArchiveAfterDays(-3)).toBe(1);
+    expect(normalizeSettledAutoArchiveAfterDays(200)).toBe(90);
+    expect(normalizeSettledAutoArchiveAfterDays(2.9)).toBe(2);
+  });
 });
 
 describe("canAutoArchiveSettledThreadNow and planSettledAutoArchive", () => {
