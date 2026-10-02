@@ -1631,6 +1631,9 @@ export default function GitActionsControl({
   );
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  // The dropdown trigger must not open when every menu entry is unavailable.
+  const hasAvailableGitAction =
+    gitActionMenuItems.some((item) => !item.disabled) || canPublishRepository;
 
   const initializeGit = () => {
     void (async () => {
@@ -1777,7 +1780,10 @@ export default function GitActionsControl({
                 if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
               }}
             >
-              <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
+              <MenuSubTrigger
+                density="touch"
+                disabled={isGitActionRunning || !hasAvailableGitAction}
+              >
                 <SourceControlIcon className="size-4" />
                 <MenuItemLabel>Git actions</MenuItemLabel>
               </MenuSubTrigger>
@@ -1835,7 +1841,7 @@ export default function GitActionsControl({
           >
             <MenuTrigger
               render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
-              disabled={isGitActionRunning}
+              disabled={isGitActionRunning || !hasAvailableGitAction}
             >
               <ChevronDownIcon aria-hidden="true" className="size-4" />
             </MenuTrigger>
