@@ -844,6 +844,7 @@ function PullRequestsRoute() {
                 <PullRequestDetailPanel
                   environmentId={surface.environmentId}
                   reference={surface.reference}
+                  visible={visible}
                   listEntry={
                     entriesByReference.get(
                       `${surface.environmentId}:${surface.reference.projectId}:${surface.reference.repository.toLowerCase()}#${surface.reference.number}`,
