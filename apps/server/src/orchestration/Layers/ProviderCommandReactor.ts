@@ -6,6 +6,7 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationEvent,
+  type OrchestrationMessageContext,
   type OrchestrationThread,
   ProviderDriverKind,
   type OrchestrationSession,
@@ -39,6 +40,8 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ServerEnvironment } from "../../environment/Services/ServerEnvironment.ts";
+import { projectThreadContextForProvider } from "@t3tools/shared/threadContext";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
 import { WorkspaceOwnershipRepositoryLive } from "../../persistence/Layers/WorkspaceOwnership.ts";
 import {
@@ -212,6 +215,7 @@ const make = Effect.gen(function* () {
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const serverEnvironment = yield* ServerEnvironment;
   const workspaceOwnership = yield* WorkspaceOwnershipRepository;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
@@ -696,6 +700,22 @@ const make = Effect.gen(function* () {
     return startedSession.threadId;
   });
 
+  // Reference-only thread context: inline refs become identity markers plus a
+  // read-only history pointer. The transcript is never injected eagerly, and
+  // records scoped to another environment never bind.
+  const resolveProviderPromptText = Effect.fnUntraced(function* (message: {
+    readonly text: string;
+    readonly context?: OrchestrationMessageContext | undefined;
+  }) {
+    if (message.context === undefined) return message.text;
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
+    return projectThreadContextForProvider({
+      text: message.text,
+      records: message.context.records,
+      environmentId,
+    });
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageText: string;
@@ -1090,7 +1110,7 @@ const make = Effect.gen(function* () {
 
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
-      messageText: message.text,
+      messageText: yield* resolveProviderPromptText(message),
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }

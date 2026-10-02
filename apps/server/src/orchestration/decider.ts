@@ -694,8 +694,10 @@ type TurnStartRequestedPayload = Extract<
 function buildTurnStartEvents(input: {
   readonly commandId: OrchestrationCommand["commandId"];
   readonly threadId: MessageSentPayload["threadId"];
-  readonly message: Pick<MessageSentPayload, "messageId" | "text" | "attachments">;
+  readonly message: Pick<MessageSentPayload, "messageId" | "text" | "attachments"> &
+    Pick<Partial<MessageSentPayload>, "context">;
   readonly origin?: MessageSentPayload["origin"];
+  readonly context?: MessageSentPayload["context"];
   readonly modelSelection: TurnStartRequestedPayload["modelSelection"];
   readonly titleSeed: TurnStartRequestedPayload["titleSeed"];
   readonly runtimeMode: TurnStartRequestedPayload["runtimeMode"];
@@ -728,6 +730,7 @@ function buildTurnStartEvents(input: {
       text: input.message.text,
       attachments: input.message.attachments,
       ...(input.origin !== undefined ? { origin: input.origin } : {}),
+      ...(input.context !== undefined ? { context: input.context } : {}),
       turnId: null,
       streaming: false,
       createdAt: input.at,
@@ -761,6 +764,7 @@ function buildTurnStartEvents(input: {
         ? { executionAuthority: input.executionAuthority }
         : {}),
       ...(input.workspaceBinding !== undefined ? { workspaceBinding: input.workspaceBinding } : {}),
+      ...(input.context !== undefined ? { context: input.context } : {}),
       createdAt: input.at,
     },
   };
@@ -3315,6 +3319,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           attachments: command.message.attachments,
         },
         ...(origin !== undefined ? { origin } : {}),
+        ...(command.message.context !== undefined ? { context: command.message.context } : {}),
         modelSelection: command.modelSelection,
         titleSeed: command.titleSeed,
         runtimeMode: targetThread.runtimeMode,
@@ -3606,6 +3611,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurnId: command.queuedTurnId,
           text: command.text,
           ...(command.origin !== undefined ? { origin: command.origin } : {}),
+          ...(command.context !== undefined ? { context: command.context } : {}),
           updatedAt: command.updatedAt,
         },
       };
@@ -3845,6 +3851,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           attachments: queuedTurn.message.attachments,
         },
         ...(turnOrigin !== undefined ? { origin: turnOrigin } : {}),
+        // Nudge follow-ups synthesize their own prompt; queued user text keeps its context.
+        ...(followUp || queuedTurn.message.context === undefined
+          ? {}
+          : { context: queuedTurn.message.context }),
         modelSelection: queuedTurn.modelSelection,
         titleSeed: queuedTurn.titleSeed,
         runtimeMode: isNudge ? targetThread.runtimeMode : queuedTurn.runtimeMode,

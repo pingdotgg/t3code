@@ -296,6 +296,10 @@
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
     },
+    "./threadContext": {
+      "types": "./src/threadContext.ts",
+      "import": "./src/threadContext.ts"
+    },
     "./themePreview": {
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"

@@ -31,6 +31,7 @@ import {
   CollaborativeAcceptanceRequestTransportContext,
 } from "./collaborativeAcceptance.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestrationMessageContext } from "./threadContext.ts";
 import { DelegationAuditCommandContext } from "./delegationAudit.ts";
 import { ReviewResult, ReviewSnapshot } from "./review.ts";
 import { GitPullRequestAssociation } from "./git.ts";
@@ -587,6 +588,7 @@ export const OrchestrationMessage = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   workspaceBinding: Schema.optional(WorkspaceBinding),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
@@ -621,6 +623,7 @@ const QueuedTurnMessage = Schema.Struct({
   role: Schema.Literal("user"),
   text: Schema.String,
   attachments: Schema.Array(ChatAttachment),
+  context: Schema.optional(OrchestrationMessageContext),
 });
 export type QueuedTurnMessage = typeof QueuedTurnMessage.Type;
 
@@ -629,6 +632,7 @@ const UploadQueuedTurnMessage = Schema.Struct({
   role: Schema.Literal("user"),
   text: Schema.String,
   attachments: Schema.Array(UploadChatAttachment),
+  context: Schema.optional(OrchestrationMessageContext),
 });
 
 export const OrchestrationQueuedTurn = Schema.Struct({
@@ -1467,6 +1471,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
+    context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1493,6 +1498,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     role: Schema.Literal("user"),
     text: Schema.String,
     attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
+    context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1560,6 +1566,7 @@ const ThreadQueuedTurnUpdateCommand = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
@@ -1569,6 +1576,7 @@ const ClientThreadQueuedTurnUpdateCommand = Schema.Struct({
   threadId: ThreadId,
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
@@ -2410,6 +2418,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   turnId: Schema.NullOr(TurnId),
   streaming: Schema.Boolean,
   replaceExisting: Schema.optional(Schema.Boolean),
@@ -2437,6 +2446,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   delegationTransition: Schema.optional(Schema.Literals(["assigned", "continued", "replaced"])),
   executionAuthority: Schema.optional(CollaborationExecutionAuthority),
   workspaceBinding: Schema.optional(WorkspaceBinding),
+  context: Schema.optional(OrchestrationMessageContext),
   createdAt: IsoDateTime,
 });
 
@@ -2457,6 +2467,7 @@ export const ThreadQueuedTurnUpdatedPayload = Schema.Struct({
   queuedTurnId: QueuedTurnId,
   text: Schema.String,
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   updatedAt: IsoDateTime,
 });
 
