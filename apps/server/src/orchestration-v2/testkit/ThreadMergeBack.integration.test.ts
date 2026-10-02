@@ -257,8 +257,9 @@ function makeCreateCommand(input: {
 }
 
 describe("orchestration V2 merge-back provider replay", () => {
-  for (const variant of PROVIDERS) {
-    it.effect(`merges one fork delta back into the original ${variant.driver} thread`, () =>
+  it.effect.each(PROVIDERS)(
+    "merges one fork delta back into the original $driver thread",
+    (variant) =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript("thread_merge_back_continue", variant.driver);
         const materialized = yield* Effect.gen(function* () {
@@ -452,9 +453,11 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.notInclude(visibleConversationText(source), "Context handoff (");
         assert.include(visibleConversationText(fork), "merge fork stored");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
+  );
 
-    it.effect(`merges two sibling fork deltas into the original ${variant.driver} thread`, () =>
+  it.effect.each(PROVIDERS)(
+    "merges two sibling fork deltas into the original $driver thread",
+    (variant) =>
       Effect.gen(function* () {
         const rawTranscript = yield* readTranscript("thread_merge_back_siblings", variant.driver);
         const materialized = yield* Effect.gen(function* () {
@@ -725,6 +728,5 @@ describe("orchestration V2 merge-back provider replay", () => {
         assert.include(visibleConversationText(secondFork), "second merge sibling stored");
         assert.notInclude(visibleConversationText(secondFork), "first merge sibling stored");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
-  }
+  );
 });

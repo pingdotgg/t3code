@@ -42,24 +42,25 @@ describe("queued message file edits", () => {
     useComposerDraftStore.setState({ draftsByThreadKey: {}, draftThreadsByThreadKey: {} });
   });
 
-  for (const images of [[], [image]]) {
-    it(`preserves a generic file in a ${images.length === 0 ? "file-only" : "mixed"} save`, async () => {
-      const attachments = await prepareQueuedEditAttachments({
-        existingAttachments: [],
-        images,
-        files: [file],
-        uploadFiles: async () => [uploadedFile],
-        readImage: async () => "data:image/png;base64,aW1hZ2U=",
-      });
-      expect(attachments.at(-1)).toEqual(uploadedFile);
-      expect(attachments.length).toBe(images.length + 1);
-      if (images.length > 0)
-        expect(attachments[0]).toMatchObject({
-          type: "image",
-          dataUrl: "data:image/png;base64,aW1hZ2U=",
-        });
+  it.each([
+    { images: [], label: "file-only" },
+    { images: [image], label: "mixed" },
+  ])("preserves a generic file in a $label save", async ({ images }) => {
+    const attachments = await prepareQueuedEditAttachments({
+      existingAttachments: [],
+      images,
+      files: [file],
+      uploadFiles: async () => [uploadedFile],
+      readImage: async () => "data:image/png;base64,aW1hZ2U=",
     });
-  }
+    expect(attachments.at(-1)).toEqual(uploadedFile);
+    expect(attachments.length).toBe(images.length + 1);
+    if (images.length > 0)
+      expect(attachments[0]).toMatchObject({
+        type: "image",
+        dataUrl: "data:image/png;base64,aW1hZ2U=",
+      });
+  });
 
   it("retains saved attachments alongside newly uploaded files", async () => {
     const saved = { ...uploadedFile, id: "saved:earlier" };

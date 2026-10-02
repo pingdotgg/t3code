@@ -271,64 +271,64 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
   });
 }
 
-for (const target of ["new", "existing"] as const) {
-  for (const createdBy of ["user", "agent"] as const) {
-    it.effect(
-      `attributes ${createdBy}-configured automations in ${target} threads without changing their prompt`,
-      () => {
-        const harness = makeHarness();
-        const scheduledTasks = ScheduledTasks.layer.pipe(
-          Layer.provide(Layer.mergeAll(harness.layer, NodeCrypto.layer, Scheduler.layer)),
-        );
-        return Effect.gen(function* () {
-          const tasks = yield* ScheduledTasks.ScheduledTaskService;
-          const launches = yield* ThreadLaunch.ThreadLaunchService;
-          const threads = yield* ThreadManagement.ThreadManagementService;
-          const existing =
-            target === "existing"
-              ? yield* launches.launch(
-                  launchInput({ command: "command:existing", thread: "thread:existing" }),
-                )
-              : null;
-          const { task } = yield* tasks.upsert({
-            id: ScheduledTaskId.make("scheduled-task:attribution"),
-            title: "Daily audit",
-            prompt: "Audit performance and crashes.",
-            enabled: false,
-            schedule: { type: "interval", everyMs: 60_000 },
-            projectId,
-            threadId: existing?.threadId ?? null,
-            workspaceStrategy: { type: "root" },
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            createdBy,
-            creationSource: createdBy === "agent" ? "mcp" : "web",
-          });
-          const result = yield* tasks.runNow({ id: task.id });
-          assert.equal(result.task.lastRunStatus, "succeeded");
-          const projectThreads = yield* threads.listProjectThreads({
-            projectId,
-            includeSubagents: false,
-          });
-          const thread =
-            projectThreads.find((candidate) => candidate.id === existing?.threadId) ??
-            projectThreads[0];
-          assert.isDefined(thread);
-          const projection = yield* threads.getThreadProjection(thread!.id);
-          // Encoding the persisted projection exercises both message and turn-item wire schemas.
-          const wire = yield* encodeThreadProjection(projection);
-          assert.equal(wire.messages[0]?.text, task.prompt);
-          assert.equal(wire.messages[0]?.scheduledTaskId, task.id);
-          assert.equal(wire.messages[0]?.createdBy, createdBy);
-          const turnItem = wire.turnItems.find((item) => item.type === "user_message");
-          assert.equal(turnItem?.text, task.prompt);
-          assert.equal(turnItem?.scheduledTaskId, task.id);
-        }).pipe(Effect.provide(Layer.mergeAll(harness.layer, scheduledTasks)));
-      },
+it.effect.each(
+  (["new", "existing"] as const).flatMap((target) =>
+    (["user", "agent"] as const).map((createdBy) => ({ target, createdBy })),
+  ),
+)(
+  "attributes $createdBy-configured automations in $target threads without changing their prompt",
+  ({ target, createdBy }) => {
+    const harness = makeHarness();
+    const scheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(Layer.mergeAll(harness.layer, NodeCrypto.layer, Scheduler.layer)),
     );
-  }
-}
+    return Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const existing =
+        target === "existing"
+          ? yield* launches.launch(
+              launchInput({ command: "command:existing", thread: "thread:existing" }),
+            )
+          : null;
+      const { task } = yield* tasks.upsert({
+        id: ScheduledTaskId.make("scheduled-task:attribution"),
+        title: "Daily audit",
+        prompt: "Audit performance and crashes.",
+        enabled: false,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId: existing?.threadId ?? null,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy,
+        creationSource: createdBy === "agent" ? "mcp" : "web",
+      });
+      const result = yield* tasks.runNow({ id: task.id });
+      assert.equal(result.task.lastRunStatus, "succeeded");
+      const projectThreads = yield* threads.listProjectThreads({
+        projectId,
+        includeSubagents: false,
+      });
+      const thread =
+        projectThreads.find((candidate) => candidate.id === existing?.threadId) ??
+        projectThreads[0];
+      assert.isDefined(thread);
+      const projection = yield* threads.getThreadProjection(thread!.id);
+      // Encoding the persisted projection exercises both message and turn-item wire schemas.
+      const wire = yield* encodeThreadProjection(projection);
+      assert.equal(wire.messages[0]?.text, task.prompt);
+      assert.equal(wire.messages[0]?.scheduledTaskId, task.id);
+      assert.equal(wire.messages[0]?.createdBy, createdBy);
+      const turnItem = wire.turnItems.find((item) => item.type === "user_message");
+      assert.equal(turnItem?.text, task.prompt);
+      assert.equal(turnItem?.scheduledTaskId, task.id);
+    }).pipe(Effect.provide(Layer.mergeAll(harness.layer, scheduledTasks)));
+  },
+);
 
 it.effect("retains automation and sender attribution while a message waits in the queue", () => {
   const harness = makeHarness({ runSetup: () => Effect.never });
@@ -603,8 +603,9 @@ it.effect(
     }),
 );
 
-for (const nativeCommand of [" /COMPACT ", "/logout"]) {
-  it.effect(`uses the first conversation message for a title after ${nativeCommand}`, () =>
+it.effect.each([" /COMPACT ", "/logout"])(
+  "uses the first conversation message for a title after %s",
+  (nativeCommand) =>
     Effect.gen(function* () {
       const harness = makeHarness();
       yield* Effect.gen(function* () {
@@ -653,8 +654,7 @@ for (const nativeCommand of [" /COMPACT ", "/logout"]) {
         );
       }).pipe(Effect.provide(harness.layer));
     }),
-  );
-}
+);
 
 it.effect("keeps native maintenance commands out of steering and restart messages", () =>
   Effect.gen(function* () {
@@ -1293,47 +1293,45 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
   }).pipe(Effect.provide(harness.layer));
 });
 
-for (const failurePoint of ["worktree", "setup"] as const) {
-  it.effect(
-    `${failurePoint} failure keeps the thread and message visible and emits failure items`,
-    () =>
-      Effect.gen(function* () {
-        const failure = new Error(`${failurePoint} failed`);
-        const harness = makeHarness(
-          failurePoint === "worktree"
-            ? { createWorktree: () => Effect.fail(failure as never) }
-            : { runSetup: () => Effect.fail(failure as never) },
+it.effect.each(["worktree", "setup"] as const)(
+  "%s failure keeps the thread and message visible and emits failure items",
+  (failurePoint) =>
+    Effect.gen(function* () {
+      const failure = new Error(`${failurePoint} failed`);
+      const harness = makeHarness(
+        failurePoint === "worktree"
+          ? { createWorktree: () => Effect.fail(failure as never) }
+          : { runSetup: () => Effect.fail(failure as never) },
+      );
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const input = launchInput({
+          command: `command:launch:${failurePoint}-failure`,
+          thread: `thread:launch:${failurePoint}-failure`,
+          message: `Fail during ${failurePoint}`,
+          workspace: { type: "worktree", baseRef: "main" },
+        });
+        const launched = yield* launches.launch(input);
+        yield* waitUntil(() =>
+          threads
+            .getThreadProjection(launched.threadId)
+            .pipe(Effect.map((projection) => projection.runs[0]?.status === "failed")),
         );
-        yield* Effect.gen(function* () {
-          const launches = yield* ThreadLaunch.ThreadLaunchService;
-          const threads = yield* ThreadManagement.ThreadManagementService;
-          const input = launchInput({
-            command: `command:launch:${failurePoint}-failure`,
-            thread: `thread:launch:${failurePoint}-failure`,
-            message: `Fail during ${failurePoint}`,
-            workspace: { type: "worktree", baseRef: "main" },
-          });
-          const launched = yield* launches.launch(input);
-          yield* waitUntil(() =>
-            threads
-              .getThreadProjection(launched.threadId)
-              .pipe(Effect.map((projection) => projection.runs[0]?.status === "failed")),
-          );
-          const projection = yield* threads.getThreadProjection(launched.threadId);
-          assert.equal(projection.messages[0]?.text, `Fail during ${failurePoint}`);
-          assert.equal(projection.runs[0]?.status, "failed");
-          assert.equal(
-            projection.turnItems.find((item) => item.type === "command_execution")?.status,
-            "failed",
-          );
-          assert.match(
-            projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
-            new RegExp(`${failurePoint} failed`, "u"),
-          );
-        }).pipe(Effect.provide(harness.layer));
-      }),
-  );
-}
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.messages[0]?.text, `Fail during ${failurePoint}`);
+        assert.equal(projection.runs[0]?.status, "failed");
+        assert.equal(
+          projection.turnItems.find((item) => item.type === "command_execution")?.status,
+          "failed",
+        );
+        assert.match(
+          projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+          new RegExp(`${failurePoint} failed`, "u"),
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
 
 it.effect("replays a server-allocated launch", () =>
   Effect.gen(function* () {
@@ -1989,61 +1987,59 @@ it.effect("cancels tracked setup before provider work is released", () =>
   }),
 );
 
-for (const exitCode of [0, 1]) {
-  it.effect(`releases an async setup before its completion with exit ${exitCode}`, () =>
-    Effect.gen(function* () {
-      const completion = yield* Deferred.make<{ exitCode: number | null; durationMs: number }>();
-      const harness = makeHarness({
-        runSetup: () =>
-          Effect.succeed({
-            status: "started" as const,
-            async: true,
-            scriptId: "setup",
-            scriptName: "Setup",
-            scriptCommand: "vp install",
-            terminalId: "setup",
-            cwd: "/repo-worktrees/feature",
-            completion: Deferred.await(completion),
-          }),
-      });
-      yield* Effect.gen(function* () {
-        const launches = yield* ThreadLaunch.ThreadLaunchService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
-        const launched = yield* launches.launch(
-          launchInput({
-            command: `command:launch:async-${exitCode}`,
-            thread: `thread:launch:async-${exitCode}`,
-            message: "Start during setup",
-            workspace: { type: "worktree", baseRef: "main" },
-          }),
-        );
-        yield* tracker.stream(launched.threadId).pipe(
-          Stream.filter(
-            (snapshot) =>
-              snapshot?.stages.some((stage) => stage.id === "agent" && stage.status === "done") ===
-              true,
-          ),
-          Stream.runHead,
-        );
-        const running = yield* threads.getThreadProjection(launched.threadId);
-        assert.equal(running.runs[0]?.status, "starting");
-        assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
-        yield* Deferred.succeed(completion, { exitCode, durationMs: 1 });
-        yield* tracker.stream(launched.threadId).pipe(
-          Stream.filter((snapshot) => snapshot?.phase === "done"),
-          Stream.runHead,
-        );
-        const settled = yield* tracker.get(launched.threadId);
-        assert.equal(
-          settled?.stages.find((stage) => stage.id === "setup-script")?.status,
-          exitCode === 0 ? "done" : "failed",
-        );
-        assert.equal(
-          (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
-          "starting",
-        );
-      }).pipe(Effect.provide(harness.layer));
-    }),
-  );
-}
+it.effect.each([0, 1])("releases an async setup before its completion with exit %s", (exitCode) =>
+  Effect.gen(function* () {
+    const completion = yield* Deferred.make<{ exitCode: number | null; durationMs: number }>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Effect.succeed({
+          status: "started" as const,
+          async: true,
+          scriptId: "setup",
+          scriptName: "Setup",
+          scriptCommand: "vp install",
+          terminalId: "setup",
+          cwd: "/repo-worktrees/feature",
+          completion: Deferred.await(completion),
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: `command:launch:async-${exitCode}`,
+          thread: `thread:launch:async-${exitCode}`,
+          message: "Start during setup",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot?.stages.some((stage) => stage.id === "agent" && stage.status === "done") ===
+            true,
+        ),
+        Stream.runHead,
+      );
+      const running = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(running.runs[0]?.status, "starting");
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+      yield* Deferred.succeed(completion, { exitCode, durationMs: 1 });
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      const settled = yield* tracker.get(launched.threadId);
+      assert.equal(
+        settled?.stages.find((stage) => stage.id === "setup-script")?.status,
+        exitCode === 0 ? "done" : "failed",
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).runs[0]?.status,
+        "starting",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

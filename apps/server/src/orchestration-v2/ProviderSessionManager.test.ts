@@ -3007,8 +3007,9 @@ it.effect(
     }),
 );
 
-for (const workspaceState of ["missing", "file"] as const) {
-  it.effect(`rejects a ${workspaceState} workspace before opening a provider session`, () =>
+it.effect.each(["missing", "file"] as const)(
+  "rejects a %s workspace before opening a provider session",
+  (workspaceState) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const root = yield* fileSystem.makeTempDirectoryScoped();
@@ -3053,8 +3054,7 @@ for (const workspaceState of ["missing", "file"] as const) {
         );
       }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-}
+);
 
 it.effect(
   "rejects a deleted workspace before reusing a live session without changing its state",

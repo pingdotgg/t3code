@@ -433,8 +433,9 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     ),
   );
 
-  for (const phase of ["high-water", "replay"] as const) {
-    it.effect(`bounds live events while the V2 ${phase} query is blocked`, () =>
+  it.effect.each(["high-water", "replay"] as const)(
+    "bounds live events while the V2 %s query is blocked",
+    (phase) =>
       Effect.scoped(
         Effect.gen(function* () {
           const sink = yield* EventSink.EventSinkV2;
@@ -486,8 +487,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           }
         }),
       ),
-    );
-  }
+  );
 
   it.effect(
     "keeps internal streams subscribed while replay is blocked beyond the RPC buffer cap",
@@ -2661,68 +2661,66 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  for (const replayRequest of [
+  it.effect.each([
     { type: "terminal.cleanup" },
     { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },
-  ] as const) {
-    it.effect(
-      `retires live provider effects and requeues ${replayRequest.type} after process loss`,
-      () =>
-        Effect.gen(function* () {
-          const outbox = yield* EffectOutbox.EffectOutboxV2;
-          const commandId = CommandId.make(
-            `command:foundation-reclaim-running:${replayRequest.type}`,
-          );
-          yield* outbox.enqueue([
-            {
-              id: `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
-              commandId,
-              threadId: ThreadId.make(`thread:foundation-reclaim-running:${replayRequest.type}`),
-              request: {
-                type: "provider-turn.start",
-                runId: RunId.make(`run:foundation-reclaim-running:${replayRequest.type}`),
-              },
+  ] as const)(
+    "retires live provider effects and requeues $type after process loss",
+    (replayRequest) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const commandId = CommandId.make(
+          `command:foundation-reclaim-running:${replayRequest.type}`,
+        );
+        yield* outbox.enqueue([
+          {
+            id: `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
+            commandId,
+            threadId: ThreadId.make(`thread:foundation-reclaim-running:${replayRequest.type}`),
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make(`run:foundation-reclaim-running:${replayRequest.type}`),
             },
-            {
-              id: `effect:b-foundation-requeue-cleanup:${replayRequest.type}`,
-              commandId,
-              threadId: ThreadId.make(`thread:foundation-reclaim-cleanup:${replayRequest.type}`),
-              request: replayRequest,
-            },
-          ]);
-          assert.isTrue(
-            Option.isSome(
-              yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
-            ),
-          );
-          assert.isTrue(
-            Option.isSome(
-              yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
-            ),
-          );
-          assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
-            cancelled: 1,
-            requeued: 1,
-          });
-          const cancelled = yield* outbox.get(
-            `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
-          );
-          assert.isTrue(Option.isSome(cancelled));
-          if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
+          },
+          {
+            id: `effect:b-foundation-requeue-cleanup:${replayRequest.type}`,
+            commandId,
+            threadId: ThreadId.make(`thread:foundation-reclaim-cleanup:${replayRequest.type}`),
+            request: replayRequest,
+          },
+        ]);
+        assert.isTrue(
+          Option.isSome(
+            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+          ),
+        );
+        assert.isTrue(
+          Option.isSome(
+            yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+          ),
+        );
+        assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
+          cancelled: 1,
+          requeued: 1,
+        });
+        const cancelled = yield* outbox.get(
+          `effect:a-foundation-cancel-provider-turn:${replayRequest.type}`,
+        );
+        assert.isTrue(Option.isSome(cancelled));
+        if (Option.isSome(cancelled)) assert.equal(cancelled.value.status, "cancelled");
 
-          const reclaimed = yield* outbox.claimNext({
-            workerId: "recovery-worker",
-            leaseDurationMs: 30_000,
-          });
-          assert.isTrue(Option.isSome(reclaimed));
-          if (Option.isSome(reclaimed)) {
-            assert.equal(reclaimed.value.request.type, replayRequest.type);
-            assert.equal(reclaimed.value.attemptCount, 2);
-            yield* outbox.succeed({ effectId: reclaimed.value.id, workerId: "recovery-worker" });
-          }
-        }),
-    );
-  }
+        const reclaimed = yield* outbox.claimNext({
+          workerId: "recovery-worker",
+          leaseDurationMs: 30_000,
+        });
+        assert.isTrue(Option.isSome(reclaimed));
+        if (Option.isSome(reclaimed)) {
+          assert.equal(reclaimed.value.request.type, replayRequest.type);
+          assert.equal(reclaimed.value.attemptCount, 2);
+          yield* outbox.succeed({ effectId: reclaimed.value.id, workerId: "recovery-worker" });
+        }
+      }),
+  );
 
   it.effect("atomically cancels stale runs and their process-bound effects", () =>
     Effect.gen(function* () {
