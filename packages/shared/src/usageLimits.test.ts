@@ -26,11 +26,31 @@ import {
   paceOf,
   providersWithLimits,
   remainingPercent,
+  limitDisplay,
   isChatGptUsageLimitError,
   usesChatGptSharing,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
+
+describe("limit display", () => {
+  it.each([0, 28, 72, 100, 72.5])("keeps both directions complementary at %s remaining", (left) => {
+    const remaining = limitDisplay(left, "remaining");
+    const used = limitDisplay(left, "used");
+    expect(remaining).toEqual({ percent: Math.round(left), label: "left" });
+    expect(used).toEqual({ percent: 100 - Math.round(left), label: "used" });
+  });
+
+  it("matches quota and time markers when spending is on pace", () => {
+    const onPace = { ...window, usedPercent: 60 };
+    for (const mode of ["remaining", "used"] as const) {
+      expect(limitDisplay(remainingPercent(onPace), mode).percent).toBe(
+        limitDisplay((1 - elapsedShare(onPace, now)!) * 100, mode).percent,
+      );
+    }
+    expect(paceOf(onPace, now)).toBe("on");
+  });
+});
 
 const window = {
   id: "five_hour",

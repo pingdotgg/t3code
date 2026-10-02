@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+import type { UsageLimitDisplayMode } from "@t3tools/contracts/settings";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -509,9 +510,18 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
-/** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */
+/** Quota left in the window, 0..100. */
 export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+}
+
+/** Present quota or time remaining in the client's chosen direction. Round once so the two views complement each other. */
+export function limitDisplay(remaining: number, mode: UsageLimitDisplayMode) {
+  const left = Math.round(Math.max(0, Math.min(100, remaining)));
+  return {
+    percent: mode === "used" ? 100 - left : left,
+    label: mode === "used" ? "used" : "left",
+  };
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {

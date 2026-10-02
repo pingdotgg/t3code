@@ -15,6 +15,7 @@ import {
   limitsNotice,
   paceOf,
   remainingPercent,
+  limitDisplay,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
@@ -26,6 +27,7 @@ import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
+import { useUsageLimitDisplayMode } from "./useUsageLimitDisplayMode";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -40,8 +42,8 @@ function useBarColor(driver: Driver): string | null {
 }
 
 /**
- * One window as a bar spanning its whole duration: the fill is quota left,
- * the hairline is how much of the window is left, so even spending keeps the
+ * One window as a bar in the selected direction: the fill is quota,
+ * the hairline is time in the same direction, so even spending keeps the
  * fill on the line. Pace sits under the left edge, the countdown under the
  * right, so a row reads in one glance.
  */
@@ -52,8 +54,10 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
+  const mode = useUsageLimitDisplayMode();
+  const display = limitDisplay(remaining, mode);
   const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeMarker = elapsed === null ? null : limitDisplay((1 - elapsed) * 100, mode).percent;
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
   return (
@@ -61,7 +65,7 @@ function WindowRow(props: {
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
         <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
+          {display.percent}% {display.label}
         </Text>
       </View>
       <View className="h-3 justify-center">
@@ -75,16 +79,16 @@ function WindowRow(props: {
                   : "h-full rounded-full bg-foreground"
             }
             style={[
-              { flex: remaining },
+              { flex: display.percent },
               remaining > 30 && props.color ? { backgroundColor: props.color } : null,
             ]}
           />
-          <View style={{ flex: 100 - remaining }} />
+          <View style={{ flex: 100 - display.percent }} />
         </View>
-        {timeLeft !== null ? (
+        {timeMarker !== null ? (
           <View
             className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
+            style={{ left: `${timeMarker}%`, opacity: 0.6 }}
           />
         ) : null}
       </View>

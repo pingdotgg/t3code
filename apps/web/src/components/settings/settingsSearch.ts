@@ -223,6 +223,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "usage-limit-display-mode",
+    title: "Limit display",
+    to: "/settings/appearance",
+    searchTerms: ["usage limits quota remaining left used"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

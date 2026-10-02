@@ -66,7 +66,7 @@ the dialog.
 
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your environments and hubs you read one number per window rather than a
-list. Each window card shows how much of the pool is left and a bar with one segment per account,
+list. By default, each window card shows how much of the pool is left and a bar with one segment per account,
 kept in the same column across windows. Accounts are ordered by their 5-hour reset, soonest
 first, or by the first available window when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
@@ -77,6 +77,11 @@ with banked reset credits show a ticket count and the **Use reset** action in th
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+
+In **Settings → Appearance → Limit display**, choose **Remaining** or **Used**. The choice is
+saved separately on each client and applies to in-app limit numbers and bars, including
+`/usage-limits`. Pace and low-quota warnings keep the same meaning. Home-screen widgets continue
+to show remaining quota.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.

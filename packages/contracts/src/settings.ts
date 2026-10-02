@@ -48,6 +48,9 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const UsageLimitDisplayMode = Schema.Literals(["remaining", "used"]);
+export type UsageLimitDisplayMode = typeof UsageLimitDisplayMode.Type;
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -296,6 +299,9 @@ export const ChatWidth = Schema.Literals(["comfortable", "wide", "full"]);
 export type ChatWidth = typeof ChatWidth.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
+  usageLimitDisplayMode: UsageLimitDisplayMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("remaining" as const)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1599,6 +1605,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  usageLimitDisplayMode: Schema.optionalKey(UsageLimitDisplayMode),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

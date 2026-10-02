@@ -11,6 +11,7 @@ import {
   formatDuration,
   formatResetsIn,
   remainingPercent,
+  limitDisplay,
   type LimitAccount,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
@@ -26,6 +27,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
+import { useUsageLimitDisplayMode } from "./useUsageLimitDisplayMode";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
@@ -48,6 +50,8 @@ function AccountSegment({
   readonly pending: boolean;
 }) {
   const patternId = useId().replace(/:/g, "");
+  const mode = useUsageLimitDisplayMode();
+  const display = limitDisplay(remaining, mode);
   return (
     <Svg width="100%" height="100%" accessible={false}>
       <Defs>
@@ -57,17 +61,18 @@ function AccountSegment({
       </Defs>
       {pending ? (
         <Rect
-          x={`${remaining}%`}
+          x={`${mode === "used" ? 0 : remaining}%`}
           width={`${100 - remaining}%`}
           height="100%"
           fill={`url(#${patternId})`}
         />
       ) : null}
-      <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+      <Rect width={`${display.percent}%`} height="100%" fill={color} opacity={0.35} />
     </Svg>
   );
 }
 
+/** Summarize one pooled window and open its account details from the segments or legend. */
 function PoolWindowCard({
   pool,
   color,
@@ -84,6 +89,8 @@ function PoolWindowCard({
   readonly description?: string;
 }) {
   const navigation = useNavigation();
+  const mode = useUsageLimitDisplayMode();
+  const display = limitDisplay(pool.remainingPercent, mode);
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsSheet", {
@@ -106,9 +113,9 @@ function PoolWindowCard({
           <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           <View className="flex-row items-baseline gap-1.5">
             <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-              {pool.remainingPercent}%
+              {display.percent}%
             </Text>
-            <Text className="text-sm text-foreground-muted">left</Text>
+            <Text className="text-sm text-foreground-muted">{display.label}</Text>
           </View>
         </View>
         {pool.pace ? (
@@ -118,7 +125,8 @@ function PoolWindowCard({
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
+          ↻ {mode === "used" ? "−" : "+"}
+          {nextRefill.restoresPercent}%{" "}
           {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
         </Text>
       ) : null}
@@ -129,7 +137,7 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${limitDisplay(remainingPercent(window), mode).percent}% ${display.label}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
@@ -157,7 +165,7 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${limitDisplay(remainingPercent(window), mode).percent}% ${display.label}${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
@@ -174,7 +182,7 @@ function PoolWindowCard({
                 {accountName(account)}
               </Text>
               <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-                {remainingPercent(window)}%
+                {limitDisplay(remainingPercent(window), mode).percent}%
               </Text>
               <View className="flex-row items-center gap-1">
                 {resetsIn ? (
@@ -329,6 +337,7 @@ type AccountScreenProps = StaticScreenProps<{
 /** Resolve the account again so live quota and credit updates reach the open detail screen. */
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
+  const mode = useUsageLimitDisplayMode();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
   const selectedIds =
@@ -386,7 +395,8 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
               <Text className="text-sm font-t3-medium text-foreground">{window.label}</Text>
               <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
-                {remainingPercent(window)}% left
+                {limitDisplay(remainingPercent(window), mode).percent}%{" "}
+                {mode === "used" ? "used" : "left"}
               </Text>
               {window.resetsAt ? (
                 <Text selectable className="text-sm text-foreground-muted">

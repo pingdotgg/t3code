@@ -12,6 +12,7 @@ import {
   elapsedShare,
   formatDuration,
   formatResetsIn,
+  limitDisplay,
   type LimitPace,
   paceOf,
   remainingPercent,
@@ -19,7 +20,7 @@ import {
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useClientSettings, usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -74,9 +75,8 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
 
 /**
  * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
- * window the clock is, which is also where even spending would have put the
- * fill. Hover for the exact figures and reset time.
+ * Fill and time marker follow the selected display direction, so the line
+ * always marks even spending. Hover for the exact figures and reset time.
  */
 function WindowBar({
   color,
@@ -88,16 +88,17 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const remaining = remainingPercent(window);
+  const mode = useClientSettings((settings) => settings.usageLimitDisplayMode);
+  const display = limitDisplay(remainingPercent(window), mode);
   const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeMarker = elapsed === null ? null : limitDisplay((1 - elapsed) * 100, mode).percent;
+  const timeLabel = mode === "used" ? "elapsed" : "left";
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${remaining}% left${
-    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
+  const summary = `${window.label}: ${display.percent}% ${display.label}${
+    timeMarker === null ? "" : `, ${timeMarker}% of the window ${timeLabel}`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -113,26 +114,27 @@ function WindowBar({
         }
       >
         <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
+        {display.percent > 0 ? (
           <div
             className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
+            style={{ width: `${display.percent}%`, backgroundColor: color }}
           />
         ) : null}
-        {timeLeft !== null ? (
+        {timeMarker !== null ? (
           <span
             aria-hidden
             className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
+            style={{ left: `${timeMarker}%` }}
           />
         ) : null}
       </TooltipTrigger>
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
+            {display.percent}% {display.label}
+            {timeMarker !== null ? ` · ${timeMarker}% of the window ${timeLabel}` : ""}
           </span>
-          {timeLeft !== null ? (
+          {timeMarker !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
           {resetsAt ? (
@@ -163,6 +165,7 @@ export function LimitWindows({
   readonly compact?: boolean;
 }) {
   const color = barColor(driver);
+  const mode = useClientSettings((settings) => settings.usageLimitDisplayMode);
   return (
     <div
       className={
@@ -174,12 +177,13 @@ export function LimitWindows({
       {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now);
+        const display = limitDisplay(remainingPercent(window), mode);
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {remainingPercent(window)}% left
+                {display.percent}% {display.label}
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
