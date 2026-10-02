@@ -341,7 +341,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         "--limit",
         "100",
         "--json",
-        "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        "number,title,url,baseRefName,headRefName,headRefOid,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
       ]);
       const empty = yield* gh.listPullRequestsByHead({
         cwd: "/repo",
