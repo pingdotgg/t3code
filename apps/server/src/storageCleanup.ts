@@ -269,14 +269,19 @@ export const make = Effect.gen(function* () {
             args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
             allowNonZeroExit: true,
           });
-          if (ancestor.exitCode !== 0) return;
-          eligible = settings.worktreeUnchanged;
+          eligible = settings.worktreeUnchanged && ancestor.exitCode === 0;
           if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-            const pullRequest = yield* gitManager.branchPullRequest(
-              { cwd: worktreePath, branch: thread.branch },
-              { refresh: true },
-            );
-            eligible = pullRequest?.state === "merged";
+            const pullRequest = yield* gitManager
+              .branchPullRequest({ cwd: worktreePath, branch: thread.branch }, { refresh: true })
+              .pipe(Effect.orElseSucceed(() => null));
+            // Squash/rebase merges replace ancestry. Fresh host evidence must
+            // identify this exact head merged into the project's default branch.
+            eligible =
+              pullRequest?.state === "merged" &&
+              (ancestor.exitCode === 0 ||
+                (pullRequest.headRef === thread.branch &&
+                  pullRequest.baseRef === branch &&
+                  pullRequest.headSha === head.commitSha));
           }
         }
         if (!eligible) return;

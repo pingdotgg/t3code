@@ -87,6 +87,7 @@ export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOpti
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
+  readonly headSha?: string;
   readonly repositoryKey: string | null;
   readonly updatedAt: string | null;
   readonly closedAt?: string | null;
@@ -188,6 +189,7 @@ interface OpenPrInfo {
 }
 
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
+  headSha?: string | undefined;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   closedAt?: string | null;
@@ -452,6 +454,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headSha !== undefined ? { headSha: summary.headSha } : {}),
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     closedAt: summary.closedAt ?? null,
@@ -2286,6 +2289,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       ...toStatusPr(latest),
+      ...(latest.headSha !== undefined ? { headSha: latest.headSha } : {}),
       closedAt: latest.closedAt ?? null,
       mergedAt: latest.mergedAt ?? null,
       // Hosting CLIs can select an upstream repository instead of origin.

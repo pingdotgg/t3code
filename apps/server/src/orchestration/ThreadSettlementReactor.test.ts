@@ -1,6 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EventId,
+  GitCommandError,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -1569,6 +1570,17 @@ describe("storage cleanup", () => {
     "recent",
     "merged",
     "unmerged",
+    "squash-exact-head",
+    "squash-later-commit",
+    "squash-release-base",
+    "squash-stack-base",
+    "squash-missing-head",
+    "squash-lookup-failed",
+    "squash-different-branch",
+    "squash-stale-merged",
+    "squash-closed",
+    "squash-head-moved",
+    "unchanged-squash",
     "unchanged",
     "unchanged-two-worktrees",
     "diverged",
@@ -1634,6 +1646,31 @@ describe("storage cleanup", () => {
           const thread = makeThread("storage-thread", {
             branch: "feature",
             worktreePath,
+            pullRequests:
+              protection === "squash-stale-merged"
+                ? [
+                    {
+                      host: "example.test",
+                      repository: "owner/repository",
+                      number: 42,
+                      url: "https://example.test/owner/repository/pull/42",
+                      source: "manual",
+                      linkedAt: NOW,
+                      stack: null,
+                      snapshot: {
+                        state: "merged",
+                        title: "Previously merged",
+                        headBranch: "feature",
+                        baseBranch: "main",
+                        isDraft: false,
+                        updatedAt: NOW,
+                        syncedAt: NOW,
+                        mergedAt: NOW,
+                        closedAt: null,
+                      },
+                    },
+                  ]
+                : [],
             latestUserMessageAt:
               protection === "recent" ? "2026-08-26T00:00:00.000Z" : "2026-08-01T00:00:00.000Z",
             ...(protection === "session"
@@ -1658,9 +1695,14 @@ describe("storage cleanup", () => {
           const deleteRule = protection.startsWith("deleted");
           let tombstoned = deleteRule && protection !== "deleted-event";
           const removals: string[] = [];
-          const mergeRule = protection === "merged" || protection === "unmerged";
+          const squash = protection.startsWith("squash-") || protection === "unchanged-squash";
+          const mergeRule =
+            protection === "merged" ||
+            protection === "unmerged" ||
+            protection.startsWith("squash-");
           const unchangedRule =
             protection === "unchanged" ||
+            protection === "unchanged-squash" ||
             protection === "unchanged-two-worktrees" ||
             protection === "diverged" ||
             protection === "head-moved";
@@ -1814,9 +1856,38 @@ describe("storage cleanup", () => {
                   invalidateStatus: () => Effect.void,
                   branchPullRequest: (_input, options) => {
                     assert.strictEqual(options?.refresh, true);
-                    return Effect.succeed(
-                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
-                    );
+                    assert.notStrictEqual(protection, "unchanged-squash");
+                    if (protection === "squash-lookup-failed") {
+                      return Effect.fail(
+                        new GitCommandError({
+                          operation: "branchPullRequest",
+                          command: "gh",
+                          cwd: worktreePath,
+                          detail: "Host unavailable",
+                        }),
+                      );
+                    }
+                    return Effect.succeed({
+                      ...makeBranchPullRequest(
+                        protection === "unmerged" || protection === "squash-stale-merged"
+                          ? "open"
+                          : protection === "squash-closed"
+                            ? "closed"
+                            : "merged",
+                      ),
+                      headRef: protection === "squash-different-branch" ? "other" : "feature",
+                      baseRef:
+                        protection === "squash-release-base"
+                          ? "release"
+                          : protection === "squash-stack-base"
+                            ? "stack-parent"
+                            : "main",
+                      ...(!squash || protection === "squash-missing-head"
+                        ? {}
+                        : {
+                            headSha: (protection === "squash-later-commit" ? "c" : "a").repeat(40),
+                          }),
+                    });
                   },
                 }),
                 Layer.mock(OrchestrationEngineService)({
@@ -1870,7 +1941,8 @@ describe("storage cleanup", () => {
                       headReads++;
                       return {
                         commitSha:
-                          protection === "head-moved" && headReads > 1
+                          (protection === "head-moved" || protection === "squash-head-moved") &&
+                          headReads > 1
                             ? "c".repeat(40)
                             : "a".repeat(40),
                       };
@@ -1894,7 +1966,9 @@ describe("storage cleanup", () => {
                     Effect.succeed({
                       exitCode: ChildProcessSpawner.ExitCode(
                         input.operation === "StorageCleanup.integratedBranch" &&
-                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
+                          (squash ||
+                            protection === "diverged" ||
+                            input.args.at(-1) !== "b".repeat(40))
                           ? 1
                           : 0,
                       ),
@@ -2007,6 +2081,7 @@ describe("storage cleanup", () => {
             protection === "files-disabled" ||
             protection === "files-extended" ||
             protection === "merged" ||
+            protection === "squash-exact-head" ||
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees";
           assert.strictEqual(yield* fs.exists(worktreePath), !removed);
