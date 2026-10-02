@@ -6,7 +6,7 @@ import type {
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { sanitizeNewRefName } from "@t3tools/shared/git";
+import { isTemporaryWorktreeBranch, sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
 export {
   dedupeRemoteBranchesWithLocalMatches,
@@ -253,20 +253,39 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-export function resolveLocalCheckoutBranchMismatch(input: {
+// A thread's recorded branch can fall behind its checkout: the user or an agent
+// switches branches, or a sibling thread sharing the worktree does. Only a local
+// checkout offers a restore; switching a worktree back could pull the branch
+// out from under a sibling thread.
+export function resolveCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
-}): { threadBranch: string; currentBranch: string } | null {
+}): { threadBranch: string; currentBranch: string; canRestoreThreadBranch: boolean } | null {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
-  if (effectiveEnvMode !== "local" || activeWorktreePath !== null) {
+  const isLocalCheckout = effectiveEnvMode === "local" && activeWorktreePath === null;
+  const isEstablishedWorktree = effectiveEnvMode === "worktree" && activeWorktreePath !== null;
+  if (!isLocalCheckout && !isEstablishedWorktree) {
     return null;
   }
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
     return null;
   }
-  return { threadBranch: activeThreadBranch, currentBranch: currentGitBranch };
+  // A new worktree's temporary branch is renamed in the background, so a status
+  // read from before the rename is not drift.
+  if (
+    isEstablishedWorktree &&
+    !isTemporaryWorktreeBranch(activeThreadBranch) &&
+    isTemporaryWorktreeBranch(currentGitBranch)
+  ) {
+    return null;
+  }
+  return {
+    threadBranch: activeThreadBranch,
+    currentBranch: currentGitBranch,
+    canRestoreThreadBranch: isLocalCheckout,
+  };
 }
 
 export function resolveBranchSelectionTarget(input: {
