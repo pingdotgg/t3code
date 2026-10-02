@@ -1286,8 +1286,11 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.searchTranscript,
             (
-              projectionSnapshotQuery.searchTranscript?.(input.query, input.threadIds) ??
-              Effect.succeed({ matches: [] })
+              projectionSnapshotQuery.searchTranscript?.(
+                input.query,
+                input.threadIds,
+                input.archived,
+              ) ?? Effect.succeed({ matches: [] })
             ).pipe(
               Effect.mapError(
                 (cause) =>
@@ -2033,21 +2036,25 @@ const makeWsRpcLayer = (
             WS_METHODS.projectsListEntries,
             // Empty-query search returns the full workspace index (files + dirs),
             // which is what mobile's file tree browser expects from listEntries.
-            workspaceEntries
-              .search({
-                cwd: input.cwd,
-                query: "",
-                limit: 25_000,
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProjectListEntriesError({
-                      message: `Failed to list workspace entries: ${cause.detail}`,
-                      cause,
-                    }),
-                ),
+            (input.directoryPath !== undefined
+              ? workspaceEntries.listDirectory({
+                  cwd: input.cwd,
+                  directoryPath: input.directoryPath,
+                })
+              : workspaceEntries.search({
+                  cwd: input.cwd,
+                  query: "",
+                  limit: 25_000,
+                })
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    message: `Failed to list workspace entries: ${cause.detail}`,
+                    cause,
+                  }),
               ),
+            ),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) =>

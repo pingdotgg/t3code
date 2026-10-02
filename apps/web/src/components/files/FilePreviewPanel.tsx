@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EditorId, ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
 import { Editor } from "@pierre/diffs/editor";
 import { EditorProvider, File, Virtualizer } from "@pierre/diffs/react";
 import {
@@ -16,6 +16,8 @@ import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPre
 import { ensureEnvironmentApi } from "~/environmentApi";
 import { getEnvironmentHttpBaseUrl } from "~/environments/runtime";
 import { useTheme } from "~/hooks/useTheme";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { OpenInPicker } from "../chat/OpenInPicker";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -31,7 +33,8 @@ import FileBrowserPanel from "./FileBrowserPanel";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import { projectFileCacheKey } from "./fileContentRevision";
-import { collapseBreadcrumbs, fileBreadcrumbs } from "./filePath";
+import { fileBreadcrumbs } from "./filePath";
+import { FileBreadcrumbMenu } from "./FileBreadcrumbMenu";
 import { setMarkdownTaskChecked } from "./filePreviewMode";
 import { getProjectFileSaveSession } from "./projectFileSaveSession";
 import { resolveProjectFileQueryData, useProjectFileQuery } from "./projectFilesQueryState";
@@ -44,6 +47,10 @@ interface FilePreviewPanelProps {
   revealLine?: number | null;
   onOpenFile: (relativePath: string) => void;
   onPendingChange?: (relativePath: string, pending: boolean) => void;
+  editorPicker?: {
+    keybindings: ResolvedKeybindingsConfig;
+    availableEditors: ReadonlyArray<EditorId>;
+  };
 }
 
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
@@ -366,9 +373,9 @@ function WorkspacePdfPreview(props: {
 
 function initialExplorerOpen(): boolean {
   try {
-    return window.localStorage.getItem(FILE_EXPLORER_STORAGE_KEY) !== "false";
+    return window.localStorage.getItem(FILE_EXPLORER_STORAGE_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -388,21 +395,21 @@ export function FilePreviewPanel({
   revealLine = null,
   onOpenFile,
   onPendingChange = NOOP_PENDING_CHANGE,
+  editorPicker,
 }: FilePreviewPanelProps) {
   const environmentId = threadRef.environmentId;
   const projectName = projectNameProp ?? cwd.split(/[\\/]/).findLast(Boolean) ?? cwd;
   const { resolvedTheme } = useTheme();
+  const { copyToClipboard } = useCopyToClipboard();
   const file = useProjectFileQuery(environmentId, cwd, relativePath);
   const openPreview = useAtomCommand(previewEnvironment.open);
   const environmentApi = ensureEnvironmentApi(environmentId);
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [renderMarkdown, setRenderMarkdown] = useState(true);
   const [wordWrap, setWordWrap] = useState(initialWordWrap);
-  const [treeReveal, setTreeReveal] = useState<{ path: string; nonce: number } | null>(null);
-  const revealNonceRef = useRef(0);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const breadcrumbs = useMemo(
-    () => (relativePath ? collapseBreadcrumbs(fileBreadcrumbs(projectName, relativePath)) : []),
+    () => (relativePath ? fileBreadcrumbs(projectName, relativePath) : []),
     [projectName, relativePath],
   );
 
@@ -429,20 +436,6 @@ export function FilePreviewPanel({
     try {
       window.localStorage.setItem(FILE_WORD_WRAP_STORAGE_KEY, String(wrap));
     } catch {}
-  };
-
-  const revealInTree = (path: string) => {
-    if (!path) {
-      setExplorerOpenPersisted(true);
-      return;
-    }
-    setExplorerOpenPersisted(true);
-    revealNonceRef.current += 1;
-    setTreeReveal({ path, nonce: revealNonceRef.current });
-  };
-
-  const copyText = (text: string) => {
-    void navigator.clipboard?.writeText(text).catch(() => {});
   };
 
   const httpBaseUrl = getEnvironmentHttpBaseUrl(environmentId);
@@ -477,7 +470,7 @@ export function FilePreviewPanel({
       data-right-panel-files-surface
     >
       {relativePath ? (
-        <div className="flex h-11 shrink-0 items-center gap-2 border-y border-border/60 px-3">
+        <div className="flex h-10 min-h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent">
           <ScrollArea
             ref={breadcrumbRef}
             hideScrollbars
@@ -495,35 +488,38 @@ export function FilePreviewPanel({
                   {index > 0 ? (
                     <ChevronRight className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
                   ) : null}
-                  {crumb.kind === "ellipsis" ? (
-                    <span className="shrink-0 text-muted-foreground/60" aria-hidden>
-                      {crumb.label}
-                    </span>
-                  ) : crumb.kind === "file" ? (
+                  {crumb.kind === "file" ? (
                     <button
                       type="button"
-                      className="max-w-40 truncate font-medium text-foreground hover:underline"
+                      className="max-w-40 truncate text-foreground hover:underline"
                       title={`Copy path: ${relativePath}`}
                       aria-label={`Copy path ${relativePath}`}
-                      onClick={() => copyText(relativePath)}
+                      onClick={() => copyToClipboard(relativePath, undefined)}
                     >
                       {crumb.label}
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      className="max-w-40 truncate text-muted-foreground hover:text-foreground hover:underline"
-                      title={crumb.path ? `Reveal ${crumb.path} in explorer` : "Show explorer"}
-                      aria-label={crumb.path ? `Reveal ${crumb.path} in explorer` : "Show explorer"}
-                      onClick={() => revealInTree(crumb.path)}
-                    >
-                      {crumb.label}
-                    </button>
+                    <FileBreadcrumbMenu
+                      environmentId={environmentId}
+                      cwd={cwd}
+                      path={crumb.path}
+                      label={crumb.label}
+                      selectedPath={relativePath}
+                      theme={resolvedTheme}
+                      onOpenFile={onOpenFile}
+                    />
                   )}
                 </div>
               ))}
             </div>
           </ScrollArea>
+          {editorPicker ? (
+            <OpenInPicker
+              {...editorPicker}
+              openInCwd={`${cwd.replace(/[\\/]$/, "")}/${relativePath}`}
+              enableShortcut={false}
+            />
+          ) : null}
           {showMarkdownToggle ? (
             <div
               role="group"
@@ -572,7 +568,7 @@ export function FilePreviewPanel({
                     onPressedChange={setWordWrapPersisted}
                     aria-label={wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
                     variant="default"
-                    size="sm"
+                    size="xs"
                   >
                     <TextWrapIcon className="size-3.5" />
                   </Toggle>
@@ -592,7 +588,7 @@ export function FilePreviewPanel({
                   onPressedChange={toggleExplorer}
                   aria-label={explorerOpen ? "Hide file explorer" : "Show file explorer"}
                   variant="default"
-                  size="sm"
+                  size="xs"
                 >
                   <FolderTree className="size-3.5" />
                 </Toggle>
@@ -707,7 +703,7 @@ export function FilePreviewPanel({
               cwd={cwd}
               projectName={projectName}
               selectedPath={relativePath}
-              revealRequest={treeReveal}
+              revealRequest={null}
               onOpenFile={onOpenFile}
             />
           </aside>

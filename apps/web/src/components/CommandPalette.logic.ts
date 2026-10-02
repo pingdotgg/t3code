@@ -33,7 +33,7 @@ export type PaletteMatchSource =
   | "ID"
   | "Command";
 
-export type PaletteScopeKind = "project" | "thread";
+export type PaletteScopeKind = "project" | "thread" | "archived";
 
 export interface ProjectPaletteScope {
   readonly kind: "project";
@@ -49,7 +49,17 @@ export interface ThreadPaletteScope {
   readonly label: string;
 }
 
-export type PaletteScope = ProjectPaletteScope | ThreadPaletteScope;
+export interface ArchivedPaletteScope {
+  readonly kind: "archived";
+  readonly label: "Archived";
+}
+
+export const ARCHIVED_PALETTE_SCOPE: ArchivedPaletteScope = {
+  kind: "archived",
+  label: "Archived",
+};
+
+export type PaletteScope = ProjectPaletteScope | ThreadPaletteScope | ArchivedPaletteScope;
 
 export interface CommandPaletteItem {
   readonly kind: "action" | "submenu";
@@ -284,6 +294,7 @@ export type BuildThreadActionItemsThread = Pick<
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
   threads: ReadonlyArray<TThread>;
+  archived?: boolean;
   activeThreadId?: Thread["id"];
   projectTitleById: ReadonlyMap<Project["id"], string>;
   sortOrder: SidebarThreadSortOrder;
@@ -296,7 +307,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter((thread) => thread.archivedAt === null),
+    input.threads.filter((thread) => (thread.archivedAt !== null) === (input.archived ?? false)),
     input.sortOrder,
     input.limit,
   );
@@ -627,6 +638,9 @@ export function paletteScopeKey(environmentId: EnvironmentId, threadId: ThreadId
 }
 
 export function isSamePaletteScope(left: PaletteScope, right: PaletteScope): boolean {
+  if (left.kind === "archived" && right.kind === "archived") {
+    return true;
+  }
   if (left.kind === "project" && right.kind === "project") {
     return left.environmentId === right.environmentId && left.projectId === right.projectId;
   }
@@ -640,10 +654,11 @@ export function formatPaletteScopeLabels(scopes: ReadonlyArray<PaletteScope>): s
 }
 
 /**
- * Resolve scopes to the set of visible thread keys.
+ * Resolve location scopes to the set of visible thread keys.
  * Project scopes match member threads; thread scopes match the thread plus its
  * subthreads. The scope root is always included even when it is absent from
- * the list (archived or not yet loaded).
+ * the list (archived or not yet loaded). Archived selects a data source in the
+ * caller; by itself it does not constrain projects, subtrees, or environments.
  */
 export function resolvePaletteScopeThreadKeys(
   scopes: ReadonlyArray<PaletteScope>,
@@ -688,9 +703,12 @@ export function resolvePaletteScopeThreadKeys(
           projectKeys.add(paletteScopeKey(thread.environmentId, thread.id));
         }
       }
-    } else {
+    } else if (scope.kind === "thread") {
       collectSubtree(paletteScopeKey(scope.environmentId, scope.threadId));
     }
+  }
+  if (!scopes.some((scope) => scope.kind !== "archived")) {
+    return new Set(threads.map((thread) => paletteScopeKey(thread.environmentId, thread.id)));
   }
   if (!scopes.some((scope) => scope.kind === "project")) {
     return threadKeys;
@@ -708,11 +726,14 @@ function isProjectScopeTarget(
   if (scope?.kind !== "project") {
     return false;
   }
-  return scopes.some(
-    (active) =>
-      active.kind === "project" &&
-      active.environmentId === scope.environmentId &&
-      active.projectId === scope.projectId,
+  return (
+    !scopes.some((active) => active.kind !== "archived") ||
+    scopes.some(
+      (active) =>
+        active.kind === "project" &&
+        active.environmentId === scope.environmentId &&
+        active.projectId === scope.projectId,
+    )
   );
 }
 
@@ -764,10 +785,11 @@ export function filterTranscriptMatchesByScopes(
 export function selectPaletteScopeEnvironmentIds(
   scopes: ReadonlyArray<PaletteScope>,
 ): EnvironmentId[] | null {
-  if (scopes.length === 0) {
+  const environmentScopes = scopes.filter((scope) => scope.kind !== "archived");
+  if (environmentScopes.length === 0) {
     return null;
   }
-  return [...new Set(scopes.map((scope) => scope.environmentId))];
+  return [...new Set(environmentScopes.map((scope) => scope.environmentId))];
 }
 
 function resolveProjectQualifier(
@@ -858,7 +880,7 @@ function resolveScopeQualifier(
 }
 
 /**
- * Pull leading `project:name` / `thread:title` qualifiers off the query and
+ * Pull leading `archived`, `project:name` / `thread:title` qualifiers off the query and
  * resolve them to scope chips. The trailing-space requirement keeps a
  * qualifier being typed (`project:t`) as plain text until it is committed
  * with space or Tab. Unresolvable qualifiers stay in the text.
@@ -872,6 +894,14 @@ export function parsePaletteScopeQualifiers(
   const scopes: PaletteScope[] = [];
   let text = query;
   for (;;) {
+    const archivedMatch = /^archived\s+/i.exec(text);
+    if (archivedMatch) {
+      if (!scopes.some((scope) => scope.kind === "archived")) {
+        scopes.push(ARCHIVED_PALETTE_SCOPE);
+      }
+      text = text.slice(archivedMatch[0].length);
+      continue;
+    }
     const match = PALETTE_SCOPE_QUALIFIER_PATTERN.exec(text);
     if (!match) {
       break;
@@ -900,6 +930,9 @@ export function parseTrailingPaletteScopeQualifier(
   projects: ReadonlyArray<PaletteScopeProjectInput>,
   threads: ReadonlyArray<PaletteScopeThreadInput>,
 ): PaletteScope | null {
+  if (query.trim().toLowerCase() === "archived") {
+    return ARCHIVED_PALETTE_SCOPE;
+  }
   const match = PALETTE_TRAILING_QUALIFIER_PATTERN.exec(query);
   if (!match) {
     return null;

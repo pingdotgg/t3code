@@ -2976,6 +2976,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const searchTranscript: NonNullable<ProjectionSnapshotQueryShape["searchTranscript"]> = (
     query,
     threadIds,
+    archived = false,
   ) => {
     const normalizedQuery = query.trim().replace(/\s+/g, " ");
     if (normalizedQuery.length < 3 || threadIds?.length === 0) {
@@ -2997,7 +2998,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ON messages.rowid = projection_thread_message_fts.rowid
           JOIN projection_threads AS threads ON threads.thread_id = messages.thread_id
           WHERE projection_thread_message_fts MATCH ${matchQuery}
-            AND threads.archived_at IS NULL
+            ${archived ? sql`AND threads.archived_at IS NOT NULL` : sql`AND threads.archived_at IS NULL`}
             AND threads.deleted_at IS NULL
             ${threadIds ? sql`AND ${sql.in("threads.thread_id", threadIds)}` : sql``}
         ),

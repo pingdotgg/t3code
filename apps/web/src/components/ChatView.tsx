@@ -5284,6 +5284,9 @@ function ChatViewBody(
               threadRef={activeThreadRef}
               onOpenFile={openRightPanelFile}
               onPendingChange={handleFilePendingChange}
+              {...(activeThreadRef.environmentId === primaryEnvironmentId
+                ? { editorPicker: { keybindings, availableEditors } }
+                : {})}
             />
           ) : null;
       }
@@ -5633,6 +5636,8 @@ function ChatViewBody(
           {...(activeDirtyFilePaths ? { dirtyFilePaths: activeDirtyFilePaths } : {})}
           maximized={rightPanelMaximized}
           onToggleMaximize={toggleRightPanelMaximized}
+          terminalOpen={terminalState.terminalOpen}
+          onToggleTerminal={toggleTerminalVisibility}
         >
           {renderRightPanelSurfaces()}
         </RightPanelTabs>
@@ -5646,6 +5651,8 @@ function ChatViewBody(
         >
           <RightPanelTabs
             mode="sheet"
+            terminalOpen={terminalState.terminalOpen}
+            onToggleTerminal={toggleTerminalVisibility}
             surfaces={browserPanel.surfaces}
             activeSurfaceId={browserPanel.activeSurfaceId}
             previewSessions={previewState.sessions}
