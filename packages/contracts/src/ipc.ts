@@ -77,6 +77,7 @@ import type {
   ServerProviderPrewarmSessionInput,
   ServerProviderListCommandsResult,
   ServerProviderUpdatedPayload,
+  ServerReplaceKeybindingRulesResult,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import type { ProviderSessionCommandInput, ProviderSessionCommandResult } from "./provider.ts";
@@ -90,7 +91,7 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import type { ServerUpsertKeybindingInput } from "./server.ts";
+import type { ServerReplaceKeybindingRulesInput, ServerUpsertKeybindingInput } from "./server.ts";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -1134,6 +1135,9 @@ export interface LocalApi {
     sessionCommand: (input: ProviderSessionCommandInput) => Promise<ProviderSessionCommandResult>;
     listSkills: () => Promise<ServerListSkillsResult>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    replaceKeybindingRules: (
+      input: ServerReplaceKeybindingRulesInput,
+    ) => Promise<ServerReplaceKeybindingRulesResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     exportActiveChats: () => Promise<ServerExportActiveChatsResult>;

@@ -816,6 +816,9 @@ export const ServerSettingsPatch = Schema.Struct({
   agentWorkflows: Schema.optionalKey(AgentWorkflowSettingsPatch),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   delegatedThreadModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  // Full-replace (including null to clear): unlike the non-nullable rows
+  // above, the global default has a meaningful empty state.
+  defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   delegationIdleStallThresholdMs: Schema.optionalKey(
     Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
   ),

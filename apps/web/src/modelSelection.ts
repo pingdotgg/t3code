@@ -330,6 +330,52 @@ export function resolveAppModelSelectionState(
 }
 
 /**
+ * Resolve the global default model (`settings.defaultModelSelection`)
+ * against live provider availability. Null stays null — "no global
+ * default" — so the row can render its clear state instead of coercing to
+ * a factory model. An explicit-but-unavailable instance falls back to the
+ * first enabled/available instance; per-model options are preserved when
+ * the instance is unchanged (chat dispatch reads them).
+ */
+export function resolveDefaultModelSelectionState(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): ModelSelection | null {
+  const selection = settings.defaultModelSelection;
+  if (!selection) {
+    return null;
+  }
+  const entries = deriveProviderInstanceEntries(providers);
+  const selectedEntry = entries.find(
+    (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
+  );
+  const entry =
+    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
+  if (!entry) {
+    return null;
+  }
+  // When the instance changed due to fallback (e.g. selected instance was disabled),
+  // don't carry over the old instance's model — use the fallback instance's default.
+  const selectedModel = selectedEntry ? selection.model : null;
+  const model =
+    resolveAppModelSelectionForInstance(entry.instanceId, settings, providers, selectedModel) ??
+    entry.models[0]?.slug ??
+    null;
+  if (!model) {
+    return null;
+  }
+  const provider = entry.driverKind;
+  const { modelOptionsForDispatch } = getComposerProviderState({
+    provider,
+    model,
+    models: entry.models,
+    modelOptions: selectedEntry ? selection.options : undefined,
+  });
+
+  return createModelSelection(entry.instanceId, model, modelOptionsForDispatch);
+}
+
+/**
  * Resolve the settings delegated-thread default (`delegate_work` children
  * without an explicit model) against live provider availability. Falls back
  * to the first enabled/available instance — and finally to factory

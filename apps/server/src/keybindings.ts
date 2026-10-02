@@ -7,6 +7,7 @@
  * @module Keybindings
  */
 import {
+  type KeybindingCommand,
   KeybindingRule,
   KeybindingsConfig,
   KeybindingsConfigError,
@@ -538,6 +539,16 @@ export interface KeybindingsShape {
   readonly upsertKeybindingRule: (
     rule: KeybindingRule,
   ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+  /**
+   * Replace one command's custom rules and persist the resulting
+   * configuration. An empty `rules` array removes the command override
+   * entirely so server defaults apply again.
+   */
+  readonly replaceKeybindingRules: (
+    command: KeybindingCommand,
+    rules: ReadonlyArray<KeybindingRule>,
+  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
 /**
@@ -884,6 +895,40 @@ const makeKeybindings = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const persistCommandRules = (
+    command: KeybindingCommand,
+    rules: ReadonlyArray<KeybindingRule>,
+  ): Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError> =>
+    upsertSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const customConfig = yield* loadWritableCustomKeybindingsConfig();
+        const nextConfig = [...customConfig.filter((entry) => entry.command !== command), ...rules];
+        const cappedConfig =
+          nextConfig.length > MAX_KEYBINDINGS_COUNT
+            ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
+            : nextConfig;
+        if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
+          yield* Effect.logWarning("truncating keybindings config to max entries", {
+            path: keybindingsConfigPath,
+            maxEntries: MAX_KEYBINDINGS_COUNT,
+          });
+        }
+        yield* writeConfigAtomically(cappedConfig);
+        const nextResolved = mergeWithDefaultKeybindings(
+          compileResolvedKeybindingsConfig(cappedConfig),
+        );
+        yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
+          keybindings: nextResolved,
+          issues: [],
+        });
+        yield* emitChange({
+          keybindings: nextResolved,
+          issues: [],
+        });
+        return nextResolved;
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -893,39 +938,8 @@ const makeKeybindings = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-    upsertKeybindingRule: (rule) =>
-      upsertSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const customConfig = yield* loadWritableCustomKeybindingsConfig();
-          const nextConfig = [
-            ...customConfig.filter((entry) => entry.command !== rule.command),
-            rule,
-          ];
-          const cappedConfig =
-            nextConfig.length > MAX_KEYBINDINGS_COUNT
-              ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
-              : nextConfig;
-          if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
-            yield* Effect.logWarning("truncating keybindings config to max entries", {
-              path: keybindingsConfigPath,
-              maxEntries: MAX_KEYBINDINGS_COUNT,
-            });
-          }
-          yield* writeConfigAtomically(cappedConfig);
-          const nextResolved = mergeWithDefaultKeybindings(
-            compileResolvedKeybindingsConfig(cappedConfig),
-          );
-          yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
-            keybindings: nextResolved,
-            issues: [],
-          });
-          yield* emitChange({
-            keybindings: nextResolved,
-            issues: [],
-          });
-          return nextResolved;
-        }),
-      ),
+    upsertKeybindingRule: (rule) => persistCommandRules(rule.command, [rule]),
+    replaceKeybindingRules: (command, rules) => persistCommandRules(command, [...rules]),
   } satisfies KeybindingsShape;
 });
 

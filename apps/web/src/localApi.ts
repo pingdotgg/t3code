@@ -138,6 +138,7 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
       sessionCommand: rpcClient.server.sessionCommand,
       listSkills: rpcClient.server.listSkills,
       upsertKeybinding: rpcClient.server.upsertKeybinding,
+      replaceKeybindingRules: rpcClient.server.replaceKeybindingRules,
       getSettings: rpcClient.server.getSettings,
       updateSettings: rpcClient.server.updateSettings,
       exportActiveChats: rpcClient.server.exportActiveChats,

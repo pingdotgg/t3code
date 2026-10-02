@@ -217,6 +217,8 @@ import {
   ServerSignalProcessInput,
   ServerSignalProcessResult,
   ServerTraceDiagnosticsResult,
+  ServerReplaceKeybindingRulesInput,
+  ServerReplaceKeybindingRulesResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
@@ -417,6 +419,7 @@ export const WS_METHODS = {
   serverListSkills: "server.listSkills",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverReplaceKeybindingRules: "server.replaceKeybindingRules",
   serverUpdateProvider: "server.updateProvider",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
@@ -501,6 +504,12 @@ export const WS_METHODS = {
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
   success: ServerUpsertKeybindingResult,
+  error: KeybindingsConfigError,
+});
+
+export const WsServerReplaceKeybindingRulesRpc = Rpc.make(WS_METHODS.serverReplaceKeybindingRules, {
+  payload: ServerReplaceKeybindingRulesInput,
+  success: ServerReplaceKeybindingRulesResult,
   error: KeybindingsConfigError,
 });
 
@@ -1503,6 +1512,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderSessionCommandRpc,
   WsServerListSkillsRpc,
   WsServerUpsertKeybindingRpc,
+  WsServerReplaceKeybindingRulesRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsSidebarGetStateRpc,

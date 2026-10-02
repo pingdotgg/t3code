@@ -597,6 +597,7 @@ export const ChatComposer = memo(
       activeThread?.session?.providerInstanceId ??
       activeThreadModelSelection?.instanceId ??
       activeProjectDefaultModelSelection?.instanceId ??
+      settings.defaultModelSelection?.instanceId ??
       null;
     const queuedPolicyBlocks = useMemo(() => {
       const blocks = new Map<QueuedTurnId, string>();
@@ -665,8 +666,9 @@ export const ChatComposer = memo(
     //      ignore picker selections).
     //   2. Thread's persisted instance id (server-side saved selection).
     //   3. Project default's instance id.
-    //   4. First enabled entry matching the current driver kind.
-    //   5. First enabled entry overall / default instance for the kind.
+    //   4. Global default's instance id.
+    //   5. First enabled entry matching the current driver kind.
+    //   6. First enabled entry overall / default instance for the kind.
     //
     const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
       const candidates: Array<string | null | undefined> = [
@@ -674,6 +676,7 @@ export const ChatComposer = memo(
         activeThread?.session?.providerInstanceId,
         activeThreadModelSelection?.instanceId,
         activeProjectDefaultModelSelection?.instanceId,
+        settings.defaultModelSelection?.instanceId,
       ];
       for (const candidate of candidates) {
         if (!candidate) continue;
@@ -710,6 +713,7 @@ export const ChatComposer = memo(
         providerInstanceEntries[0]?.instanceId ??
         activeThreadModelSelection?.instanceId ??
         activeProjectDefaultModelSelection?.instanceId ??
+        settings.defaultModelSelection?.instanceId ??
         defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND)
       );
     }, [
@@ -722,6 +726,7 @@ export const ChatComposer = memo(
       lockedProvider,
       providerInstanceEntries,
       selectedProvider,
+      settings.defaultModelSelection?.instanceId,
     ]);
 
     const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
