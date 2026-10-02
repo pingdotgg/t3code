@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/expo/modules/sharing/SharingRecords.kt b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
-index 0b87b53..65f1c57 100644
+index 0b87b53f632e82f9b4c09c066d5a67e4ab2525a4..65f1c57faef3ba8caac9e137341f2b8312bb5f86 100644
 --- a/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 +++ b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 @@ -52,7 +52,8 @@ enum class ContentType(val value: String) : Enumerable {
@@ -13,7 +13,7 @@ index 0b87b53..65f1c57 100644
  
  @OptimizedRecord
 diff --git a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
-index 8dd50e8..481cdb4 100644
+index 3381c5fd207ebb4cd8e0301aac59d307939ff162..481cdb4bc64ea5ae49919071f686324f6d56d55c 100644
 --- a/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 +++ b/android/src/main/java/expo/modules/sharing/dataParsers/SimpleShareIntentDataParser.kt
 @@ -3,6 +3,7 @@ package expo.modules.sharing
@@ -24,7 +24,7 @@ index 8dd50e8..481cdb4 100644
  
  internal class SimpleShareIntentDataParser {
    companion object {
-@@ -17,21 +18,26 @@ internal class SimpleShareIntentDataParser {
+@@ -17,25 +18,26 @@ internal class SimpleShareIntentDataParser {
      }
  
      private fun handleSendAction(context: Context, intent: Intent, type: String): List<SharePayload> {
@@ -40,7 +40,11 @@ index 8dd50e8..481cdb4 100644
 +        return listOf(
            SharePayload().apply {
              value = text
--            shareType = if (isUrl) ShareType.Url else ShareType.Text
+-            shareType = if (isUrl) {
+-              ShareType.Url
+-            } else {
+-              ShareType.Text
+-            }
 -            mimeType = "text/plain"
 +            shareType = if (android.util.Patterns.WEB_URL.matcher(text).matches()) ShareType.Url else ShareType.Text
 +            mimeType = type
@@ -61,7 +65,7 @@ index 8dd50e8..481cdb4 100644
      }
  
      private fun handleSendMultipleAction(context: Context, intent: Intent, type: String): List<SharePayload> {
-@@ -41,10 +47,25 @@ internal class SimpleShareIntentDataParser {
+@@ -45,10 +47,25 @@ internal class SimpleShareIntentDataParser {
  
      private fun createUriPayload(context: Context, uri: Uri, defaultType: String): SharePayload {
        val specificType = context.contentResolver.getType(uri) ?: defaultType
@@ -89,7 +93,7 @@ index 8dd50e8..481cdb4 100644
      }
    }
 diff --git a/build/Sharing.types.d.ts b/build/Sharing.types.d.ts
-index 74544e0..92bd2f5 100644
+index 74544e0728d5f845351693d8d90596abae42eaea..92bd2f53108ac717f1ef7292fe89aea05c676c5e 100644
 --- a/build/Sharing.types.d.ts
 +++ b/build/Sharing.types.d.ts
 @@ -100,6 +100,11 @@ export type SharePayload = {
@@ -105,7 +109,7 @@ index 74544e0..92bd2f5 100644
  export type BaseResolvedSharePayload = SharePayload & {
      /**
 diff --git a/src/Sharing.types.ts b/src/Sharing.types.ts
-index 18af320..3a52b70 100644
+index 18af320420e7c01a8ffbd7fa5347320409f905d8..3a52b70a20efbc588ad5ca974c38c951e5757c97 100644
 --- a/src/Sharing.types.ts
 +++ b/src/Sharing.types.ts
 @@ -108,6 +108,12 @@ export type SharePayload = {

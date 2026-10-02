@@ -55,8 +55,8 @@ catalog:
 
 minimumReleaseAgeExclude:
   - expo-glass-effect@58.0.3
-  - expo-blur@58.0.2
-  - expo-audio@58.0.3
+  - expo-blur@58.0.3
+  - expo-audio@58.0.4
   - "@clerk/backend@3.18.1"
   - "@clerk/clerk-js@6.32.1"
   - "@clerk/electron@0.0.44"
@@ -78,39 +78,39 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.79
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
-  - "@expo/cli@58.0.9"
+  - "@expo/cli@58.1.1"
   - "@expo/env@2.5.1"
   - "@expo/fingerprint@0.21.2"
   - "@expo/metro-config@58.0.6"
   - expo-constants@58.0.9
-  - expo-font@58.0.4
-  - expo-updates@58.0.11
-  - expo@58.0.0
-  - expo-widgets@58.0.9
+  - expo-font@58.0.5
+  - expo-updates@58.0.13
+  - expo@58.0.2
+  - expo-widgets@58.0.11
   - "@expo/config-plugins@58.0.4"
-  - "@expo/log-box@58.0.7"
+  - "@expo/log-box@58.0.8"
   - "@expo/metro-file-map@58.0.3"
-  - "@expo/metro-runtime@58.0.9"
+  - "@expo/metro-runtime@58.0.10"
   - "@expo/metro@58.0.0-rc.0"
-  - "@expo/prebuild-config@58.0.6"
-  - "@expo/router-server@58.0.4"
-  - "@expo/ui@58.0.9"
-  - babel-preset-expo@58.0.6
-  - expo-asset@58.0.9
+  - "@expo/prebuild-config@58.0.7"
+  - "@expo/router-server@58.0.6"
+  - "@expo/ui@58.0.11"
+  - babel-preset-expo@58.0.8
+  - expo-asset@58.0.10
   - expo-build-properties@58.0.9
-  - expo-dev-client@58.0.9
-  - expo-dev-launcher@58.0.9
-  - expo-dev-menu@58.0.9
-  - expo-image-manipulator@58.0.10
-  - expo-image-picker@58.0.9
-  - expo-image@58.0.8
-  - expo-linking@58.0.9
-  - expo-modules-autolinking@58.0.6
-  - expo-modules-core@58.0.9
-  - expo-modules-jsi@58.0.5
-  - expo-notifications@58.0.9
-  - expo-sharing@58.0.12
-  - expo-sqlite@58.0.7
+  - expo-dev-client@58.0.10
+  - expo-dev-launcher@58.0.10
+  - expo-dev-menu@58.0.10
+  - expo-image-manipulator@58.0.11
+  - expo-image-picker@58.0.10
+  - expo-image@58.0.10
+  - expo-linking@58.0.10
+  - expo-modules-autolinking@58.0.7
+  - expo-modules-core@58.0.11
+  - expo-modules-jsi@58.0.7
+  - expo-notifications@58.0.11
+  - expo-sharing@58.0.13
+  - expo-sqlite@58.0.8
   - expo-symbols@58.0.3
   - electron@44.4.2
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
@@ -125,20 +125,20 @@ minimumReleaseAgeExclude:
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
   - "@expo/dom-webview@58.0.2"
-  - "expo-auth-session@58.0.6"
-  - "expo-camera@58.0.5"
-  - "expo-clipboard@58.0.2"
-  - "expo-crypto@58.0.3"
-  - "expo-device@58.0.3"
-  - "expo-document-picker@58.0.3"
-  - "expo-file-system@58.0.4"
-  - "expo-haptics@58.0.3"
-  - "expo-keep-awake@58.0.2"
-  - "expo-network@58.0.2"
-  - "expo-secure-store@58.0.1"
-  - "expo-splash-screen@58.0.2"
-  - "expo-video@58.0.5"
-  - "expo-web-browser@58.0.3"
+  - "expo-auth-session@58.0.7"
+  - "expo-camera@58.0.7"
+  - "expo-clipboard@58.0.3"
+  - "expo-crypto@58.0.4"
+  - "expo-device@58.0.5"
+  - "expo-document-picker@58.0.4"
+  - "expo-file-system@58.0.5"
+  - "expo-haptics@58.0.4"
+  - "expo-keep-awake@58.0.3"
+  - "expo-network@58.0.3"
+  - "expo-secure-store@58.0.2"
+  - "expo-splash-screen@58.0.4"
+  - "expo-video@58.0.6"
+  - "expo-web-browser@58.0.4"
   - "react@19.3.0"
   - "react-dom@19.3.0"
   - "react-native@0.88.0-rc.3"
@@ -147,6 +147,9 @@ minimumReleaseAgeExclude:
   - "react-native-reanimated@4.7.0"
   - "react-native-screens@4.28.0"
   - "@expo/config-types@58.0.2"
+  - expo-application@58.0.3
+  - expo-eas-client@58.0.2
+  - expo-image-loader@58.0.3
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
@@ -231,13 +234,13 @@ packageExtensions:
 patchedDependencies:
   alchemy@2.0.0-beta.79: patches/alchemy@2.0.0-beta.79.patch
   expo-glass-effect@58.0.3: patches/expo-glass-effect@58.0.3.patch
-  expo-blur@58.0.2: patches/expo-blur@58.0.2.patch
-  expo-audio@58.0.3: patches/expo-audio@58.0.3.patch
+  expo-blur@58.0.3: patches/expo-blur@58.0.3.patch
+  expo-audio@58.0.4: patches/expo-audio@58.0.4.patch
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
   "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch
-  expo-sharing@58.0.12: patches/expo-sharing@58.0.12.patch
-  expo-widgets@58.0.9: patches/expo-widgets@58.0.9.patch
+  expo-sharing@58.0.13: patches/expo-sharing@58.0.13.patch
+  expo-widgets@58.0.11: patches/expo-widgets@58.0.11.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   "@pierre/diffs@1.3.0-beta.10": patches/@pierre%2Fdiffs@1.3.0-beta.10.patch
