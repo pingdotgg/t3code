@@ -212,7 +212,6 @@ export const runReviewChangesWorkflow = (
         interactionMode,
         branch: reviewContext.branch,
         worktreePath: cwd === project.workspaceRoot ? null : cwd,
-        pullRequest: null,
         reviewSnapshot: reviewContext.snapshot,
         createdAt,
       });
@@ -256,7 +255,6 @@ export const runReviewChangesWorkflow = (
         interactionMode,
         branch: reviewContext.branch,
         worktreePath: cwd === project.workspaceRoot ? null : cwd,
-        pullRequest: null,
         reviewSnapshot: reviewContext.snapshot,
       },
       inputArtifact: {

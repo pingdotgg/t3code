@@ -12,6 +12,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 
 import { collectActiveThreadSubtree } from "../orchestration/threadHierarchy.ts";
+import { pullRequestFromReviewSnapshot } from "../orchestration/reviewPullRequest.ts";
 import { isReviewWorkflowThread } from "./reviewWorkflowThread.ts";
 
 export type ReviewThreadMergeArchiveCandidate = {
@@ -27,12 +28,22 @@ export type ReviewThreadPullRequest = {
 };
 
 export function reviewThreadPullRequests(
-  thread: Pick<OrchestrationThread, "pullRequests" | "pullRequest">,
+  thread: Pick<OrchestrationThread, "pullRequests" | "pullRequest" | "reviewSnapshot">,
 ): ReadonlyArray<GitPullRequestAssociation> {
   const linked = (thread.pullRequests ?? []).map((link) => link.pullRequest);
   const legacy = thread.pullRequest;
-  if (legacy === null || legacy === undefined) return linked;
-  return [...linked, legacy];
+  const collected: GitPullRequestAssociation[] =
+    legacy === null || legacy === undefined ? [...linked] : [...linked, legacy];
+  // Workflow review workers created with an explicit null association carry no
+  // durable link, but their immutable snapshot is still PR provenance.
+  const fromSnapshot = pullRequestFromReviewSnapshot(thread.reviewSnapshot);
+  if (
+    fromSnapshot !== undefined &&
+    !collected.some((entry) => threadPullRequestKey(entry) === threadPullRequestKey(fromSnapshot))
+  ) {
+    collected.push(fromSnapshot);
+  }
+  return collected;
 }
 
 // Shared by the sweep's plan and the admission guard so the two cannot drift.

@@ -295,6 +295,32 @@ describe("planReviewThreadAutoArchive", () => {
       reviewThreadMergeArchiveCommandId(second!),
     );
   });
+
+  it("archives a snapshot-only review worker whose pull request merged", () => {
+    const threads = [
+      reviewThread({
+        id: "workflow:run-1:node:review-changes:worker",
+        pullRequests: [],
+        pullRequest: null,
+        reviewSnapshot: {
+          scope: {
+            kind: "pull-request",
+            number: 7,
+            title: "Add thing",
+            url: `https://github.com/${REPO}/pull/7`,
+            baseBranch: "main",
+            headBranch: "feature",
+          },
+        },
+      }),
+    ];
+    expect(planReviewThreadAutoArchive(readModel(threads), mergedPullRequest7)).toEqual([
+      {
+        threadId: "workflow:run-1:node:review-changes:worker",
+        pullRequestKey: `github.com/${REPO}#7`,
+      },
+    ]);
+  });
 });
 
 describe("liveReviewThreadPullRequests", () => {
