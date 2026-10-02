@@ -1933,7 +1933,7 @@ export const make = Effect.gen(function* () {
           // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
           // change request, and dropping a 300-file diff on every checkbox is the whole cost of
           // the feature. Only this reader's own bookkeeping is forgotten.
-          Effect.tap(() => Effect.sync(() => bumpFilesViewedEpoch(ref))),
+          Effect.ensuring(Effect.sync(() => bumpFilesViewedEpoch(ref))),
         ),
       ),
     );

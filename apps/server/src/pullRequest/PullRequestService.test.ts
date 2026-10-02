@@ -5695,6 +5695,53 @@ it.effect("names the signed-in account in the detail, and says nothing where the
   }),
 );
 
+it.effect("host viewed write errors discard cached marks after a partial mutation", () =>
+  Effect.gen(function* () {
+    const states = new Map<string, "viewed" | "unviewed">([
+      ["a.ts", "unviewed"],
+      ["b.ts", "unviewed"],
+    ]);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+          getFilesViewed: () =>
+            Effect.sync(() => ({
+              files: [...states].map(([path, state]) => ({ path, state })),
+              truncated: false,
+            })),
+          setFilesViewed: () =>
+            Effect.gen(function* () {
+              states.set("a.ts", "viewed");
+              return yield* new PullRequestProviderError({
+                provider: "github",
+                operation: "setFilesViewed",
+                reason: "failed",
+                detail: "Second mutation refused",
+              });
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+      { path: "a.ts", state: "unviewed" },
+      { path: "b.ts", state: "unviewed" },
+    ]);
+    yield* Effect.flip(
+      service.setFilesViewed({
+        ...ref,
+        files: [...states.keys()].map((path) => ({ path, viewed: true })),
+      }),
+    );
+    assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+      { path: "a.ts", state: "viewed" },
+      { path: "b.ts", state: "unviewed" },
+    ]);
+  }),
+);
+
 it.effect("keeps the diff cached across a file being ticked off", () =>
   Effect.gen(function* () {
     let diffReads = 0;
