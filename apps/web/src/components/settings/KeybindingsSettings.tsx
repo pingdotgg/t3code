@@ -1,6 +1,5 @@
 import { SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { KeybindingRule } from "@t3tools/contracts";
 import { ensureLocalApi } from "../../localApi";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatShortcutLabel } from "../../keybindings";
@@ -17,6 +16,7 @@ import { Kbd } from "../ui/kbd";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildKeybindingRows,
+  buildReplacementRules,
   defaultRulesForCommand,
   filterKeybindingRows,
   keybindingFromKeyboardEvent,
@@ -128,40 +128,53 @@ export function KeybindingsSettingsPanel() {
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [editingRow]);
 
-  const upsertRule = useCallback(async (row: KeybindingRow, key: string) => {
-    const rule: KeybindingRule =
-      row.when.length > 0
-        ? { key, command: row.command, when: row.when }
-        : { key, command: row.command };
-    setSavingId(row.id);
-    try {
-      await ensureLocalApi().server.upsertKeybinding(rule);
-      setEditingId(null);
-      setPendingKey(null);
-    } catch (error) {
-      reportClientWarning("Failed to save keybinding", error);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: `Could not save shortcut for ${row.label}`,
-          description: error instanceof Error ? error.message : "Saving failed.",
-        }),
-      );
-    } finally {
-      setSavingId(null);
-    }
-  }, []);
-
-  const resetRow = useCallback(
-    (row: KeybindingRow) => {
-      const [firstDefault] = defaultRulesForCommand(row.command);
-      if (!firstDefault) return;
-      void upsertRule(row, firstDefault.key).catch((error: unknown) => {
-        reportClientWarning("Failed to reset keybinding", error);
-      });
+  const saveRow = useCallback(
+    async (row: KeybindingRow, key: string) => {
+      // Row-level replacement: the edited row takes the new key while every
+      // sibling row of the same command is preserved. The command-wide
+      // single-rule upsert would silently delete those siblings.
+      const rules = buildReplacementRules(rows, row, key);
+      setSavingId(row.id);
+      try {
+        await ensureLocalApi().server.replaceKeybindingRules({
+          command: row.command,
+          rules,
+        });
+        setEditingId(null);
+        setPendingKey(null);
+      } catch (error) {
+        reportClientWarning("Failed to save keybinding", error);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not save shortcut for ${row.label}`,
+            description: error instanceof Error ? error.message : "Saving failed.",
+          }),
+        );
+      } finally {
+        setSavingId(null);
+      }
     },
-    [upsertRule],
+    [rows],
   );
+
+  const resetRow = useCallback((row: KeybindingRow) => {
+    // Removing the command override restores its complete default rule set
+    // (keys and conditions); re-upserting a single default would keep a
+    // customized condition and drop the other defaults.
+    void ensureLocalApi()
+      .server.replaceKeybindingRules({ command: row.command, rules: [] })
+      .catch((error: unknown) => {
+        reportClientWarning("Failed to reset keybinding", error);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not reset shortcut for ${row.label}`,
+            description: error instanceof Error ? error.message : "Reset failed.",
+          }),
+        );
+      });
+  }, []);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath || isOpeningFile) return;
@@ -255,7 +268,7 @@ export function KeybindingsSettingsPanel() {
                     setPendingKey(null);
                   }}
                   onSave={() => {
-                    if (pendingKey) void upsertRule(row, pendingKey);
+                    if (pendingKey) void saveRow(row, pendingKey);
                   }}
                   onCancel={() => {
                     setEditingId(null);

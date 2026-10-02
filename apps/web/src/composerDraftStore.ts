@@ -960,11 +960,17 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const threadModel = input.threadModelSelection?.model ?? null;
+  const projectModel = input.projectModelSelection?.model ?? null;
   const baseModelCandidate =
-    input.threadModelSelection?.model ??
-    input.projectModelSelection?.model ??
-    input.settings.defaultModelSelection?.model ??
-    null;
+    threadModel ?? projectModel ?? input.settings.defaultModelSelection?.model ?? null;
+  // Options follow the winning model selection: an explicit optionless
+  // thread or project selection must not inherit global traits.
+  const winningSelection = threadModel
+    ? input.threadModelSelection
+    : projectModel
+      ? input.projectModelSelection
+      : input.settings.defaultModelSelection;
   const baseModel =
     (input.selectedInstanceId
       ? resolveAppModelSelectionForInstance(
@@ -1011,9 +1017,7 @@ export function deriveEffectiveComposerModelState(input: {
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerSelectionsFromModelSelection(input.threadModelSelection) ??
-    providerSelectionsFromModelSelection(input.projectModelSelection) ??
-    providerSelectionsFromModelSelection(input.settings.defaultModelSelection) ??
+    providerSelectionsFromModelSelection(winningSelection) ??
     null;
 
   return {

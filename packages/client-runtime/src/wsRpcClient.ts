@@ -155,6 +155,7 @@ export interface WsRpcClient {
     >;
     readonly updateProvider: RpcUnaryMethod<typeof WS_METHODS.serverUpdateProvider>;
     readonly upsertKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverUpsertKeybinding>;
+    readonly replaceKeybindingRules: RpcUnaryMethod<typeof WS_METHODS.serverReplaceKeybindingRules>;
     readonly removeKeybinding: RpcUnaryMethod<typeof WS_METHODS.serverRemoveKeybinding>;
     readonly getSettings: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetSettings>;
     readonly updateSettings: (
@@ -365,6 +366,8 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.serverUpdateProvider](input)),
       upsertKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverUpsertKeybinding](input)),
+      replaceKeybindingRules: (input) =>
+        transport.request((client) => client[WS_METHODS.serverReplaceKeybindingRules](input)),
       removeKeybinding: (input) =>
         transport.request((client) => client[WS_METHODS.serverRemoveKeybinding](input)),
       getSettings: () => transport.request((client) => client[WS_METHODS.serverGetSettings]({})),

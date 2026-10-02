@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { KeybindingShortcut, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   buildKeybindingRows,
+  buildReplacementRules,
   commandLabel,
   defaultRulesForCommand,
   encodeShortcutKey,
@@ -235,5 +236,44 @@ describe("filterKeybindingRows", () => {
     expect(filterKeybindingRows(rows, "chat.find")).toHaveLength(1);
     expect(filterKeybindingRows(rows, "mod+f")).toHaveLength(1);
     expect(filterKeybindingRows(rows, "nothing")).toHaveLength(0);
+  });
+});
+
+describe("buildReplacementRules", () => {
+  const rows = buildKeybindingRows([
+    {
+      command: "chat.new",
+      shortcut: shortcut({ key: "n" }),
+      whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+    },
+    {
+      command: "chat.new",
+      shortcut: shortcut({ key: "o", shiftKey: true }),
+      whenAst: { type: "not", node: { type: "identifier", name: "terminalFocus" } },
+    },
+    { command: "chat.find", shortcut: shortcut({ key: "f" }) },
+  ]);
+  const edited = rows.find((row) => row.key === "mod+n")!;
+
+  it("replaces the edited row while preserving sibling bindings", () => {
+    expect(buildReplacementRules(rows, edited, "mod+t")).toEqual([
+      { key: "mod+t", command: "chat.new", when: "!terminalFocus" },
+      { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
+    ]);
+  });
+
+  it("excludes unrelated commands", () => {
+    expect(
+      buildReplacementRules(rows, edited, "mod+t").every((rule) => rule.command === "chat.new"),
+    ).toBe(true);
+  });
+
+  it("omits when for unconditional rows", () => {
+    const unconditional = buildKeybindingRows([
+      { command: "terminal.toggle", shortcut: shortcut({ key: "j" }) },
+    ])[0]!;
+    const [rule] = buildReplacementRules([unconditional], unconditional, "mod+k");
+    expect(rule).toEqual({ key: "mod+k", command: "terminal.toggle" });
+    expect(rule).not.toHaveProperty("when");
   });
 });

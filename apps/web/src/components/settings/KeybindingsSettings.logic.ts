@@ -152,6 +152,32 @@ function commandSortKey(command: string): string {
   return commandLabel(command);
 }
 
+function ruleForRow(
+  row: Pick<KeybindingRow, "command" | "key" | "when">,
+  key: string,
+): KeybindingRule {
+  return row.when.length > 0
+    ? { key, command: row.command, when: row.when }
+    : { key, command: row.command };
+}
+
+/**
+ * Row-level replacement for one command's bindings: the edited row takes
+ * `nextKey` (keeping its own activation condition) while every sibling row
+ * of the same command is preserved verbatim. Persist the result with
+ * `replaceKeybindingRules`, not the command-wide single-rule upsert, so
+ * editing one shortcut never deletes the command's other bindings.
+ */
+export function buildReplacementRules(
+  rows: ReadonlyArray<KeybindingRow>,
+  editedRow: KeybindingRow,
+  nextKey: string,
+): KeybindingRule[] {
+  return rows
+    .filter((row) => row.command === editedRow.command)
+    .map((row) => (row.id === editedRow.id ? ruleForRow(row, nextKey) : ruleForRow(row, row.key)));
+}
+
 /** One row per resolved rule, sorted by human label. Conflicts are attached. */
 export function buildKeybindingRows(keybindings: ResolvedKeybindingsConfig): KeybindingRow[] {
   const rows: KeybindingRow[] = keybindings.map((binding, index) => {

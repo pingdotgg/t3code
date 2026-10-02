@@ -1683,6 +1683,15 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverReplaceKeybindingRules]: ({ command, rules }) =>
+          observeRpcEffect(
+            WS_METHODS.serverReplaceKeybindingRules,
+            Effect.gen(function* () {
+              const keybindingsConfig = yield* keybindings.replaceKeybindingRules(command, rules);
+              return { keybindings: keybindingsConfig, issues: [] };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
         [WS_METHODS.serverGetSettings]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetSettings,

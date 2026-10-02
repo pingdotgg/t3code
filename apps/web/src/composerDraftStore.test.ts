@@ -1816,4 +1816,52 @@ describe("deriveEffectiveComposerModelState global default", () => {
 
     expect(state.selectedModel).toBe("gpt-5.5");
   });
+
+  it("does not inherit global traits into an explicit optionless thread selection", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: {
+          instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+          model: "gpt-5.5",
+          options: toSelections({ effort: "high" }),
+        },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+    expect(state.modelOptions).toBeNull();
+  });
+
+  it("keeps the winning selection's traits instead of mixing levels", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4", { effort: "low" }),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: {
+          instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+          model: "gpt-5.5",
+          options: toSelections({ effort: "high" }),
+        },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+    expect(state.modelOptions).toEqual(
+      providerModelOptions({
+        [defaultInstanceIdForDriver(CODEX_DRIVER)]: { effort: "low" },
+      }),
+    );
+  });
 });
