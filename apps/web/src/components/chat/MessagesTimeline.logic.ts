@@ -3,10 +3,36 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import {
   type DelegationAuditEvent,
   type MessageId,
+  type ThreadContextRecord,
   type TurnId,
   type WorkspaceHandoffOrigin,
 } from "@t3tools/contracts";
 import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+
+export function collectTimelineThreadContextLabels(text: string): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const occurrence of collectThreadContextReferences(text)) {
+    const key = String(occurrence.contextId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    labels.push(occurrence.label);
+  }
+  return labels;
+}
+
+export function selectTimelineThreadContextRecords(message: {
+  text: string;
+  context?: { records?: ReadonlyArray<ThreadContextRecord> } | undefined;
+}): ThreadContextRecord[] {
+  const inlineIds = new Set(
+    collectThreadContextReferences(message.text).map((occurrence) => String(occurrence.contextId)),
+  );
+  const records = message.context?.records ?? [];
+  if (inlineIds.size === 0) return [...records];
+  return records.filter((record) => inlineIds.has(String(record.contextId)));
+}
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 export const EMPTY_REVIEW_OUTPUT_MESSAGE_IDS: ReadonlySet<string> = new Set();

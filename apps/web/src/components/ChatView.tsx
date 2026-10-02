@@ -15,6 +15,7 @@ import {
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ThreadContextRecord,
   type ThreadId,
   type TurnDiffScope,
   type TurnId,
@@ -233,6 +234,7 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
+  buildThreadContextForSend,
   canStartThreadTurn,
   createThreadPlanCatalogSelector,
   deriveComposerSendState,
@@ -957,6 +959,7 @@ function ChatViewBody(
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
+  const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
@@ -981,6 +984,7 @@ function ChatViewBody(
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
+  const composerThreadContextsRef = useRef<ThreadContextRecord[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -3360,14 +3364,17 @@ function ChatViewBody(
     const {
       images: composerImages,
       terminalContexts: composerTerminalContexts,
+      threadContexts: composerThreadContexts = [],
       previewAnnotations: composerPreviewAnnotations,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
-    } = sendCtx;
+    } = sendCtx as typeof sendCtx & { threadContexts?: ThreadContextRecord[] };
     const draftPromptForSend = promptRef.current;
+    const draftThreadContextsForSend = [...composerThreadContexts];
+    composerThreadContextsRef.current = [...composerThreadContexts];
     const promptForSend =
       providerCommand !== undefined
         ? `/${providerCommand}`
@@ -3384,12 +3391,15 @@ function ChatViewBody(
       prompt: promptForSend,
       imageCount: composerImages.length,
       terminalContexts: composerTerminalContexts,
+      threadContextCount: composerThreadContexts.length,
     });
+    const threadContextForSend = buildThreadContextForSend(promptForSend, composerThreadContexts);
     const piSessionCommand = ctxSelectedProvider === "pi" ? parsePiSessionCommand(trimmed) : null;
     if (piSessionCommand) {
       const composerHasNonPromptContent =
         composerImages.length > 0 ||
         composerTerminalContexts.length > 0 ||
+        composerThreadContexts.length > 0 ||
         composerPreviewAnnotations.length > 0;
       if ("error" in piSessionCommand || composerHasNonPromptContent) {
         toastManager.add(
@@ -3586,6 +3596,7 @@ function ChatViewBody(
               text: messageTextForQueue || IMAGE_ONLY_BOOTSTRAP_PROMPT,
             }),
             attachments: queuedAttachments,
+            ...(threadContextForSend ? { context: threadContextForSend } : {}),
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: truncate(titleSeed),
@@ -3812,6 +3823,7 @@ function ChatViewBody(
           role: "user",
           text: outgoingMessageText,
           attachments: turnAttachments,
+          ...(threadContextForSend ? { context: threadContextForSend } : {}),
         },
         modelSelection: ctxSelectedModelSelection,
         titleSeed: title,
@@ -3829,7 +3841,8 @@ function ChatViewBody(
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0
+        composerTerminalContextsRef.current.length === 0 &&
+        composerThreadContextsRef.current.length === 0
       ) {
         usePendingTurnStore
           .getState()
@@ -3838,9 +3851,11 @@ function ChatViewBody(
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
+        composerThreadContextsRef.current = [...draftThreadContextsForSend];
         setComposerDraftPrompt(composerDraftTarget, draftPromptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+        setComposerDraftThreadContexts(composerDraftTarget, draftThreadContextsForSend);
         for (const annotation of composerPreviewAnnotations) {
           addComposerDraftPreviewAnnotation(composerDraftTarget, annotation);
         }
@@ -5514,6 +5529,7 @@ function ChatViewBody(
                     promptRef={promptRef}
                     composerImagesRef={composerImagesRef}
                     composerTerminalContextsRef={composerTerminalContextsRef}
+                    composerThreadContextsRef={composerThreadContextsRef}
                     shouldAutoScrollRef={isAtEndRef}
                     scheduleStickToBottom={scrollToEnd}
                     onSend={onSend}

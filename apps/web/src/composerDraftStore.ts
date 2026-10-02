@@ -15,6 +15,9 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
+  ThreadContextRecord,
+  THREAD_CONTEXT_MAX_RECORDS,
+  type ThreadContextId,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -48,6 +51,7 @@ import { UnifiedSettings } from "@t3tools/contracts/settings";
 const isRuntimeMode2 = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
+const isThreadContextRecord = Schema.is(ThreadContextRecord);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 7;
@@ -102,6 +106,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   attachments: Schema.Array(PersistedComposerImageAttachment),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
   previewAnnotations: Schema.optionalKey(Schema.Array(PreviewAnnotationPayloadSchema)),
+  threadContexts: Schema.optionalKey(Schema.Array(ThreadContextRecord)),
   // Keyed by `ProviderInstanceId` (open branded slug) so custom provider
   // instances (e.g. `codex_personal`) round-trip alongside the built-in
   // `codex` / `claudeAgent` / ... entries. Every prior `ProviderDriverKind`
@@ -260,6 +265,7 @@ export interface ComposerThreadDraftState {
   persistedAttachments: PersistedComposerImageAttachment[];
   terminalContexts: TerminalContextDraft[];
   previewAnnotations: PreviewAnnotationPayload[];
+  threadContexts: ThreadContextRecord[];
   /**
    * Per-instance model selection. Keyed by `ProviderInstanceId` (open
    * branded slug) so a default `codex` instance and a user-authored
@@ -284,7 +290,8 @@ export function composerDraftHasUserContent(
       draft.images.length > 0 ||
       draft.persistedAttachments.length > 0 ||
       draft.terminalContexts.length > 0 ||
-      draft.previewAnnotations.length > 0),
+      draft.previewAnnotations.length > 0 ||
+      draft.threadContexts.length > 0),
   );
 }
 
@@ -494,6 +501,14 @@ interface ComposerDraftStoreState {
   addTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   removeTerminalContext: (threadRef: ComposerThreadTarget, contextId: string) => void;
   clearTerminalContexts: (threadRef: ComposerThreadTarget) => void;
+  setThreadContexts: (threadRef: ComposerThreadTarget, contexts: ThreadContextRecord[]) => void;
+  addThreadContexts: (
+    threadRef: ComposerThreadTarget,
+    prompt: string,
+    contexts: ThreadContextRecord[],
+  ) => void;
+  removeThreadContext: (threadRef: ComposerThreadTarget, contextId: ThreadContextId) => void;
+  clearThreadContexts: (threadRef: ComposerThreadTarget) => void;
   addPreviewAnnotation: (
     threadRef: ComposerThreadTarget,
     annotation: PreviewAnnotationPayload,
@@ -573,9 +588,11 @@ const EMPTY_IDS: string[] = [];
 const EMPTY_PERSISTED_ATTACHMENTS: PersistedComposerImageAttachment[] = [];
 const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
 const EMPTY_PREVIEW_ANNOTATIONS: PreviewAnnotationPayload[] = [];
+const EMPTY_THREAD_CONTEXTS: ThreadContextRecord[] = [];
 Object.freeze(EMPTY_IMAGES);
 Object.freeze(EMPTY_IDS);
 Object.freeze(EMPTY_PERSISTED_ATTACHMENTS);
+Object.freeze(EMPTY_THREAD_CONTEXTS);
 const EMPTY_MODEL_SELECTION_BY_PROVIDER: Partial<Record<ProviderDriverKind, ModelSelection>> =
   Object.freeze({});
 const EMPTY_COMPOSER_DRAFT_MODEL_STATE = Object.freeze<ComposerDraftModelState>({
@@ -590,6 +607,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   persistedAttachments: EMPTY_PERSISTED_ATTACHMENTS,
   terminalContexts: EMPTY_TERMINAL_CONTEXTS,
   previewAnnotations: EMPTY_PREVIEW_ANNOTATIONS,
+  threadContexts: EMPTY_THREAD_CONTEXTS,
   modelSelectionByProvider: EMPTY_MODEL_SELECTION_BY_PROVIDER,
   activeProvider: null,
   runtimeMode: null,
@@ -604,6 +622,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     persistedAttachments: [],
     terminalContexts: [],
     previewAnnotations: [],
+    threadContexts: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,
@@ -675,11 +694,27 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.persistedAttachments.length === 0 &&
     draft.terminalContexts.length === 0 &&
     draft.previewAnnotations.length === 0 &&
+    draft.threadContexts.length === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
     draft.interactionMode === null
   );
+}
+
+export function normalizePersistedThreadContextRecords(value: unknown): ThreadContextRecord[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: ThreadContextRecord[] = [];
+  for (const entry of value) {
+    if (!isThreadContextRecord(entry)) continue;
+    const key = String(entry.contextId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+    if (out.length >= THREAD_CONTEXT_MAX_RECORDS) break;
+  }
+  return out;
 }
 
 function normalizeProviderDriverKind(value: unknown): ProviderDriverKind | null {
@@ -1614,6 +1649,9 @@ function normalizePersistedDraftsByThreadId(
     const previewAnnotations = Array.isArray(draftCandidate.previewAnnotations)
       ? draftCandidate.previewAnnotations.filter(isPreviewAnnotationPayload)
       : [];
+    const threadContexts = normalizePersistedThreadContextRecords(
+      (draftCandidate as { threadContexts?: unknown }).threadContexts,
+    );
     const runtimeMode = isRuntimeMode(draftCandidate.runtimeMode)
       ? draftCandidate.runtimeMode
       : null;
@@ -1678,6 +1716,7 @@ function normalizePersistedDraftsByThreadId(
       attachments.length === 0 &&
       terminalContexts.length === 0 &&
       previewAnnotations.length === 0 &&
+      threadContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
       !interactionMode
@@ -1701,6 +1740,7 @@ function normalizePersistedDraftsByThreadId(
       attachments,
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
+      ...(threadContexts.length > 0 ? { threadContexts } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
@@ -1800,6 +1840,7 @@ function partializeComposerDraftStoreState(
       draft.persistedAttachments.length === 0 &&
       draft.terminalContexts.length === 0 &&
       draft.previewAnnotations.length === 0 &&
+      draft.threadContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -1830,6 +1871,7 @@ function partializeComposerDraftStoreState(
             })) as DeepMutable<PreviewAnnotationPayload[]>,
           }
         : {}),
+      ...(draft.threadContexts.length > 0 ? { threadContexts: [...draft.threadContexts] } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(
@@ -2069,6 +2111,9 @@ function toHydratedThreadDraft(
         text: "",
       })) ?? [],
     previewAnnotations: [...(persistedDraft.previewAnnotations ?? [])],
+    threadContexts: normalizePersistedThreadContextRecords(
+      (persistedDraft as { threadContexts?: unknown }).threadContexts,
+    ),
     modelSelectionByProvider,
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
@@ -3092,6 +3137,103 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        setThreadContexts: (threadRef, contexts) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          const normalized = normalizePersistedThreadContextRecords(contexts);
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const nextDraft: ComposerThreadDraftState = { ...existing, threadContexts: normalized };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        addThreadContexts: (threadRef, prompt, contexts) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey || contexts.length === 0) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            const seen = new Set(existing.threadContexts.map((entry) => String(entry.contextId)));
+            const accepted: ThreadContextRecord[] = [];
+            for (const entry of contexts) {
+              if (!isThreadContextRecord(entry)) continue;
+              const key = String(entry.contextId);
+              if (seen.has(key)) continue;
+              seen.add(key);
+              accepted.push(entry);
+              if (existing.threadContexts.length + accepted.length >= THREAD_CONTEXT_MAX_RECORDS) {
+                break;
+              }
+            }
+            if (accepted.length === 0) {
+              if (existing.prompt === prompt) return state;
+              return {
+                draftsByThreadKey: {
+                  ...state.draftsByThreadKey,
+                  [threadKey]: { ...existing, prompt },
+                },
+              };
+            }
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...existing,
+                  prompt,
+                  threadContexts: [...existing.threadContexts, ...accepted].slice(
+                    0,
+                    THREAD_CONTEXT_MAX_RECORDS,
+                  ),
+                },
+              },
+            };
+          });
+        },
+        removeThreadContext: (threadRef, contextId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) return state;
+            const key = String(contextId);
+            const nextContexts = current.threadContexts.filter(
+              (entry) => String(entry.contextId) !== key,
+            );
+            if (nextContexts.length === current.threadContexts.length) return state;
+            const nextDraft: ComposerThreadDraftState = {
+              ...current,
+              threadContexts: nextContexts,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearThreadContexts: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current || current.threadContexts.length === 0) return state;
+            const nextDraft: ComposerThreadDraftState = { ...current, threadContexts: [] };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         clearPersistedAttachments: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -3165,6 +3307,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               persistedAttachments: [],
               terminalContexts: [],
               previewAnnotations: [],
+              threadContexts: [],
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

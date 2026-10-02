@@ -1,15 +1,18 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type OrchestrationMessageContext,
   type OrchestrationThreadActivity,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
   type ScopedThreadRef,
+  type ThreadContextRecord,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
 import { type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { isInsightActivity } from "../insights";
@@ -337,10 +340,33 @@ export function cloneComposerImageForRetry(
   }
 }
 
+export function buildThreadContextForSend(
+  prompt: string,
+  records: ReadonlyArray<ThreadContextRecord>,
+): OrchestrationMessageContext | undefined {
+  if (records.length === 0) return undefined;
+  const referencedIds = new Set(
+    collectThreadContextReferences(prompt).map((occurrence) => String(occurrence.contextId)),
+  );
+  if (referencedIds.size === 0) return undefined;
+  const seen = new Set<string>();
+  const filtered: ThreadContextRecord[] = [];
+  for (const record of records) {
+    const key = String(record.contextId);
+    if (!referencedIds.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    filtered.push(record);
+    if (filtered.length >= 32) break;
+  }
+  if (filtered.length === 0) return undefined;
+  return { version: 1, records: filtered };
+}
+
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  threadContextCount?: number | undefined;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
@@ -356,7 +382,10 @@ export function deriveComposerSendState(options: {
     sendableTerminalContexts,
     expiredTerminalContextCount,
     hasSendableContent:
-      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+      trimmedPrompt.length > 0 ||
+      options.imageCount > 0 ||
+      sendableTerminalContexts.length > 0 ||
+      (options.threadContextCount ?? 0) > 0,
   };
 }
 

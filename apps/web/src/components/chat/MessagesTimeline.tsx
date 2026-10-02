@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   EventId,
   type MessageId,
+  type ThreadContextRecord,
   ThreadId,
   type TurnDiffScope,
   TurnId,
@@ -65,12 +66,14 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { ChildFollowUpReceipt } from "./ChildFollowUpPanel";
 import {
   collectReviewOutputMessageIds,
+  collectTimelineThreadContextLabels,
   computeStableMessagesTimelineRows,
   deriveDelegationOperationSummary,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveExternalActionUrl,
+  selectTimelineThreadContextRecords,
   shouldHandleInternalActionClick,
   stabilizeReadonlyStringSet,
   type StableMessagesTimelineRowsState,
@@ -781,6 +784,35 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                   )}
                   forceExpanded={ctx.activeChatFindRowId === row.id}
                 />
+                {(() => {
+                  const threadRecords = selectTimelineThreadContextRecords(
+                    row.message as {
+                      text: string;
+                      context?: { records?: ThreadContextRecord[] } | undefined;
+                    },
+                  );
+                  const threadLabels =
+                    threadRecords.length > 0
+                      ? threadRecords.map((record) => record.title || record.label)
+                      : collectTimelineThreadContextLabels(visibleText);
+                  if (threadLabels.length === 0) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+                      {threadLabels.map((label) => (
+                        <span
+                          key={label}
+                          className="inline-flex max-w-60 items-center gap-1 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-xs text-foreground"
+                          title={label}
+                        >
+                          <span aria-hidden="true" className="text-muted-foreground">
+                            #
+                          </span>
+                          <span className="truncate font-medium">{label}</span>
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );

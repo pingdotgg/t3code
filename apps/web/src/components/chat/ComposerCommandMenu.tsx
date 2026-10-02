@@ -31,6 +31,14 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "thread";
+      threadId: string;
+      environmentId: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "slash-command";
       command: ComposerSlashCommand;
       label: string;
@@ -255,6 +263,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
+        </span>
+      ) : null}
+      {props.item.type === "thread" ? (
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
+          #
         </span>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
