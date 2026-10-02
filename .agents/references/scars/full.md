@@ -400,6 +400,7 @@
 
 ## UI discovery and browser capture
 
+- Archived palette search must lazy-load the dedicated archived shell, not rely on the active sidebar cache. Hydrate a selected archived thread before routing to it, preserve its archived state, and discard transcript results when the archive mode changes.
 - `thread.create` browser fixtures can allocate a server-owned checkout. Record the actual file RPC cwd and test newly added files from a committed revision; a source-worktree filename does not prove it exists in the thread workspace.
 - Incremental `@pierre/trees` directory removals require `recursive: true`; pruning only parent roots does not enable recursion. Exercise clearing a search that introduced unloaded ancestor directories.
 - Palette scope filters must run before recent-thread and transcript top-N limits; post-filtering global winners can hide all valid scoped hits. Project and thread scopes intersect rather than widening each other.
