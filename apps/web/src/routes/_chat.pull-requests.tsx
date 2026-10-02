@@ -4,12 +4,12 @@ import {
   isGitHubRateLimitMessage,
   type ProjectId,
   type PullRequestInvolvement,
-  type PullRequestListInput,
-  type PullRequestListResult,
   type PullRequestListState,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { keepPreviousData, queryOptions, useQueries, useQueryClient } from "@tanstack/react-query";
+import { LegendList } from "@legendapp/list/react";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   ArrowDownUpIcon,
@@ -24,11 +24,22 @@ import {
   RefreshCwIcon,
   SearchIcon,
 } from "lucide-react";
-import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import { PullRequestFiltersMenu } from "../components/pullRequest/PullRequestFiltersMenu";
 import { PullRequestRow } from "../components/pullRequest/PullRequestRow";
+import {
+  buildPullRequestListItems,
+  isProvisionalSearch,
+  narrowEntriesLocally,
+  PULL_REQUEST_SEARCH_DEBOUNCE_MS,
+  selectVisibleStatsEntries,
+  VISIBLE_STATS_LIMIT,
+  type PullRequestListItem,
+  type PullRequestListRowEntry,
+} from "../components/pullRequest/pullRequestListLogic";
+import { useProgressivePullRequestLists } from "../components/pullRequest/useProgressivePullRequestLists";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { RightPanelTabs } from "../components/RightPanelTabs";
 import { Button } from "../components/ui/button";
@@ -41,11 +52,9 @@ import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { usePrimaryEnvironmentDescriptor } from "../environments/primary";
 import {
-  pullRequestQueryKeys,
   pullRequestListStatsQueryOptions,
   prefetchPullRequestDetail,
 } from "../lib/pullRequestReactQuery";
-import { ensureEnvironmentApi } from "../environmentApi";
 import { cn } from "../lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useSettings } from "../hooks/useSettings";
@@ -88,6 +97,7 @@ const INVOLVEMENT_LABELS: Record<(typeof INVOLVEMENTS)[number], string> = {
 };
 const PAGE_SIZE = 50;
 const STATS_BATCH_SIZE = 500;
+const STATS_FALLBACK_ROWS = 50;
 /** Pointer hovers shorter than this never leave the client. */
 const HOVER_PREFETCH_DELAY_MS = 350;
 const EMPTY_PROJECTS: readonly Project[] = [];
@@ -95,34 +105,6 @@ const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests"),
   ThreadId.make("pull-requests"),
 );
-
-async function fetchAllPullRequestList(
-  environmentId: EnvironmentId,
-  request: Omit<PullRequestListInput, "cursors">,
-): Promise<PullRequestListResult> {
-  const pages: PullRequestListResult[] = [];
-  let cursors: PullRequestListInput["cursors"] | undefined;
-  for (let page = 0; page < 20; page += 1) {
-    const result = await ensureEnvironmentApi(environmentId).pullRequests.list({
-      ...request,
-      ...(cursors ? { cursors } : {}),
-    });
-    pages.push(result);
-    if (Object.keys(result.nextCursors).length === 0) break;
-    cursors = result.nextCursors;
-  }
-  const first = pages[0];
-  if (!first) {
-    throw new Error("Pull request list returned no pages.");
-  }
-  return {
-    ...first,
-    entries: pages.flatMap((page) => page.entries),
-    errors: pages.flatMap((page) => page.errors),
-    viewers: Object.assign({}, ...pages.map((page) => page.viewers)),
-    nextCursors: {},
-  };
-}
 
 function isListState(value: unknown): value is PullRequestListState {
   return typeof value === "string" && (LIST_STATES as readonly string[]).includes(value);
@@ -197,103 +179,154 @@ function PullRequestsRoute() {
   const defaultListState = useSettings((s) => s.pullRequestsDefaultState);
   const effectiveState = search.state ?? defaultListState;
   const sort = search.sort ?? "ready";
-  const deferredQuery = useDeferredValue(search.q ?? "");
-  const listQueries = useQueries({
-    queries: environmentTargets.map(({ environmentId }) =>
-      queryOptions({
-        queryKey: pullRequestQueryKeys.list(environmentId, {
-          state: effectiveState,
-          involvement: search.involvement,
-          limit: PAGE_SIZE,
-          ...(search.projectId ? { projectId: search.projectId } : {}),
-          ...(deferredQuery.trim() ? { query: deferredQuery.trim() } : {}),
-        }),
-        queryFn: () =>
-          fetchAllPullRequestList(environmentId, {
-            state: effectiveState,
-            involvement: search.involvement,
-            limit: PAGE_SIZE,
-            ...(search.projectId ? { projectId: search.projectId } : {}),
-            ...(deferredQuery.trim() ? { query: deferredQuery.trim() } : {}),
-          }),
-        staleTime: 30_000,
-        placeholderData: keepPreviousData,
-        refetchOnWindowFocus: true,
-        refetchOnReconnect: true,
-      }),
-    ),
+  const immediateQuery = search.q ?? "";
+  // Debounced server search: the input stays immediate (provisional local
+  // narrowing below), while the host is asked at most once per pause.
+  const [debouncedQuery] = useDebouncedValue(immediateQuery, {
+    wait: PULL_REQUEST_SEARCH_DEBOUNCE_MS,
   });
-  const entries = useMemo(
-    () =>
-      listQueries.flatMap((query, index) =>
-        (query.data?.entries ?? []).map((entry) => ({
-          ...entry,
-          environmentId: environmentTargets[index]!.environmentId,
-        })),
-      ),
-    [environmentTargets, listQueries],
+  const serverQuery = debouncedQuery.trim();
+  const listRequest = useMemo(
+    () => ({
+      state: effectiveState,
+      involvement: search.involvement,
+      limit: PAGE_SIZE,
+      ...(search.projectId ? { projectId: search.projectId } : {}),
+      ...(serverQuery ? { query: serverQuery } : {}),
+    }),
+    [effectiveState, search.involvement, search.projectId, serverQuery],
   );
+  // First pages resolve through cached React Query reads; older pages append
+  // progressively behind them instead of blocking the list.
+  const progressive = useProgressivePullRequestLists(environmentIds, listRequest);
+  const provisional = isProvisionalSearch(immediateQuery, debouncedQuery);
+  const loadedEntries = useMemo(
+    () =>
+      provisional ? narrowEntriesLocally(progressive.entries, immediateQuery) : progressive.entries,
+    [immediateQuery, progressive.entries, provisional],
+  );
+  const statsRequireAllRows = sort === "largest" || sort === "smallest";
+  // Rows the virtualizer has actually rendered: ordinary sorts only need diff
+  // stats for this visible window plus bounded overscan, not every loaded row.
+  const renderedKeysRef = useRef<Set<string>>(new Set());
+  const statsFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [visibleStatsEpoch, setVisibleStatsEpoch] = useState(0);
+  useEffect(
+    () => () => {
+      if (statsFlushTimer.current !== null) clearTimeout(statsFlushTimer.current);
+    },
+    [],
+  );
+  const noteRendered = useCallback((key: string) => {
+    const rendered = renderedKeysRef.current;
+    // Re-renders refresh recency so the stats window favors the rows on
+    // screen now, not the rows scrolled past long ago.
+    if (rendered.has(key)) rendered.delete(key);
+    rendered.add(key);
+    if (rendered.size > VISIBLE_STATS_LIMIT * 2) {
+      const oldest = rendered.values().next().value;
+      if (oldest !== undefined) rendered.delete(oldest);
+    }
+    if (statsFlushTimer.current !== null) return;
+    statsFlushTimer.current = setTimeout(() => {
+      statsFlushTimer.current = null;
+      setVisibleStatsEpoch((epoch) => epoch + 1);
+    }, 400);
+  }, []);
+  const orderForStats = useMemo(() => {
+    if (sort === "updated") {
+      return loadedEntries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    }
+    if (sort === "newest") {
+      return loadedEntries.toSorted((left, right) => right.createdAt.localeCompare(left.createdAt));
+    }
+    if (sort === "oldest") {
+      return loadedEntries.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
+    }
+    return loadedEntries;
+  }, [loadedEntries, sort]);
+  const statsRefs = useMemo(() => {
+    // The environment travels on the ref so targets group without
+    // rescanning every loaded row per render; it is stripped before the
+    // request, which names project, repository, and number only.
+    const toRef = (entry: PullRequestListRowEntry) => ({
+      environmentId: entry.environmentId,
+      projectId: entry.projectId,
+      repository: entry.repository,
+      number: entry.number,
+    });
+    if (statsRequireAllRows) return loadedEntries.map(toRef);
+    // Read the visible snapshot for the current render window; fall back to
+    // the leading rows before the virtualizer reports back.
+    void visibleStatsEpoch;
+    return selectVisibleStatsEntries(
+      orderForStats,
+      renderedKeysRef.current,
+      VISIBLE_STATS_LIMIT,
+      STATS_FALLBACK_ROWS,
+    ).map(toRef);
+  }, [loadedEntries, orderForStats, statsRequireAllRows, visibleStatsEpoch]);
   const statsTargets = useMemo(
     () =>
       environmentTargets.flatMap(({ environmentId }) => {
-        const refs = entries
-          .filter((entry) => entry.environmentId === environmentId)
+        const refs = statsRefs
+          .filter((ref) => ref.environmentId === environmentId)
           .map(({ projectId, repository, number }) => ({ projectId, repository, number }));
         return Array.from({ length: Math.ceil(refs.length / STATS_BATCH_SIZE) }, (_, index) => ({
           environmentId,
           refs: refs.slice(index * STATS_BATCH_SIZE, (index + 1) * STATS_BATCH_SIZE),
         }));
       }),
-    [entries, environmentTargets],
+    [environmentTargets, statsRefs],
   );
-  const statsScopeKey = JSON.stringify([
-    effectiveState,
-    search.involvement,
-    search.projectId ?? null,
-    deferredQuery.trim(),
-  ]);
-  const [deferredStatsScopeKey, setDeferredStatsScopeKey] = useState<string | null>(null);
-  const statsRequireAllRows = sort === "largest" || sort === "smallest";
-  useEffect(() => {
-    if (entries.length === 0 || statsRequireAllRows) {
-      setDeferredStatsScopeKey(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      if (!cancelled) setDeferredStatsScopeKey(statsScopeKey);
-    }, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [entries.length, statsRequireAllRows, statsScopeKey]);
-  const statsEnabled = statsRequireAllRows || deferredStatsScopeKey === statsScopeKey;
   const statsQueries = useQueries({
     queries: statsTargets.map(({ environmentId, refs }) =>
       pullRequestListStatsQueryOptions({
         environmentId,
         request: { refs },
-        enabled: statsEnabled,
+        enabled: refs.length > 0,
       }),
     ),
   });
   const entriesWithStats = useMemo(() => {
+    // Row identity is case-insensitive on the repository, so both sides of
+    // the join lowercase it: a stats answer that differs only in
+    // `owner/Repo` casing still attaches instead of leaving the row at 0/0.
+    // Only the counts are taken from the stat, never its identity fields,
+    // so a differently-cased answer cannot fork the row's casing downstream.
     const stats = new Map(
       statsQueries.flatMap((query, index) =>
         (query.data?.stats ?? []).map((stat) => [
-          `${statsTargets[index]?.environmentId}:${stat.projectId}:${stat.repository}#${stat.number}`,
+          `${statsTargets[index]?.environmentId}:${stat.projectId}:${stat.repository.toLowerCase()}#${stat.number}`,
           stat,
         ]),
       ),
     );
-    return entries.map((entry) => {
+    return loadedEntries.map((entry) => {
       const stat = stats.get(
-        `${entry.environmentId}:${entry.projectId}:${entry.repository}#${entry.number}`,
+        `${entry.environmentId}:${entry.projectId}:${entry.repository.toLowerCase()}#${entry.number}`,
       );
-      return stat && entry.additions === 0 && entry.deletions === 0 ? { ...entry, ...stat } : entry;
+      return stat && entry.additions === 0 && entry.deletions === 0
+        ? { ...entry, additions: stat.additions, deletions: stat.deletions }
+        : entry;
     });
-  }, [entries, statsQueries, statsTargets]);
+  }, [loadedEntries, statsQueries, statsTargets]);
+  const sizeStatsIncomplete = useMemo(() => {
+    if (!statsRequireAllRows) return null;
+    const stats = new Set(
+      statsQueries
+        .flatMap((query) => query.data?.stats ?? [])
+        .map((stat) => `${stat.projectId}:${stat.repository.toLowerCase()}#${stat.number}`),
+    );
+    const missing = entriesWithStats.filter(
+      (entry) =>
+        entry.additions === 0 &&
+        entry.deletions === 0 &&
+        !stats.has(`${entry.projectId}:${entry.repository.toLowerCase()}#${entry.number}`),
+    ).length;
+    const pending = statsQueries.some((query) => query.isPending || query.isFetching);
+    return missing > 0 || pending ? missing : null;
+  }, [entriesWithStats, statsQueries, statsRequireAllRows]);
   const entriesByReference = useMemo(
     () =>
       new Map(
@@ -304,19 +337,22 @@ function PullRequestsRoute() {
       ),
     [entriesWithStats],
   );
-  const normalizedQuery = deferredQuery.trim().toLowerCase();
+  const normalizedQuery = (provisional ? immediateQuery : debouncedQuery).trim().toLowerCase();
   /**
    * The list only narrows by title/repository client-side for display; a row
    * whose match came from elsewhere (description, comments) says so on the
    * row rather than reading as a random result.
    */
-  const matchRowElsewhere = (entry: { readonly title: string; readonly repository: string }) => {
-    if (!normalizedQuery) return false;
-    return (
-      !entry.title.toLowerCase().includes(normalizedQuery) &&
-      !entry.repository.toLowerCase().includes(normalizedQuery)
-    );
-  };
+  const matchRowElsewhere = useCallback(
+    (entry: { readonly title: string; readonly repository: string }) => {
+      if (!normalizedQuery) return false;
+      return (
+        !entry.title.toLowerCase().includes(normalizedQuery) &&
+        !entry.repository.toLowerCase().includes(normalizedQuery)
+      );
+    },
+    [normalizedQuery],
+  );
   /**
    * Warm the detail an intentional hover is about to open, so selecting the
    * row reads from the cache. Pointer hovers wait 350ms — crossing rows on
@@ -325,41 +361,47 @@ function PullRequestsRoute() {
    * and unbounded, and the detail is one consolidated read.
    */
   const hoverPrefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelHoverPrefetch = () => {
+  const cancelHoverPrefetch = useCallback(() => {
     if (hoverPrefetchTimer.current !== null) {
       clearTimeout(hoverPrefetchTimer.current);
       hoverPrefetchTimer.current = null;
     }
-  };
-  useEffect(() => cancelHoverPrefetch, []);
-  const prefetchDetailFor = (entry: {
-    readonly projectId: ProjectId;
-    readonly repository: string;
-    readonly number: number;
-    readonly environmentId?: EnvironmentId;
-  }) => {
-    const targetEnvironmentId = entry.environmentId ?? environmentTargets[0]?.environmentId;
-    if (!targetEnvironmentId) return;
-    void prefetchPullRequestDetail(queryClient, {
-      environmentId: targetEnvironmentId,
-      reference: {
-        projectId: entry.projectId,
-        repository: entry.repository,
-        number: entry.number,
-      },
-    });
-  };
-  const scheduleHoverPrefetch = (entry: {
-    readonly projectId: ProjectId;
-    readonly repository: string;
-    readonly number: number;
-  }) => {
-    cancelHoverPrefetch();
-    hoverPrefetchTimer.current = setTimeout(() => {
-      hoverPrefetchTimer.current = null;
-      prefetchDetailFor(entry);
-    }, HOVER_PREFETCH_DELAY_MS);
-  };
+  }, []);
+  useEffect(() => cancelHoverPrefetch, [cancelHoverPrefetch]);
+  const prefetchDetailFor = useCallback(
+    (entry: {
+      readonly projectId: ProjectId;
+      readonly repository: string;
+      readonly number: number;
+      readonly environmentId?: EnvironmentId;
+    }) => {
+      const targetEnvironmentId = entry.environmentId ?? environmentTargets[0]?.environmentId;
+      if (!targetEnvironmentId) return;
+      void prefetchPullRequestDetail(queryClient, {
+        environmentId: targetEnvironmentId,
+        reference: {
+          projectId: entry.projectId,
+          repository: entry.repository,
+          number: entry.number,
+        },
+      });
+    },
+    [environmentTargets, queryClient],
+  );
+  const scheduleHoverPrefetch = useCallback(
+    (entry: {
+      readonly projectId: ProjectId;
+      readonly repository: string;
+      readonly number: number;
+    }) => {
+      cancelHoverPrefetch();
+      hoverPrefetchTimer.current = setTimeout(() => {
+        hoverPrefetchTimer.current = null;
+        prefetchDetailFor(entry);
+      }, HOVER_PREFETCH_DELAY_MS);
+    },
+    [cancelHoverPrefetch, prefetchDetailFor],
+  );
   const sortedEntries = useMemo(() => {
     if (sort === "ready") return entriesWithStats;
     return entriesWithStats.toSorted((left, right) => {
@@ -379,6 +421,23 @@ function PullRequestsRoute() {
     () => sortedEntries.filter((entry) => !entry.viewerReviewRequested),
     [sortedEntries],
   );
+  const listItems = useMemo(
+    () => buildPullRequestListItems(reviewRequestedEntries, otherEntries),
+    [otherEntries, reviewRequestedEntries],
+  );
+  // Remount the virtualizer when the authoritative filter changes so the
+  // scroll resets to the top; progressive appends keep their key and their
+  // scroll position.
+  const filterKey = JSON.stringify([
+    effectiveState,
+    search.involvement,
+    search.projectId ?? null,
+    serverQuery,
+    sort,
+  ]);
+  useEffect(() => {
+    renderedKeysRef.current = new Set();
+  }, [filterKey]);
   const selectedEntry = useMemo(
     () =>
       search.repository && search.number
@@ -435,30 +494,82 @@ function PullRequestsRoute() {
   const closeSurfacesToRight = useRightPanelStore((state) => state.closeSurfacesToRight);
   const closeAllSurfaces = useRightPanelStore((state) => state.closeAllSurfaces);
   const closePanel = useRightPanelStore((state) => state.close);
-  const updateSearch = (patch: PullRequestsSearchPatch, clearSelection = false) => {
-    void navigate({
-      search: (previous: PullRequestsSearch) => {
-        const next = { ...previous, ...patch };
-        return {
-          ...(next.state ? { state: next.state } : {}),
-          involvement: next.involvement ?? "all",
-          ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
-          ...(next.projectId ? { projectId: next.projectId } : {}),
-          ...(next.q ? { q: next.q } : {}),
-          ...(!clearSelection && next.repository && next.number && next.selectedProjectId
-            ? {
-                ...(next.host ? { host: next.host } : {}),
-                repository: next.repository,
-                number: next.number,
-                selectedProjectId: next.selectedProjectId,
-                ...(next.environmentId ? { environmentId: next.environmentId } : {}),
-              }
-            : {}),
-        };
-      },
-      replace: true,
-    });
-  };
+  const updateSearch = useCallback(
+    (patch: PullRequestsSearchPatch, clearSelection = false) => {
+      void navigate({
+        search: (previous: PullRequestsSearch) => {
+          const next = { ...previous, ...patch };
+          return {
+            ...(next.state ? { state: next.state } : {}),
+            involvement: next.involvement ?? "all",
+            ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
+            ...(next.projectId ? { projectId: next.projectId } : {}),
+            ...(next.q ? { q: next.q } : {}),
+            ...(!clearSelection && next.repository && next.number && next.selectedProjectId
+              ? {
+                  ...(next.host ? { host: next.host } : {}),
+                  repository: next.repository,
+                  number: next.number,
+                  selectedProjectId: next.selectedProjectId,
+                  ...(next.environmentId ? { environmentId: next.environmentId } : {}),
+                }
+              : {}),
+          };
+        },
+        replace: true,
+      });
+    },
+    [navigate],
+  );
+  const renderListItem = useCallback(
+    ({ item }: { readonly item: PullRequestListItem }) => {
+      if (item.kind === "header") {
+        return (
+          <h2
+            className={cn(
+              "px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground/70",
+              item.key === "header:awaiting" && "pt-0",
+            )}
+          >
+            {item.title}
+          </h2>
+        );
+      }
+      noteRendered(item.key);
+      const entry = item.entry;
+      const isSelected =
+        selected?.projectId === entry.projectId &&
+        selected.repository === entry.repository &&
+        selected.number === entry.number;
+      return (
+        <PullRequestRow
+          entry={entry}
+          matchedElsewhere={matchRowElsewhere(entry)}
+          selected={isSelected}
+          onSelect={(next) =>
+            updateSearch({
+              repository: next.repository,
+              number: next.number,
+              selectedProjectId: next.projectId,
+              environmentId: next.environmentId,
+            })
+          }
+          onHoverStart={scheduleHoverPrefetch}
+          onHoverEnd={cancelHoverPrefetch}
+          onFocusRow={prefetchDetailFor}
+        />
+      );
+    },
+    [
+      cancelHoverPrefetch,
+      matchRowElsewhere,
+      noteRendered,
+      prefetchDetailFor,
+      scheduleHoverPrefetch,
+      selected,
+      updateSearch,
+    ],
+  );
   useEffect(() => {
     if (!selectedEntry || search.selectedProjectId) return;
     void navigate({
@@ -491,10 +602,13 @@ function PullRequestsRoute() {
     selectedEntry?.title,
     selectedEnvironmentId,
   ]);
-  const listIsPending = listQueries.some((query) => query.isPending);
-  const listIsFetching = listQueries.some((query) => query.isFetching);
-  const listError = listQueries.find((query) => query.error)?.error;
-  const errors = listQueries.flatMap((query) => query.data?.errors ?? []);
+  const listIsPending = progressive.isInitialLoading;
+  const listIsFetching = progressive.baseQueriesFetching || progressive.isBackgroundLoading;
+  const listError =
+    entriesWithStats.length === 0
+      ? progressive.envStates.find((state) => state.error)?.error
+      : undefined;
+  const errors = progressive.errors;
 
   if (environments.length === 0) {
     return (
@@ -529,234 +643,172 @@ function PullRequestsRoute() {
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>
         <div className={cn("min-h-0 flex-1")}>
-          <section className="flex min-h-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
-                <div className="flex flex-col gap-3">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <InputGroup className="min-w-0 flex-1">
-                      <InputGroupAddon>
-                        {listIsFetching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
-                      </InputGroupAddon>
-                      <InputGroupInput
-                        type="search"
-                        aria-label="Search pull requests"
-                        autoComplete="off"
-                        name="pull-request-search"
-                        placeholder="Search pull requests, or label:bug"
-                        value={search.q ?? ""}
-                        onChange={(event) =>
-                          updateSearch({ q: event.currentTarget.value || undefined }, true)
-                        }
-                      />
-                    </InputGroup>
-                    <Menu>
-                      <MenuTrigger
-                        render={
-                          <Button
-                            aria-label="Sort pull requests"
-                            size="default"
-                            variant="outline"
-                          />
-                        }
-                      >
-                        <ArrowDownUpIcon aria-hidden />
-                        <span>Sort</span>
-                      </MenuTrigger>
-                      <MenuPopup align="end">
-                        <MenuRadioGroup
-                          value={sort}
-                          onValueChange={(value) =>
-                            updateSearch({ sort: value as PullRequestListSort }, true)
-                          }
-                        >
-                          {SORT_OPTIONS.map(({ value, label, Icon }) => (
-                            <MenuRadioItem key={value} value={value}>
-                              <Icon aria-hidden />
-                              {label}
-                            </MenuRadioItem>
-                          ))}
-                        </MenuRadioGroup>
-                      </MenuPopup>
-                    </Menu>
-                    <PullRequestFiltersMenu
-                      defaultListState={defaultListState}
-                      effectiveState={effectiveState}
-                      involvement={search.involvement}
-                      projectId={search.projectId}
-                      projects={projects}
-                      onStateChange={(value) => updateSearch({ state: value }, true)}
-                      onInvolvementChange={(value) => updateSearch({ involvement: value }, true)}
-                      onProjectChange={(value) => updateSearch({ projectId: value }, true)}
-                    />
-                    <Menu>
-                      <MenuTrigger
-                        render={
-                          <Button
-                            aria-label="Filter by involvement"
-                            size="default"
-                            variant="outline"
-                          />
-                        }
-                      >
-                        <LayersIcon aria-hidden />
-                        <span>
-                          {INVOLVEMENT_LABELS[search.involvement].replace(" involvement", "")}
-                        </span>
-                        <ChevronDownIcon aria-hidden />
-                      </MenuTrigger>
-                      <MenuPopup align="end">
-                        <MenuRadioGroup
-                          value={search.involvement}
-                          onValueChange={(value) =>
-                            updateSearch({ involvement: value as PullRequestInvolvement }, true)
-                          }
-                        >
-                          {INVOLVEMENTS.map((involvement) => (
-                            <MenuRadioItem key={involvement} value={involvement}>
-                              {INVOLVEMENT_LABELS[involvement]}
-                            </MenuRadioItem>
-                          ))}
-                        </MenuRadioGroup>
-                      </MenuPopup>
-                    </Menu>
-                    <Button
-                      aria-label="Refresh pull requests"
-                      disabled={listIsFetching}
-                      size="icon"
-                      variant="outline"
-                      onClick={() => void Promise.all(listQueries.map((query) => query.refetch()))}
-                    >
-                      <RefreshCwIcon className={cn(listIsFetching && "animate-spin")} />
-                    </Button>
-                  </div>
-                  <p aria-live="polite" className="sr-only">
-                    {entriesWithStats.length} pull request
-                    {entriesWithStats.length === 1 ? "" : "s"}
-                    {listIsFetching ? ", updating" : ""}
-                  </p>
-                </div>
-                <div>
-                  {listIsPending ? (
-                    <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
-                      <LoaderCircleIcon className="size-4 animate-spin" /> Loading pull requests…
-                    </div>
-                  ) : null}
-                  {listError ? (
-                    <EmptyState
-                      title="Could not load pull requests"
-                      description={
-                        listError instanceof Error ? listError.message : "Please try again."
+          <section className="flex min-h-0 h-full flex-col">
+            <WorkspacePageContainer width="expanded" className="gap-4 pb-0">
+              <div className="flex flex-col gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <InputGroup className="min-w-0 flex-1">
+                    <InputGroupAddon>
+                      {listIsFetching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      type="search"
+                      aria-label="Search pull requests"
+                      autoComplete="off"
+                      name="pull-request-search"
+                      placeholder="Search pull requests, or label:bug"
+                      value={search.q ?? ""}
+                      onChange={(event) =>
+                        updateSearch({ q: event.currentTarget.value || undefined }, true)
                       }
-                      action={
-                        <div className="flex items-center gap-2">
+                    />
+                  </InputGroup>
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button aria-label="Sort pull requests" size="default" variant="outline" />
+                      }
+                    >
+                      <ArrowDownUpIcon aria-hidden />
+                      <span>Sort</span>
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuRadioGroup
+                        value={sort}
+                        onValueChange={(value) =>
+                          updateSearch({ sort: value as PullRequestListSort }, true)
+                        }
+                      >
+                        {SORT_OPTIONS.map(({ value, label, Icon }) => (
+                          <MenuRadioItem key={value} value={value}>
+                            <Icon aria-hidden />
+                            {label}
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuPopup>
+                  </Menu>
+                  <PullRequestFiltersMenu
+                    defaultListState={defaultListState}
+                    effectiveState={effectiveState}
+                    involvement={search.involvement}
+                    projectId={search.projectId}
+                    projects={projects}
+                    onStateChange={(value) => updateSearch({ state: value }, true)}
+                    onInvolvementChange={(value) => updateSearch({ involvement: value }, true)}
+                    onProjectChange={(value) => updateSearch({ projectId: value }, true)}
+                  />
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          aria-label="Filter by involvement"
+                          size="default"
+                          variant="outline"
+                        />
+                      }
+                    >
+                      <LayersIcon aria-hidden />
+                      <span>
+                        {INVOLVEMENT_LABELS[search.involvement].replace(" involvement", "")}
+                      </span>
+                      <ChevronDownIcon aria-hidden />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuRadioGroup
+                        value={search.involvement}
+                        onValueChange={(value) =>
+                          updateSearch({ involvement: value as PullRequestInvolvement }, true)
+                        }
+                      >
+                        {INVOLVEMENTS.map((involvement) => (
+                          <MenuRadioItem key={involvement} value={involvement}>
+                            {INVOLVEMENT_LABELS[involvement]}
+                          </MenuRadioItem>
+                        ))}
+                      </MenuRadioGroup>
+                    </MenuPopup>
+                  </Menu>
+                  <Button
+                    aria-label="Refresh pull requests"
+                    disabled={listIsFetching}
+                    size="icon"
+                    variant="outline"
+                    onClick={() => progressive.refetchAll()}
+                  >
+                    <RefreshCwIcon className={cn(listIsFetching && "animate-spin")} />
+                  </Button>
+                </div>
+                <p aria-live="polite" className="sr-only">
+                  {entriesWithStats.length} pull request
+                  {entriesWithStats.length === 1 ? "" : "s"}
+                  {provisional ? ", narrowing" : ""}
+                  {listIsFetching ? ", updating" : ""}
+                </p>
+              </div>
+            </WorkspacePageContainer>
+            <div className="min-h-0 flex flex-1 flex-col">
+              {listIsPending ? (
+                <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
+                  <LoaderCircleIcon className="size-4 animate-spin" /> Loading pull requests…
+                </div>
+              ) : null}
+              {listError ? (
+                <WorkspacePageContainer width="expanded" className="gap-4">
+                  <EmptyState
+                    title="Could not load pull requests"
+                    description={
+                      listError instanceof Error ? listError.message : "Please try again."
+                    }
+                    action={
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => progressive.refetchAll()}
+                        >
+                          Retry
+                        </Button>
+                        {listError instanceof Error &&
+                        isGitHubRateLimitMessage(listError.message) ? (
                           <Button
                             size="sm"
-                            variant="outline"
+                            variant="ghost"
                             onClick={() =>
-                              void Promise.all(listQueries.map((query) => query.refetch()))
+                              void navigate({ to: "/settings/pull-request-collaboration" })
                             }
                           >
-                            Retry
+                            See API usage
                           </Button>
-                          {listError instanceof Error &&
-                          isGitHubRateLimitMessage(listError.message) ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                void navigate({ to: "/settings/pull-request-collaboration" })
-                              }
-                            >
-                              See API usage
-                            </Button>
-                          ) : null}
-                        </div>
-                      }
-                    />
-                  ) : null}
-                  {!listIsPending && !listError && entriesWithStats.length === 0 ? (
-                    <EmptyState
-                      title="No pull requests"
-                      description={
-                        search.q
-                          ? "Nothing matches this search."
-                          : "No pull requests match these filters."
-                      }
-                      action={
-                        search.q ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => updateSearch({ q: undefined }, true)}
-                          >
-                            Clear search
-                          </Button>
-                        ) : undefined
-                      }
-                    />
-                  ) : null}
-                  {reviewRequestedEntries.length > 0 ? (
-                    <h2 className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">
-                      Awaiting your review
-                    </h2>
-                  ) : null}
-                  {reviewRequestedEntries.map((entry) => (
-                    <PullRequestRow
-                      entry={entry}
-                      key={`${entry.environmentId}:${entry.projectId}:${entry.repository}#${entry.number}`}
-                      matchedElsewhere={matchRowElsewhere(entry)}
-                      selected={
-                        selected?.projectId === entry.projectId &&
-                        selected.repository === entry.repository &&
-                        selected.number === entry.number
-                      }
-                      onSelect={(next) =>
-                        updateSearch({
-                          repository: next.repository,
-                          number: next.number,
-                          selectedProjectId: next.projectId,
-                          environmentId: next.environmentId,
-                        })
-                      }
-                      onHoverStart={scheduleHoverPrefetch}
-                      onHoverEnd={cancelHoverPrefetch}
-                      onFocusRow={prefetchDetailFor}
-                    />
-                  ))}
-                  {otherEntries.length > 0 ? (
-                    <h2
-                      className={cn(
-                        "px-3 pb-1 text-xs font-medium text-muted-foreground/70",
-                        reviewRequestedEntries.length > 0 && "pt-3",
-                      )}
-                    >
-                      Others
-                    </h2>
-                  ) : null}
-                  {otherEntries.map((entry) => (
-                    <PullRequestRow
-                      entry={entry}
-                      key={`${entry.environmentId}:${entry.projectId}:${entry.repository}#${entry.number}`}
-                      matchedElsewhere={matchRowElsewhere(entry)}
-                      selected={
-                        selected?.projectId === entry.projectId &&
-                        selected.repository === entry.repository &&
-                        selected.number === entry.number
-                      }
-                      onSelect={(next) =>
-                        updateSearch({
-                          repository: next.repository,
-                          number: next.number,
-                          selectedProjectId: next.projectId,
-                          environmentId: next.environmentId,
-                        })
-                      }
-                      onHoverStart={scheduleHoverPrefetch}
-                      onHoverEnd={cancelHoverPrefetch}
-                      onFocusRow={prefetchDetailFor}
-                    />
-                  ))}
+                        ) : null}
+                      </div>
+                    }
+                  />
+                </WorkspacePageContainer>
+              ) : null}
+              {!listIsPending && !listError && entriesWithStats.length === 0 ? (
+                <WorkspacePageContainer width="expanded" className="gap-4">
+                  <EmptyState
+                    title="No pull requests"
+                    description={
+                      search.q
+                        ? provisional
+                          ? "Narrowing loaded rows… the server search is still on its way."
+                          : "Nothing matches this search."
+                        : "No pull requests match these filters."
+                    }
+                    action={
+                      search.q ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updateSearch({ q: undefined }, true)}
+                        >
+                          Clear search
+                        </Button>
+                      ) : undefined
+                    }
+                  />
                   {errors.length > 0 ? (
                     <ul className="space-y-1 p-3 text-xs text-muted-foreground">
                       {errors.map((error) => (
@@ -767,8 +819,64 @@ function PullRequestsRoute() {
                       ))}
                     </ul>
                   ) : null}
-                </div>
-              </WorkspacePageContainer>
+                </WorkspacePageContainer>
+              ) : null}
+              {!listIsPending && !listError && entriesWithStats.length > 0 ? (
+                <>
+                  {progressive.hasPartialFailure ? (
+                    <p role="status" className="px-6 pt-1 text-xs text-muted-foreground">
+                      Some environments could not be read — showing the results that arrived.
+                    </p>
+                  ) : null}
+                  {sizeStatsIncomplete !== null ? (
+                    <p role="status" className="px-6 pt-1 text-xs text-muted-foreground">
+                      Loading sizes
+                      {sizeStatsIncomplete > 0 ? ` (${sizeStatsIncomplete} rows pending)` : ""} —
+                      the size order is partial until every diff stat arrives.
+                    </p>
+                  ) : null}
+                  <LegendList<PullRequestListItem>
+                    key={filterKey}
+                    data={listItems}
+                    keyExtractor={(item) => item.key}
+                    renderItem={renderListItem}
+                    estimatedItemSize={76}
+                    drawDistance={600}
+                    maintainVisibleContentPosition
+                    onEndReached={() => {
+                      if (progressive.hasMore) progressive.fetchMore();
+                    }}
+                    onEndReachedThreshold={0.4}
+                    className="min-h-0 flex-1 overflow-y-auto px-3"
+                  />
+                  {progressive.isBackgroundLoading ? (
+                    <p
+                      aria-live="polite"
+                      className="flex items-center gap-2 px-6 py-2 text-xs text-muted-foreground"
+                    >
+                      <LoaderCircleIcon className="size-3 animate-spin" /> Loading more pull
+                      requests…
+                    </p>
+                  ) : null}
+                  {progressive.hasMore && !progressive.isBackgroundLoading ? (
+                    <div className="px-6 py-2">
+                      <Button size="sm" variant="outline" onClick={() => progressive.fetchMore()}>
+                        Load more pull requests
+                      </Button>
+                    </div>
+                  ) : null}
+                  {errors.length > 0 ? (
+                    <ul className="space-y-1 p-3 text-xs text-muted-foreground">
+                      {errors.map((error) => (
+                        <li key={error.projectId} className="break-words">
+                          <span className="font-medium text-foreground">{error.projectTitle}:</span>{" "}
+                          {error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           </section>
         </div>

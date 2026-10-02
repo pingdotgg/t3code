@@ -520,26 +520,43 @@ export function PullRequestDetailPanel({
     listEntry.number === reference.number
       ? listEntry
       : null;
-  const detailQuery = useQuery(pullRequestDetailQueryOptions({ environmentId, reference }));
+  const detailQuery = useQuery({
+    ...pullRequestDetailQueryOptions({ environmentId, reference }),
+    enabled: visible,
+  });
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [timelineNewestFirst, setTimelineNewestFirst] = useState(true);
   const [expandedTimelineGroups, setExpandedTimelineGroups] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const monitorQuery = useQuery(
-    pullRequestMonitorStatusQueryOptions({
+  // Only the collaboration tab reads monitor/acceptance state; the summary
+  // description and checks render from the detail alone.
+  const collaborationVisible = visible && tab === "collaboration";
+  // Comments, review threads, and commits come from the activity walk; the
+  // summary description and checks do not wait for it.
+  const activityNeeded = visible && tab !== "collaboration";
+  const monitorQuery = useQuery({
+    ...pullRequestMonitorStatusQueryOptions({
       environmentId,
       reference,
-      enabled: detailQuery.data !== undefined,
+      enabled: collaborationVisible && detailQuery.data !== undefined,
     }),
-  );
-  const monitorContextQuery = useQuery(
-    pullRequestMonitorContextQueryOptions({
+    enabled: collaborationVisible && detailQuery.data !== undefined,
+  });
+  const monitorContextQuery = useQuery({
+    ...pullRequestMonitorContextQueryOptions({
       environmentId,
       reference,
-      enabled: monitorQuery.data?.monitor !== null && monitorQuery.data?.monitor !== undefined,
+      enabled:
+        collaborationVisible &&
+        monitorQuery.data?.monitor !== null &&
+        monitorQuery.data?.monitor !== undefined,
     }),
-  );
+    enabled:
+      collaborationVisible &&
+      monitorQuery.data?.monitor !== null &&
+      monitorQuery.data?.monitor !== undefined,
+  });
   const activityQuery = useQuery({
     ...pullRequestActivityQueryOptions({
       environmentId,
@@ -547,23 +564,22 @@ export function PullRequestDetailPanel({
     }),
     // A backgrounded panel keeps its last answer but stops asking for a new one: the reader is
     // looking at another surface, and a conversation read is one host request per interval.
-    // While GitHub's quota is exhausted every poll fails identically; back off to the server's
-    // failure cooldown instead of re-walking the review threads every 30s. Recovery is still
-    // automatic on the next poll.
-    refetchInterval: (query) => {
-      if (!visible || tab !== "timeline") return false;
-      return isRateLimitQueryError(query.state.error) ? 60_000 : 30_000;
-    },
+    // Gated on the tab as well as visibility, so the collaboration tab and hidden surfaces
+    // never fetch — only summary, timeline, and code need the conversation. Returning to a
+    // needing tab re-asks through the enabled transition when the held answer is stale (and
+    // costs nothing when it is fresh), so no separate resume-fetch is needed.
+    enabled: activityNeeded,
+    // While GitHub's quota is exhausted every poll fails identically; back
+    // off to the server's failure cooldown instead of re-walking the review
+    // threads every 30s. Recovery is still automatic on the next poll.
+    // Hidden surfaces and the collaboration tab never poll.
+    refetchInterval: (query) =>
+      activityNeeded && tab === "timeline"
+        ? isRateLimitQueryError(query.state.error)
+          ? 60_000
+          : 30_000
+        : false,
   });
-  // Resuming an interval does not fetch, so a surface returning to view would show the
-  // conversation as it stood when it was last focused. Ask once on the way back in; the
-  // server's own read cache absorbs the cost when nothing has moved.
-  const wasVisibleRef = useRef(visible);
-  useEffect(() => {
-    const returning = visible && !wasVisibleRef.current;
-    wasVisibleRef.current = visible;
-    if (returning) void activityQuery.refetch();
-  }, [visible, activityQuery.refetch]);
   const [comment, setComment] = useState("");
   const [actionPending, setActionPending] = useState<PullRequestAction | null>(null);
   const [mediaPreview, setMediaPreview] = useState<PullRequestMediaPreview | null>(null);
@@ -611,24 +627,26 @@ export function PullRequestDetailPanel({
           ) ?? null),
     [environmentId, reviewThreadId, threads],
   );
-  const acceptanceLookupQuery = useQuery(
-    collaborativeAcceptanceLookupQueryOptions({
+  const acceptanceLookupQuery = useQuery({
+    ...collaborativeAcceptanceLookupQueryOptions({
       environmentId,
       threadId: acceptanceThreadId,
       reference,
-      enabled: acceptanceThreadId !== null && acceptanceProvenance === null,
+      enabled: collaborationVisible && acceptanceThreadId !== null && acceptanceProvenance === null,
     }),
-  );
+    enabled: collaborationVisible && acceptanceThreadId !== null && acceptanceProvenance === null,
+  });
   const acceptanceCaseId =
     acceptanceProvenance?.caseId ?? acceptanceLookupQuery.data?.caseId ?? null;
-  const acceptanceQuery = useQuery(
-    collaborativeAcceptanceStatusQueryOptions({
+  const acceptanceQuery = useQuery({
+    ...collaborativeAcceptanceStatusQueryOptions({
       environmentId,
       threadId: acceptanceThreadId,
       caseId: acceptanceCaseId,
-      enabled: acceptanceCaseId !== null && acceptanceThreadId !== null,
+      enabled: collaborationVisible && acceptanceCaseId !== null && acceptanceThreadId !== null,
     }),
-  );
+    enabled: collaborationVisible && acceptanceCaseId !== null && acceptanceThreadId !== null,
+  });
   const acceptanceStatus = acceptanceQuery.data ?? acceptanceLookupQuery.data?.status;
   const browserThreadRef = useMemo(
     () => (owner ? scopeThreadRef(owner.environmentId, owner.id) : null),
