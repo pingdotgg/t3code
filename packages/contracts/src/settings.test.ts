@@ -542,11 +542,11 @@ describe("ServerSettings speech model", () => {
   it("starts with no custom transcription words", () => {
     expect(DEFAULT_SERVER_SETTINGS.speechAcceleration).toBe("auto");
     expect(DEFAULT_SERVER_SETTINGS.speechModelUnloadTimeout).toBe("min_15");
-    expect(DEFAULT_SERVER_SETTINGS.speechLanguage).toBe("auto");
-    expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
-    expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(true);
-    expect(DEFAULT_SERVER_SETTINGS.speechCorrectionWord).toBe("");
+    expect(decodeClientSettings({}).speechLanguage).toBe("auto");
+    expect(decodeClientSettings({}).speechCustomWords).toEqual([]);
+    expect(decodeClientSettings({}).speechRemoveFillerWords).toBe(true);
+    expect(decodeClientSettings({}).speechPostProcessingEnabled).toBe(true);
+    expect(decodeClientSettings({}).speechCorrectionWord).toBe("");
     expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
       DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
     );
@@ -554,7 +554,7 @@ describe("ServerSettings speech model", () => {
       model: "gpt-6-luna",
       options: [{ id: "reasoningEffort", value: "low" }],
     });
-    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompt).toEqual({
+    expect(decodeClientSettings({}).speechPostProcessingPrompt).toEqual({
       mode: "default",
       customInstructions: "",
     });

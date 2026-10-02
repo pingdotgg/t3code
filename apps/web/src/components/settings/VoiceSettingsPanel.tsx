@@ -5,12 +5,8 @@ import {
   getEnvironmentSpeechStatus,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
-  updateEnvironmentSpeechCustomWords,
-  updateEnvironmentSpeechFillerWordRemoval,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
-  updateEnvironmentSpeechLanguage,
-  updateEnvironmentSpeechTranslation,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -20,7 +16,9 @@ import type {
   SpeechCustomWords,
   SpeechModelUnloadTimeout,
 } from "@t3tools/contracts";
-import { EnvironmentRequestInvalidError } from "@t3tools/contracts";
+import { SpeechCustomWords as SpeechCustomWordsSchema } from "@t3tools/contracts";
+import { mergeSpeechCustomWords } from "@t3tools/shared/speech";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -31,7 +29,6 @@ import {
   GlobeIcon,
   HardDriveIcon,
   LanguagesIcon,
-  LayersIcon,
   RefreshCwIcon,
   TargetIcon,
   Trash2Icon,
@@ -63,7 +60,8 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { TranscriptionTest } from "./TranscriptionTest";
 
-const isInvalidDictionaryRequest = Schema.is(EnvironmentRequestInvalidError);
+const isSpeechCustomWords = Schema.is(SpeechCustomWordsSchema);
+
 const SYSTEM_DEFAULT = "system-default";
 const PRIMARY_ENVIRONMENT = "primary-environment";
 const deviceValue = (id: string) => `device:${id}`;
@@ -316,10 +314,12 @@ export function VoiceSettingsPanel() {
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const voiceShortcutMode = useClientSettings((settings) => settings.voiceShortcutMode);
   const updateClientSettings = useUpdateClientSettings();
+  const clientSettings = useClientSettings();
+  const scopedSettings = useScopedSettings();
+  const updateScopedSettings = useUpdateScopedSettings();
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
-    readonly projectId?: typeof projectId;
   } | null>(null);
   const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
@@ -357,15 +357,13 @@ export function VoiceSettingsPanel() {
     }
   }, []);
 
-  const connectionEpoch = useRef<{ prepared: typeof prepared; projectId: typeof projectId } | null>(
-    null,
-  );
+  const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
   useLayoutEffect(() => {
-    connectionEpoch.current = { prepared, projectId };
+    connectionEpoch.current = { prepared };
     return () => {
       connectionEpoch.current = null;
     };
-  }, [prepared, projectId]);
+  }, [prepared]);
 
   const refreshModels = useCallback(async () => {
     if (!prepared) return;
@@ -373,17 +371,17 @@ export function VoiceSettingsPanel() {
     if (epoch?.prepared !== prepared) return;
     try {
       const [nextStatus, nextModels] = await Promise.all([
-        runtime.runPromise(getEnvironmentSpeechStatus(prepared, projectId)),
+        runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
         runtime.runPromise(getEnvironmentSpeechModels(prepared)),
       ]);
       if (connectionEpoch.current !== epoch) return;
-      setStatus({ prepared, projectId, value: nextStatus });
+      setStatus({ prepared, value: nextStatus });
       setModels(nextModels.models);
     } catch (error) {
       if (connectionEpoch.current !== epoch) return;
       throw error;
     }
-  }, [prepared, projectId]);
+  }, [prepared]);
 
   useEffect(() => {
     void refreshMicrophones();
@@ -465,85 +463,52 @@ export function VoiceSettingsPanel() {
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
   const acceptStatus = (value: EnvironmentSpeechStatus) => {
-    if (!prepared) return;
-    setStatus((previous) => ({
-      prepared,
-      projectId,
-      value:
-        value.supported &&
-        value.projectCustomWords === undefined &&
-        previous?.prepared === prepared &&
-        previous.projectId === projectId &&
-        previous.value.supported &&
-        previous.value.projectCustomWords !== undefined
-          ? { ...value, projectCustomWords: previous.value.projectCustomWords }
-          : value,
-    }));
+    if (prepared) setStatus({ prepared, value });
   };
-  const sharedWords = currentStatus?.supported ? currentStatus.customWords : [];
-  const projectWords =
-    currentStatus?.supported && status?.projectId === projectId
-      ? (currentStatus.projectCustomWords ?? [])
-      : [];
-  const editableWords = projectId ? projectWords : sharedWords;
-  const sharedSpellings = new Set(
-    sharedWords.flatMap(({ term, aliases }) =>
+  const personalWords = clientSettings.speechCustomWords;
+  const projectWords = projectId ? scopedSettings.speechProjectCustomWords : [];
+  const editableWords = projectId ? projectWords : personalWords;
+  const personalSpellings = new Set(
+    personalWords.flatMap(({ term, aliases }) =>
       [term, ...aliases].map((value) => value.toLocaleLowerCase()),
     ),
   );
-  const visibleProjectWords = projectWords.filter(
-    ({ term }) => !sharedSpellings.has(term.toLocaleLowerCase()),
-  );
-  const customWords = projectId ? [...visibleProjectWords, ...sharedWords] : sharedWords;
+  const customWords = mergeSpeechCustomWords(personalWords, projectWords);
   const dictionaryUnavailable =
-    settingsScope?.scope.kind === "unavailable" ||
-    (projectId !== undefined &&
-      (status?.projectId !== projectId ||
-        (currentStatus?.supported && currentStatus.projectCustomWords === undefined)));
-  const removeFillerWords = currentStatus?.supported ? currentStatus.removeFillerWords : true;
+    !clientSettingsHydrated ||
+    Boolean(projectId && (settingsScope?.scope.kind === "unavailable" || !settingsScope?.target));
+  const removeFillerWords = clientSettings.speechRemoveFillerWords;
   const acceleration = currentStatus?.supported ? currentStatus.acceleration : "auto";
   const modelUnloadTimeout = currentStatus?.supported ? currentStatus.modelUnloadTimeout : "min_15";
   const gpuDevices = currentStatus?.supported ? currentStatus.gpuDevices : [];
   const normalizedCustomWord = normalizeDictionaryTerm(customWordDraft);
   const bulkWords = prepareBulkWords(bulkWordsDraft, customWords);
   const updateCustomWords = (words: SpeechCustomWords, onSuccess?: () => void) => {
-    if (!prepared || dictionaryUnavailable) return;
-    const epoch = connectionEpoch.current;
-    setOperation("custom-words");
-    const save = async () => {
-      const ids = projectId
-        ? [...new Set(settingsScope?.scope.members.map((member) => member.id) ?? [projectId])]
-            .filter((id) => id !== projectId)
-            .concat(projectId)
-        : [undefined];
-      let value = await runtime.runPromise(
-        updateEnvironmentSpeechCustomWords(prepared, words, ids[0]),
-      );
-      for (const id of ids.slice(1))
-        value = await runtime.runPromise(updateEnvironmentSpeechCustomWords(prepared, words, id));
-      return value;
-    };
-    void save()
-      .then((value) => {
-        if (connectionEpoch.current !== epoch) return;
-        setStatus({ prepared, projectId, value });
-        onSuccess?.();
-      })
-      .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not update dictionary",
-          description:
-            isInvalidDictionaryRequest(error) && error.reason === "dictionary_conflict"
-              ? "A word or misspelling is already used in a shared or project dictionary. Remove it there before adding it here."
-              : isInvalidDictionaryRequest(error) && error.reason === "dictionary_limit"
-                ? "Shared and project words together cannot exceed 100 words."
-                : error instanceof Error
-                  ? error.message
-                  : String(error),
+    if (dictionaryUnavailable) return;
+    const dictionary = projectId ? mergeSpeechCustomWords(personalWords, words) : words;
+    if (!isSpeechCustomWords(dictionary)) {
+      toastManager.add({
+        type: "error",
+        title: "Could not update dictionary",
+        description:
+          "Personal and project dictionaries together cannot exceed 100 words. Terms and aliases must be unique.",
+      });
+      return;
+    }
+    if (projectId) {
+      updateScopedSettings({ speechProjectCustomWords: words });
+      onSuccess?.();
+    } else {
+      void updateClientSettings({ speechCustomWords: words })
+        .then(onSuccess)
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not update dictionary",
+            description: error instanceof Error ? error.message : String(error),
+          });
         });
-      })
-      .finally(() => setOperation(null));
+    }
   };
   const addCustomWord = () => {
     if (
@@ -562,7 +527,7 @@ export function VoiceSettingsPanel() {
     );
   };
   const addBulkWords = () => {
-    if (!currentStatus?.supported || operation !== null || bulkWords.entries.length === 0) return;
+    if (dictionaryUnavailable || operation !== null || bulkWords.entries.length === 0) return;
     updateCustomWords([...editableWords, ...bulkWords.entries], () => {
       setBulkWordsDraft("");
       setBulkWordsOpen(false);
@@ -618,7 +583,7 @@ export function VoiceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Environment">
+      <SettingsSection title="This client">
         <SettingsRow
           {...searchableSetting("transcription-environment")}
           description="Run voice transcription on this environment for every thread."
@@ -760,15 +725,32 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
-      <SettingsSection title="Transcription models" id={searchableSetting("local-voice-input").id}>
+      <SettingsSection
+        title={`Transcription on ${selectedEnvironmentLabel}`}
+        id={searchableSetting("local-voice-input").id}
+      >
         <TranscriptionTest
           key={`${environmentId}:${activeModel?.id}:${selectedMicrophone}`}
           prepared={prepared}
           microphoneId={selectedMicrophone}
+          options={{
+            speechLanguage: clientSettings.speechLanguage,
+            speechTranslateToEnglish: clientSettings.speechTranslateToEnglish,
+            speechCustomWords: customWords,
+            speechRemoveFillerWords: removeFillerWords,
+            speechCorrectionWord: clientSettings.speechCorrectionWord,
+            speechPostProcessingEnabled: false,
+          }}
           modelName={
             currentStatus?.supported ? (activeModel?.name ?? "No model selected") : "Unavailable"
           }
-          disabled={!currentStatus?.supported || !activeModel || operation !== null}
+          disabled={
+            !currentStatus?.supported ||
+            !activeModel ||
+            dictionaryUnavailable ||
+            !isSpeechCustomWords(customWords) ||
+            operation !== null
+          }
         />
         <SettingsRow
           title="Transcription language"
@@ -789,41 +771,25 @@ export function VoiceSettingsPanel() {
                 activeModel.languages.length === 1 ||
                 operation !== null
               }
-              value={
-                currentStatus?.supported
-                  ? currentStatus.effectiveLanguage
-                  : (activeModel?.languages[0] ?? "auto")
-              }
+              value={clientSettings.speechLanguage}
               onValueChange={(value) => {
-                if (!value || !prepared) return;
-                setOperation("language");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechLanguage(prepared, value))
-                  .then(acceptStatus)
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update transcription language",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
+                if (value) void updateClientSettings({ speechLanguage: value });
               }}
             >
               <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-80">
                 <SelectValue>
-                  {currentStatus?.supported && currentStatus.effectiveLanguage === "auto"
+                  {clientSettings.speechLanguage === "auto"
                     ? "Auto"
-                    : languageLabel(
-                        currentStatus?.supported
-                          ? currentStatus.effectiveLanguage
-                          : (activeModel?.languages[0] ?? "en"),
-                      )}
+                    : languageLabel(clientSettings.speechLanguage)}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                {activeModel?.supportsLanguageDetection ? (
-                  <SelectItem value="auto">Auto</SelectItem>
+                <SelectItem value="auto">Auto</SelectItem>
+                {clientSettings.speechLanguage !== "auto" &&
+                !activeModel?.languages.includes(clientSettings.speechLanguage) ? (
+                  <SelectItem value={clientSettings.speechLanguage}>
+                    {languageLabel(clientSettings.speechLanguage)} (Unavailable on this model)
+                  </SelectItem>
                 ) : null}
                 {[...(activeModel?.languages ?? [])].sort(compareLanguages).map((code) => (
                   <SelectItem key={code} value={code}>
@@ -839,14 +805,14 @@ export function VoiceSettingsPanel() {
           description={
             !currentStatus?.supported || !currentStatus.supportsTranslation
               ? "The active model does not support translation."
-              : currentStatus.effectiveLanguage === "en"
+              : clientSettings.speechLanguage === "en"
                 ? "English speech is transcribed without translation."
                 : "Convert speech in the selected or detected language directly into English text."
           }
           control={
             <Switch
               aria-label="Translate to English"
-              checked={currentStatus?.supported ? currentStatus.translateToEnglish : false}
+              checked={clientSettings.speechTranslateToEnglish}
               disabled={
                 !prepared ||
                 !currentStatus?.supported ||
@@ -854,19 +820,7 @@ export function VoiceSettingsPanel() {
                 operation !== null
               }
               onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("translation");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechTranslation(prepared, enabled))
-                  .then(acceptStatus)
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update speech translation",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
+                void updateClientSettings({ speechTranslateToEnglish: enabled });
               }}
             />
           }
@@ -1025,43 +979,14 @@ export function VoiceSettingsPanel() {
       <SettingsSection title="Transcription options">
         <SettingsRow
           {...searchableSetting("dictionary")}
-          title={
-            <span className="inline-flex items-center gap-1">
-              Dictionary
-              <Popover>
-                <PopoverTrigger
-                  render={<Button type="button" size="icon-micro" variant="ghost-muted" />}
-                  aria-label="Show dictionary sources"
-                >
-                  <LayersIcon className="size-3" />
-                </PopoverTrigger>
-                <PopoverContent align="start" width="md">
-                  <div className="space-y-2 text-xs">
-                    {projectId ? (
-                      <div className="flex justify-between gap-3">
-                        <span>{projectLabel}</span>
-                        <span className="text-muted-foreground">
-                          {visibleProjectWords.length} project words
-                        </span>
-                      </div>
-                    ) : null}
-                    <div className="flex justify-between gap-3">
-                      <span>All projects</span>
-                      <span className="text-muted-foreground">
-                        {sharedWords.length} shared words
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground">
-                      {projectId
-                        ? "Project and shared words are both supplied to the transcription model."
-                        : "These words are used in every project."}
-                    </p>
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </span>
+          serverScoped={Boolean(projectId)}
+          settingKeys={projectId ? ["speechProjectCustomWords"] : []}
+          title="Dictionary"
+          description={
+            projectId
+              ? "Project words are saved on the selected project environments. Your personal words are included automatically."
+              : "Personal words are saved on this client and used across projects and transcription environments."
           }
-          description="Give the transcription model names and uncommon terms to recognize. The current project's name is included automatically. If a term is transcribed incorrectly, add that version to correct future transcripts."
           control={
             <div className="w-full max-w-80">
               <div className="flex items-center gap-1.5">
@@ -1070,9 +995,7 @@ export function VoiceSettingsPanel() {
                   maxLength={50}
                   placeholder="Add a word or phrase"
                   aria-label="Add a word or phrase"
-                  disabled={
-                    !currentStatus?.supported || dictionaryUnavailable || operation !== null
-                  }
+                  disabled={dictionaryUnavailable || operation !== null}
                   onChange={(event) => setCustomWordDraft(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
@@ -1084,7 +1007,6 @@ export function VoiceSettingsPanel() {
                   type="button"
                   size="sm"
                   disabled={
-                    !currentStatus?.supported ||
                     dictionaryUnavailable ||
                     !normalizedCustomWord ||
                     normalizedCustomWord.length > 50 ||
@@ -1104,9 +1026,9 @@ export function VoiceSettingsPanel() {
               </div>
               {projectId &&
               normalizedCustomWord &&
-              sharedSpellings.has(normalizedCustomWord.toLocaleLowerCase()) ? (
+              personalSpellings.has(normalizedCustomWord.toLocaleLowerCase()) ? (
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Already in your shared dictionary.
+                  Already in your personal dictionary.
                 </p>
               ) : null}
               <div className="mt-1 flex justify-end">
@@ -1114,9 +1036,7 @@ export function VoiceSettingsPanel() {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  disabled={
-                    !currentStatus?.supported || dictionaryUnavailable || operation !== null
-                  }
+                  disabled={dictionaryUnavailable || operation !== null}
                   aria-expanded={bulkWordsOpen}
                   onClick={() => setBulkWordsOpen((open) => !open)}
                 >
@@ -1134,7 +1054,7 @@ export function VoiceSettingsPanel() {
                 maxLength={10_000}
                 placeholder={"T3 Code\nAnother name\nTechnical term"}
                 aria-label="Words to add"
-                disabled={!currentStatus?.supported || dictionaryUnavailable || operation !== null}
+                disabled={dictionaryUnavailable || operation !== null}
                 onChange={(event) => setBulkWordsDraft(event.target.value)}
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1154,10 +1074,7 @@ export function VoiceSettingsPanel() {
                   type="button"
                   size="sm"
                   disabled={
-                    !currentStatus?.supported ||
-                    dictionaryUnavailable ||
-                    bulkWords.entries.length === 0 ||
-                    operation !== null
+                    dictionaryUnavailable || bulkWords.entries.length === 0 || operation !== null
                   }
                   onClick={addBulkWords}
                 >
@@ -1174,7 +1091,7 @@ export function VoiceSettingsPanel() {
               <div aria-label="Dictionary entries" className="flex flex-wrap gap-1.5">
                 {customWords.map(({ term, aliases }) => {
                   const inherited = Boolean(
-                    projectId && sharedWords.some((entry) => entry.term === term),
+                    projectId && !projectWords.some((entry) => entry.term === term),
                   );
                   const draft = (aliasDrafts[term] ?? "")
                     .replace(/[<>"']/g, "")
@@ -1277,7 +1194,7 @@ export function VoiceSettingsPanel() {
                                 })
                               }
                             >
-                              Edit in All projects
+                              Edit personal dictionary
                             </Button>
                           ) : (
                             <div className="flex max-w-80 gap-1.5">
@@ -1334,21 +1251,9 @@ export function VoiceSettingsPanel() {
             <Switch
               aria-label="Remove filler words"
               checked={removeFillerWords}
-              disabled={!currentStatus?.supported || operation !== null}
+              disabled={!clientSettingsHydrated}
               onCheckedChange={(enabled) => {
-                if (!prepared) return;
-                setOperation("filler-words");
-                void runtime
-                  .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
-                  .then(acceptStatus)
-                  .catch((error) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Could not update filler word removal",
-                      description: error instanceof Error ? error.message : String(error),
-                    });
-                  })
-                  .finally(() => setOperation(null));
+                void updateClientSettings({ speechRemoveFillerWords: enabled });
               }}
             />
           }

@@ -526,6 +526,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./speech": {
+      "types": "./src/speech.ts",
+      "import": "./src/speech.ts"
     }
   },
   "scripts": {

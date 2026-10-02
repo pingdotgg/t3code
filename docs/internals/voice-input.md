@@ -11,7 +11,7 @@ Clients supply recorder and transcriber implementations.
   `SpeechAnalyzer` and `SpeechTranscriber`.
 - Web and desktop record with browser media APIs. The client converts the
   recording to 16 kHz mono Float32 PCM and sends it through the authenticated
-  environment HTTP connection.
+  connection to the selected transcription environment.
 - The environment runs the selected transcription model through transcribe.cpp
   and returns only transcript text. Users manage model downloads and selection in
   Settings > Voice.
@@ -23,12 +23,20 @@ transcription on the T3 environment rather than on-device transcription.
 
 ## Boundaries
 
-Microphone selection is client-local because input devices belong to the client.
-Model storage and lifecycle belong to the environment because that is where
-transcribe.cpp runs. The environment advertises the `voiceTranscription`
+Microphone selection and personal dictation preferences are client-local. Each
+recording snapshots those preferences and the originating project's vocabulary.
+Project vocabulary uses project overrides on the originating environment; the
+transcription host never stores foreign project IDs. The resolved dictionary and
+correction cue travel with both transcription and cleanup requests. Cleanup runs
+on the thread's environment, where its provider model and credentials live.
+Model storage and lifecycle belong to the transcription environment because that
+is where transcribe.cpp runs. The environment advertises the `voiceTranscription`
 capability so newer clients do not probe older servers.
 
-Audio uses a bounded binary HTTP request rather than JSON or base64. Cancellation
+Batch audio uses a bounded binary HTTP request: a four-byte little-endian JSON
+length, UTF-8 transcription options, then unencoded PCM. Streaming sends options
+in its initial `start` command before any audio. Preferences stay in request
+bodies rather than URLs or headers. Cancellation
 aborts the client request and prevents late transcript insertion. Model-load
 failures are not cached, so later attempts can retry. The server accepts at most
 five minutes of 16 kHz mono Float32 PCM per request.

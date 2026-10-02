@@ -10,7 +10,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/unstable/http";
-import { SpeechStreamEvent } from "@t3tools/contracts";
+import { SpeechStreamEvent, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import type { SpeechService, SpeechStream } from "./SpeechService.ts";
 import { runSpeechSocket } from "./stream.ts";
 import type * as NetAddress from "effect/unstable/net/NetAddress";
@@ -19,6 +19,9 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamE
 
 function client(url: string) {
   const socket = new WebSocket(url);
+  socket.addEventListener("open", () =>
+    socket.send(JSON.stringify({ type: "start", options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS })),
+  );
   const events: SpeechStreamEvent[] = [];
   let waiter: ReturnType<typeof Promise.withResolvers<SpeechStreamEvent>> | undefined;
   socket.addEventListener("message", ({ data }) => {

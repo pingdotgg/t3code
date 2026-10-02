@@ -1,3 +1,4 @@
+import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -69,6 +70,7 @@ it("preserves audio when recording stops before the streaming model is ready", a
 
   const platform = createBrowserVoiceInputPlatform({
     prepared: {} as PreparedConnection,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     getMicrophoneId: () => "",
     onLevel,
     onDurationLimit() {},

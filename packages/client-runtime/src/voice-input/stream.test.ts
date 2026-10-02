@@ -1,3 +1,4 @@
+import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { SPEECH_STREAM_MAX_QUEUED_BYTES, type SpeechStreamEvent } from "@t3tools/contracts";
 import { openSpeechStream } from "./stream.ts";
@@ -26,10 +27,16 @@ async function connect() {
   const onError = vi.fn();
   const pending = openSpeechStream({
     url: "wss://environment.test/ws/voice",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     signal: abort.signal,
     onText,
     onError,
     createSocket: () => socket as unknown as WebSocket,
+  });
+  socket.dispatchEvent(new Event("open"));
+  expect(JSON.parse(socket.sent.shift() as string)).toEqual({
+    type: "start",
+    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   });
   socket.receive({ type: "ready" });
   return { socket, abort, onText, onError, stream: await pending };

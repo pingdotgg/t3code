@@ -1,11 +1,12 @@
+import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentHttpApi,
   EnvironmentVoiceBodyLimit,
+  SPEECH_MAX_OPTIONS_BYTES,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as ByteSize from "effect/ByteSize";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -17,19 +18,18 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as SpeechService from "./SpeechService.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { postProcessTranscript } from "./postProcessing.ts";
+import * as SpeechPostProcessing from "./postProcessing.ts";
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const length = Number(request.headers["content-length"]);
-    if (length > SpeechService.MAX_SPEECH_BYTES)
+    if (length > SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4)
       return yield* failEnvironmentInvalidRequest("invalid_audio");
     return yield* effect.pipe(
       Effect.provideService(
         HttpServerRequest.MaxBodySize,
-        ByteSize.bytes(SpeechService.MAX_SPEECH_BYTES),
+        ByteSize.bytes(SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4),
       ),
     );
   }),
@@ -40,6 +40,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
   "voice",
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
+    const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     return handlers
       .handle(
         "prepareModel",
@@ -64,9 +65,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.status")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech
-            .getStatus(args.headers["x-t3-project-id"])
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+          return yield* speech.status.pipe(
+            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+          );
         }),
       )
       .handle(
@@ -135,37 +136,6 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "updateCustomWords",
-        Effect.fn("environment.voice.updateCustomWords")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech.updateCustomWords(args.payload.words, args.payload.projectId).pipe(
-            Effect.catchTags({
-              SpeechDictionaryConflictError: () =>
-                failEnvironmentInvalidRequest("dictionary_conflict"),
-              SpeechDictionaryLimitError: () => failEnvironmentInvalidRequest("dictionary_limit"),
-              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
-              SpeechUnsupportedPlatformError: () =>
-                failEnvironmentInvalidRequest("speech_unavailable"),
-              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
-              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
-              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
-              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
-            }),
-          );
-        }),
-      )
-      .handle(
-        "updateFillerWordRemoval",
-        Effect.fn("environment.voice.updateFillerWordRemoval")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech
-            .updateFillerWordRemoval(args.payload.enabled)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
-        }),
-      )
-      .handle(
         "updateAcceleration",
         Effect.fn("environment.voice.updateAcceleration")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
@@ -194,50 +164,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "updateLanguage",
-        Effect.fn("environment.voice.updateLanguage")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech
-            .updateLanguage(args.payload.language)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
-        }),
-      )
-      .handle(
-        "updateTranslation",
-        Effect.fn("environment.voice.updateTranslation")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* speech
-            .updateTranslation(args.payload.enabled)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
-        }),
-      )
-      .handle(
         "postProcess",
         Effect.fn("environment.voice.postProcess")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const settingsService = yield* ServerSettings.ServerSettingsService;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const text = yield* Effect.gen(function* () {
-            const settings = yield* settingsService.getSettings;
-            const cwd = yield* fileSystem.makeTempDirectoryScoped({
-              prefix: "t3-voice-post-processing-",
-            });
-            return yield* postProcessTranscript({
-              transcript: args.payload.transcript,
-              draft: args.payload.draft,
-              cwd,
-              settings: args.payload.dictionary
-                ? { ...settings, speechCustomWords: args.payload.dictionary }
-                : settings,
-            });
-          }).pipe(
-            Effect.scoped,
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
-          );
-          return { text };
+          return yield* postProcessing
+            .process(args.payload)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
         }),
       )
       .handle(
@@ -245,26 +178,25 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.transcribe")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          if (args.payload.byteLength > SpeechService.MAX_SPEECH_BYTES) {
-            return yield* failEnvironmentInvalidRequest("invalid_audio");
-          }
-          const text = yield* speech
-            .transcribe(
-              args.payload,
-              args.headers["x-t3-project-name"],
-              args.headers["x-t3-project-id"],
-            )
-            .pipe(
-              Effect.catchTags({
-                SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
-                SpeechUnsupportedPlatformError: () =>
-                  failEnvironmentInvalidRequest("speech_unavailable"),
-                SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
-                SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
-                SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
-                SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+          const decoded = yield* Effect.try({
+            try: () => decodeSpeechPcmRequest(args.payload),
+            catch: () =>
+              new SpeechService.SpeechInvalidAudioError({
+                byteLength: args.payload.byteLength,
+                message: "Invalid speech options.",
               }),
-            );
+          }).pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_audio")));
+          const text = yield* speech.transcribe(decoded.pcm, decoded.options).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
           return { text };
         }),
       )
@@ -290,4 +222,4 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       );
   }),
-).pipe(Layer.provide(bodyLimit));
+).pipe(Layer.provide(bodyLimit), Layer.provide(SpeechPostProcessing.layer));

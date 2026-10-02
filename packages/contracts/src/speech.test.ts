@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { EnvironmentSpeechStatus, EnvironmentSpeechTranscriptionResult } from "./speech.ts";
+import {
+  EnvironmentSpeechStatus,
+  EnvironmentSpeechTranscriptionResult,
+  SpeechTranscriptionOptions,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+} from "./speech.ts";
 
 const decodeStatus = Schema.decodeUnknownSync(EnvironmentSpeechStatus);
 const decodeTranscription = Schema.decodeUnknownSync(EnvironmentSpeechTranscriptionResult);
@@ -13,14 +18,9 @@ const readyStatus = {
   size: 35_466_912,
   supportsStreaming: false,
   supportsTranslation: true,
-  translateToEnglish: false,
   acceleration: "auto",
-  language: "auto",
-  effectiveLanguage: "auto",
   modelUnloadTimeout: "min_15",
   gpuDevices: [],
-  customWords: [{ term: "T3 Code", aliases: ["T3 codes"] }],
-  removeFillerWords: false,
 };
 
 describe("environment speech contracts", () => {
@@ -32,34 +32,28 @@ describe("environment speech contracts", () => {
     });
   });
 
-  it.each([
-    "language",
-    "effectiveLanguage",
-    "acceleration",
-    "modelUnloadTimeout",
-    "gpuDevices",
-    "customWords",
-    "removeFillerWords",
-    "supportsTranslation",
-    "translateToEnglish",
-  ])("rejects a supported status missing %s", (field) => {
-    const incomplete = Object.fromEntries(
-      Object.entries(readyStatus).filter(([key]) => key !== field),
-    );
-    expect(() => decodeStatus(incomplete)).toThrow();
-  });
+  it.each(["acceleration", "modelUnloadTimeout", "gpuDevices", "supportsTranslation"])(
+    "rejects a supported status missing %s",
+    (field) => {
+      const incomplete = Object.fromEntries(
+        Object.entries(readyStatus).filter(([key]) => key !== field),
+      );
+      expect(() => decodeStatus(incomplete)).toThrow();
+    },
+  );
 
-  it("bounds vocabulary entries and rejects duplicate aliases", () => {
+  it("bounds request vocabulary and rejects duplicate aliases", () => {
+    const decode = Schema.decodeUnknownSync(SpeechTranscriptionOptions);
     expect(() =>
-      decodeStatus({
-        ...readyStatus,
-        customWords: [{ term: "x".repeat(51), aliases: [] }],
+      decode({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechCustomWords: [{ term: "x".repeat(51), aliases: [] }],
       }),
     ).toThrow();
     expect(() =>
-      decodeStatus({
-        ...readyStatus,
-        customWords: [
+      decode({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechCustomWords: [
           { term: "MiniMax", aliases: ["mini max"] },
           { term: "Other", aliases: ["MINI MAX"] },
         ],

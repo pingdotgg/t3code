@@ -11,15 +11,14 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import type { ProjectId, SpeechStreamText } from "@t3tools/contracts";
+import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
 
 import { runtime } from "../lib/runtime";
 import workletUrl from "./pcmWorklet.ts?worker&url";
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
-  readonly getProjectName?: () => string | undefined;
-  readonly getProjectId?: () => ProjectId | undefined;
+  readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getMicrophoneId: () => string;
   readonly onLevel: (level: number) => void;
   readonly onDurationLimit: () => void;
@@ -38,8 +37,7 @@ export function createBrowserVoiceInputPlatform(input: {
   let worklet: AudioWorkletNode | undefined;
   let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let signal: AbortSignal | undefined;
-  let recordingProjectId: ProjectId | undefined;
-  let recordingProjectName: string | undefined;
+  let recordingOptions: SpeechTranscriptionOptions;
   let live: Awaited<ReturnType<typeof openSpeechStream>> | undefined;
   let stopped:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
@@ -163,7 +161,7 @@ export function createBrowserVoiceInputPlatform(input: {
       const response = await fetch(uri, { signal: transcriptionSignal });
       const pcm = new Uint8Array(await response.arrayBuffer());
       const result = await runtime.runPromise(
-        transcribeEnvironmentPcm(input.prepared, pcm, recordingProjectName, recordingProjectId),
+        transcribeEnvironmentPcm(input.prepared, pcm, recordingOptions),
         {
           signal: transcriptionSignal,
         },
@@ -190,8 +188,7 @@ export function createBrowserVoiceInputPlatform(input: {
     transcriber: {
       prepare: async (options) => {
         signal = options.signal;
-        recordingProjectId = input.getProjectId?.();
-        recordingProjectName = input.getProjectName?.();
+        recordingOptions = input.getTranscriptionOptions();
         live = undefined;
         const status = await runtime.runPromise(
           getEnvironmentSpeechStatus(input.prepared),
@@ -201,11 +198,12 @@ export function createBrowserVoiceInputPlatform(input: {
         if (!status.supported) throw new VoiceTranscriptionError("unavailable", status.reason);
         if (status.supportsStreaming) {
           const url = await runtime.runPromise(
-            getEnvironmentSpeechStreamUrl(input.prepared, recordingProjectName, recordingProjectId),
+            getEnvironmentSpeechStreamUrl(input.prepared),
             options,
           );
           const session = openSpeechStream({
             url,
+            options: recordingOptions,
             signal: options.signal,
             onText: input.onText,
             onError: (error) => input.onError(error.message),

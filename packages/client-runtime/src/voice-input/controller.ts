@@ -63,10 +63,12 @@ export type VoiceInputControllerDependencies<WithPostProcessing extends boolean 
   readonly releaseRecording: () => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
   readonly postProcess?: WithPostProcessing extends true
-    ? (
-        transcript: string,
-        options: { readonly signal: AbortSignal; readonly draft: VoiceDraftSnapshot },
-      ) => Promise<string>
+    ?
+        | ((
+            transcript: string,
+            options: { readonly signal: AbortSignal; readonly draft: VoiceDraftSnapshot },
+          ) => Promise<string>)
+        | undefined
     : never;
   readonly onPostProcessingError?: (error: unknown) => void;
   readonly readDraft: () => VoiceDraftSnapshot | null;

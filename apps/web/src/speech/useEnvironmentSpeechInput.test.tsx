@@ -4,12 +4,27 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { DEFAULT_CLIENT_SETTINGS, type EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  type ClientSettings,
+  type ServerSettings,
+  type SpeechTranscriptionOptions,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 
 const mocks = vi.hoisted(() => ({
   postProcessingEnabled: false,
+  clientPreferences: {} as Partial<ClientSettings>,
+  projectId: undefined as ProjectId | undefined,
+  originSettings: null as ServerSettings | null,
+  originPrepared: {} as PreparedConnection,
+  recordingOptions: null as SpeechTranscriptionOptions | null,
+  cleanup: vi.fn(),
+  committed: vi.fn(),
   busy: false,
   microphoneFailure: true,
   missingModel: false,
@@ -25,19 +40,27 @@ vi.mock("../state/session", () => ({
   usePreparedConnection: (environmentId: EnvironmentId | null) => {
     mocks.preparedEnvironmentId = environmentId;
     mocks.preparedEnvironmentIds.push(environmentId);
-    return Option.some(mocks.prepared);
+    return Option.some(
+      environmentId === "project-environment" ? mocks.originPrepared : mocks.prepared,
+    );
   },
 }));
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
+  useEnvironment: () =>
+    mocks.originSettings ? { serverConfig: { settings: mocks.originSettings } } : null,
 }));
 vi.mock("../hooks/useSettings", () => ({
   useClientSettingsHydrated: () => true,
-  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector({
+  useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) => {
+    const settings = {
       ...DEFAULT_CLIENT_SETTINGS,
       voiceTranscriptionEnvironmentId: mocks.transcriptionEnvironmentId,
-    }),
+      speechPostProcessingEnabled: mocks.postProcessingEnabled,
+      ...mocks.clientPreferences,
+    };
+    return selector ? selector(settings) : settings;
+  },
   useEnvironmentSettings: () => mocks.postProcessingEnabled,
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
@@ -52,15 +75,21 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       modelId: "test-model",
       size: 731_357_568,
     }),
+  postProcessEnvironmentTranscript: (...args: unknown[]) => {
+    mocks.cleanup(...args);
+    return Effect.succeed({ text: "Clean transcript" });
+  },
   downloadEnvironmentSpeechModel: () =>
     Effect.sync(() => {
       mocks.missingModel = false;
     }),
 }));
 vi.mock("./browserVoiceInput", () => ({
-  createBrowserVoiceInputPlatform: () => ({
+  createBrowserVoiceInputPlatform: (input: {
+    getTranscriptionOptions: () => SpeechTranscriptionOptions;
+  }) => ({
     recorder: {
-      uri: null,
+      uri: "recording",
       prepareToRecordAsync: async () => {
         mocks.microphoneRequests += 1;
         if (mocks.microphoneFailure) throw new Error("no microphone");
@@ -68,7 +97,12 @@ vi.mock("./browserVoiceInput", () => ({
       record() {},
       stop: async () => {},
     },
-    transcriber: { prepare: async () => ({ locale: "en", transcribe: async () => "" }) },
+    transcriber: {
+      prepare: async () => {
+        mocks.recordingOptions = input.getTranscriptionOptions();
+        return { locale: "en", transcribe: async () => "Raw transcript" };
+      },
+    },
     cancelRecording() {},
     deleteRecording() {},
   }),
@@ -79,10 +113,11 @@ let voice: ReturnType<typeof useEnvironmentSpeechInput>;
 function Probe() {
   const value = useEnvironmentSpeechInput({
     environmentId: "project-environment" as EnvironmentId,
+    projectId: mocks.projectId,
     ownerKey: mocks.ownerKey,
     draftText: "",
     readDraft: () => ({ text: "", selection: { start: 0, end: 0 } }),
-    commitDraft() {},
+    commitDraft: mocks.committed,
   });
   useLayoutEffect(() => {
     voice = value;
@@ -125,6 +160,12 @@ afterEach(async () => {
   mocks.transcriptionEnvironmentId = null;
   mocks.preparedEnvironmentId = null;
   mocks.preparedEnvironmentIds = [];
+  mocks.clientPreferences = {};
+  mocks.projectId = undefined;
+  mocks.originSettings = null;
+  mocks.recordingOptions = null;
+  mocks.cleanup.mockClear();
+  mocks.committed.mockClear();
   vi.unstubAllGlobals();
 });
 it("queues a recording while the environment is transcribing and starts when it drains", async () => {
@@ -276,4 +317,68 @@ it(" replacing post-processing settings does not strand recording state", async 
   await act(() => voice.cancel());
   expect(voice.state.phase).toBe("idle");
   mocks.postProcessingEnabled = false;
+});
+
+it("transcribes on the selected host and cleans on the thread environment using one preference snapshot", async () => {
+  mocks.microphoneFailure = false;
+  mocks.postProcessingEnabled = true;
+  mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
+  mocks.projectId = ProjectId.make("project-one");
+  mocks.originSettings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: {
+      [mocks.projectId]: { speechProjectCustomWords: [{ term: "Effect", aliases: ["a fact"] }] },
+      [ProjectId.make("other-project")]: {
+        speechProjectCustomWords: [{ term: "Unrelated", aliases: [] }],
+      },
+    },
+  };
+  mocks.clientPreferences = {
+    speechLanguage: "fr",
+    speechCorrectionWord: "pardon",
+    speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+  };
+  await mountProbe();
+  await act(() => voice.start());
+  expect(voice.state.phase).toBe("recording");
+  expect(mocks.recordingOptions).toMatchObject({
+    speechLanguage: "fr",
+    speechCorrectionWord: "pardon",
+    speechCustomWords: [
+      { term: "Effect", aliases: ["a fact"] },
+      { term: "T3 Code", aliases: [] },
+    ],
+  });
+  mocks.clientPreferences = {
+    speechLanguage: "en",
+    speechCorrectionWord: "sorry",
+    speechCustomWords: [],
+  };
+  mocks.postProcessingEnabled = false;
+  await act(() => root!.render(<Probe />));
+  expect(voice.state.phase).toBe("recording");
+  await act(() => voice.stop());
+  expect(mocks.cleanup).toHaveBeenCalledWith(
+    mocks.originPrepared,
+    "Raw transcript",
+    { text: "", selection: { start: 0, end: 0 } },
+    expect.objectContaining({
+      speechCorrectionWord: "pardon",
+      speechPostProcessingEnabled: true,
+      speechCustomWords: mocks.recordingOptions!.speechCustomWords,
+    }),
+  );
+  expect(mocks.committed).toHaveBeenCalledWith("Clean transcript", expect.anything());
+  expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
+  mocks.postProcessingEnabled = false;
+});
+
+it("preserves the original transcript without cleanup when the client disables it", async () => {
+  mocks.microphoneFailure = false;
+  mocks.postProcessingEnabled = false;
+  await mountProbe();
+  await act(() => voice.start());
+  await act(() => voice.stop());
+  expect(mocks.cleanup).not.toHaveBeenCalled();
+  expect(mocks.committed).toHaveBeenCalledWith("Raw transcript", expect.anything());
 });

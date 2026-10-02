@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   listModels: vi.fn(),
   saveWords: vi.fn(),
+  saveClient: vi.fn(),
   saveTranslation: vi.fn(),
   speechStatus: {
     supportsTranslation: false,
@@ -59,11 +60,35 @@ vi.mock("@t3tools/client-runtime/voice-input", () => ({
   cancelEnvironmentSpeechModelDownload: mocks.cancel,
 }));
 vi.mock("./SettingsScopeContext", () => ({ useOptionalSettingsScope: () => mocks.scope }));
-vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: (select: (settings: typeof mocks.settings) => unknown) =>
-    select(mocks.settings),
-  useClientSettingsHydrated: () => true,
-  useUpdateClientSettings: () => vi.fn(),
+vi.mock("../../hooks/useSettings", async () => {
+  const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts");
+  return {
+    useClientSettings: (select?: (settings: unknown) => unknown) => {
+      const settings = {
+        ...DEFAULT_CLIENT_SETTINGS,
+        ...mocks.settings,
+        speechCustomWords: mocks.customWords,
+      };
+      return select ? select(settings) : settings;
+    },
+    useClientSettingsHydrated: () => true,
+    useUpdateClientSettings: () => async (patch: Record<string, unknown>) => {
+      mocks.saveClient(patch);
+      if (patch.speechCustomWords)
+        mocks.customWords = patch.speechCustomWords as typeof mocks.customWords;
+      Object.assign(mocks.settings, patch);
+      root.update(createElement(VoiceSettingsPanel));
+    },
+  };
+});
+vi.mock("./useScopedSettings", () => ({
+  useScopedSettings: () => ({ speechProjectCustomWords: mocks.projectWords }),
+  useUpdateScopedSettings:
+    () => (patch: { speechProjectCustomWords: typeof mocks.projectWords }) => {
+      mocks.saveWords(patch);
+      mocks.projectWords = patch.speechProjectCustomWords;
+      root.update(createElement(VoiceSettingsPanel));
+    },
 }));
 vi.mock("../../lib/runtime", () => ({ runtime: { runPromise: (value: unknown) => value } }));
 vi.mock("../../state/environments", () => ({
@@ -123,6 +148,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   mocks.listModels.mockReset();
   mocks.saveWords.mockReset();
+  mocks.saveClient.mockReset();
   mocks.saveTranslation.mockReset();
   mocks.speechStatus = {
     supportsTranslation: false,
@@ -136,7 +162,7 @@ afterEach(async () => {
   mocks.settings.voiceMicrophone = "";
 });
 
-it("shows translation for capable models and updates the environment preference", async () => {
+it("shows translation for capable models and updates the client preference", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
   vi.stubGlobal("window", { setInterval, clearInterval });
@@ -182,7 +208,7 @@ it("shows translation for capable models and updates the environment preference"
   );
   const toggle = root.root.findByProps({ "aria-label": "Translate to English" });
   await act(async () => toggle.props.onCheckedChange(true));
-  expect(mocks.saveTranslation).toHaveBeenCalledWith(mocks.connection, true);
+  expect(mocks.saveClient).toHaveBeenCalledWith({ speechTranslateToEnglish: true });
 });
 
 it("ignores a previous environment model response", async () => {
@@ -292,7 +318,7 @@ it("bulk adds normalized words and reports skipped entries", async () => {
     .find((button) => button.children.join("") === "Add 2 words");
   expect(addBulk).toBeDefined();
   await act(async () => addBulk!.props.onClick());
-  expect(mocks.saveWords).toHaveBeenCalledWith(mocks.connection, words, undefined);
+  expect(mocks.saveClient).toHaveBeenCalledWith({ speechCustomWords: words });
   expect(root.root.findAllByProps({ "aria-label": "Words to add" })).toHaveLength(0);
   expect(root.root.findByProps({ "aria-label": "Edit misspellings for New Name" })).toBeDefined();
 });
@@ -601,12 +627,12 @@ it("shows cancellation errors without clearing the download state", async () => 
   expect(root.root.findByProps({ "aria-label": "Cancel Model download" })).toBeDefined();
 });
 
-it("adds words for an offline project without copying shared words and blocks shared duplicates", async () => {
+it("saves project words through the originating project scope without copying personal words", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", {});
   vi.stubGlobal("window", { setInterval, clearInterval });
   mocks.scope = {
-    target: null,
+    target: { projectId: "project-one" },
     scope: { label: "T3 Code", kind: "project", members: [{ id: "project-one" }] },
     search: { project: "project-one" },
     selectScope: vi.fn(),
@@ -628,7 +654,7 @@ it("adds words for an offline project without copying shared words and blocks sh
   expect(root.root.findAllByProps({ "aria-label": "Transcribed as for GitHub" })).toHaveLength(0);
   expect(root.root.findAllByProps({ "aria-label": "Remove GitHub" })).toHaveLength(0);
   await act(async () =>
-    root.root.findByProps({ children: "Edit in All projects" }).props.onClick(),
+    root.root.findByProps({ children: "Edit personal dictionary" }).props.onClick(),
   );
   expect(mocks.scope.selectScope).toHaveBeenCalledWith({ project: undefined, checkout: undefined });
   const input = root.root.findByProps({ "aria-label": "Add a word or phrase" });
@@ -637,12 +663,11 @@ it("adds words for an offline project without copying shared words and blocks sh
   expect(mocks.saveWords).not.toHaveBeenCalled();
   await act(async () => input.props.onChange({ target: { value: "Parakeet" } }));
   await act(async () => input.props.onKeyDown({ key: "Enter", preventDefault: vi.fn() }));
-  expect(mocks.saveWords).toHaveBeenCalledWith(
-    mocks.connection,
-    [
+  expect(mocks.saveWords).toHaveBeenCalledWith({
+    speechProjectCustomWords: [
       { term: "Effect", aliases: [] },
       { term: "Parakeet", aliases: [] },
     ],
-    "project-one",
-  );
+  });
+  expect(mocks.saveClient).not.toHaveBeenCalled();
 });

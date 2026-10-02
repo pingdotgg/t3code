@@ -1,4 +1,4 @@
-import type { ServerSettings, SpeechCustomWords } from "@t3tools/contracts";
+import type { ClientSettings, SpeechCustomWords } from "@t3tools/contracts";
 
 const MATCH_THRESHOLD = 0.18;
 
@@ -196,7 +196,7 @@ export function applySpeechAliases(text: string, words: SpeechCustomWords): stri
 
 export function transcriptionCustomWords(
   settings: Pick<
-    ServerSettings,
+    ClientSettings,
     "speechCustomWords" | "speechCorrectionWord" | "speechPostProcessingEnabled"
   >,
   projectName?: string,

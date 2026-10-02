@@ -1,9 +1,10 @@
+import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { FetchHttpClient } from "effect/unstable/http";
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import {
   PrimaryConnectionTarget,
@@ -12,7 +13,7 @@ import {
 } from "../connection/model.ts";
 import { transcribeEnvironmentPcm } from "./environment.ts";
 
-const environmentId = Schema.decodeUnknownSync(EnvironmentId)("voice-test");
+const environmentId = Schema.decodeSync(EnvironmentId)("voice-test");
 const prepared = (
   httpBaseUrl: string,
   httpAuthorization: PreparedHttpAuthorization | null = null,
@@ -37,7 +38,11 @@ for (const url of [
   it.effect(`does not send audio or credentials to ${url}`, () =>
     Effect.gen(function* () {
       const fetch = vi.fn(async () => Response.json({ text: "hello" }));
-      const result = yield* transcribeEnvironmentPcm(prepared(url), new Uint8Array(4)).pipe(
+      const result = yield* transcribeEnvironmentPcm(
+        prepared(url),
+        new Uint8Array(4),
+        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      ).pipe(
         Effect.provide(FetchHttpClient.layer),
         Effect.provideService(FetchHttpClient.Fetch, fetch),
         Effect.result,
@@ -59,7 +64,11 @@ for (const url of [
     Effect.gen(function* () {
       const fetch = vi.fn(async () => Response.json({ text: "hello" }));
       expect(
-        yield* transcribeEnvironmentPcm(prepared(url), new Uint8Array(4)).pipe(
+        yield* transcribeEnvironmentPcm(
+          prepared(url),
+          new Uint8Array(4),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        ).pipe(
           Effect.provide(FetchHttpClient.layer),
           Effect.provideService(FetchHttpClient.Fetch, fetch),
         ),
@@ -82,6 +91,7 @@ it.effect("does not send browser cookies with bearer-authenticated voice request
     yield* transcribeEnvironmentPcm(
       prepared("https://remote.example", { _tag: "Bearer", token: "secret" }),
       new Uint8Array(4),
+      DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     ).pipe(
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
@@ -94,22 +104,32 @@ it.effect("does not send browser cookies with bearer-authenticated voice request
   }),
 );
 
-it.effect("sends the originating project to a remote transcription environment", () =>
-  Effect.gen(function* () {
-    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get("x-t3-project-id")).toBe("project-one");
-      expect(new Headers(init?.headers).get("x-t3-project-name")).toBe("T3 Code");
-      return Response.json({ text: "hello" });
-    });
-    yield* transcribeEnvironmentPcm(
-      prepared("https://remote.example"),
-      new Uint8Array(4),
-      "T3 Code",
-      ProjectId.make("project-one"),
-    ).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, fetch),
-    );
-    expect(fetch).toHaveBeenCalledOnce();
-  }),
+it.effect(
+  "sends resolved preferences and project vocabulary to a remote transcription environment",
+  () =>
+    Effect.gen(function* () {
+      const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const decoded = decodeSpeechPcmRequest(
+          new Uint8Array(await new Response(init?.body).arrayBuffer()),
+        );
+        expect(decoded.options).toMatchObject({
+          projectName: "T3 Code",
+          speechLanguage: "fr",
+          speechCustomWords: [{ term: "Effect", aliases: [] }],
+        });
+        expect(decoded.pcm).toEqual(new Uint8Array(4));
+        expect(new Headers(init?.headers).has("x-t3-project-id")).toBe(false);
+        return Response.json({ text: "hello" });
+      });
+      yield* transcribeEnvironmentPcm(prepared("https://remote.example"), new Uint8Array(4), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        projectName: "T3 Code",
+        speechLanguage: "fr",
+        speechCustomWords: [{ term: "Effect", aliases: [] }],
+      }).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, fetch),
+      );
+      expect(fetch).toHaveBeenCalledOnce();
+    }),
 );

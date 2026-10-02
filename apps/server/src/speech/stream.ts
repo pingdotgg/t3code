@@ -1,9 +1,9 @@
 import {
   AuthOrchestrationOperateScope,
-  ProjectId,
   SPEECH_STREAM_PATH,
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   SpeechStreamCommand,
+  SPEECH_MAX_OPTIONS_BYTES,
   type SpeechStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,15 +16,12 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SpeechService from "./SpeechService.ts";
 
-const decodeProjectId = Schema.decodeOption(ProjectId);
 const decodeCommand = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamCommand));
 
 /** One socket owns one stream. Audio is processed and acknowledged in arrival order. */
 export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
   speech: Pick<SpeechService.SpeechService["Service"], "startStream">,
-  projectName?: string,
-  projectId?: ProjectId,
 ) {
   const scope = yield* Scope.Scope;
   const writer = yield* socket.writer;
@@ -39,20 +36,28 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
       yield* writer.write(new Socket.CloseEvent(1008, "Speech stream ended"));
     });
   const receive = (data: string | Uint8Array) => {
-    if (ended || !stream) return Effect.void;
-    const current = stream;
+    if (ended) return Effect.void;
     return Effect.gen(function* () {
       if (typeof data === "string") {
-        if (data.length > 100) return yield* fail("Invalid speech stream command.");
-        yield* Effect.try(() => decodeCommand(data));
-        const text = yield* current.finish;
+        if (new TextEncoder().encode(data).byteLength > SPEECH_MAX_OPTIONS_BYTES)
+          return yield* fail("Invalid speech stream command.");
+        const command = yield* Effect.try(() => decodeCommand(data));
+        if (command.type === "start") {
+          if (stream) return yield* fail("Speech stream already started.");
+          stream = yield* speech.startStream(command.options).pipe(Scope.provide(scope));
+          yield* send({ type: "ready" });
+          return;
+        }
+        if (!stream) return yield* fail("Start speech transcription before finishing.");
+        const text = yield* stream.finish;
         ended = true;
         yield* send({ type: "finished", text });
         yield* writer.write(new Socket.CloseEvent(1000));
       } else {
         if (data.byteLength > SPEECH_STREAM_MAX_CHUNK_BYTES)
           return yield* fail("Speech audio chunk is too large.");
-        const update = yield* current.feed(data);
+        if (!stream) return yield* fail("Start speech transcription before sending audio.");
+        const update = yield* stream.feed(data);
         yield* send({ type: "update", ...update });
       }
     }).pipe(
@@ -65,15 +70,6 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   };
   const reader = yield* socket.reader;
   yield* Effect.gen(function* () {
-    yield* Effect.gen(function* () {
-      stream = yield* speech.startStream(projectName, projectId).pipe(Scope.provide(scope));
-      yield* send({ type: "ready" });
-    }).pipe(
-      Effect.catch(() =>
-        fail("Could not prepare live transcription. Check the selected model and try again."),
-      ),
-      Effect.ignore,
-    );
     const pending = yield* Queue.bounded<string | Uint8Array>(2);
     yield* Effect.forever(Queue.take(pending).pipe(Effect.flatMap(receive))).pipe(
       Effect.forkScoped,
@@ -107,19 +103,8 @@ export const speechStreamRouteLayer = Layer.unwrap(
         if (session._tag === "Failure") return HttpServerResponse.empty({ status: 401 });
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });
-        const projectName = new URL(request.url, "http://localhost").searchParams
-          .get("projectName")
-          ?.slice(0, 200);
-        const projectIdValue = new URL(request.url, "http://localhost").searchParams.get(
-          "projectId",
-        );
-        const decodedProjectId =
-          projectIdValue === null ? undefined : decodeProjectId(projectIdValue);
-        const projectId =
-          decodedProjectId && decodedProjectId._tag === "Some" ? decodedProjectId.value : undefined;
-        if (projectIdValue !== null && !projectId) return HttpServerResponse.empty({ status: 400 });
         const socket = yield* request.upgrade;
-        yield* runSpeechSocket(socket, speech, projectName, projectId).pipe(Effect.scoped);
+        yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);
         return HttpServerResponse.empty();
       }),
     );

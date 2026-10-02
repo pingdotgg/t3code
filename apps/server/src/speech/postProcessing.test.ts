@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_CLIENT_SETTINGS,
+  type SpeechPostProcessingOptions,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -46,11 +48,20 @@ const codexProvider: ServerProvider = {
 };
 
 const runPostProcess = (
-  input: { readonly transcript: string; readonly cwd: string; readonly settings: ServerSettings },
+  input: {
+    readonly transcript: string;
+    readonly cwd: string;
+    readonly settings?: ServerSettings;
+    readonly options?: Partial<SpeechPostProcessingOptions>;
+  },
   generate: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"],
   providers: ReadonlyArray<ServerProvider> = [codexProvider],
 ) =>
-  postProcessTranscript(input).pipe(
+  postProcessTranscript({
+    ...input,
+    settings: input.settings ?? DEFAULT_SERVER_SETTINGS,
+    options: { ...DEFAULT_CLIENT_SETTINGS, ...input.options },
+  }).pipe(
     Effect.provide(
       Layer.mergeAll(
         Layer.mock(TextGeneration.TextGeneration)({
@@ -148,8 +159,8 @@ describe("postProcessTranscript", () => {
         {
           transcript: "clean text",
           cwd: "C:/neutral",
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
+          options: {
+            ...DEFAULT_CLIENT_SETTINGS,
             speechPostProcessingPrompt: {
               mode: "custom",
               customInstructions: "Keep technical terms verbatim.",
@@ -177,8 +188,8 @@ describe("postProcessTranscript", () => {
         {
           transcript: "clean text",
           cwd: "C:/neutral",
-          settings: {
-            ...DEFAULT_SERVER_SETTINGS,
+          options: {
+            ...DEFAULT_CLIENT_SETTINGS,
             speechPostProcessingPrompt: { mode: "custom", customInstructions: "" },
           },
         },
@@ -196,7 +207,7 @@ describe("postProcessTranscript", () => {
           {
             transcript: "raw text",
             cwd: "C:/neutral",
-            settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: false },
+            options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: false },
           },
           generate,
         ),
@@ -208,12 +219,12 @@ describe("postProcessTranscript", () => {
   it.effect("adds context-sensitive correction instructions to the prompt", () =>
     Effect.gen(function* () {
       const generate = vi.fn(() => Effect.succeed({ transcription: "I want yellow." }));
-      const settings = { ...DEFAULT_SERVER_SETTINGS, speechCorrectionWord: "err" };
+      const options = { ...DEFAULT_CLIENT_SETTINGS, speechCorrectionWord: "err" };
       yield* runPostProcess(
         {
           transcript: "I want orange, err, yellow.",
           cwd: "C:/neutral",
-          settings,
+          options,
         },
         generate,
       );
@@ -246,7 +257,7 @@ describe("postProcessTranscript", () => {
           {
             transcript: "raw text",
             cwd: "C:/neutral",
-            settings: { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingEnabled: true },
+            options: { ...DEFAULT_CLIENT_SETTINGS, speechPostProcessingEnabled: true },
           },
           () => Effect.succeed({ transcription: "   " }),
         ),
@@ -261,8 +272,8 @@ describe("postProcessTranscript", () => {
           {
             transcript: "Use MiniMax.",
             cwd: "C:/neutral",
-            settings: {
-              ...DEFAULT_SERVER_SETTINGS,
+            options: {
+              ...DEFAULT_CLIENT_SETTINGS,
               speechCustomWords: [{ term: "MiniMax", aliases: ["mini max"] }],
             },
           },

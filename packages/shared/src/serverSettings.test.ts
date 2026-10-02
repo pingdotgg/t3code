@@ -242,26 +242,6 @@ describe("serverSettings helpers", () => {
     );
   });
 
-  it("keeps the built-in voice prompt selected until custom instructions are nonempty", () => {
-    const blank = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      speechPostProcessingPrompt: { mode: "custom", customInstructions: "   " },
-    });
-    expect(blank.speechPostProcessingPrompt).toEqual({ mode: "default", customInstructions: "" });
-
-    const custom = applyServerSettingsPatch(blank, {
-      speechPostProcessingPrompt: { mode: "custom", customInstructions: "Keep product names." },
-    });
-    expect(custom.speechPostProcessingPrompt).toEqual({
-      mode: "custom",
-      customInstructions: "Keep product names.",
-    });
-    expect(
-      applyServerSettingsPatch(custom, {
-        speechPostProcessingPrompt: { customInstructions: "" },
-      }).speechPostProcessingPrompt,
-    ).toEqual({ mode: "default", customInstructions: "" });
-  });
-
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

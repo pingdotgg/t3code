@@ -3,33 +3,38 @@ import {
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
+  VoiceTranscriptionError,
   postProcessEnvironmentTranscript,
   VoiceInputController,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
+  type VoiceInputControllerDependencies,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
+  SpeechPostProcessingOptions,
   ProjectId,
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   SpeechStreamText,
 } from "@t3tools/contracts";
+import { SpeechTranscriptionOptions } from "@t3tools/contracts";
+import { mergeSpeechCustomWords } from "@t3tools/shared/speech";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  useClientSettings,
-  useClientSettingsHydrated,
-  useEnvironmentSettings,
-} from "../hooks/useSettings";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { toastManager } from "../components/ui/toast";
+
+const decodeTranscriptionOptions = Schema.decodeSync(SpeechTranscriptionOptions);
 
 const INITIAL_STATE: VoiceInputState<true> = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState<true> = { phase: "preparing", error: null, errorAction: null };
@@ -63,10 +68,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     : null;
   const prepared = Option.getOrNull(usePreparedConnection(transcriptionEnvironmentId));
   const postProcessingPrepared = Option.getOrNull(usePreparedConnection(input.environmentId));
-  const postProcessingEnabled = useEnvironmentSettings(
-    input.environmentId,
-    (settings) => settings.speechPostProcessingEnabled,
-  );
+  const clientSettings = useClientSettings();
+  const originatingEnvironment = useEnvironment(input.environmentId);
+  const preferencesRef = useRef({ clientSettings, originatingEnvironment });
+  useEffect(() => {
+    preferencesRef.current = { clientSettings, originatingEnvironment };
+  }, [clientSettings, originatingEnvironment]);
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
@@ -140,12 +147,46 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
     let disposed = false;
     let controller: VoiceInputController<true>;
+    let recordingPreferences: SpeechPostProcessingOptions | undefined;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
-      getProjectId: () => latestInputRef.current.projectId,
-      getProjectName: () => {
-        const name = latestInputRef.current.projectName;
-        return name && name.length <= 200 ? name : undefined;
+      getTranscriptionOptions: () => {
+        const { clientSettings, originatingEnvironment } = preferencesRef.current;
+        const { projectId, projectName } = latestInputRef.current;
+        if (projectId && !originatingEnvironment?.serverConfig) {
+          throw new VoiceTranscriptionError(
+            "preparation-failed",
+            "Reconnect the project environment to load its dictionary.",
+          );
+        }
+        const projectWords =
+          projectId && originatingEnvironment?.serverConfig
+            ? resolveProjectSettings(originatingEnvironment.serverConfig.settings, projectId)
+                .settings.speechProjectCustomWords
+            : [];
+        const speechCustomWords = mergeSpeechCustomWords(
+          clientSettings.speechCustomWords,
+          projectWords,
+        );
+        recordingPreferences = {
+          speechPostProcessingEnabled: clientSettings.speechPostProcessingEnabled,
+          speechCorrectionWord: clientSettings.speechCorrectionWord,
+          speechPostProcessingPrompt: { ...clientSettings.speechPostProcessingPrompt },
+          speechCustomWords,
+        };
+        try {
+          return decodeTranscriptionOptions({
+            ...clientSettings,
+            speechCustomWords,
+            ...(projectName && projectName.length <= 200 ? { projectName } : {}),
+          });
+        } catch (cause) {
+          throw new VoiceTranscriptionError(
+            "preparation-failed",
+            "Personal and project dictionaries together cannot exceed 100 words.",
+            { cause },
+          );
+        }
       },
       getMicrophoneId: () => microphoneIdRef.current,
       onLevel: setLevel,
@@ -164,39 +205,30 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       configureRecording: async () => undefined,
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
-      ...(postProcessingEnabled && postProcessingPrepared
-        ? {
-            postProcess: async (transcript, options) => {
-              const dictionary = input.projectId
-                ? await runtime.runPromise(
-                    getEnvironmentSpeechStatus(prepared, input.projectId),
-                    options,
-                  )
-                : undefined;
-              const result = await runtime.runPromise(
-                postProcessEnvironmentTranscript(
-                  postProcessingPrepared,
-                  transcript,
-                  {
-                    text: options.draft.text,
-                    selection: options.draft.selection,
-                  },
-                  dictionary?.supported
-                    ? [...(dictionary.projectCustomWords ?? []), ...dictionary.customWords]
-                    : undefined,
-                ),
-                options,
-              );
-              return result.text;
-            },
-            onPostProcessingError: () =>
-              toastManager.add({
-                type: "warning",
-                title: "Post-processing failed",
-                description: "The original transcription was added.",
-              }),
-          }
-        : {}),
+      get postProcess(): VoiceInputControllerDependencies<true>["postProcess"] {
+        const preferences = recordingPreferences;
+        if (!preferences?.speechPostProcessingEnabled) return undefined;
+        return async (transcript, options) => {
+          if (!postProcessingPrepared)
+            throw new Error("The project environment is unavailable for transcript cleanup.");
+          const result = await runtime.runPromise(
+            postProcessEnvironmentTranscript(
+              postProcessingPrepared,
+              transcript,
+              { text: options.draft.text, selection: options.draft.selection },
+              preferences,
+            ),
+            options,
+          );
+          return result.text;
+        };
+      },
+      onPostProcessingError: () =>
+        toastManager.add({
+          type: "warning",
+          title: "Post-processing failed",
+          description: "The original transcription was added.",
+        }),
       readDraft,
       commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
       onStateChange: (value) => {
@@ -217,7 +249,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [postProcessingEnabled, postProcessingPrepared, prepared, input.projectId]);
+  }, [postProcessingPrepared, prepared]);
 
   useEffect(() => {
     if (!prepared) return;

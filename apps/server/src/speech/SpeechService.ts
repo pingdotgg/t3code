@@ -1,11 +1,9 @@
 import type {
   EnvironmentSpeechModel,
-  ProjectId,
   EnvironmentSpeechStatus,
   SpeechAcceleration,
-  SpeechCustomWords,
-  SpeechLanguage,
   SpeechModelUnloadTimeout,
+  SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
@@ -92,24 +90,6 @@ export class SpeechOperationError extends Schema.TaggedError<SpeechOperationErro
   }
 }
 
-export class SpeechDictionaryConflictError extends Schema.TaggedError<SpeechDictionaryConflictError>()(
-  "SpeechDictionaryConflictError",
-  { term: Schema.String },
-) {
-  override get message() {
-    return `${this.term} is already used in a shared or project dictionary.`;
-  }
-}
-
-export class SpeechDictionaryLimitError extends Schema.TaggedError<SpeechDictionaryLimitError>()(
-  "SpeechDictionaryLimitError",
-  {},
-) {
-  override get message() {
-    return "Shared and project words together cannot exceed the 100-word dictionary limit.";
-  }
-}
-
 export class SpeechUnsupportedPlatformError extends Schema.TaggedError<SpeechUnsupportedPlatformError>()(
   "SpeechUnsupportedPlatformError",
   { platform: Schema.String, architecture: Schema.String },
@@ -167,9 +147,6 @@ export class SpeechService extends Context.Service<
   SpeechService,
   {
     readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechOperationError>;
-    readonly getStatus: (
-      projectId?: ProjectId,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechOperationError>;
     readonly models: Effect.Effect<
       { readonly models: ReadonlyArray<EnvironmentSpeechModel> },
       SpeechOperationError
@@ -183,35 +160,17 @@ export class SpeechService extends Context.Service<
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
-      projectName?: string,
-      projectId?: ProjectId,
+      options: SpeechTranscriptionOptions,
     ) => Effect.Effect<string, SpeechError>;
     readonly prepareModel: Effect.Effect<void, SpeechError>;
-    readonly updateCustomWords: (
-      words: SpeechCustomWords,
-      projectId?: ProjectId,
-    ) => Effect.Effect<
-      EnvironmentSpeechStatus,
-      SpeechError | SpeechDictionaryConflictError | SpeechDictionaryLimitError
-    >;
-    readonly updateFillerWordRemoval: (
-      enabled: boolean,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateAcceleration: (
       acceleration: SpeechAcceleration,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly updateModelUnloadTimeout: (
       timeout: SpeechModelUnloadTimeout,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly updateLanguage: (
-      language: SpeechLanguage,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly updateTranslation: (
-      enabled: boolean,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: (
-      projectName?: string,
-      projectId?: ProjectId,
+      options: SpeechTranscriptionOptions,
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
@@ -577,10 +536,7 @@ export const make = Effect.gen(function* () {
       catch: (cause) => speechError(operation, cause),
     });
 
-  const currentStatus = async (
-    settings: SettingsSnapshot,
-    projectId?: ProjectId,
-  ): Promise<EnvironmentSpeechStatus> => {
+  const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
     return {
@@ -596,17 +552,9 @@ export const make = Effect.gen(function* () {
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
       supportsTranslation: definition.supportsTranslation,
-      translateToEnglish: settings.speechTranslateToEnglish,
-      language: settings.speechLanguage,
-      effectiveLanguage: effectiveSpeechLanguage(definition, settings.speechLanguage),
       acceleration: settings.speechAcceleration,
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
       gpuDevices: await (gpuDevices ??= listNativeSpeechGpuDevices().catch(() => [])),
-      customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
-      ...(projectId
-        ? { projectCustomWords: settings.speechProjectCustomWords[projectId] ?? [] }
-        : {}),
-      removeFillerWords: settings.speechRemoveFillerWords,
     };
   };
 
@@ -644,9 +592,9 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const freshStatus = (operation: string, projectId?: ProjectId) =>
+  const freshStatus = (operation: string) =>
     readSettings(operation).pipe(
-      Effect.flatMap((settings) => attempt(operation, () => currentStatus(settings, projectId))),
+      Effect.flatMap((settings) => attempt(operation, () => currentStatus(settings))),
     );
 
   const statusEffect = freshStatus("status");
@@ -676,7 +624,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     ),
-    startStream: (projectName, projectId) =>
+    startStream: (preferences) =>
       Effect.gen(function* () {
         const operation = "streaming transcription";
         if (closing || activeOperation) return yield* new SpeechBusyError({ operation });
@@ -717,14 +665,8 @@ export const make = Effect.gen(function* () {
           }),
         );
         const rawSettings = yield* readSettings("custom words loading");
-        const settings = {
-          ...rawSettings,
-          speechCustomWords: normalizeSpeechCustomWords([
-            ...(projectId ? (rawSettings.speechProjectCustomWords[projectId] ?? []) : []),
-            ...rawSettings.speechCustomWords,
-          ]),
-        };
-        const customWords = transcriptionCustomWords(settings, projectName);
+        const settings = { ...rawSettings, ...preferences };
+        const customWords = transcriptionCustomWords(settings, preferences.projectName);
         const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
         const replaceAliases = makeSpeechAliasReplacer(dictionary);
         const correct = (text: string) => replaceAliases(applySpeechCustomWords(text, customWords));
@@ -845,7 +787,6 @@ export const make = Effect.gen(function* () {
         };
       }),
     status: statusEffect,
-    getStatus: (projectId) => freshStatus("status", projectId),
     models: modelsEffect,
     downloadModel: (modelId) =>
       exclusive("model download", async () => {
@@ -868,50 +809,6 @@ export const make = Effect.gen(function* () {
       Effect.sync(() => {
         if (downloading?.modelId === modelId) downloading.controller.abort();
       }).pipe(Effect.andThen(freshStatus("model download cancellation"))),
-    updateCustomWords: (words, projectId) =>
-      exclusiveEffect(
-        "custom words update",
-        Effect.gen(function* () {
-          const settings = yield* readSettings("custom words update");
-          const customWords = normalizeSpeechCustomWords(words);
-          const otherWords = projectId
-            ? settings.speechCustomWords
-            : Object.values(settings.speechProjectCustomWords).flat();
-          const otherSpellings = new Set(
-            otherWords.flatMap(({ term, aliases }) =>
-              [term, ...aliases].map((value) => value.toLocaleLowerCase()),
-            ),
-          );
-          const conflict = customWords.find(({ term, aliases }) =>
-            [term, ...aliases].some((value) => otherSpellings.has(value.toLocaleLowerCase())),
-          );
-          if (conflict) return yield* new SpeechDictionaryConflictError({ term: conflict.term });
-          const exceedsLimit = projectId
-            ? settings.speechCustomWords.length + customWords.length > 100
-            : Object.values(settings.speechProjectCustomWords).some(
-                (entries) => entries.length + customWords.length > 100,
-              );
-          if (exceedsLimit) return yield* new SpeechDictionaryLimitError({});
-          yield* writeSettings(
-            "custom words update",
-            projectId
-              ? {
-                  speechProjectCustomWords: {
-                    [projectId]: customWords.length ? customWords : null,
-                  },
-                }
-              : { speechCustomWords: customWords },
-          );
-          return yield* freshStatus("custom words update", projectId);
-        }),
-      ),
-    updateFillerWordRemoval: (enabled) =>
-      exclusive("filler word removal update", async () => {}).pipe(
-        Effect.andThen(
-          writeSettings("filler word removal update", { speechRemoveFillerWords: enabled }),
-        ),
-        Effect.andThen(freshStatus("filler word removal update")),
-      ),
     updateAcceleration: (acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
@@ -920,23 +817,9 @@ export const make = Effect.gen(function* () {
       writeSettings("model unload timeout update", { speechModelUnloadTimeout: timeout }).pipe(
         Effect.andThen(freshStatus("model unload timeout update")),
       ),
-    updateLanguage: (language) =>
-      writeSettings("language update", { speechLanguage: language }).pipe(
-        Effect.andThen(freshStatus("language update")),
-      ),
-    updateTranslation: (enabled) =>
-      writeSettings("translation update", { speechTranslateToEnglish: enabled }).pipe(
-        Effect.andThen(freshStatus("translation update")),
-      ),
-    transcribe: (pcmBytes, projectName, projectId) =>
+    transcribe: (pcmBytes, preferences) =>
       readSettings("transcription").pipe(
-        Effect.map((settings) => ({
-          ...settings,
-          speechCustomWords: normalizeSpeechCustomWords([
-            ...(projectId ? (settings.speechProjectCustomWords[projectId] ?? []) : []),
-            ...settings.speechCustomWords,
-          ]),
-        })),
+        Effect.map((settings) => ({ ...settings, ...preferences })),
         Effect.flatMap((settings) =>
           exclusiveEffect(
             "transcription",
@@ -971,7 +854,7 @@ export const make = Effect.gen(function* () {
                 const prepareDurationMs = performance.now() - prepareStartedAt;
                 const inferenceStartedAt = performance.now();
                 let inferenceModel = loaded;
-                const customWords = transcriptionCustomWords(settings, projectName);
+                const customWords = transcriptionCustomWords(settings, preferences.projectName);
                 const dictionary = normalizeSpeechCustomWords(settings.speechCustomWords);
                 const removeFillerWords = settings.speechRemoveFillerWords;
                 const fillerWordLanguage = translateToEnglish

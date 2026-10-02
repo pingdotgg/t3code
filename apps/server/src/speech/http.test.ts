@@ -1,3 +1,4 @@
+import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalFetchInEffect:off - real HTTP streaming boundary test.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -6,6 +7,8 @@ import { expect, vi } from "vite-plus/test";
 import {
   AuthSessionId,
   AuthOrchestrationOperateScope,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+  SPEECH_MAX_OPTIONS_BYTES,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -65,20 +68,14 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
-          getStatus: () => Effect.succeed({ supported: false as const, reason: "test" }),
           prepareModel: Effect.void,
           models: Effect.succeed({ models: [] }),
           downloadModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
           selectModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
           cancelDownload: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateCustomWords: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateFillerWordRemoval: () =>
-            Effect.succeed({ supported: false as const, reason: "test" }),
           updateAcceleration: () => Effect.succeed({ supported: false as const, reason: "test" }),
           updateModelUnloadTimeout: () =>
             Effect.succeed({ supported: false as const, reason: "test" }),
-          updateLanguage: () => Effect.succeed({ supported: false as const, reason: "test" }),
-          updateTranslation: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
           startStream: () => Effect.die("not used"),
           removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
@@ -98,7 +95,9 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
             headers: { "content-type": "application/octet-stream" },
             body: new ReadableStream({
               start(controller) {
-                controller.enqueue(new Uint8Array(SpeechService.MAX_SPEECH_BYTES));
+                controller.enqueue(
+                  new Uint8Array(SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4),
+                );
                 controller.enqueue(new Uint8Array(4));
                 controller.close();
               },
@@ -125,6 +124,11 @@ effectIt.effect.each([
     reason: "speech_unavailable",
   },
   {
+    malformedOptions: true,
+    error: new SpeechService.SpeechInvalidAudioError({ byteLength: 3, message: "invalid PCM" }),
+    reason: "invalid_audio",
+  },
+  {
     oversized: true,
     error: new SpeechService.SpeechInvalidAudioError({ byteLength: 3, message: "invalid PCM" }),
     reason: "invalid_audio",
@@ -148,21 +152,17 @@ effectIt.effect.each([
           }),
         ),
       );
+      const transcribe = vi.fn(() => Effect.fail(error));
       const service = Layer.succeed(SpeechService.SpeechService, {
         status: Effect.succeed({ supported: false as const, reason: "test" }),
-        getStatus: () => Effect.succeed({ supported: false as const, reason: "test" }),
         prepareModel: Effect.void,
         models: Effect.succeed({ models: [] }),
         downloadModel: () => Effect.fail(error),
         selectModel: () => Effect.fail(error),
         cancelDownload: () => Effect.fail(error),
-        updateCustomWords: () => Effect.fail(error),
-        updateFillerWordRemoval: () => Effect.fail(error),
         updateAcceleration: () => Effect.fail(error),
         updateModelUnloadTimeout: () => Effect.fail(error),
-        updateLanguage: () => Effect.fail(error),
-        updateTranslation: () => Effect.fail(error),
-        transcribe: () => Effect.fail(error),
+        transcribe,
         startStream: () => Effect.fail(error),
         removeModel: () => Effect.fail(error),
       });
@@ -173,6 +173,8 @@ effectIt.effect.each([
           Layer.provide(auth),
           Layer.provide(service),
           Layer.provide(HttpServer.layerServices),
+          Layer.provide(dependencies),
+          Layer.provide(NodeServices.layer),
         ),
         { disableLogger: true },
       );
@@ -180,14 +182,28 @@ effectIt.effect.each([
       const request = new Request("http://localhost/api/voice/transcribe", {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
-        body: new Uint8Array(3),
+        body:
+          "malformedOptions" in options
+            ? new Uint8Array([255, 255, 255, 255])
+            : encodeSpeechPcmRequest(new Uint8Array(3), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
       });
       const decode = vi.spyOn(request, "arrayBuffer");
       if ("oversized" in options)
-        request.headers.set("content-length", String(SpeechService.MAX_SPEECH_BYTES + 1));
+        request.headers.set(
+          "content-length",
+          String(SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 5),
+        );
       const context = yield* Layer.build(Layer.mergeAll(dependencies, NodeServices.layer));
       const response = yield* Effect.promise(() => handler(request, context));
       if ("oversized" in options) expect(decode).not.toHaveBeenCalled();
+      if ("malformedOptions" in options || "oversized" in options) {
+        expect(transcribe).not.toHaveBeenCalled();
+      } else {
+        expect(transcribe).toHaveBeenCalledWith(
+          new Uint8Array(3),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        );
+      }
       expect(response.status).toBe(400);
       expect(yield* Effect.promise(() => response.json())).toMatchObject({
         code: "invalid_request",

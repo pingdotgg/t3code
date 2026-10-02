@@ -45,22 +45,24 @@ The current project's name is included automatically when transcribing in its th
 If transcription repeatedly writes a term differently, add that spelling as an alias
 under the preferred term. Only preferred terms are sent as recognition hints; aliases
 correct matching words and phrases in the transcript.
-Select **All projects** to add shared words, or select a project to add words used
-only in that project. Project words are used together with shared words. Shared
-words can be inspected in project view; edit them in **All projects**. Each project
-can use up to 100 shared and project words combined.
-The words are stored on the selected transcription environment and apply to every
-web or desktop client that uses it.
+Select **All projects** to edit your personal dictionary on this client, or select
+a project to edit vocabulary saved on its originating environments. Both dictionaries
+are used together, even when transcription runs elsewhere. Project spellings take
+precedence when dictionaries overlap. Each recording can use up to 100 personal
+and project words combined.
 
 **Remove filler words** deletes common hesitation sounds from completed
 transcriptions. It uses conservative language-aware rules so words with a real
 meaning in another language are preserved when the transcription language is
-uncertain. The setting is stored on the selected transcription environment.
+uncertain. The preference is saved on this client.
 
 On web and desktop, **Voice post-processing** can polish a completed transcript
 with a provider configured on the current project environment. Its model and
 prompt are independent from the environment's general text generation model.
-Enable it and choose its model and prompt under Settings, then Voice.
+Enable it and choose its model and prompt under Settings, then Voice. Language,
+translation, filler removal, cleanup instructions, and correction cues are saved
+on this client. The cleanup model is configured separately on each thread's
+environment. Changes to personal preferences apply to the next recording.
 If automatic cleanup misses your spoken corrections, add the word or phrase you
 use to signal them as an **Explicit correction cue** in Voice settings.
 While it runs, the composer shows a post-processing state. Select **Skip** to

@@ -21,6 +21,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useClientSettingsHydrated, useUpdateClientSettings } from "../../hooks/useSettings";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -30,6 +31,8 @@ export function VoicePostProcessingSettings() {
   const [editingCustomInstructions, setEditingCustomInstructions] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateClientSettings = useUpdateClientSettings();
+  const clientSettingsHydrated = useClientSettingsHydrated();
   const { environment, connectedEnvironments } = useSettingsScope();
   const providers = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
   const textGenerationProviders = providers.filter(
@@ -67,15 +70,15 @@ export function VoicePostProcessingSettings() {
   return (
     <SettingsSection title="Improve transcripts">
       <SettingsRow
-        serverScoped
-        settingKeys={["speechPostProcessingEnabled"]}
         {...searchableSetting("speech-post-processing")}
-        description="Polish completed voice transcripts with a provider on this project environment."
+        description="Enable cleanup for this client. Cleanup runs on each thread’s environment using its configured provider."
         control={
           <Switch
             checked={settings.speechPostProcessingEnabled}
-            disabled={!hasServerTargets || !hasTextGenerationProvider}
-            onCheckedChange={(enabled) => updateSettings({ speechPostProcessingEnabled: enabled })}
+            disabled={!clientSettingsHydrated}
+            onCheckedChange={(enabled) =>
+              void updateClientSettings({ speechPostProcessingEnabled: enabled })
+            }
             aria-label="Enable voice post-processing"
           />
         }
@@ -84,7 +87,7 @@ export function VoicePostProcessingSettings() {
         serverScoped
         settingKeys={["speechPostProcessingModelSelection"]}
         {...searchableSetting("speech-post-processing-model")}
-        description="Independent from the text generation model. Runs on this project environment after transcription."
+        description={`Configure the cleanup provider on ${environment?.label ?? "the selected environment"}. Threads on that environment use it after transcription.`}
         control={
           !hasServerTargets ? (
             <span className="text-sm text-muted-foreground">Connect an environment first.</span>
@@ -142,8 +145,6 @@ export function VoicePostProcessingSettings() {
         }
       />
       <SettingsRow
-        serverScoped
-        settingKeys={["speechCorrectionWord"]}
         {...searchableSetting("speech-correction-word")}
         description="If automatic cleanup misses your spoken corrections, enter a word or phrase you use to signal them. Transcription gets it as a hint. Post-processing uses it only when context indicates a correction."
         control={
@@ -155,15 +156,13 @@ export function VoicePostProcessingSettings() {
               placeholder="err"
               aria-label="Explicit correction cue"
               onBlur={(event) =>
-                updateSettings({ speechCorrectionWord: event.target.value.trim() })
+                void updateClientSettings({ speechCorrectionWord: event.target.value.trim() })
               }
             />
           </div>
         }
       />
       <SettingsRow
-        serverScoped
-        settingKeys={["speechPostProcessingPrompt"]}
         {...searchableSetting("speech-post-processing-prompt")}
         description="Use the built-in transcript cleanup prompt or write your own instructions."
         control={
@@ -178,7 +177,7 @@ export function VoicePostProcessingSettings() {
               setEditingCustomInstructions(false);
               const nextInstructions =
                 customInstructionsRef.current?.value.trim() || customInstructions;
-              updateSettings({
+              void updateClientSettings({
                 speechPostProcessingPrompt: {
                   mode: mode as "default" | "custom",
                   customInstructions:
@@ -221,7 +220,7 @@ export function VoicePostProcessingSettings() {
                 if (!nextInstructions) {
                   setEditingCustomInstructions(false);
                   if (settings.speechPostProcessingPrompt.mode === "custom") {
-                    updateSettings({
+                    void updateClientSettings({
                       speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
                     });
                   }
@@ -231,7 +230,7 @@ export function VoicePostProcessingSettings() {
                   nextInstructions !== customInstructions ||
                   settings.speechPostProcessingPrompt.mode !== "custom"
                 ) {
-                  updateSettings({
+                  void updateClientSettings({
                     speechPostProcessingPrompt: {
                       mode: "custom",
                       customInstructions: nextInstructions,

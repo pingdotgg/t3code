@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { ProjectId } from "./baseSchemas.ts";
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
@@ -91,15 +90,9 @@ export const EnvironmentSpeechStatus = Schema.Union([
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
     supportsTranslation: Schema.Boolean,
-    translateToEnglish: Schema.Boolean,
-    language: SpeechLanguage,
-    effectiveLanguage: SpeechLanguage,
     acceleration: SpeechAcceleration,
     modelUnloadTimeout: SpeechModelUnloadTimeout,
     gpuDevices: Schema.Array(SpeechGpuDevice),
-    customWords: SpeechCustomWords,
-    projectCustomWords: Schema.optionalKey(SpeechCustomWords),
-    removeFillerWords: Schema.Boolean,
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
@@ -108,27 +101,56 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
   text: Schema.String,
 });
 
-export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({
-  words: SpeechCustomWords,
-  projectId: Schema.optionalKey(ProjectId),
-});
-export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
 export const EnvironmentSpeechAccelerationRequest = Schema.Struct({
   acceleration: SpeechAcceleration,
 });
 export const EnvironmentSpeechModelUnloadTimeoutRequest = Schema.Struct({
   timeout: SpeechModelUnloadTimeout,
 });
-export const EnvironmentSpeechLanguageRequest = Schema.Struct({ language: SpeechLanguage });
-export const EnvironmentSpeechTranslationRequest = Schema.Struct({ enabled: Schema.Boolean });
+export const SpeechPostProcessingPromptSettings = Schema.Struct({
+  mode: Schema.Literals(["default", "custom"]),
+  customInstructions: Schema.String.check(Schema.isMaxLength(10_000)),
+});
+export type SpeechPostProcessingPromptSettings = typeof SpeechPostProcessingPromptSettings.Type;
+
+export const SpeechTranscriptionOptions = Schema.Struct({
+  speechLanguage: SpeechLanguage,
+  speechTranslateToEnglish: Schema.Boolean,
+  speechCustomWords: SpeechCustomWords,
+  speechRemoveFillerWords: Schema.Boolean,
+  speechCorrectionWord: Schema.String.check(Schema.isMaxLength(50)),
+  speechPostProcessingEnabled: Schema.Boolean,
+  projectName: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type SpeechTranscriptionOptions = typeof SpeechTranscriptionOptions.Type;
+export const DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS: SpeechTranscriptionOptions = {
+  speechLanguage: "auto",
+  speechTranslateToEnglish: false,
+  speechCustomWords: [],
+  speechRemoveFillerWords: true,
+  speechCorrectionWord: "",
+  speechPostProcessingEnabled: true,
+};
+export const SPEECH_MAX_OPTIONS_BYTES = 128_000;
+
+export const SpeechPostProcessingOptions = Schema.Struct({
+  speechCustomWords: SpeechCustomWords,
+  speechCorrectionWord: Schema.String.check(Schema.isMaxLength(50)),
+  speechPostProcessingEnabled: Schema.Boolean,
+  speechPostProcessingPrompt: SpeechPostProcessingPromptSettings,
+});
+export type SpeechPostProcessingOptions = typeof SpeechPostProcessingOptions.Type;
+
 export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
-  dictionary: Schema.optionalKey(SpeechCustomWords),
+  options: SpeechPostProcessingOptions,
   transcript: Schema.String.check(Schema.isMaxLength(100_000)),
   draft: Schema.Struct({
     text: Schema.String.check(Schema.isMaxLength(100_000)),
     selection: Schema.Struct({ start: Schema.Number, end: Schema.Number }),
   }),
 });
+export type EnvironmentSpeechPostProcessingRequest =
+  typeof EnvironmentSpeechPostProcessingRequest.Type;
 export const EnvironmentSpeechPostProcessingResult = Schema.Struct({ text: Schema.String });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
 
@@ -137,7 +159,10 @@ const SPEECH_SAMPLE_RATE = 16_000;
 export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
 export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5 * 60;
 
-export const SpeechStreamCommand = Schema.Struct({ type: Schema.Literal("finish") });
+export const SpeechStreamCommand = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("start"), options: SpeechTranscriptionOptions }),
+  Schema.Struct({ type: Schema.Literal("finish") }),
+]);
 
 export const SpeechStreamText = Schema.Struct({
   committed: Schema.String,

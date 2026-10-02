@@ -7,7 +7,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
-import { ProjectId, ServerSettingsError } from "@t3tools/contracts";
+import {
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+  type SpeechTranscriptionOptions,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -91,7 +95,7 @@ vi.mock("./model.ts", () => ({
 }));
 const layer = SpeechService.layer.pipe(
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-review-" })),
-  Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })),
+  Layer.provideMerge(ServerSettings.layerTest({ speechModelId: "test-model" })),
   Layer.provide(NodeServices.layer),
 );
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
@@ -105,28 +109,14 @@ beforeEach(() => {
   downloadModel.mockImplementation(async () => "test.gguf");
 });
 
-const customWordsLayer = SpeechService.layer.pipe(
-  Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-custom-words-" })),
-  Layer.provide(
-    ServerSettings.layerTest({
-      speechModelId: "test-model",
-      speechCustomWords: [{ term: "T3 Code", aliases: [] }],
-    }),
-  ),
-  Layer.provide(NodeServices.layer),
-);
-
-const correctionWordLayer = SpeechService.layer.pipe(
-  Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-correction-word-" })),
-  Layer.provide(
-    ServerSettings.layerTest({
-      speechModelId: "test-model",
-      speechCustomWords: [{ term: "T3 Code", aliases: [] }],
-      speechCorrectionWord: "err",
-    }),
-  ),
-  Layer.provide(NodeServices.layer),
-);
+const customWordsOptions: SpeechTranscriptionOptions = {
+  ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+  speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+};
+const correctionWordOptions: SpeechTranscriptionOptions = {
+  ...customWordsOptions,
+  speechCorrectionWord: "err",
+};
 
 it.effect("prepares a batch model before audio arrives and reuses it for transcription", () =>
   Effect.gen(function* () {
@@ -135,7 +125,7 @@ it.effect("prepares a batch model before audio arrives and reuses it for transcr
     yield* speech.prepareModel;
     expect(loadNative).toHaveBeenCalledTimes(1);
     expect(native.transcribe).not.toHaveBeenCalled();
-    expect(yield* speech.transcribe(pcm())).toBe("hello");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     expect(loadNative).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(layer)),
 );
@@ -144,12 +134,12 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     yield* speech.updateModelUnloadTimeout("min_2");
-    yield* speech.transcribe(pcm());
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
     yield* TestClock.adjust(2 * 60_000 - 1);
     expect(native.dispose).not.toHaveBeenCalled();
     yield* TestClock.adjust(1);
     expect(native.dispose).toHaveBeenCalledOnce();
-    yield* speech.transcribe(pcm());
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
@@ -175,7 +165,7 @@ it.effect("waits for an active stream before immediate unloading", () =>
     const speech = yield* SpeechService.SpeechService;
     yield* speech.updateModelUnloadTimeout("immediately");
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* TestClock.adjust(60_000);
       expect(native.dispose).not.toHaveBeenCalled();
       yield* stream.finish;
@@ -196,7 +186,7 @@ it.effect("waits for timer-owned model disposal when the service scope closes", 
     let closed = false;
     const service = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      yield* speech.transcribe(pcm());
+      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* speech.updateModelUnloadTimeout("immediately");
       yield* TestClock.adjust(0);
     }).pipe(
@@ -222,33 +212,38 @@ it.effect("recognizes the correction word without showing it in the dictionary",
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "I want orange, er, yellow." });
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.transcribe(pcm())).toBe("I want orange, err, yellow.");
-    expect(yield* speech.status).toMatchObject({ customWords: [{ term: "T3 Code", aliases: [] }] });
-  }).pipe(Effect.provide(correctionWordLayer)),
+    expect(yield* speech.transcribe(pcm(), correctionWordOptions)).toBe(
+      "I want orange, err, yellow.",
+    );
+    expect(yield* speech.status).not.toHaveProperty("customWords");
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("includes the correction word in the model's initial prompt", () =>
   Effect.gen(function* () {
     native.supportsInitialPrompt = true;
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.transcribe(pcm());
+    yield* speech.transcribe(pcm(), correctionWordOptions);
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
       family: { kind: "whisper", initialPrompt: "err, T3 Code" },
     });
-  }).pipe(Effect.provide(correctionWordLayer)),
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("applies the selected language to transcription and streaming", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.updateLanguage("fr")).toMatchObject({
-      language: "fr",
-      effectiveLanguage: "fr",
+
+    yield* speech.transcribe(pcm(), {
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      speechLanguage: "fr",
     });
-    yield* speech.transcribe(pcm());
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({ language: "fr" });
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+      });
       yield* stream.finish;
     }).pipe(Effect.scoped);
     expect(native.begin).toHaveBeenCalledWith("fr");
@@ -258,12 +253,12 @@ it.effect("applies the selected language to transcription and streaming", () =>
 it.effect("translates supported non-English batch transcription to English", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.updateLanguage("fr");
-    expect(yield* speech.updateTranslation(true)).toMatchObject({
-      supportsTranslation: true,
-      translateToEnglish: true,
+
+    yield* speech.transcribe(pcm(), {
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      speechLanguage: "fr",
+      speechTranslateToEnglish: true,
     });
-    yield* speech.transcribe(pcm());
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
       language: "fr",
       task: "translate",
@@ -281,39 +276,42 @@ it.effect("recognizes the correction word in stream previews and final text", ()
     native.finish.mockResolvedValueOnce("orange, er, yellow");
     const speech = yield* SpeechService.SpeechService;
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(correctionWordOptions);
       expect(yield* stream.feed(pcm())).toMatchObject({
         text: { committed: "orange, err,", tentative: "yellow" },
       });
       expect(yield* stream.finish).toBe("orange, err, yellow");
     }).pipe(Effect.scoped);
-  }).pipe(Effect.provide(correctionWordLayer)),
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("corrects custom words for models without prompt support", () =>
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "open t 3 code" });
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
-  }).pipe(Effect.provide(customWordsLayer)),
+    expect(yield* speech.transcribe(pcm(), customWordsOptions)).toBe("open T3 Code");
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("passes custom words as an initial prompt when the model supports it", () =>
   Effect.gen(function* () {
     native.supportsInitialPrompt = true;
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.transcribe(pcm());
+    yield* speech.transcribe(pcm(), customWordsOptions);
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
       family: { kind: "whisper", initialPrompt: "T3 Code" },
     });
-  }).pipe(Effect.provide(customWordsLayer)),
+  }).pipe(Effect.provide(layer)),
 );
 
 it.effect("includes the active project name in the transcription prompt", () =>
   Effect.gen(function* () {
     native.supportsInitialPrompt = true;
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.transcribe(pcm(), "Acme Studio");
+    yield* speech.transcribe(pcm(), {
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      projectName: "Acme Studio",
+    });
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
       family: { kind: "whisper", initialPrompt: "Acme Studio" },
     });
@@ -328,7 +326,10 @@ it.effect("uses the active project name to correct streaming text", () =>
     });
     const speech = yield* SpeechService.SpeechService;
     const text = yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream("Acme Studio");
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        projectName: "Acme Studio",
+      });
       return yield* stream.feed(pcm());
     }).pipe(Effect.scoped);
     expect(text.text?.tentative).toBe("Acme Studio");
@@ -340,7 +341,12 @@ it.effect("applies aliases even when the model accepts a vocabulary prompt", () 
     native.supportsInitialPrompt = true;
     native.transcribe.mockResolvedValueOnce({ text: "open t three code" });
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechCustomWords: [{ term: "T3 Code", aliases: ["t three code"] }],
+      }),
+    ).toBe("open T3 Code");
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
       family: { kind: "whisper", initialPrompt: "T3 Code" },
     });
@@ -351,7 +357,6 @@ it.effect("applies aliases even when the model accepts a vocabulary prompt", () 
         Layer.provide(
           ServerSettings.layerTest({
             speechModelId: "test-model",
-            speechCustomWords: [{ term: "T3 Code", aliases: ["t three code"] }],
           }),
         ),
         Layer.provide(NodeServices.layer),
@@ -364,7 +369,9 @@ it.effect("removes filler words from batch transcription", () =>
   Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "Um, I uhh think this works." });
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.transcribe(pcm())).toBe("I think this works.");
+    expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
+      "I think this works.",
+    );
   }).pipe(Effect.provide(layer)),
 );
 
@@ -373,7 +380,7 @@ it.effect("removes filler words when a stream is finalized", () =>
     native.finish.mockResolvedValueOnce("Um, I uhh think this works.");
     const speech = yield* SpeechService.SpeechService;
     const result = yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       return yield* stream.finish;
     }).pipe(Effect.scoped);
     expect(result).toBe("I think this works.");
@@ -386,7 +393,6 @@ it.effect("preserves filler words when removal is disabled", () => {
     Layer.provide(
       ServerSettings.layerTest({
         speechModelId: "test-model",
-        speechRemoveFillerWords: false,
       }),
     ),
     Layer.provide(NodeServices.layer),
@@ -394,7 +400,12 @@ it.effect("preserves filler words when removal is disabled", () => {
   return Effect.gen(function* () {
     native.transcribe.mockResolvedValueOnce({ text: "Um, I uhh think this works." });
     const speech = yield* SpeechService.SpeechService;
-    expect(yield* speech.transcribe(pcm())).toBe("Um, I uhh think this works.");
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechRemoveFillerWords: false,
+      }),
+    ).toBe("Um, I uhh think this works.");
   }).pipe(Effect.provide(disabledLayer));
 });
 
@@ -402,7 +413,7 @@ it.effect("holds model ownership until the stream scope closes and preserves sil
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       const busy = yield* Effect.result(speech.selectModel("fallback-model"));
       expect(Result.isFailure(busy) && busy.failure).toMatchObject({ _tag: "SpeechBusyError" });
       yield* stream.feed(new Uint8Array(new Float32Array(160).buffer));
@@ -418,11 +429,11 @@ it.effect("holds model ownership until the stream scope closes and preserves sil
 it.effect("resets cancelled streams and reuses the loaded model", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(native.reset).toHaveBeenCalledOnce();
     expect(native.dispose).not.toHaveBeenCalled();
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* stream.feed(pcm());
       yield* stream.finish;
     }).pipe(Effect.scoped);
@@ -434,9 +445,9 @@ it.effect("disposes a stream when resetting it fails", () =>
   Effect.gen(function* () {
     native.reset.mockRejectedValueOnce(new Error("reset failed"));
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(native.dispose).toHaveBeenCalledOnce();
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
@@ -445,10 +456,10 @@ it.live("stops an unresponsive stream reset and releases the busy slot", () =>
   Effect.gen(function* () {
     native.reset.mockImplementationOnce(() => new Promise(() => {}));
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(native.dispose).toHaveBeenCalledOnce();
     expect(yield* speech.status).toMatchObject({ state: "ready" });
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
@@ -479,11 +490,13 @@ it.effect("releases a stream cancelled while settings are loading", () =>
     );
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const starting = yield* speech.startStream().pipe(Effect.scoped, Effect.forkChild);
+      const starting = yield* speech
+        .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.scoped, Effect.forkChild);
       yield* Effect.promise(() => settingsRead.promise);
       yield* Fiber.interrupt(starting);
       yield* Effect.gen(function* () {
-        const stream = yield* speech.startStream();
+        const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
         yield* stream.finish;
       }).pipe(Effect.scoped);
       expect(loadNative).toHaveBeenCalledOnce();
@@ -522,9 +535,11 @@ it.effect("recovers the busy slot when a settings read fails", () =>
     );
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const first = yield* speech.startStream().pipe(Effect.scoped, Effect.result);
+      const first = yield* speech
+        .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.scoped, Effect.result);
       expect(Result.isFailure(first)).toBe(true);
-      yield* speech.startStream().pipe(Effect.scoped);
+      yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
       expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(testLayer));
   }),
@@ -544,13 +559,13 @@ it.effect("reuses the model when a cancelled feed finishes during reset", () =>
     });
     const speech = yield* SpeechService.SpeechService;
     yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* stream.feed(pcm()).pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
     }).pipe(Effect.scoped);
     expect(native.reset).toHaveBeenCalledOnce();
     expect(native.dispose).not.toHaveBeenCalled();
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledOnce();
   }).pipe(Effect.provide(layer)),
 );
@@ -559,7 +574,7 @@ it.effect("rejects invalid streaming audio and resets the stream", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     const result = yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* stream.feed(new Uint8Array([1, 2, 3]));
     }).pipe(Effect.scoped, Effect.result);
     expect(Result.isFailure(result) && result.failure).toMatchObject({
@@ -578,7 +593,9 @@ it.effect("preserves a cancelled download during stream preparation", () =>
     );
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.startStream().pipe(Effect.scoped));
+      return yield* Effect.result(
+        speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped),
+      );
     }).pipe(Effect.provide(layer));
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechDownloadCancelledError",
@@ -593,7 +610,9 @@ it.effect("preserves a busy error during stream preparation", () =>
     );
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.startStream().pipe(Effect.scoped));
+      return yield* Effect.result(
+        speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped),
+      );
     }).pipe(Effect.provide(layer));
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechBusyError",
@@ -608,7 +627,7 @@ it.effect("preserves a cancelled download during transcription preparation", () 
     );
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.transcribe(pcm()));
+      return yield* Effect.result(speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS));
     }).pipe(Effect.provide(layer));
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechDownloadCancelledError",
@@ -623,7 +642,7 @@ it.effect("preserves a busy error during transcription preparation", () =>
     );
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.transcribe(pcm()));
+      return yield* Effect.result(speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS));
     }).pipe(Effect.provide(layer));
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechBusyError",
@@ -635,7 +654,7 @@ it.effect("releases the loaded native model when its service scope closes", () =
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
       expect(native.dispose).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layer));
     expect(native.dispose).toHaveBeenCalledOnce();
@@ -645,7 +664,9 @@ it.effect("preserves invalid PCM errors through the service boundary", () =>
   Effect.gen(function* () {
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.transcribe(new Uint8Array(3)));
+      return yield* Effect.result(
+        speech.transcribe(new Uint8Array(3), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS),
+      );
     }).pipe(Effect.provide(layer));
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechInvalidAudioError",
@@ -658,7 +679,7 @@ it.effect("retries accelerated inference on CPU after the native process fails",
     native.transcribe.mockRejectedValueOnce(new Error("worker stopped"));
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
       expect(loadNative).toHaveBeenCalledTimes(2);
       expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
     }).pipe(Effect.provide(layer));
@@ -673,7 +694,9 @@ it.effect("uses a selected GPU without falling back to CPU after inference fails
       const speech = yield* SpeechService.SpeechService;
       const acceleration = 'gpu:["vulkan","gpu-1"]';
       expect(yield* speech.updateAcceleration(acceleration)).toMatchObject({ acceleration });
-      const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+      const result = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.result);
       expect(Result.isFailure(result) && result.failure).toMatchObject({
         _tag: "SpeechOperationError",
         operation: "transcription",
@@ -691,7 +714,9 @@ it.effect("reports an unavailable selected GPU without loading CPU", () =>
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
       yield* speech.updateAcceleration('gpu:["vulkan","missing"]');
-      const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+      const result = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
       expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer));
@@ -702,9 +727,9 @@ it.effect("reloads a cached model after acceleration changes", () =>
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      yield* speech.transcribe(pcm());
+      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       yield* speech.updateAcceleration("cpu");
-      yield* speech.transcribe(pcm());
+      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       expect(loadNative).toHaveBeenCalledTimes(2);
       expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
       expect(native.dispose).toHaveBeenCalled();
@@ -718,7 +743,7 @@ it.effect("applies an acceleration change after an active stream finishes", () =
       const speech = yield* SpeechService.SpeechService;
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const stream = yield* speech.startStream();
+          const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
           expect(yield* speech.updateAcceleration("cpu")).toMatchObject({
             state: "transcribing",
             acceleration: "cpu",
@@ -726,7 +751,7 @@ it.effect("applies an acceleration change after an active stream finishes", () =
           yield* stream.finish;
         }),
       );
-      yield* speech.transcribe(pcm());
+      yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       expect(loadNative).toHaveBeenCalledTimes(2);
       expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
     }).pipe(Effect.provide(layer));
@@ -738,7 +763,7 @@ it.effect("replays streaming audio on CPU after an accelerated feed crashes", ()
     native.feed.mockRejectedValueOnce(new Error("worker stopped"));
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const stream = yield* speech.startStream();
+      const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       expect((yield* stream.feed(pcm())).text).toEqual({ committed: "", tentative: "hello" });
       expect(loadNative).toHaveBeenCalledTimes(2);
       expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
@@ -757,7 +782,7 @@ it.effect("reports a selected GPU streaming failure without replaying on CPU", (
       yield* speech.updateAcceleration('gpu:["vulkan","gpu-1"]');
       const result = yield* Effect.scoped(
         Effect.gen(function* () {
-          const stream = yield* speech.startStream();
+          const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
           return yield* stream.feed(pcm()).pipe(Effect.result);
         }),
       );
@@ -796,7 +821,7 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
   Effect.gen(function* () {
     const result = yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      return yield* Effect.result(speech.transcribe(pcm()));
+      return yield* Effect.result(speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS));
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(HostProcessPlatform, "win32"),
@@ -841,14 +866,16 @@ it.live("frees a cancelled batch transcription and preempts it on retry", () =>
     });
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
+      const request = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(request);
       // The slot is free immediately while abandoned work still runs.
       expect(yield* speech.status).toMatchObject({ state: "ready" });
       expect(native.dispose).not.toHaveBeenCalled();
       // The retry waits out the grace period, stops the orphan, and reloads.
-      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
       expect(native.dispose).toHaveBeenCalledOnce();
       expect(loadNative).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(layer));
@@ -865,11 +892,13 @@ it.effect("reuses the model when abandoned batch work finishes first", () =>
     });
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
+      const request = yield* speech
+        .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+        .pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(request);
       gate.resolve({ text: "late hello" });
-      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
       expect(native.dispose).not.toHaveBeenCalled();
       expect(loadNative).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer));
@@ -887,7 +916,9 @@ it.effect(
       });
       yield* Effect.gen(function* () {
         const speech = yield* SpeechService.SpeechService;
-        const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
+        const request = yield* speech
+          .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+          .pipe(Effect.forkChild);
         yield* Effect.promise(() => started.promise);
         yield* Fiber.interrupt(request);
       }).pipe(Effect.provide(layer));
@@ -926,10 +957,12 @@ it.effect("a failed stream begin does not poison the next stream", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
     native.begin.mockRejectedValueOnce(new Error("native stream creation failed"));
-    const result = yield* speech.startStream().pipe(Effect.scoped, Effect.result);
+    const result = yield* speech
+      .startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.scoped, Effect.result);
     expect(Result.isFailure(result)).toBe(true);
     expect(native.dispose).toHaveBeenCalledOnce();
-    yield* speech.startStream().pipe(Effect.scoped);
+    yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS).pipe(Effect.scoped);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
 );
@@ -940,7 +973,9 @@ it.effect("failed CPU fallback is disposed", () =>
     const failure = new Error("CPU failed");
     native.transcribe.mockRejectedValueOnce(failure);
     const speech = yield* SpeechService.SpeechService;
-    const result = yield* speech.transcribe(pcm()).pipe(Effect.result);
+    const result = yield* speech
+      .transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)
+      .pipe(Effect.result);
     expect(Result.isFailure(result) && result.failure).toMatchObject({
       _tag: "SpeechOperationError",
       operation: "transcription",
@@ -950,96 +985,44 @@ it.effect("failed CPU fallback is disposed", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("keeps project words separate and combines only the selected project's hints", () =>
+it.effect("keeps consecutive clients' transcription preferences isolated", () =>
   Effect.gen(function* () {
     native.supportsInitialPrompt = true;
     const speech = yield* SpeechService.SpeechService;
-    const first = ProjectId.make("project-one");
-    const second = ProjectId.make("project-two");
-    yield* speech.updateCustomWords([{ term: "GitHub", aliases: [] }]);
-    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: ["pair a keet"] }], first);
-    yield* speech.updateCustomWords([{ term: "Moonshine", aliases: [] }], second);
-    expect(yield* speech.getStatus(first)).toMatchObject({
-      customWords: [{ term: "GitHub", aliases: [] }],
-      projectCustomWords: [{ term: "Parakeet", aliases: ["pair a keet"] }],
-    });
+    const settingsService = yield* ServerSettings.ServerSettingsService;
+    const before = yield* settingsService.getSettings;
     native.transcribe.mockResolvedValueOnce({ text: "pair a keet" });
-    expect(yield* speech.transcribe(pcm(), undefined, first)).toBe("Parakeet");
+    expect(
+      yield* speech.transcribe(pcm(), {
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechLanguage: "fr",
+        speechCustomWords: [{ term: "Parakeet", aliases: ["pair a keet"] }],
+      }),
+    ).toBe("Parakeet");
     expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
-      family: { kind: "whisper", initialPrompt: "Parakeet, GitHub" },
+      language: "fr",
+      family: { kind: "whisper", initialPrompt: "Parakeet" },
     });
-    yield* speech.transcribe(pcm(), undefined, second);
-    expect(native.transcribe.mock.calls[1]?.[1]).toMatchObject({
-      family: { kind: "whisper", initialPrompt: "Moonshine, GitHub" },
-    });
-    yield* speech.updateCustomWords([], first);
-    expect(yield* speech.getStatus(first)).toMatchObject({
-      projectCustomWords: [],
-      customWords: [{ term: "GitHub", aliases: [] }],
-    });
+    yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
+    expect(native.transcribe.mock.calls[1]?.[1]).toMatchObject({ language: "en" });
+    expect(native.transcribe.mock.calls[1]?.[1]).not.toHaveProperty("family");
+    expect(yield* settingsService.getSettings).toEqual(before);
   }).pipe(Effect.provide(layer)),
 );
-it.effect("rejects project words and misspellings already in the shared dictionary", () =>
+it.effect("uses the supplied dictionary in live transcription", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    yield* speech.updateCustomWords([{ term: "GitHub", aliases: ["get hub"] }]);
-    const result = yield* speech
-      .updateCustomWords([{ term: "Other", aliases: ["GET HUB"] }], ProjectId.make("project-one"))
-      .pipe(Effect.result);
-    expect(result._tag).toBe("Failure");
-    expect(yield* speech.getStatus(ProjectId.make("project-one"))).toMatchObject({
-      projectCustomWords: [],
-    });
-  }).pipe(Effect.provide(layer)),
-);
-it.effect("uses project misspellings in live transcription", () =>
-  Effect.gen(function* () {
-    const speech = yield* SpeechService.SpeechService;
-    const id = ProjectId.make("project-one");
-    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: ["pair a keet"] }], id);
     native.feed.mockResolvedValueOnce({
       revision: 1,
       text: { committed: "", tentative: "pair a keet" },
     });
     const result = yield* Effect.gen(function* () {
-      const stream = yield* speech.startStream(undefined, id);
+      const stream = yield* speech.startStream({
+        ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        speechCustomWords: [{ term: "Parakeet", aliases: ["pair a keet"] }],
+      });
       return yield* stream.feed(pcm());
     }).pipe(Effect.scoped);
     expect(result.text?.tentative).toBe("Parakeet");
-  }).pipe(Effect.provide(layer)),
-);
-
-it.effect("prevents adding a shared word that is already project-specific", () =>
-  Effect.gen(function* () {
-    const speech = yield* SpeechService.SpeechService;
-    const id = ProjectId.make("project-one");
-    yield* speech.updateCustomWords([{ term: "Parakeet", aliases: [] }], id);
-    const result = yield* speech
-      .updateCustomWords([{ term: "parakeet", aliases: [] }])
-      .pipe(Effect.result);
-    expect(result._tag).toBe("Failure");
-    expect(yield* speech.getStatus(id)).toMatchObject({
-      customWords: [],
-      projectCustomWords: [{ term: "Parakeet", aliases: [] }],
-    });
-  }).pipe(Effect.provide(layer)),
-);
-
-it.effect("rejects shared additions that would silently truncate a project's dictionary", () =>
-  Effect.gen(function* () {
-    const speech = yield* SpeechService.SpeechService;
-    const id = ProjectId.make("project-one");
-    yield* speech.updateCustomWords(
-      Array.from({ length: 100 }, (_, index) => ({ term: `Project term ${index}`, aliases: [] })),
-      id,
-    );
-    const result = yield* speech
-      .updateCustomWords([{ term: "New shared term", aliases: [] }])
-      .pipe(Effect.result);
-    expect(result._tag).toBe("Failure");
-    expect(yield* speech.getStatus(id)).toMatchObject({
-      customWords: [],
-      projectCustomWords: expect.arrayContaining([{ term: "Project term 99", aliases: [] }]),
-    });
   }).pipe(Effect.provide(layer)),
 );

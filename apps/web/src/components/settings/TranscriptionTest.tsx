@@ -1,6 +1,6 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { VoiceInputController, type VoiceInputState } from "@t3tools/client-runtime/voice-input";
-import type { SpeechStreamText } from "@t3tools/contracts";
+import type { SpeechStreamText, SpeechTranscriptionOptions } from "@t3tools/contracts";
 import { MicIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -15,11 +15,13 @@ export function TranscriptionTest({
   microphoneId,
   disabled,
   modelName,
+  options,
 }: {
   prepared: PreparedConnection | null;
   microphoneId: string;
   disabled: boolean;
   modelName: string;
+  options: SpeechTranscriptionOptions;
 }) {
   const [state, setState] = useState<VoiceInputState<true>>({
     phase: "idle",
@@ -29,6 +31,10 @@ export function TranscriptionTest({
   const [level, setLevel] = useState(0);
   const [transcript, setTranscript] = useState<string | null>(null);
   const [preview, setPreview] = useState<SpeechStreamText | null>(null);
+  const optionsRef = useRef(options);
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
   const controller = useRef<VoiceInputController<true> | null>(null);
   const [connection, setConnection] = useState(prepared);
   if (connection !== prepared) {
@@ -43,6 +49,7 @@ export function TranscriptionTest({
     let disposed = false;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
+      getTranscriptionOptions: () => optionsRef.current,
       getMicrophoneId: () => microphoneId,
       onLevel: (value) => {
         if (!disposed) setLevel(value);

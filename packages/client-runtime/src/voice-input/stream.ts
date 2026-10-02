@@ -4,6 +4,7 @@ import {
   SPEECH_STREAM_MAX_QUEUED_BYTES,
   SpeechStreamEvent,
   type SpeechStreamText,
+  type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -12,6 +13,7 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamE
 /** Audio stays bounded while the environment acknowledges a small send window. */
 export async function openSpeechStream(input: {
   readonly url: string;
+  readonly options: SpeechTranscriptionOptions;
   readonly signal: AbortSignal;
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (error: Error) => void;
@@ -79,6 +81,9 @@ export async function openSpeechStream(input: {
       armTimeout();
     }
   };
+  socket.addEventListener("open", () => {
+    if (!closed) socket.send(JSON.stringify({ type: "start", options: input.options }));
+  });
   socket.addEventListener("message", (event) => {
     if (closed) return;
     try {

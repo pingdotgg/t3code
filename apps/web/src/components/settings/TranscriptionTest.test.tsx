@@ -1,3 +1,4 @@
+import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
 import { createElement, type ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -62,6 +63,7 @@ async function mount() {
     root = create(
       createElement(TranscriptionTest, {
         prepared,
+        options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
         microphoneId: "mic",
         modelName: "Test model",
         disabled: false,
