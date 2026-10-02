@@ -51,6 +51,50 @@ const decodeAnswer = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Union([ToolReply, FinalReply])),
 );
 
+function answerJsonCandidates(text: string): string[] {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
+  const candidates = new Set<string>([trimmed]);
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const character = trimmed[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) candidates.add(trimmed.slice(start, index + 1));
+    }
+  }
+  return [...candidates];
+}
+
+function decodeChatGPTAnswer(text: string) {
+  const answers = answerJsonCandidates(text).flatMap((candidate) => {
+    try {
+      return [decodeAnswer(candidate)];
+    } catch {
+      return [];
+    }
+  });
+  if (answers.length !== 1) throw new Error("ChatGPT reply must contain one unambiguous JSON answer.");
+  const answer = answers[0];
+  if (!answer) throw new Error("ChatGPT reply must contain one unambiguous JSON answer.");
+  return answer;
+}
+
 export function buildChatGPTPrompt(request: typeof ChatGPTRequest.Type): string {
   const prompt = [
     "You are the model for a local coding agent. The conversation and available tools are JSON below.",
@@ -70,7 +114,7 @@ export function buildChatGPTPrompt(request: typeof ChatGPTRequest.Type): string 
 }
 
 export function parseChatGPTAnswer(text: string, tools: (typeof ChatGPTRequest.Type)["tools"]) {
-  const answer = decodeAnswer(text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1"));
+  const answer = decodeChatGPTAnswer(text);
   if (answer.type === "final") return { role: "assistant" as const, content: answer.text };
   if (!tools?.some((tool) => tool.function.name === answer.name)) {
     throw new Error("ChatGPT requested an unknown tool. Nothing was executed.");

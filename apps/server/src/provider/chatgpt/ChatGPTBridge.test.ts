@@ -65,6 +65,27 @@ it("accepts final replies and fenced JSON without treating text as a tool", () =
   ).toEqual({ role: "assistant", content: "Use read(file)." });
 });
 
+it("extracts one complete answer when ChatGPT adds surrounding page text", () => {
+  expect(
+    parseChatGPTAnswer(
+      'Here is the response:\n```json\n{"type":"final","text":"HELLO"}\n```\nCopy',
+      tools,
+    ),
+  ).toEqual({ role: "assistant", content: "HELLO" });
+  expect(
+    parseChatGPTAnswer('Answer: {"type":"final","text":"A } brace and \\"quote\\""} Done.', tools),
+  ).toEqual({ role: "assistant", content: 'A } brace and "quote"' });
+});
+
+it("rejects ambiguous replies containing more than one valid answer", () => {
+  expect(() =>
+    parseChatGPTAnswer(
+      '{"type":"final","text":"first"} then {"type":"final","text":"second"}',
+      tools,
+    ),
+  ).toThrow("one unambiguous JSON answer");
+});
+
 it("rejects unsupported media instead of silently dropping attachments", () => {
   expect(() =>
     decodeRequestForTest({
