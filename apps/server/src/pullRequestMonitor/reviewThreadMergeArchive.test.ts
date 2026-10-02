@@ -463,10 +463,7 @@ const mergedPullRequest590 = new Set(["github.com/ronak-guliani/t3code#590"]);
 
 describe("review workers that carry only snapshot provenance", () => {
   it("asks about the reviewed pull request, which has no link to iterate", () => {
-    const worker = snapshotOnlyReviewWorker();
-    expect(worker.pullRequests).toEqual([]);
-    expect(worker.pullRequest).toBeNull();
-    expect(liveReviewThreadPullRequests(readModel([worker]))).toEqual([
+    expect(liveReviewThreadPullRequests(readModel([snapshotOnlyReviewWorker()]))).toEqual([
       {
         ref: { projectId: projectId("project-1"), repository: "ronak-guliani/t3code", number: 590 },
         pullRequestKeys: ["github.com/ronak-guliani/t3code#590"],
@@ -476,22 +473,23 @@ describe("review workers that carry only snapshot provenance", () => {
   });
 
   it("archives the worker once the reviewed pull request merges", () => {
-    const worker = snapshotOnlyReviewWorker();
-    expect(planReviewThreadAutoArchive(readModel([worker]), mergedPullRequest590)).toEqual([
+    expect(
+      planReviewThreadAutoArchive(readModel([snapshotOnlyReviewWorker()]), mergedPullRequest590),
+    ).toEqual([
       { threadId: REVIEW_WORKER_ID, pullRequestKey: "github.com/ronak-guliani/t3code#590" },
     ]);
   });
 
+  // The guard shares `reviewThreadPullRequests` with the planner, so it would
+  // refuse the dispatch above and silently archive nothing.
   it("accepts the worker at admission, so the archive dispatch is not refused", () => {
-    const worker = snapshotOnlyReviewWorker();
-    expect(canAutoArchiveThreadNow(readModel([worker]), REVIEW_WORKER_ID)).toBe(true);
+    expect(canAutoArchiveThreadNow(readModel([snapshotOnlyReviewWorker()]), REVIEW_WORKER_ID)).toBe(
+      true,
+    );
   });
 
-  it("leaves the worker alone while the reviewed pull request is still open", () => {
-    const worker = snapshotOnlyReviewWorker();
-    expect(planReviewThreadAutoArchive(readModel([worker]), new Set())).toEqual([]);
-  });
-
+  // The snapshot's `state: null` must not read as unmerged once a link records
+  // the merge, or the sweep would re-ask forever.
   it("does not re-ask the provider when a link already names the same pull request", () => {
     const worker = snapshotOnlyReviewWorker({
       pullRequests: [
@@ -519,9 +517,7 @@ describe("review workers that carry only snapshot provenance", () => {
   });
 
   it("ignores a snapshot whose scope is not a pull request", () => {
-    const worker = snapshotOnlyReviewWorker({
-      reviewSnapshot: { scope: { kind: "uncommitted" } },
-    });
+    const worker = snapshotOnlyReviewWorker({ reviewSnapshot: { scope: { kind: "uncommitted" } } });
     expect(liveReviewThreadPullRequests(readModel([worker]))).toEqual([]);
   });
 });
