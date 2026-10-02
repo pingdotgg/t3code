@@ -244,7 +244,12 @@ export const executorLayer: Layer.Layer<
                       text: message.text,
                       ...(message.context ? { context: message.context } : {}),
                       attachments: message.attachments,
-                      modelSelection: run.modelSelection,
+                      // A user's follow-up starts on the thread's saved selection,
+                      // which already holds the steer's choice. A delegated
+                      // completion stays pinned to the run it reports to.
+                      ...(message.delegatedCompletion === undefined
+                        ? {}
+                        : { modelSelection: run.modelSelection }),
                       dispatchMode: {
                         type:
                           message.delegatedCompletion === undefined
