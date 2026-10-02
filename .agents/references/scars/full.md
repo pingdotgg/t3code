@@ -414,6 +414,7 @@
 - `@pierre/trees` captures `useFileTree` options once at construction, so live data (selection guards, row decorations) must flow through refs; `collapse-non-matches` is type-only with no runtime branch — use `expand-matches` for hierarchy-preserving filter. The tree opens its own `Search…` overlay whenever the model search value is set, so a panel-owned filter input must hide `[data-file-tree-search-container]` via tree CSS. Row decorations render as bare spans — style them through the `div[data-item-section='decoration']` lane wrapper.
 - Stopping a `pnpm dev` wrapper does not stop its backend/watch children, and a surviving backend keeps the isolated state-dir lock so the next server fails to claim it with `ECONNREFUSED` proxies. Kill the backend processes (same worktree cwd), never another worktree's.
 - Automation snapshots must capture through the guest's CDP target, not native `capturePage()`: a cold/hidden guest can return a zero-sized native image while DOM evaluation still works. Validate decoded pixels and preserve page diagnostics when reporting the typed visual-capture failure.
+- Offline CLI project/auth commands always resolve to the `userdata` flavor database and can never target the `dev` one (project commands reject `--dev-url`); seed `pnpm dev` state through the running server's API or `--auto-bootstrap-project-from-cwd`, and confirm which flavor database a seed landed in before concluding the UI is empty.
 
 ## Checkpoint and snapshot atomicity
 
