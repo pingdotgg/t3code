@@ -753,12 +753,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
+  // A relative `--git-common-dir` is computed from Git's physical working
+  // directory. `path.resolve` applies `..` to the project path string, so a
+  // symlink into a repository subdirectory climbs out of the link and the
+  // checkpoint index is created in the wrong directory. `--path-format=absolute`
+  // is the same request already used for `--git-path index`.
   const resolveGitCommonDir = (cwd: string) =>
     Effect.gen(function* () {
       const result = yield* execute({
         operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
         cwd,
-        args: ["rev-parse", "--git-common-dir"],
+        args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
       });
       const gitCommonDir = result.stdout.trim();
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
