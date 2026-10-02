@@ -121,6 +121,24 @@ export function canAutoArchiveSettledThreadNow(
   );
 }
 
+// Admission guard registered on the AutomaticArchiveGuardRegistry. Unsettled
+// threads (and unknown ids) are abstained on (approved) because the review
+// merge archiver owns them: the settled sweep never dispatches an unsettled
+// thread (`planSettledAutoArchive` only yields due settled candidates), while
+// the merge guard covers those. Returning false here would veto every
+// unsettled automatic archive under the registry's every-guard-must-approve
+// rule — the mirror of the merge guard abstaining on settled threads.
+export function canAdmitSettledAutoArchiveNow(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+  now: string,
+  afterDays: number | null,
+): boolean {
+  const thread = readModel.threads.find((entry) => entry.id === threadId);
+  if (thread === undefined || (thread.settledOverride ?? null) !== "settled") return true;
+  return canAutoArchiveSettledThreadNow(readModel, threadId, now, afterDays);
+}
+
 export type SettledAutoArchiveCandidate = {
   readonly threadId: ThreadId;
 };

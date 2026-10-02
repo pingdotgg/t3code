@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 import {
+  canAdmitSettledAutoArchiveNow,
   canAutoArchiveSettledThreadNow,
   isSettledAutoArchiveCandidate,
   normalizeSettledAutoArchiveAfterDays,
@@ -304,6 +305,35 @@ describe("canAutoArchiveSettledThreadNow and planSettledAutoArchive", () => {
   it("rejects unknown threads", () => {
     const model = readModel([]);
     expect(canAutoArchiveSettledThreadNow(model, ThreadId.make("missing"), NOW, 2)).toBe(false);
+  });
+});
+
+describe("canAdmitSettledAutoArchiveNow", () => {
+  it("abstains on unsettled threads so the merge archiver still admits them", () => {
+    const model = readModel([settledThread("active", null, { settledOverride: null })]);
+    expect(canAdmitSettledAutoArchiveNow(model, ThreadId.make("active"), NOW, 2)).toBe(true);
+  });
+
+  it("abstains on unknown threads", () => {
+    const model = readModel([]);
+    expect(canAdmitSettledAutoArchiveNow(model, ThreadId.make("missing"), NOW, 2)).toBe(true);
+  });
+
+  it("admits a due settled thread and defers a fresh one", () => {
+    const model = readModel([settledThread("due", daysAgo(3)), settledThread("fresh", NOW)]);
+    expect(canAdmitSettledAutoArchiveNow(model, ThreadId.make("due"), NOW, 2)).toBe(true);
+    expect(canAdmitSettledAutoArchiveNow(model, ThreadId.make("fresh"), NOW, 2)).toBe(false);
+  });
+
+  it("still vetoes settled threads when the setting is null (never)", () => {
+    const model = readModel([settledThread("due", daysAgo(30))]);
+    expect(canAdmitSettledAutoArchiveNow(model, ThreadId.make("due"), NOW, null)).toBe(false);
+    // ...while unsettled threads keep abstaining so other archivers proceed.
+    const mixed = readModel([
+      settledThread("due", daysAgo(30)),
+      settledThread("active", null, { settledOverride: null }),
+    ]);
+    expect(canAdmitSettledAutoArchiveNow(mixed, ThreadId.make("active"), NOW, null)).toBe(true);
   });
 });
 

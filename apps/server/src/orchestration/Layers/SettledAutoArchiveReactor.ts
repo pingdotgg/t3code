@@ -11,7 +11,7 @@ import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { AutomaticArchiveGuardRegistry } from "../Services/AutomaticArchiveGuardRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
-  canAutoArchiveSettledThreadNow,
+  canAdmitSettledAutoArchiveNow,
   normalizeSettledAutoArchiveAfterDays,
   planSettledAutoArchive,
   settledAutoArchiveCommandId,
@@ -74,11 +74,12 @@ const makeReactor = Effect.gen(function* () {
   const guards = yield* AutomaticArchiveGuardRegistry;
 
   // The admission guard is synchronous, so it reads the setting through a
-  // snapshot refreshed at startup and on every settings change. Strict about
-  // its own domain (settled threads only) and false elsewhere: the registry
-  // requires every guard to approve, and the merge guard covers the rest.
-  // Due-ness is re-checked here (not just at sweep time) so a raise of
-  // `autoArchiveSettledAfterDays` between sweep and admission still defers.
+  // snapshot refreshed at startup and on every settings change. It abstains
+  // (approves) on unsettled threads, which the merge archiver owns — the
+  // registry requires every guard to approve, and the merge guard abstains on
+  // settled threads the same way. Due-ness is re-checked here (not just at
+  // sweep time) so a raise of `autoArchiveSettledAfterDays` between sweep and
+  // admission still defers.
   const afterDaysRef = MutableRef.make<number | null>(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS);
   const refreshAfterDays = Effect.result(serverSettings.getSettings).pipe(
     Effect.map((result) =>
@@ -90,7 +91,7 @@ const makeReactor = Effect.gen(function* () {
   );
   yield* refreshAfterDays;
   yield* guards.register(({ readModel, threadId }) =>
-    canAutoArchiveSettledThreadNow(
+    canAdmitSettledAutoArchiveNow(
       readModel,
       threadId,
       new Date().toISOString(),
