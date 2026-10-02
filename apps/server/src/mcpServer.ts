@@ -1200,7 +1200,7 @@ async function resolveGitCommonDir(cwd: string): Promise<string> {
   return await fs.realpath(path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir));
 }
 
-async function createIsolatedWorkspaceTool(
+export async function createIsolatedWorkspaceTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -1240,7 +1240,7 @@ async function createIsolatedWorkspaceTool(
   });
 }
 
-async function switchWorkspaceTool(
+export async function switchWorkspaceTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2119,7 +2119,7 @@ export async function delegateWorkTool(
   return serializedBatch;
 }
 
-async function sendToThreadTool(
+export async function sendToThreadTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   mode: "message" | "assignment" = "message",
@@ -2166,7 +2166,7 @@ async function sendToThreadTool(
   return result.stdout.trim();
 }
 
-async function setChildWaitTool(
+export async function setChildWaitTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2183,7 +2183,7 @@ async function setChildWaitTool(
   return result.stdout.trim();
 }
 
-async function reportToParentTool(
+export async function reportToParentTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2242,7 +2242,7 @@ async function reportToParentTool(
   return result.stdout.trim();
 }
 
-async function associatePullRequestTool(
+export async function associatePullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2268,7 +2268,7 @@ async function associatePullRequestTool(
   return result.stdout.trim();
 }
 
-async function linkPullRequestTool(
+export async function linkPullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2289,7 +2289,7 @@ async function linkPullRequestTool(
   return result.stdout.trim();
 }
 
-async function unlinkPullRequestTool(
+export async function unlinkPullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2310,7 +2310,7 @@ async function unlinkPullRequestTool(
   return result.stdout.trim();
 }
 
-async function listThreadPullRequestsTool(options: McpServeOptions): Promise<string> {
+export async function listThreadPullRequestsTool(options: McpServeOptions): Promise<string> {
   if (!options.threadId) {
     throw new Error("list_thread_pull_requests is only available from a T3 provider session");
   }
