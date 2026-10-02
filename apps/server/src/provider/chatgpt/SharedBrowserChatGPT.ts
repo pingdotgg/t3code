@@ -164,12 +164,13 @@ export class SharedBrowserChatGPT {
         readonly login: boolean;
         readonly challenge: boolean;
         readonly lockdownMessage: string;
-        readonly retryButtonPoint?: { readonly x: number; readonly y: number };
+        readonly retryButtonSelector?: string;
         readonly sendButtonSelector?: string;
-        readonly composerText: string;
+        readonly composerHasText: boolean;
         readonly assistantCount: number;
         readonly userMessageCount: number;
         readonly answer: string;
+        readonly answerTruncated: boolean;
         readonly generating: boolean;
       }>("evaluate", {
         expression: `(() => {
@@ -204,10 +205,21 @@ export class SharedBrowserChatGPT {
           const retryButton = [...(lockdownAlert?.querySelectorAll("button") ?? [])].find((button) =>
             visible(button) && button.innerText.trim() === "Retry",
           );
-          const retryRect = retryButton?.getBoundingClientRect();
-          const retryButtonPoint = retryRect
-            ? { x: retryRect.left + retryRect.width / 2, y: retryRect.top + retryRect.height / 2 }
-            : undefined;
+          const retryButtonSelector = (() => {
+            if (!retryButton) return undefined;
+            const path = [];
+            for (let element = retryButton; element && element !== document.documentElement; ) {
+              let part = element.localName;
+              const parent = element.parentElement;
+              if (!parent) break;
+              const sameTag = [...parent.children].filter((child) => child.localName === element.localName);
+              if (sameTag.length > 1)
+                part += ":nth-of-type(" + (sameTag.indexOf(element) + 1) + ")";
+              path.unshift(part);
+              element = parent;
+            }
+            return path.join(" > ");
+          })();
           const sendButton = [
             document.querySelector('[data-testid="send-button"]'),
             document.querySelector('button[aria-label="Send prompt"]'),
@@ -247,6 +259,10 @@ export class SharedBrowserChatGPT {
               ? markedUserMessages
               : [...document.querySelectorAll('[class~="group/user-message"]')].filter(visible);
           const last = answers.at(-1);
+          const answerText = last?.innerText ?? "";
+          // Preview automation caps serialized evaluation results at 64 KB.
+          // Keep headroom for the rest of this observation and the protocol envelope.
+          const answerLimit = 12_000;
           // ChatGPT can keep an inactive stop control mounted after a reply. Only
           // visible generation controls should keep the provider turn open.
           const generating = [
@@ -257,15 +273,16 @@ export class SharedBrowserChatGPT {
           return {
             composer,
             composerSelector,
-            composerText,
+            composerHasText: composerText.trim().length > 0,
             login,
             challenge,
             lockdownMessage: lockdownAlert?.innerText ?? "",
-            retryButtonPoint,
+            retryButtonSelector,
             sendButtonSelector,
             assistantCount: answers.length,
             userMessageCount: userMessages.length,
-            answer: last?.innerText ?? "",
+            answer: answerText.slice(0, answerLimit),
+            answerTruncated: answerText.length > answerLimit,
             generating,
           };
         })()`,
@@ -274,8 +291,14 @@ export class SharedBrowserChatGPT {
       });
 
     let ready = await inspect();
-    if (hasChatGPTLockdownCheckFailure(ready.lockdownMessage) && ready.retryButtonPoint) {
-      await invoke("click", ready.retryButtonPoint);
+    if (hasChatGPTLockdownCheckFailure(ready.lockdownMessage) && ready.retryButtonSelector) {
+      try {
+        // Resolve the moving toast's button at click time. Its entrance/exit
+        // animation can put a previously measured point outside the viewport.
+        await invoke("click", { selector: ready.retryButtonSelector });
+      } catch {
+        // Recheck below: the toast may have disappeared while the click ran.
+      }
       const retryDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 5_000;
       while (
         DateTime.toEpochMillis(DateTime.nowUnsafe()) < retryDeadline &&
@@ -364,7 +387,7 @@ export class SharedBrowserChatGPT {
         "ChatGPT couldn't check Lockdown Mode. T3 has not sent the prompt and did not start a cooldown. Restore the ChatGPT page connection, then retry this turn.",
         false,
       );
-    if (!sendState.composerText.trim())
+    if (!sendState.composerHasText)
       throw new ChatGPTInteractionRequiredError(
         "T3 entered no text in ChatGPT's message box, so it did not send the request or start a cooldown. Check the visible browser, then retry this turn.",
         false,
@@ -410,7 +433,11 @@ export class SharedBrowserChatGPT {
           "ChatGPT requested verification. Complete it in the visible T3 browser; the request cooldown will apply.",
           true,
         );
-      if (isChatGPTReplyComplete(state, before)) return state.answer.trim();
+      if (isChatGPTReplyComplete(state, before)) {
+        if (state.answerTruncated)
+          throw new Error("ChatGPT's reply exceeded the 12,000-character limit T3 can inspect.");
+        return state.answer.trim();
+      }
     }
     throw new Error("ChatGPT did not finish a reply within three minutes.");
   }

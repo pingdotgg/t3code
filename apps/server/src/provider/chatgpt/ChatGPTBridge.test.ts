@@ -114,7 +114,7 @@ it("settles on a new visible reply only after ChatGPT stops generating", () => {
   ).toBe(false);
 });
 
-it("recognizes a failed ChatGPT Lockdown Mode status check without treating it as a verification challenge", () => {
+it("recognizes a failed ChatGPT Lockdown Mode status check separately from verification", () => {
   expect(hasChatGPTLockdownCheckFailure("Couldn't check Lockdown mode · Retry")).toBe(true);
   expect(hasChatGPTLockdownCheckFailure("ChatGPT requires verification.")).toBe(false);
   expect(hasChatGPTLockdownCheckFailure("Lockdown Mode enabled")).toBe(false);
