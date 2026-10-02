@@ -343,14 +343,16 @@ it.effect("invalidates origin remote cache when a driver mutation adds origin", 
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
     const cwd = yield* makeTmpDir();
-    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
     yield* initRepoWithCommit(cwd);
-    yield* git(remote, ["init", "--bare"]);
 
     const before = yield* driver.statusDetailsLocal(cwd);
     assert.equal(before.hasOriginRemote, false);
 
-    yield* driver.ensureRemote({ cwd, preferredName: "origin", url: remote });
+    yield* driver.ensureRemote({
+      cwd,
+      preferredName: "origin",
+      url: "https://forge.test/team/project.git",
+    });
 
     const after = yield* driver.statusDetailsLocal(cwd);
     assert.equal(after.hasOriginRemote, true);
@@ -2747,6 +2749,79 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.notInclude(error.detail, missingRemote);
         assert.notProperty(error, "stderr");
       }),
+    );
+
+    for (const url of [
+      "ext::echo blocked",
+      "file:///private/tmp/repo",
+      "/private/tmp/repo",
+      "--upload-pack=echo",
+      "git://forge.test/team/project",
+      "http://other.test/team/project",
+    ]) {
+      it.effect(`provider remote policy rejects ${url} without adding it`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["remote", "add", "origin", "http://forge.test:3000/team/base.git"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const error = yield* driver
+            .ensureRemote({ cwd, preferredName: "provider", url })
+            .pipe(Effect.flip);
+          assert.include(error.detail, "Refusing to add a remote");
+          assert.equal(yield* git(cwd, ["remote"]), "origin");
+        }),
+      );
+    }
+
+    for (const origin of [
+      "http://forge.test:3000/team/base.git",
+      "https://forge.test/team/base.git",
+      "git@forge.test:team/base.git",
+      "ssh://git@forge.test:2222/team/base.git",
+    ]) {
+      it.effect(`provider remote policy permits same-host HTTP with origin ${origin}`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["remote", "add", "origin", origin]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const url = "http://forge.test:3001/team/fork.git";
+          assert.equal(
+            yield* driver.ensureRemote({ cwd, preferredName: "provider", url }),
+            "provider",
+          );
+          assert.equal(yield* git(cwd, ["remote", "get-url", "provider"]), url);
+        }),
+      );
+    }
+
+    it.effect(
+      "provider remote policy accepts origin HTTP and trusts configured local remotes",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["remote", "add", "origin", "http://forge.test:3000/team/base.git"]);
+          yield* git(cwd, ["remote", "add", "local", "/private/tmp/trusted.git"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          assert.equal(
+            yield* driver.ensureRemote({
+              cwd,
+              preferredName: "provider",
+              url: "http://forge.test:3000/team/fork.git",
+            }),
+            "provider",
+          );
+          assert.equal(
+            yield* driver.ensureRemote({
+              cwd,
+              preferredName: "provider",
+              url: "/private/tmp/trusted.git",
+            }),
+            "local",
+          );
+        }),
     );
 
     it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>

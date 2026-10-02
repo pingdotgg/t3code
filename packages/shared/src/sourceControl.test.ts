@@ -5,6 +5,7 @@ import {
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
+  isProviderRepositoryUrlAllowed,
   resolveChangeRequestPresentation,
 } from "./sourceControl.ts";
 
@@ -238,4 +239,72 @@ it("puts owner and name back together for an identity recorded before displayNam
 it("names nothing for a project with no remote to name it by", () => {
   expect(sourceControlRepositorySelector(null)).toBeNull();
   expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
+});
+
+describe("provider repository URL policy", () => {
+  it.each([
+    "https://forge.test/team/project.git",
+    "https://user:password@forge.test/team/project.git",
+    "git@forge.test:team/project.git",
+    "ssh://git@forge.test:22/team/project.git",
+    "ssh://git@forge.test:2222/team/project.git",
+  ])("permits hosted repository %s", (url) => {
+    expect(isProviderRepositoryUrlAllowed(url)).toBe(true);
+  });
+
+  it.each([
+    "ext::echo blocked",
+    "file:///tmp/repo",
+    "/tmp/repo",
+    "../repo",
+    "--upload-pack=echo",
+    "git://forge.test/team/project",
+    "https://forge.test/team/white space.git",
+  ])("rejects provider repository %s", (url) => {
+    expect(isProviderRepositoryUrlAllowed(url)).toBe(false);
+  });
+
+  it("limits plain HTTP to the configured origin's hostname", () => {
+    expect(
+      isProviderRepositoryUrlAllowed(
+        "http://forge.test:3000/team/fork",
+        "http://forge.test:3000/team/base",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderRepositoryUrlAllowed(
+        "http://forge.test/team/fork",
+        "http://forge.test:80/team/base",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderRepositoryUrlAllowed(
+        "http://forge.test:80/team/fork",
+        "http://forge.test/team/base",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderRepositoryUrlAllowed(
+        "http://forge.test:3001/team/fork",
+        "http://forge.test:3000/team/base",
+      ),
+    ).toBe(true);
+    expect(
+      isProviderRepositoryUrlAllowed(
+        "http://other.test:3000/team/fork",
+        "http://forge.test:3000/team/base",
+      ),
+    ).toBe(false);
+    expect(
+      isProviderRepositoryUrlAllowed("http://forge.test/team/fork", "https://forge.test/team/base"),
+    ).toBe(true);
+    for (const origin of [
+      "git@forge.test:team/base.git",
+      "ssh://git@forge.test:2222/team/base.git",
+    ]) {
+      expect(isProviderRepositoryUrlAllowed("http://forge.test:3000/team/fork", origin)).toBe(true);
+      expect(isProviderRepositoryUrlAllowed("http://other.test/team/fork", origin)).toBe(false);
+    }
+    expect(isProviderRepositoryUrlAllowed("http://forge.test/team/fork")).toBe(false);
+  });
 });

@@ -147,6 +147,26 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
 }
 
 /**
+ * Provider repository URLs must use HTTPS, SSH, or plain HTTP on origin's hostname. Matching
+ * only the hostname permits self-hosted forges with an SSH origin and a separate HTTP port.
+ */
+export function isProviderRepositoryUrlAllowed(url: string, originUrl?: string | null): boolean {
+  if (/^-|\s/u.test(url)) return false;
+  if (/^https:\/\//iu.test(url) || isSshRemoteUrl(url)) return true;
+  try {
+    const parsed = new URL(url);
+    const originHost = parseRemoteHost(originUrl ?? "");
+    return (
+      parsed.protocol === "http:" &&
+      originHost !== null &&
+      parsed.hostname.toLowerCase() === parseHostName(originHost)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Extracts the normalized host used for provider detection. SCP-style and SSH remotes return the
  * hostname only, while other URL schemes retain explicit ports for non-default web endpoints.
  */

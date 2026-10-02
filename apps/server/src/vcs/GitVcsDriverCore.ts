@@ -28,6 +28,7 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -1502,6 +1503,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
+    // A remote the user configured is theirs to trust; one added here takes its URL from the
+    // provider, so it must be a hosting service's, or plain HTTP on origin's host.
+    const originUrl = yield* runGitStdout(
+      "GitVcsDriver.ensureRemote.readOriginUrl",
+      input.cwd,
+      ["config", "--get", "remote.origin.url"],
+      true,
+    );
+    if (!isProviderRepositoryUrlAllowed(input.url, originUrl)) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.ensureRemote",
+        command: "git remote add",
+        cwd: input.cwd,
+        detail: "Refusing to add a remote whose URL is not HTTPS, SSH or HTTP on origin's host.",
+      });
+    }
     let remoteName = preferredName;
     let suffix = 1;
     while (remoteFetchUrls.has(remoteName)) {

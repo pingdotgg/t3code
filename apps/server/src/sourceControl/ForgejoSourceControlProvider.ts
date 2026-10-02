@@ -1,3 +1,4 @@
+import { isProviderRepositoryUrlAllowed } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -15,6 +16,7 @@ import {
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 export const discovery = {
   type: "cli",
@@ -197,16 +199,17 @@ export const make = Effect.gen(function* () {
       ),
     );
   const mapError = (operation: string, cwd: string) =>
-    Effect.mapError(
-      (cause: unknown) =>
-        new SourceControlProviderError({
-          provider: "forgejo",
-          operation,
-          cwd,
-          ...(isForgejoCliError(cause) ? { command: cause.command } : {}),
-          detail: isForgejoCliError(cause) ? cause.detail : "Forgejo operation failed.",
-          cause,
-        }),
+    Effect.mapError((cause: unknown) =>
+      isSourceControlProviderError(cause)
+        ? cause
+        : new SourceControlProviderError({
+            provider: "forgejo",
+            operation,
+            cwd,
+            ...(isForgejoCliError(cause) ? { command: cause.command } : {}),
+            detail: isForgejoCliError(cause) ? cause.detail : "Forgejo operation failed.",
+            cause,
+          }),
     );
   const getPull = Effect.fn("ForgejoSourceControlProvider.getPull")(function* (
     input: Parameters<
@@ -330,16 +333,21 @@ export const make = Effect.gen(function* () {
           );
           const remote = input.context?.remoteUrl;
           const useSsh = remote && ForgejoCli.parseForgejoRemote(remote)?.ssh;
+          const url = useSsh ? urls.ssh_url : urls.clone_url;
+          if (!isProviderRepositoryUrlAllowed(url, remote))
+            return yield* new SourceControlProviderError({
+              provider: "forgejo",
+              operation: "checkoutChangeRequest",
+              command: "git fetch",
+              cwd: input.cwd,
+              detail:
+                "Refusing to fetch a repository URL that is not HTTPS, SSH or HTTP on origin's host.",
+            });
           yield* process.run({
             operation: "ForgejoSourceControlProvider.checkoutChangeRequest",
             command: "git",
             cwd: input.cwd,
-            args: [
-              "fetch",
-              "--",
-              useSsh ? urls.ssh_url : urls.clone_url,
-              `refs/pull/${pull.number}/head`,
-            ],
+            args: ["fetch", "--", url, `refs/pull/${pull.number}/head`],
           });
           const branch = `pulls/${pull.number}`;
           const existing = yield* process.run({

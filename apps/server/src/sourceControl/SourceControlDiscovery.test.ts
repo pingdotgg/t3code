@@ -1500,11 +1500,16 @@ it.effect(
               const url = input.args[2];
               assert.isDefined(url);
               fetched.push(url!);
-              // Only SSH transport is substituted; both paths fetch the real pull ref.
+              // Substitute safe provider transports with the local fixture to fetch the real pull ref.
               return git.run({
                 ...input,
                 args: input.args.map((arg) =>
-                  arg === "git@forgejo.test:reviewer/project.git" ? source : arg,
+                  [
+                    "git@forgejo.test:reviewer/project.git",
+                    "https://forgejo.test/reviewer/project.git",
+                  ].includes(arg)
+                    ? source
+                    : arg,
                 ),
               });
             },
@@ -1539,7 +1544,7 @@ it.effect(
                         }
                       : {
                           full_name: "reviewer/project",
-                          clone_url: source,
+                          clone_url: "https://forgejo.test/reviewer/project.git",
                           ssh_url: "git@forgejo.test:reviewer/project.git",
                           default_branch: "main",
                         },
@@ -1620,7 +1625,11 @@ it.effect(
         yield* fs.readFileString(path.join(cwd, "feature.txt")),
         "pull request change\n",
       );
-      assert.deepStrictEqual(fetched, [source, source, "git@forgejo.test:reviewer/project.git"]);
+      assert.deepStrictEqual(fetched, [
+        "https://forgejo.test/reviewer/project.git",
+        "https://forgejo.test/reviewer/project.git",
+        "git@forgejo.test:reviewer/project.git",
+      ]);
     }).pipe(
       Effect.scoped,
       Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
