@@ -12,6 +12,7 @@
  *
  * @module provider/Drivers/ClaudeDriver
  */
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -19,6 +20,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -44,7 +46,7 @@ import {
 } from "../Layers/ClaudeProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
-import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
+import { resolveClaudeModelCatalog, withClaudeReportedModels } from "../ClaudeModelCatalog.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -125,7 +127,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const modelManifest = yield* ModelManifest.ModelManifest;
-      const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -164,6 +165,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         continuationGroupKey,
       });
 
+      // Models from the last successful capabilities probe, so sessions can
+      // resolve options for gateway-discovered models the manifest lacks.
+      const reportedModels = yield* Ref.make<ReadonlyArray<ClaudeModelInfo>>([]);
+      const modelCatalog = Effect.all([modelManifest.current, Ref.get(reportedModels)]).pipe(
+        Effect.map(([manifest, models]) =>
+          withClaudeReportedModels(
+            resolveClaudeModelCatalog(manifest),
+            effectiveConfig.customModels,
+            models,
+          ),
+        ),
+      );
+
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
@@ -174,7 +188,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          modelCatalog,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -199,6 +217,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
           probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+            Effect.tap((probe) =>
+              probe ? Ref.set(reportedModels, probe.models ?? []) : Effect.void,
+            ),
             Effect.provideService(Path.Path, path),
           ),
       });

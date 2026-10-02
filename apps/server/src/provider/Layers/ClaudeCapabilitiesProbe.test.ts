@@ -223,3 +223,33 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
+  Effect.gen(function* () {
+    let abortSignal: AbortSignal | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      abortSignal = options?.abortController?.signal;
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+          commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+        }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () =>
+          new Promise((_, reject) => reject(new Error("usage unavailable"))),
+      } as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const capabilities = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+      {
+        ...process.env,
+        ANTHROPIC_BASE_URL: "https://gateway.example",
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+    );
+    assert.isDefined(capabilities);
+    assert.equal(abortSignal?.aborted, false);
+    yield* TestClock.adjust("3 seconds");
+    assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

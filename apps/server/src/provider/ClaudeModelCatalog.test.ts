@@ -13,6 +13,7 @@ import {
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
+  withClaudeReportedModels,
 } from "./ClaudeModelCatalog.ts";
 
 /**
@@ -240,6 +241,64 @@ describe("Claude model catalog", () => {
     assert.deepStrictEqual(
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next", "claude-custom-tuned"],
+    );
+  });
+
+  it("resolves effort for models Claude Code reports from its own capabilities", () => {
+    const catalog = withClaudeReportedModels(
+      resolveClaudeModelCatalog(manifest()),
+      [],
+      [
+        { value: "synthetic", displayName: "Synthetic", description: "", supportsEffort: true },
+        {
+          value: "anthropic/claude-gateway",
+          displayName: "Gateway Claude",
+          description: "From gateway",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high", "max"],
+          supportsFastMode: true,
+        },
+        { value: "claude-gateway-plain", displayName: "Plain", description: "From gateway" },
+      ],
+    );
+
+    assert.deepStrictEqual(
+      resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
+      ["claude-synthetic-next", "anthropic/claude-gateway", "claude-gateway-plain"],
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "anthropic/claude-gateway", "max"),
+      "max",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "anthropic/claude-gateway", undefined),
+      "high",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "anthropic/claude-gateway",
+        options: [{ id: "effort", value: "max" }],
+      }),
+      "anthropic/claude-gateway",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude-gateway-plain", "max"),
+      undefined,
+    );
+  });
+
+  it("lists a reported model once regardless of context-window suffix or order", () => {
+    const reported = (value: string) => ({ value, displayName: "Gateway", description: "" });
+    const catalog = withClaudeReportedModels(
+      resolveClaudeModelCatalog(manifest()),
+      [],
+      [reported("gateway/model[1m]"), reported("gateway/model"), reported("gateway/model[1m]")],
+    );
+
+    assert.deepStrictEqual(
+      resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
+      ["claude-synthetic-next", "gateway/model[1m]"],
     );
   });
 });

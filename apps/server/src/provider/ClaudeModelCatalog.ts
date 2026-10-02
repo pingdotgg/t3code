@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   type ServerProviderModel,
 } from "@t3tools/contracts";
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import * as Option from "effect/Option";
 import {
   getModelSelectionStringOptionValue,
@@ -116,6 +117,90 @@ export function scopeClaudeModelCatalog(
   }
 
   return { models: [...builtInModels, ...customCatalogModels] };
+}
+
+const CLAUDE_EFFORT_LABELS: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
+
+/** Strip Claude Code's context-window suffix, e.g. `opus[1m]` -> `opus`. */
+function stripClaudeModelSuffix(value: string): string {
+  return value.replace(/\[[^\]]*\]$/, "").trim();
+}
+
+/** Option descriptors for a model from what Claude Code reports it supports. */
+function claudeReportedModelCapabilities(info: ClaudeModelInfo): ModelCapabilities {
+  const efforts = info.supportsEffort ? (info.supportedEffortLevels ?? []) : [];
+  const defaultEffort = efforts.includes("high") ? "high" : undefined;
+  return {
+    optionDescriptors: [
+      ...(efforts.length
+        ? [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select" as const,
+              options: efforts.map((id) => ({
+                id,
+                label: CLAUDE_EFFORT_LABELS[id] ?? id,
+                ...(id === defaultEffort ? { isDefault: true } : {}),
+              })),
+            },
+          ]
+        : []),
+      ...(info.supportsFastMode
+        ? [{ id: "fastMode", label: "Fast Mode", type: "boolean" as const }]
+        : []),
+    ],
+  };
+}
+
+/**
+ * Append models Claude Code reports that the catalog does not know, such as
+ * ids from an Anthropic-compatible gateway with model discovery on. Catalog
+ * models, including ones the installed version cannot run, are never
+ * duplicated and keep T3's descriptors. A custom model with the same slug keeps
+ * its settings-owned row. Discovered models take their options from what
+ * Claude Code reports and are passed to it verbatim at runtime.
+ */
+export function withClaudeReportedModels(
+  catalog: ClaudeModelCatalog,
+  customModels: ReadonlyArray<CustomModelSetting>,
+  reportedModels: ReadonlyArray<ClaudeModelInfo> | undefined,
+): ClaudeModelCatalog {
+  if (!reportedModels?.length) return catalog;
+  const known = new Set<string>();
+  for (const { model } of catalog.models) {
+    known.add(model.slug.toLowerCase());
+    for (const alias of model.aliases ?? []) known.add(alias.toLowerCase());
+  }
+  for (const entry of readCustomModelEntries(customModels)) known.add(entry.slug.toLowerCase());
+  const discovered: Array<ClaudeCatalogModel> = [];
+  for (const info of reportedModels) {
+    const slug = info.value.trim();
+    // `default` is Claude Code's pointer at its own default model, not a model.
+    if (!slug || slug === "default") continue;
+    const ids = [slug, info.resolvedModel ?? ""].map((id) =>
+      stripClaudeModelSuffix(id).toLowerCase(),
+    );
+    if (ids.some((id) => id && known.has(id))) continue;
+    for (const id of ids) if (id) known.add(id);
+    discovered.push({
+      model: {
+        slug,
+        name: info.displayName.trim() || slug,
+        isCustom: false,
+        capabilities: claudeReportedModelCapabilities(info),
+      },
+      runtime: {},
+      compatibility: {},
+    });
+  }
+  return discovered.length ? { models: [...catalog.models, ...discovered] } : catalog;
 }
 
 function resolveClaudeCatalogModel(

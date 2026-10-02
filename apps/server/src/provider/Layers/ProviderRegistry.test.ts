@@ -2,6 +2,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import { describe, it, assert } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -158,6 +159,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models?: ReadonlyArray<ModelInfo>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -2961,6 +2963,77 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "bedrock");
           assert.strictEqual(status.auth.label, "Amazon Bedrock");
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("adds models Claude Code reports that the catalog does not know", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            {
+              ...defaultClaudeSettings,
+              customModels: [
+                { slug: "my-custom", name: "My Custom" },
+                { slug: "gateway/kimi-3", name: "Kimi (mine)" },
+              ],
+            },
+            claudeCapabilities({
+              models: [
+                { value: "default", displayName: "Default", description: "" },
+                {
+                  value: "opus[1m]",
+                  resolvedModel: "claude-opus-5[1m]",
+                  displayName: "Opus",
+                  description: "",
+                },
+                { value: "sonnet", displayName: "Sonnet", description: "" },
+                { value: "gateway/glm-5", displayName: "GLM 5", description: "" },
+                {
+                  value: "gateway/claude-relay",
+                  displayName: "Claude Relay",
+                  description: "",
+                  supportsEffort: true,
+                  supportedEffortLevels: ["low", "high"],
+                },
+                { value: "gateway/kimi-3", displayName: "Kimi 3", description: "" },
+              ],
+            }),
+          );
+          const reported = status.models.filter(
+            (model) => !model.isCustom && !model.slug.startsWith("claude-"),
+          );
+          assert.deepStrictEqual(
+            reported.map((model) => [model.slug, model.name]),
+            [
+              ["gateway/glm-5", "GLM 5"],
+              ["gateway/claude-relay", "Claude Relay"],
+            ],
+          );
+          assert.deepStrictEqual(reported[0]?.capabilities, { optionDescriptors: [] });
+          assert.deepStrictEqual(reported[1]?.capabilities, {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "high", label: "High", isDefault: true },
+                ],
+              },
+            ],
+          });
+          assert.deepStrictEqual(
+            status.models.filter((model) => model.isCustom).map((model) => model.name),
+            ["My Custom", "Kimi (mine)"],
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

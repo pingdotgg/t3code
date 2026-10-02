@@ -16,6 +16,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
+  type ModelInfo as ClaudeModelInfo,
   type Options as ClaudeQueryOptions,
   type SlashCommand as ClaudeSlashCommand,
   type SDKControlGetUsageResponse,
@@ -47,6 +48,7 @@ import {
   type ClaudeModelCatalog,
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
+  withClaudeReportedModels,
 } from "../ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -236,6 +238,8 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** Models Claude Code reports, including gateway-discovered ones. */
+  readonly models?: ReadonlyArray<ClaudeModelInfo>;
   /**
    * Subscription windows from the SDK's `get_usage` control request, or
    * `undefined` when the request itself failed. Absent windows on an
@@ -316,6 +320,25 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Claude Code's default for `CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS`. */
+const CLAUDE_GATEWAY_DISCOVERY_TIMEOUT_MS = 3_000;
+
+/**
+ * How long a probe subprocess must outlive initialization so gateway model
+ * discovery can finish. Claude Code reports gateway models from its on-disk
+ * cache and refreshes that cache in the background after startup, so aborting
+ * right after initialization means a cold config dir never learns them.
+ */
+function claudeGatewayDiscoveryGraceMs(environment: NodeJS.ProcessEnv): number {
+  const enabled = environment.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY?.trim();
+  if (!enabled || enabled === "0" || enabled.toLowerCase() === "false") return 0;
+  if (!environment.ANTHROPIC_BASE_URL?.trim()) return 0;
+  const configured = Number(environment.CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : CLAUDE_GATEWAY_DISCOVERY_TIMEOUT_MS;
+}
+
 /**
  * Probe account information by spawning a lightweight Claude Agent SDK
  * session and reading the initialization result.
@@ -324,7 +347,8 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * message is ever written to the subprocess stdin. This means the Claude
  * Code subprocess completes its local initialization IPC (returning
  * account info and slash commands) but never starts an API request to
- * Anthropic. We read the init data and then abort the subprocess.
+ * Anthropic. We read the init data and then abort the subprocess, after a
+ * grace period when gateway model discovery is enabled.
  *
  * This is used as a fallback when `claude auth status` does not include
  * subscription type information.
@@ -335,8 +359,13 @@ const probeClaudeCapabilities = (
   cwd?: string,
 ) => {
   const abort = new AbortController();
+  let abortGraceMs = 0;
+  const abortProbe = Effect.sync(() => {
+    if (!abort.signal.aborted) abort.abort();
+  });
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+    abortGraceMs = claudeGatewayDiscoveryGraceMs(claudeEnvironment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
@@ -387,14 +416,23 @@ const probeClaudeCapabilities = (
           tokenSource: account?.tokenSource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
+          ...(init.models?.length ? { models: init.models } : {}),
           ...(usage ? { usage } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
+    // Return the capabilities right away, but let a gateway discovery that is
+    // still in flight write Claude Code's cache so the next probe reports it.
     Effect.ensuring(
-      Effect.sync(() => {
-        if (!abort.signal.aborted) abort.abort();
-      }),
+      Effect.suspend(() =>
+        abortGraceMs > 0
+          ? Effect.sleep(abortGraceMs).pipe(
+              Effect.andThen(abortProbe),
+              Effect.forkDetach,
+              Effect.asVoid,
+            )
+          : abortProbe,
+      ),
     ),
     Effect.result,
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
@@ -526,16 +564,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
+  const models = providerModelsFromSettings(
+    resolveClaudeModelsForVersion(
+      withClaudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
+      parsedVersion,
+    ),
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);

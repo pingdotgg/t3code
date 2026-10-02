@@ -55,6 +55,10 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  withClaudeReportedModels,
+} from "../../provider/ClaudeModelCatalog.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -189,6 +193,37 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.thinking);
     assert.isUndefined(options.extraArgs?.["thinking-display"]);
     assert.include(options.settings, { alwaysThinkingEnabled: false });
+  });
+
+  it("sends the effort chosen for a model Claude Code reported", () => {
+    const modelSelection = {
+      ...CLAUDE_TEST_MODEL_SELECTION,
+      model: "anthropic/claude-gateway",
+      options: [{ id: "effort", value: "max" }],
+    };
+    const modelCatalog = withClaudeReportedModels(
+      BUNDLED_CLAUDE_MODEL_CATALOG,
+      [],
+      [
+        {
+          value: "anthropic/claude-gateway",
+          displayName: "Gateway Claude",
+          description: "",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high", "max"],
+        },
+      ],
+    );
+    const base = { nativeThreadId: "gateway-thread", resume: false, cwd: "/workspace" };
+
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      modelSelection,
+      modelCatalog,
+    });
+    assert.equal(options.model, "anthropic/claude-gateway");
+    assert.equal(options.effort, "max");
+    assert.isUndefined(ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, modelSelection }).effort);
   });
 
   it.each([
