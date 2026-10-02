@@ -127,9 +127,9 @@ export function usePullRequestFilesViewed(options: {
       // The reader has moved on, and what is on screen now has nothing to do with this answer.
       if (scope.current !== sentFrom) return;
       if (result._tag === "Failure") {
-        // The host never heard these, so the ticks go back to whatever it last said. Only the
-        // paths this request still answers for: one pressed again since is waiting on a request
-        // of its own, or on the next flush, and that press is the one on screen.
+        // A failed batch can still have applied some paths. Revert to the last read until it is
+        // refreshed, and only the paths this request still answers for: one pressed again since
+        // is waiting on a request of its own, or on the next flush, and that press is on screen.
         const owned = new Set(mine.filter((path) => !queued.current.has(path)));
         setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
         // Silent when nothing was still this request's to answer for, so nothing on screen went
@@ -137,6 +137,7 @@ export function usePullRequestFilesViewed(options: {
         // told about and which the host never refused.
         if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
           toastManager.add({ type: "error", title: "Could not update viewed files" });
+          refresh();
         }
         return;
       }
