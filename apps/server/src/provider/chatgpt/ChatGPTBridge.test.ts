@@ -14,6 +14,8 @@ import {
 import { ChatGPTRateLimit } from "./ChatGPTRateLimit.ts";
 import {
   ChatGPTInteractionRequiredError,
+  hasChatGPTLockdownCheckFailure,
+  isChatGPTPromptAccepted,
   isChatGPTReplyComplete,
 } from "./SharedBrowserChatGPT.ts";
 
@@ -107,9 +109,20 @@ it("settles on a new visible reply only after ChatGPT stops generating", () => {
   expect(
     isChatGPTReplyComplete({ assistantCount: 1, answer: "Partial reply", generating: true }, 0),
   ).toBe(false);
-  expect(isChatGPTReplyComplete({ assistantCount: 0, answer: "Old reply", generating: false }, 0)).toBe(
-    false,
-  );
+  expect(
+    isChatGPTReplyComplete({ assistantCount: 0, answer: "Old reply", generating: false }, 0),
+  ).toBe(false);
+});
+
+it("recognizes a failed ChatGPT Lockdown Mode status check without treating it as a verification challenge", () => {
+  expect(hasChatGPTLockdownCheckFailure("Couldn't check Lockdown mode · Retry")).toBe(true);
+  expect(hasChatGPTLockdownCheckFailure("ChatGPT requires verification.")).toBe(false);
+  expect(hasChatGPTLockdownCheckFailure("Lockdown Mode enabled")).toBe(false);
+});
+
+it("confirms ChatGPT accepted a prompt only when a new user message appears", () => {
+  expect(isChatGPTPromptAccepted(1, 0)).toBe(true);
+  expect(isChatGPTPromptAccepted(0, 0)).toBe(false);
 });
 
 it("rejects oversized web prompts before opening the shared browser", () => {

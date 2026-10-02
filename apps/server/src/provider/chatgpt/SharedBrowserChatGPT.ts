@@ -44,6 +44,17 @@ export function isChatGPTReplyComplete(
   );
 }
 
+export function hasChatGPTLockdownCheckFailure(text: string): boolean {
+  return /couldn['’]t check lockdown mode/i.test(text);
+}
+
+export function isChatGPTPromptAccepted(
+  userMessageCount: number,
+  previousUserMessageCount: number,
+) {
+  return userMessageCount > previousUserMessageCount;
+}
+
 export class SharedBrowserChatGPT {
   private scope: Scope | undefined;
   private readonly tabs = new Map<string, PreviewTabId>();
@@ -152,7 +163,12 @@ export class SharedBrowserChatGPT {
         readonly composerSelector?: string;
         readonly login: boolean;
         readonly challenge: boolean;
+        readonly lockdownMessage: string;
+        readonly retryButtonPoint?: { readonly x: number; readonly y: number };
+        readonly sendButtonSelector?: string;
+        readonly composerText: string;
         readonly assistantCount: number;
+        readonly userMessageCount: number;
         readonly answer: string;
         readonly generating: boolean;
       }>("evaluate", {
@@ -169,6 +185,10 @@ export class SharedBrowserChatGPT {
             document.querySelector("textarea"),
           ].find((element) => element && visible(element) && !element.disabled && !element.readOnly);
           const composer = !!composerElement;
+          const composerText =
+            composerElement instanceof HTMLTextAreaElement || composerElement instanceof HTMLInputElement
+              ? composerElement.value
+              : composerElement?.innerText ?? "";
           const composerSelector = composerElement?.id === "prompt-textarea"
             ? "#prompt-textarea"
             : composerElement?.matches('[contenteditable="true"][role="textbox"]')
@@ -176,9 +196,54 @@ export class SharedBrowserChatGPT {
               : composerElement instanceof HTMLTextAreaElement
                 ? "textarea"
                 : undefined;
-          const login = [...document.querySelectorAll('[data-testid="login-button"], a[href*="/auth/login"]')].some(visible);
-          const challenge = /checking your browser|verify you are human|cloudflare|security check|just a moment|attention required|turnstile/i.test(title + " " + body.slice(0, 1200));
-          const answers = [...document.querySelectorAll('[data-message-author-role="assistant"]')];
+          const lockdownAlert = [...document.querySelectorAll('[role="alert"], [data-sonner-toast]')].find(
+            (element) => visible(element) && /couldn['’]t check lockdown mode/i.test(element.innerText),
+          );
+          const retryButton = [...(lockdownAlert?.querySelectorAll("button") ?? [])].find((button) =>
+            visible(button) && button.innerText.trim() === "Retry",
+          );
+          const retryRect = retryButton?.getBoundingClientRect();
+          const retryButtonPoint = retryRect
+            ? { x: retryRect.left + retryRect.width / 2, y: retryRect.top + retryRect.height / 2 }
+            : undefined;
+          const sendButton = [
+            document.querySelector('[data-testid="send-button"]'),
+            document.querySelector('button[aria-label="Send prompt"]'),
+            document.querySelector('button[aria-label="Send message"]'),
+            [...document.querySelectorAll("button")].find(
+              (button) =>
+                visible(button) &&
+                !button.disabled &&
+                /\b(send|submit)\b/i.test(button.getAttribute("aria-label") ?? ""),
+            ),
+          ].find((element) => element && visible(element) && !element.disabled);
+          const sendButtonSelector = sendButton?.getAttribute("data-testid")
+            ? 'button[data-testid="' + sendButton.getAttribute("data-testid") + '"]'
+            : sendButton?.getAttribute("aria-label")
+              ? 'button[aria-label="' + sendButton.getAttribute("aria-label") + '"]'
+              : undefined;
+          const login = [...document.querySelectorAll('[data-testid="login-button"], a[href*="/auth/login"]')].some(
+            visible,
+          );
+          const challenge = /checking your browser|verify you are human|cloudflare|security check|just a moment|attention required|turnstile/i.test(
+            title + " " + body.slice(0, 1200),
+          );
+          const markedAnswers = [...document.querySelectorAll('[data-message-author-role="assistant"]')].filter(
+            visible,
+          );
+          // ChatGPT's current web UI removed its message-role attributes. These
+          // visible group classes identify assistant output and user bubbles there.
+          const answers =
+            markedAnswers.length > 0
+              ? markedAnswers
+              : [...document.querySelectorAll("div.group.flex.min-w-0.flex-col")].filter(visible);
+          const markedUserMessages = [
+            ...document.querySelectorAll('[data-message-author-role="user"]'),
+          ].filter(visible);
+          const userMessages =
+            markedUserMessages.length > 0
+              ? markedUserMessages
+              : [...document.querySelectorAll('[class~="group/user-message"]')].filter(visible);
           const last = answers.at(-1);
           // ChatGPT can keep an inactive stop control mounted after a reply. Only
           // visible generation controls should keep the provider turn open.
@@ -187,13 +252,45 @@ export class SharedBrowserChatGPT {
               '[data-testid="stop-button"], button[aria-label*="Stop generating" i], button[aria-label*="Stop response" i]',
             ),
           ].some(visible);
-          return { composer, composerSelector, login, challenge, assistantCount: answers.length, answer: last?.innerText ?? "", generating };
+          return {
+            composer,
+            composerSelector,
+            composerText,
+            login,
+            challenge,
+            lockdownMessage: /couldn['’]t check lockdown mode/i.test(body)
+              ? "Couldn't check Lockdown mode"
+              : "",
+            retryButtonPoint,
+            sendButtonSelector,
+            assistantCount: answers.length,
+            userMessageCount: userMessages.length,
+            answer: last?.innerText ?? "",
+            generating,
+          };
         })()`,
         awaitPromise: true,
         returnByValue: true,
       });
 
     let ready = await inspect();
+    if (hasChatGPTLockdownCheckFailure(ready.lockdownMessage) && ready.retryButtonPoint) {
+      await invoke("click", ready.retryButtonPoint);
+      const retryDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 5_000;
+      while (
+        DateTime.toEpochMillis(DateTime.nowUnsafe()) < retryDeadline &&
+        hasChatGPTLockdownCheckFailure(ready.lockdownMessage)
+      ) {
+        signal.throwIfAborted();
+        await NodeTimersPromises.setTimeout(300, undefined, { signal });
+        ready = await inspect();
+      }
+    }
+    if (hasChatGPTLockdownCheckFailure(ready.lockdownMessage))
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT couldn't check Lockdown Mode. Its Retry check is still failing, so T3 has not sent the prompt and did not start a cooldown. Restore the ChatGPT page connection, then retry this turn.",
+        false,
+      );
     const composerDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 20_000;
     while (
       !ready.composer &&
@@ -258,9 +355,51 @@ export class SharedBrowserChatGPT {
         );
       }
     }
-    signal.throwIfAborted();
-    await invoke("press", { key: "Enter", timeoutMs: 15_000 });
     const before = ready.assistantCount;
+    const beforeUserMessageCount = ready.userMessageCount;
+    signal.throwIfAborted();
+    const sendState = await inspect();
+    if (hasChatGPTLockdownCheckFailure(sendState.lockdownMessage))
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT couldn't check Lockdown Mode. T3 has not sent the prompt and did not start a cooldown. Restore the ChatGPT page connection, then retry this turn.",
+        false,
+      );
+    if (!sendState.composerText.trim())
+      throw new ChatGPTInteractionRequiredError(
+        "T3 entered no text in ChatGPT's message box, so it did not send the request or start a cooldown. Check the visible browser, then retry this turn.",
+        false,
+      );
+    if (sendState.sendButtonSelector) {
+      await invoke("click", { selector: sendState.sendButtonSelector, timeoutMs: 15_000 });
+    } else {
+      // Older ChatGPT layouts may not expose a labeled Send control.
+      await invoke("press", { key: "Enter", timeoutMs: 15_000 });
+    }
+    const acceptedDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 5_000;
+    let accepted = false;
+    while (DateTime.toEpochMillis(DateTime.nowUnsafe()) < acceptedDeadline) {
+      signal.throwIfAborted();
+      const submitted = await inspect();
+      if (hasChatGPTLockdownCheckFailure(submitted.lockdownMessage))
+        throw new ChatGPTInteractionRequiredError(
+          "ChatGPT couldn't check Lockdown Mode. T3 did not receive confirmation that the prompt was sent, so no cooldown was started. Retry the page check and retry this turn.",
+          false,
+        );
+      if (
+        submitted.assistantCount > before ||
+        isChatGPTPromptAccepted(submitted.userMessageCount, beforeUserMessageCount)
+      ) {
+        ready = submitted;
+        accepted = true;
+        break;
+      }
+      await NodeTimersPromises.setTimeout(250, undefined, { signal });
+    }
+    if (!accepted)
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT left the prompt in its message box instead of sending it. T3 did not start a cooldown. Check the visible ChatGPT page, then retry this turn.",
+        false,
+      );
     const deadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 180_000;
     while (DateTime.toEpochMillis(DateTime.nowUnsafe()) < deadline) {
       signal.throwIfAborted();
