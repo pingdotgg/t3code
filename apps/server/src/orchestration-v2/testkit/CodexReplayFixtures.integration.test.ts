@@ -105,6 +105,19 @@ function uniqueCanonicalTranscripts(
 const CODEX_REPLAY_TRANSCRIPTS = uniqueCanonicalTranscripts(CODEX_REPLAY_FIXTURE_REGISTRATIONS);
 
 const scenarioExpectations = {
+  codex_luna_reserve: {
+    outgoing: [
+      "initialize",
+      "initialized",
+      "thread/start",
+      "account/rateLimits/read",
+      "turn/start",
+    ],
+    incoming: ["error", "account/rateLimits/read", "turn/completed"],
+    turnStartCount: 4,
+    turnCompletedCount: 4,
+    approvalRequestCount: 0,
+  },
   simple: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
     incoming: ["thread/started", "turn/started", "turn/completed"],

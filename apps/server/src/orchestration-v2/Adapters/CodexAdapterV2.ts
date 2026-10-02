@@ -648,6 +648,69 @@ type CodexTurnStartParamsWithCollaborationMode =
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
   CodexTurnStartParamsWithCollaborationMode,
 );
+
+/** Hidden wire model the Codex TUI sends while Luna Reserve is active (tui/src/model_catalog.rs:7). */
+const CODEX_LUNA_RESERVE_MODEL = "gpt-reserve";
+/** The TUI's fallback normal model when the backend names none (tui/src/model_catalog.rs:8). */
+const CODEX_LUNA_MODEL = "gpt-6-luna";
+
+// Only the fields the TUI's fallback reads (tui/src/backend_banners.rs:18-36); other banners decode to none.
+const decodeCodexLunaReserveBanner = Schema.decodeUnknownOption(
+  Schema.Struct({
+    banner_type: Schema.Literal("luna_reserve"),
+    blocked_model_slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+);
+
+interface CodexLunaReserve {
+  readonly normalModel: string;
+  readonly blockedModel: string | null;
+}
+
+/**
+ * Luna Reserve state after a Reserve-capable `account/rateLimits/read`, or
+ * `undefined` when the read leaves it unchanged. Mirrors the Codex 0.156 TUI
+ * (tui/src/chatwidget/backend_banners.rs): only a full read that allows
+ * ordinary usage with no remaining blocker ends Reserve (lines 317-327), and a
+ * `luna_reserve` banner starts it (lines 143-154). Reserve borrows the normal
+ * Luna model's presentation (tui/src/chatwidget/luna_reserve_model.rs:14-21).
+ */
+function codexLunaReserveFromRead(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+): CodexLunaReserve | null | undefined {
+  const credits = response.rateLimits.credits;
+  if (
+    response.ordinaryUsageAllowed != null &&
+    (response.ordinaryUsageAllowed ||
+      credits?.unlimited === true ||
+      credits?.hasCredits === true) &&
+    response.rateLimitUpsell == null &&
+    response.rateLimits.spendControlReached !== true &&
+    response.rateLimits.rateLimitReachedType == null
+  ) {
+    return null;
+  }
+  const banner = decodeCodexLunaReserveBanner(response.rateLimitUpsell);
+  if (Option.isNone(banner)) return undefined;
+  const reserveSnapshot = [
+    response.rateLimits,
+    ...Object.values(response.rateLimitsByLimitId ?? {}),
+  ].find((snapshot) => snapshot.limitName === CODEX_LUNA_RESERVE_MODEL);
+  return {
+    normalModel: reserveSnapshot?.normalModelSlug ?? CODEX_LUNA_MODEL,
+    blockedModel: banner.value.blocked_model_slug ?? null,
+  };
+}
+
+/** Reserve replaces only the model it stands in for, so the visible Luna label stays true. */
+function codexLunaReserveApplies(reserve: CodexLunaReserve | null, selectedModel: string) {
+  return (
+    reserve !== null &&
+    reserve.normalModel === selectedModel &&
+    (reserve.blockedModel === null || reserve.blockedModel === selectedModel)
+  );
+}
+
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapterRuntimeRequestResponseError,
 );
@@ -698,6 +761,8 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  /** Model sent on the wire when it differs from the user's selection (Luna Reserve). */
+  readonly wireModel?: string;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
@@ -705,6 +770,7 @@ export function buildCodexTurnStartParams(input: {
   readonly omitServiceTier?: boolean;
 }) {
   return Effect.gen(function* () {
+    const wireModel = input.wireModel ?? input.modelSelection.model;
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
@@ -744,7 +810,8 @@ export function buildCodexTurnStartParams(input: {
         : {
             mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
             settings: {
-              model: input.modelSelection.model,
+              // Codex takes the model from collaborationMode when present (core/src/session/step_settings.rs:265).
+              model: wireModel,
               reasoning_effort: effort ?? "medium",
               ...(developerInstructions === undefined
                 ? {}
@@ -757,7 +824,7 @@ export function buildCodexTurnStartParams(input: {
       input: input.codexInput,
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
-      model: input.modelSelection.model,
+      model: wireModel,
       // Model catalogues can default summaries to "none". Request them on every
       // turn, including resumed threads, for T3's reasoning timeline.
       summary: "detailed",
@@ -1632,6 +1699,27 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         });
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        // Luna Reserve: like the Codex TUI, re-read usage after a usage-limit stop
+        // (tui/src/chatwidget/turn_runtime.rs:460-463) and while Reserve is active,
+        // so the next turn enters or leaves it. Ordinary sessions never pay for the read.
+        const lunaReserve = yield* Ref.make<CodexLunaReserve | null>(null);
+        const lunaReserveReadArmed = yield* Ref.make(false);
+        const refreshLunaReserve = Effect.gen(function* () {
+          if (!(yield* Ref.get(lunaReserveReadArmed)) && (yield* Ref.get(lunaReserve)) === null) {
+            return;
+          }
+          const response = yield* client
+            .request("account/rateLimits/read", { supportsLunaReserve: true })
+            .pipe(Effect.timeoutOption("3 seconds"));
+          if (Option.isNone(response)) return;
+          yield* Ref.set(lunaReserveReadArmed, false);
+          const next = codexLunaReserveFromRead(response.value);
+          if (next !== undefined) yield* Ref.set(lunaReserve, next);
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logDebug("Codex Luna Reserve usage read failed.", { cause }),
+          ),
+        );
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -5004,6 +5092,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               : event;
           yield* emitProviderEvent(current);
           if (current.status === "failed" && current.failure.class === "usage_limit") {
+            yield* Ref.set(lunaReserveReadArmed, true);
             const item = makeProviderFailureTurnItem({
               idAllocator,
               driver: CODEX_PROVIDER,
@@ -5537,11 +5626,18 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ? yield* toCodexInput(turnInput)
                   : [];
               const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
+              yield* refreshLunaReserve;
               const turnStartParams = yield* buildCodexTurnStartParams({
                 nativeThreadId: threadId,
                 codexInput,
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
+                ...(codexLunaReserveApplies(
+                  yield* Ref.get(lunaReserve),
+                  turnInput.modelSelection.model,
+                )
+                  ? { wireModel: CODEX_LUNA_RESERVE_MODEL }
+                  : {}),
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
