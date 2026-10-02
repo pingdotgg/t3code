@@ -11128,6 +11128,77 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeShell replays a shell update after repeated projection read failures", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-replayed-refetch");
+      let attempts = 0;
+      const event: OrchestrationEvent = {
+        sequence: 1,
+        eventId: EventId.make("event-replayed-refetch"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {} as never,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(1),
+            readEvents: () => Stream.make(event),
+          },
+          projectionSnapshotQuery: {
+            getThreadShellById: () =>
+              Effect.suspend(() => {
+                attempts += 1;
+                return attempts <= 2
+                  ? Effect.fail(
+                      new PersistenceSqlError({
+                        operation: "test.shell-refetch",
+                        detail: "read failed",
+                      }),
+                    )
+                  : Effect.succeedSome(makeDefaultOrchestrationThreadShell({ id: threadId }));
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const firstError = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell]({ afterSequence: 0 }).pipe(
+              Stream.runCollect,
+            ),
+          ),
+        ),
+      );
+      assert.equal(firstError._tag, "OrchestrationGetSnapshotError");
+      assert.equal(attempts, 2);
+
+      const recovered = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({ afterSequence: 0 }).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        ),
+      );
+      assert.equal(recovered[0]?.kind, "thread-upserted");
+      assert.equal(
+        recovered[0]?.kind === "thread-upserted" ? recovered[0].thread.id : null,
+        threadId,
+      );
+      assert.equal(attempts, 3);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeShell coalescing still removes a project after a trailing update", () =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project-gone");
