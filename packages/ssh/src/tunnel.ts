@@ -880,7 +880,16 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey: remoteStateKey(target),
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-l", "-s", "--", remoteStateKey(target)],
+      // C shells cannot combine login and command flags; retain the POSIX login fallback.
+      remoteCommandArgs: [
+        "sh",
+        "-c",
+        shellSingleQuote(
+          'case "${SHELL##*/}" in csh|tcsh) exec sh -l -c "$1" ;; *) exec "${SHELL:-/bin/sh}" -l -c "$1" ;; esac',
+        ),
+        "sh",
+        shellSingleQuote(`exec sh -s -- ${remoteStateKey(target)}`),
+      ],
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
