@@ -8,7 +8,9 @@ import {
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -33,13 +35,117 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
-const OPENCODE_VERSION_PROBE_TIMEOUT = "4 seconds";
+
+/**
+ * Product default from #8750. It stays 4 seconds so a hung `--version` is
+ * still killed quickly (#8681). Slow hosts opt in with
+ * `T3CODE_OPENCODE_VERSION_PROBE_TIMEOUT` instead of changing it.
+ */
+const DEFAULT_OPENCODE_VERSION_PROBE_TIMEOUT = Duration.seconds(4);
+const MIN_OPENCODE_VERSION_PROBE_TIMEOUT = Duration.seconds(1);
+const MAX_OPENCODE_VERSION_PROBE_TIMEOUT = Duration.seconds(60);
+export const OPENCODE_VERSION_PROBE_TIMEOUT_ENV = "T3CODE_OPENCODE_VERSION_PROBE_TIMEOUT";
+const OPENCODE_VERSION_PROBE_TIMEOUT_SHORTHAND = /^(?<amount>\d+(?:\.\d+)?)\s*(?<unit>ms|s|m|h)$/i;
+
+const OPENCODE_VERSION_PROBE_TIMEOUT_UNITS = {
+  ms: "millis",
+  s: "seconds",
+  m: "minutes",
+  h: "hours",
+} as const;
+
+/**
+ * Duration label placed in the `--version` timeout message. Whole seconds
+ * render as "1 second" or "N seconds"; every other duration renders as
+ * "N millis". The registry only treats those shapes as a probe timeout.
+ */
+const formatOpenCodeVersionProbeTimeout = (duration: Duration.Duration): string => {
+  const millis = Duration.toMillis(duration);
+  if (Number.isInteger(millis) && millis % 1000 === 0) {
+    const seconds = millis / 1000;
+    return seconds === 1 ? "1 second" : `${seconds} seconds`;
+  }
+  return `${millis} millis`;
+};
+
+const OPENCODE_CLI_HEALTH_CHECK_FAILURE = "Failed to execute OpenCode CLI health check";
+
+/** Text before the duration label in the exact `--version` timeout message. */
+export const OPENCODE_VERSION_PROBE_TIMEOUT_MESSAGE_PREFIX = `${OPENCODE_CLI_HEALTH_CHECK_FAILURE}: OpenCode CLI version probe timed out after `;
+
+/** Detail text for a `--version` probe that reached its cap. */
+const openCodeVersionProbeTimeoutDetail = (timeoutLabel: string): string =>
+  `OpenCode CLI version probe timed out after ${timeoutLabel}.`;
+
+/**
+ * Exact provider message for that timeout. Snapshot merging must compare this
+ * with `===`; a launch error that only contains the phrase is a different failure.
+ */
+export const openCodeVersionProbeTimeoutMessage = (timeoutLabel: string): string =>
+  `${OPENCODE_VERSION_PROBE_TIMEOUT_MESSAGE_PREFIX}${timeoutLabel}.`;
+
+/**
+ * Parses `T3CODE_OPENCODE_VERSION_PROBE_TIMEOUT`. Empty or unparseable text
+ * returns undefined so the 4 second default stands. `ms`, `s`, `m`, and `h`
+ * shorthand is accepted. Finite values clamp to 1-60 seconds; non-positive
+ * values are ignored and an infinite value uses the 60 second cap.
+ */
+const parseOpenCodeVersionProbeTimeout = (
+  raw: string | undefined,
+): Duration.Duration | undefined => {
+  const trimmed = raw?.trim() ?? "";
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const shorthand = OPENCODE_VERSION_PROBE_TIMEOUT_SHORTHAND.exec(trimmed);
+  const shorthandAmount = shorthand?.groups?.amount;
+  const shorthandUnit = shorthand?.groups?.unit?.toLowerCase();
+  const normalized =
+    shorthandAmount !== undefined &&
+    shorthandUnit !== undefined &&
+    shorthandUnit in OPENCODE_VERSION_PROBE_TIMEOUT_UNITS
+      ? `${shorthandAmount} ${OPENCODE_VERSION_PROBE_TIMEOUT_UNITS[shorthandUnit as keyof typeof OPENCODE_VERSION_PROBE_TIMEOUT_UNITS]}`
+      : trimmed;
+  const decoded = Duration.fromInput(normalized as Duration.Input);
+  if (Option.isNone(decoded)) {
+    return undefined;
+  }
+
+  const millis = Duration.toMillis(decoded.value);
+  // Non-positive values fall through to the 4 second default. Infinity is
+  // finite-capped with the rest of the range.
+  if (!Number.isFinite(millis) || millis <= 0) {
+    return millis > 0 ? MAX_OPENCODE_VERSION_PROBE_TIMEOUT : undefined;
+  }
+  if (millis < Duration.toMillis(MIN_OPENCODE_VERSION_PROBE_TIMEOUT)) {
+    return MIN_OPENCODE_VERSION_PROBE_TIMEOUT;
+  }
+  if (millis > Duration.toMillis(MAX_OPENCODE_VERSION_PROBE_TIMEOUT)) {
+    return MAX_OPENCODE_VERSION_PROBE_TIMEOUT;
+  }
+  return decoded.value;
+};
+
+/**
+ * `T3CODE_OPENCODE_VERSION_PROBE_TIMEOUT` overrides the 4 second default.
+ * Invalid text is ignored. Accepted values are clamped to 1-60 seconds.
+ */
+export const resolveOpenCodeVersionProbeTimeout = (
+  environment?: NodeJS.ProcessEnv,
+): Duration.Duration =>
+  parseOpenCodeVersionProbeTimeout(environment?.[OPENCODE_VERSION_PROBE_TIMEOUT_ENV]) ??
+  DEFAULT_OPENCODE_VERSION_PROBE_TIMEOUT;
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;
   readonly detail: string;
 }> {}
 
+/**
+ * Drops blank text and Effect's generic `try` / `tryPromise` wrappers so a
+ * probe failure keeps the detail the snapshot can show.
+ */
 function normalizeProbeMessage(message: string): string | undefined {
   const trimmed = message.trim();
   if (trimmed.length === 0) {
@@ -54,6 +160,11 @@ function normalizeProbeMessage(message: string): string | undefined {
   return trimmed;
 }
 
+/**
+ * Detail string for a probe failure. `OpenCodeProbeError` contributes its
+ * `detail`; any other `Error` contributes `message`. Both go through
+ * `normalizeProbeMessage`.
+ */
 function normalizedErrorMessage(cause: unknown): string | undefined {
   if (cause instanceof OpenCodeProbeError) {
     return normalizeProbeMessage(cause.detail);
@@ -66,6 +177,11 @@ function normalizedErrorMessage(cause: unknown): string | undefined {
   return normalizeProbeMessage(cause.message);
 }
 
+/**
+ * Maps a version or inventory probe failure onto the snapshot fields the UI
+ * shows. Local `--version` failures use `OPENCODE_CLI_HEALTH_CHECK_FAILURE`,
+ * so a timeout stays identical to `openCodeVersionProbeTimeoutMessage`.
+ */
 function formatOpenCodeProbeError(input: {
   readonly cause: unknown;
   readonly isExternalServer: boolean;
@@ -135,7 +251,7 @@ function formatOpenCodeProbeError(input: {
   const failureLabel =
     input.phase === "inventory"
       ? "Failed to load OpenCode provider inventory"
-      : "Failed to execute OpenCode CLI health check";
+      : OPENCODE_CLI_HEALTH_CHECK_FAILURE;
   return {
     installed: true,
     message: detail ? `${failureLabel}: ${detail}` : `${failureLabel}.`,
@@ -381,189 +497,208 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
-export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
-  openCodeSettings: OpenCodeSettings,
-  cwd: string,
-  environment?: NodeJS.ProcessEnv,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
-> {
-  const openCodeRuntime = yield* OpenCodeRuntime;
-  const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
-  const resolvedEnvironment = environment ?? process.env;
-  const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const customModels = openCodeSettings.customModels;
-  const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
+/**
+ * Checks OpenCode once and returns its provider snapshot. A local install
+ * runs `--version` under `resolveOpenCodeVersionProbeTimeout` before loading
+ * inventory; a timeout is reported with `openCodeVersionProbeTimeoutDetail`.
+ * A configured server URL skips that CLI probe and connects directly.
+ */
+export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(
+  /**
+   * Generator passed to `Effect.fn` for that status check. A local install
+   * runs `--version` under `resolveOpenCodeVersionProbeTimeout` before loading
+   * inventory; a timeout is reported with `openCodeVersionProbeTimeoutDetail`.
+   * A configured server URL skips that CLI probe and connects directly.
+   */
+  function* (
+    openCodeSettings: OpenCodeSettings,
+    cwd: string,
+    environment?: NodeJS.ProcessEnv,
+  ): Effect.fn.Return<
+    ServerProviderDraft,
+    never,
+    OpenCodeRuntime | OpenCodeServerOwner.OpenCodeServerOwner
+  > {
+    const openCodeRuntime = yield* OpenCodeRuntime;
+    const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
+    const resolvedEnvironment = environment ?? process.env;
+    const versionProbeTimeout = resolveOpenCodeVersionProbeTimeout(resolvedEnvironment);
+    const versionProbeTimeoutLabel = formatOpenCodeVersionProbeTimeout(versionProbeTimeout);
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const customModels = openCodeSettings.customModels;
+    const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
 
-  const fallback = (
-    cause: unknown,
-    version: string | null = null,
-    phase: "version" | "inventory" = "version",
-  ) => {
-    const failure = formatOpenCodeProbeError({
-      cause,
-      isExternalServer,
-      phase,
-      serverUrl: openCodeSettings.serverUrl,
-    });
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: openCodeSettings.enabled,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: failure.installed,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: failure.message,
-      },
-    });
-  };
-
-  if (!openCodeSettings.enabled) {
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: false,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: false,
-        version: null,
-        status: "warning",
-        auth: { status: "unknown" },
-        message: isExternalServer
-          ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
-          : "OpenCode is disabled in T3 Code settings.",
-      },
-    });
-  }
-
-  let version: string | null = null;
-  if (!isExternalServer) {
-    const versionExit = yield* Effect.exit(
-      openCodeRuntime
-        .runOpenCodeCommand({
-          binaryPath: openCodeSettings.binaryPath,
-          args: ["--version"],
-          environment: resolvedEnvironment,
-        })
-        .pipe(
-          Effect.mapError(
-            (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
-          ),
-          Effect.timeoutOrElse({
-            duration: OPENCODE_VERSION_PROBE_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new OpenCodeProbeError({
-                  detail: `OpenCode CLI version probe timed out after ${OPENCODE_VERSION_PROBE_TIMEOUT}.`,
-                }),
-              ),
-          }),
-        ),
-    );
-    if (versionExit._tag === "Failure") {
-      return fallback(Cause.squash(versionExit.cause));
-    }
-    version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
-
-    if (!version) {
-      return fallback(
-        new Error(
-          `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
-        ),
-        null,
-      );
-    }
-    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+    const fallback = (
+      cause: unknown,
+      version: string | null = null,
+      phase: "version" | "inventory" = "version",
+    ) => {
+      const failure = formatOpenCodeProbeError({
+        cause,
+        isExternalServer,
+        phase,
+        serverUrl: openCodeSettings.serverUrl,
+      });
       return buildServerProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
         probe: {
-          installed: true,
+          installed: failure.installed,
           version,
           status: "error",
           auth: { status: "unknown" },
-          message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          message: failure.message,
+        },
+      });
+    };
+
+    if (!openCodeSettings.enabled) {
+      return buildServerProvider({
+        presentation: OPENCODE_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: isExternalServer
+            ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
+            : "OpenCode is disabled in T3 Code settings.",
         },
       });
     }
-  }
 
-  const loadInventory = (server: {
-    readonly url: string;
-    readonly serverPassword?: string;
-    readonly version: string;
-  }) =>
-    openCodeRuntime
-      .loadOpenCodeInventory(
-        openCodeRuntime.createOpenCodeSdkClient({
-          baseUrl: server.url,
-          directory: cwd,
-          ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
-        }),
-      )
-      .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
-  const inventoryEffect = isExternalServer
-    ? openCodeRuntime
-        .connectToOpenCodeServer({
-          binaryPath: openCodeSettings.binaryPath,
-          directory: cwd,
-          serverUrl: openCodeSettings.serverUrl,
-          ...(openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
-            : {}),
-        })
-        .pipe(Effect.flatMap(loadInventory), Effect.scoped)
-    : serverOwner.withServer(loadInventory);
-  const inventoryExit = yield* Effect.exit(
-    inventoryEffect.pipe(
-      Effect.mapError(
-        (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+    let version: string | null = null;
+    if (!isExternalServer) {
+      const versionExit = yield* Effect.exit(
+        openCodeRuntime
+          .runOpenCodeCommand({
+            binaryPath: openCodeSettings.binaryPath,
+            args: ["--version"],
+            environment: resolvedEnvironment,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+            ),
+            Effect.timeoutOrElse({
+              duration: versionProbeTimeout,
+              orElse: () =>
+                Effect.fail(
+                  new OpenCodeProbeError({
+                    detail: openCodeVersionProbeTimeoutDetail(versionProbeTimeoutLabel),
+                  }),
+                ),
+            }),
+          ),
+      );
+      if (versionExit._tag === "Failure") {
+        return fallback(Cause.squash(versionExit.cause));
+      }
+      version = parseGenericCliVersion(versionExit.value.stdout) ?? null;
+
+      if (!version) {
+        return fallback(
+          new Error(
+            `Unable to determine OpenCode version from \`opencode --version\` output. T3 Code requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          ),
+          null,
+        );
+      }
+      if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+        return buildServerProvider({
+          presentation: OPENCODE_PRESENTATION,
+          enabled: openCodeSettings.enabled,
+          checkedAt,
+          models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+          probe: {
+            installed: true,
+            version,
+            status: "error",
+            auth: { status: "unknown" },
+            message: `OpenCode v${version} is too old. Upgrade to v${MINIMUM_OPENCODE_VERSION} or newer.`,
+          },
+        });
+      }
+    }
+
+    const loadInventory = (server: {
+      readonly url: string;
+      readonly serverPassword?: string;
+      readonly version: string;
+    }) =>
+      openCodeRuntime
+        .loadOpenCodeInventory(
+          openCodeRuntime.createOpenCodeSdkClient({
+            baseUrl: server.url,
+            directory: cwd,
+            ...(server.serverPassword !== undefined
+              ? { serverPassword: server.serverPassword }
+              : {}),
+          }),
+        )
+        .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
+    const inventoryEffect = isExternalServer
+      ? openCodeRuntime
+          .connectToOpenCodeServer({
+            binaryPath: openCodeSettings.binaryPath,
+            directory: cwd,
+            serverUrl: openCodeSettings.serverUrl,
+            ...(openCodeSettings.serverPassword
+              ? { serverPassword: openCodeSettings.serverPassword }
+              : {}),
+          })
+          .pipe(Effect.flatMap(loadInventory), Effect.scoped)
+      : serverOwner.withServer(loadInventory);
+    const inventoryExit = yield* Effect.exit(
+      inventoryEffect.pipe(
+        Effect.mapError(
+          (cause) => new OpenCodeProbeError({ cause, detail: openCodeRuntimeErrorDetail(cause) }),
+        ),
       ),
-    ),
-  );
-  if (inventoryExit._tag === "Failure") {
-    return fallback(Cause.squash(inventoryExit.cause), version, "inventory");
-  }
+    );
+    if (inventoryExit._tag === "Failure") {
+      return fallback(Cause.squash(inventoryExit.cause), version, "inventory");
+    }
 
-  version = inventoryExit.value.version;
+    version = inventoryExit.value.version;
 
-  const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value.inventory),
-    customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-  );
-  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
-  return buildServerProvider({
-    presentation: OPENCODE_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    skills,
-    slashCommands: openCodeCommandsToServerProviderSlashCommands(
-      inventoryExit.value.inventory.commands,
-    ),
-    probe: {
-      installed: true,
-      version,
-      status: connectedCount > 0 ? "ready" : "warning",
-      auth: {
-        status: connectedCount > 0 ? "authenticated" : "unknown",
-        type: "opencode",
+    const models = providerModelsFromSettings(
+      flattenOpenCodeModels(inventoryExit.value.inventory),
+      customModels,
+      DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+    );
+    const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
+    const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+    return buildServerProvider({
+      presentation: OPENCODE_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      skills,
+      slashCommands: openCodeCommandsToServerProviderSlashCommands(
+        inventoryExit.value.inventory.commands,
+      ),
+      probe: {
+        installed: true,
+        version,
+        status: connectedCount > 0 ? "ready" : "warning",
+        auth: {
+          status: connectedCount > 0 ? "authenticated" : "unknown",
+          type: "opencode",
+        },
+        message:
+          connectedCount > 0
+            ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
+            : isExternalServer
+              ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
+              : "OpenCode is available, but it did not report any connected upstream providers.",
       },
-      message:
-        connectedCount > 0
-          ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
-          : isExternalServer
-            ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
-            : "OpenCode is available, but it did not report any connected upstream providers.",
-    },
-  });
-});
+    });
+  },
+);

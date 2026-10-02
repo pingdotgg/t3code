@@ -20,6 +20,15 @@ fail, check the URL, credentials, and OpenCode version, then refresh provider st
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
 
+## Slow version checks
+
+If OpenCode is installed but a refresh leaves it unavailable, the version check
+may be timing out. Set `T3CODE_OPENCODE_VERSION_PROBE_TIMEOUT` on the machine
+running T3 Code, for example `10 seconds`. The default wait is 4 seconds, and
+any value is limited to 1-60 seconds. Once OpenCode has already been ready, a
+slow check keeps that status. A missing `opencode` binary still reports as not
+installed.
+
 ## Approvals
 
 OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has

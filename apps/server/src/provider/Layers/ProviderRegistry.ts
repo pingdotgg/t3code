@@ -56,6 +56,10 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+import {
+  OPENCODE_VERSION_PROBE_TIMEOUT_MESSAGE_PREFIX,
+  openCodeVersionProbeTimeoutMessage,
+} from "./OpenCodeProvider.ts";
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -173,6 +177,79 @@ const mergeProviderModels = (
     : mergedModels;
 };
 
+// Labels `formatOpenCodeVersionProbeTimeout` can emit: "1 second", "N seconds",
+// or "N millis" when the cap is not a whole number of seconds.
+const OPENCODE_VERSION_PROBE_TIMEOUT_LABEL = /^(?:1 second|[1-9]\d* seconds|[1-9]\d* millis)$/;
+
+/**
+ * Duration label inside the exact `--version` timeout message. A launch
+ * failure whose text merely contains "version probe timed out" — including a
+ * configured `binaryPath` with that phrase — does not match.
+ */
+const readOpenCodeVersionProbeTimeoutLabel = (message: string | undefined): string | undefined => {
+  if (
+    message === undefined ||
+    !message.startsWith(OPENCODE_VERSION_PROBE_TIMEOUT_MESSAGE_PREFIX) ||
+    !message.endsWith(".")
+  ) {
+    return undefined;
+  }
+  const label = message.slice(OPENCODE_VERSION_PROBE_TIMEOUT_MESSAGE_PREFIX.length, -1);
+  if (!OPENCODE_VERSION_PROBE_TIMEOUT_LABEL.test(label)) {
+    return undefined;
+  }
+  return message === openCodeVersionProbeTimeoutMessage(label) ? label : undefined;
+};
+
+/**
+ * True when `provider` is an installed OpenCode instance whose snapshot failed
+ * with the exact `--version` timeout message and no version. A launch error
+ * that only contains that phrase, including a `binaryPath` with the words, is
+ * not a timeout.
+ */
+const isOpenCodeVersionProbeTimeout = (provider: ServerProvider): boolean => {
+  const label = readOpenCodeVersionProbeTimeoutLabel(provider.message);
+  if (label === undefined) {
+    return false;
+  }
+  const OPENCODE_VERSION_PROBE_TIMEOUT_MARKER = openCodeVersionProbeTimeoutMessage(label);
+  return (
+    provider.driver === ProviderDriverKind.make("opencode") &&
+    provider.installed &&
+    provider.status === "error" &&
+    provider.version === null &&
+    provider.message === OPENCODE_VERSION_PROBE_TIMEOUT_MARKER
+  );
+};
+
+/**
+ * A slow OpenCode `--version` must not mark a provider Unavailable after it
+ * has already reported a version. The probe still dies at its cap. Only a
+ * timeout against a previous ready, versioned snapshot keeps status, version,
+ * and auth. A first probe, a missing binary, and any other failure replace
+ * the snapshot.
+ */
+const carryLastKnownOpenCodeOnVersionProbeTimeout = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+): Pick<ServerProvider, "auth" | "status" | "version"> | undefined => {
+  if (
+    !isOpenCodeVersionProbeTimeout(nextProvider) ||
+    previousProvider.driver !== ProviderDriverKind.make("opencode") ||
+    previousProvider.status !== "ready" ||
+    previousProvider.version === null ||
+    previousProvider.version.length === 0
+  ) {
+    return undefined;
+  }
+
+  return {
+    auth: previousProvider.auth,
+    status: previousProvider.status,
+    version: previousProvider.version,
+  };
+};
+
 /**
  * Antigravity's health check only initializes the agent, so after a server
  * restart it reports the account as unchecked. The saved Google login still
@@ -205,6 +282,13 @@ const carrySavedAntigravityAccount = (
   return { auth: previousProvider.auth, status };
 };
 
+/**
+ * Folds a fresh probe into the previous snapshot. Carries Antigravity account
+ * state forward, and keeps a ready OpenCode version, status, and auth across
+ * an exact `--version` timeout. Models, workspace snapshots, and empty
+ * OpenCode skills or slash commands stay when the new probe did not replace
+ * them.
+ */
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
@@ -213,12 +297,17 @@ export const mergeProviderSnapshot = (
     return nextProvider;
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
+  const lastKnownOpenCode = carryLastKnownOpenCodeOnVersionProbeTimeout(
+    previousProvider,
+    nextProvider,
+  );
   // "Google account access is not checked yet" describes the probe, not the
   // account; it must not outlive the state it explained.
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
+    ...lastKnownOpenCode,
     models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
     ...(nextProvider.workspaceSnapshots !== undefined
       ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
