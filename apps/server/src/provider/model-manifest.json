@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-30T22:00:00Z",
+  "updatedAt": "2026-10-01T18:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -578,6 +578,77 @@
             }
           }
         },
+        "sonnet-5-5": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
+                ],
+                "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "contextWindow",
+                "label": "Context Window",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "200k",
+                    "label": "200k",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "1m",
+                    "label": "1M"
+                  }
+                ]
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "effortMap": {
+                "ultrathink": null
+              },
+              "modelSuffixes": {
+                "contextWindow": {
+                  "1m": "[1m]"
+                }
+              },
+              "contextWindowTokens": {
+                "200k": 200000,
+                "1m": 1000000
+              }
+            }
+          }
+        },
         "sonnet-4-6": {
           "capabilities": {
             "optionDescriptors": [
@@ -677,7 +748,7 @@
           "aliases": ["sonnet-5.5", "claude-sonnet-5.5"],
           "status": "current",
           "badge": "new",
-          "profile": "sonnet-5",
+          "profile": "sonnet-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
         {
