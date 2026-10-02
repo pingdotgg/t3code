@@ -8,7 +8,12 @@ import type {
   ServerSettings,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  DEFAULT_UNIFIED_SETTINGS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+} from "@t3tools/contracts/settings";
 import type { Project, ThreadShell } from "../../types";
 
 export type CollaborativeAcceptancePolicyPatch = Omit<
@@ -146,6 +151,35 @@ export function filterArchivedThreadGroups(
         );
     return threads.length > 0 ? [{ ...group, threads }] : [];
   });
+}
+
+/**
+ * Resolves the raw `autoArchiveSettledAfterDays` setting for display. The
+ * key may still be absent on older servers or until the contracts change
+ * lands everywhere, so an absent value falls back to the default while an
+ * explicit null keeps its "never archive" meaning.
+ */
+export function resolveAutoArchiveSettledAfterDays(raw: number | null | undefined): number | null {
+  return raw === undefined ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : raw;
+}
+
+/**
+ * Parses the days-before-archive draft. Whole-string digits only so "3.5"
+ * and "3days" are rejected instead of silently truncating; out-of-range
+ * values return null and the caller keeps the previous setting.
+ */
+export function parseAutoArchiveSettledAfterDays(draft: string): number | null {
+  const trimmed = draft.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS ||
+    parsed > MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS
+  ) {
+    return null;
+  }
+  return parsed;
 }
 
 export async function runSequentiallySettled<T>(

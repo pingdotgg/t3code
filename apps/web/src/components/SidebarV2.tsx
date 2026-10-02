@@ -703,6 +703,7 @@ export default function SidebarV2() {
             hasChildren={row.hasChildren}
             isExpanded={row.isExpanded}
             key={row.threadKey}
+            settled={settled}
             onArchive={handleArchive}
             onDismissAgentRun={handleDismissAgentRun}
             onOpen={handleThreadClick}

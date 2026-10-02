@@ -31,6 +31,8 @@ export interface SidebarV2NestedRowProps {
   readonly hasChildren: boolean;
   readonly isExpanded: boolean;
   readonly childCount: number;
+  /** Set for rows inside the settled shelf so history fades like its parent. */
+  readonly settled: boolean;
   /** Self or any active descendant is mid-turn; archive would hide that work. */
   readonly archiveBlocked: boolean;
   // The click event drives multi-select: Ctrl/Cmd toggles and Shift extends a
@@ -56,6 +58,7 @@ export const SidebarV2NestedRow = memo(function SidebarV2NestedRow({
   depth,
   active,
   hasChildren,
+  settled,
   isExpanded,
   childCount,
   archiveBlocked,
@@ -120,7 +123,11 @@ export const SidebarV2NestedRow = memo(function SidebarV2NestedRow({
 
   return (
     <SidebarMenuItem
-      className={cn("group/thread relative", isSelected && "rounded-lg ring-1 ring-primary/30")}
+      className={cn(
+        "group/thread relative",
+        settled && "opacity-60",
+        isSelected && "rounded-lg ring-1 ring-primary/30",
+      )}
       data-thread-prewarm-key={getSidebarThreadPrewarmKey(thread)}
     >
       <Tooltip>

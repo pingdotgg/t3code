@@ -25,6 +25,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   resolveThreadListV2Enabled,
+  resolveThreadListV2RootState,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -34,6 +35,7 @@ import {
   type ThreadListV2Item,
   type ThreadListV2ListItem,
 } from "./threadListV2";
+import { resolveDaysDraftCommit } from "../settings/SettingsRouteScreen.logic";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -1795,5 +1797,83 @@ describe("threadListV2 toggle invalidation scope", () => {
         item.key !== "v2-thread:environment-1:scope-mid",
       );
     }
+  });
+});
+
+describe("resolveThreadListV2RootState", () => {
+  const settled = makeThread({
+    id: ThreadId.make("settled"),
+    title: "Settled",
+    settledOverride: "settled",
+    settledAt: NOW,
+  });
+  const base = {
+    relatedStatus: "ready" as const,
+    settlementSupported: true,
+    snoozeSupported: true,
+    now: NOW,
+  };
+
+  it("classifies a settled ready thread as a slim shelf row", () => {
+    expect(resolveThreadListV2RootState({ thread: settled, ...base })).toEqual({
+      variant: "slim",
+      snoozed: false,
+      pinned: false,
+    });
+  });
+
+  it("keeps a settled thread on a card while its group is busy", () => {
+    expect(
+      resolveThreadListV2RootState({ thread: settled, ...base, relatedStatus: "working" }),
+    ).toEqual({ variant: "card", snoozed: false, pinned: false });
+  });
+
+  it("keeps a settled thread on a card when unread descendant activity promotes it", () => {
+    expect(
+      resolveThreadListV2RootState({ thread: settled, ...base, hasUnreadDescendant: true }),
+    ).toEqual({ variant: "card", snoozed: false, pinned: false });
+  });
+
+  it("keeps threads on a card where settlement is unsupported", () => {
+    expect(
+      resolveThreadListV2RootState({ thread: settled, ...base, settlementSupported: false }),
+    ).toEqual({ variant: "card", snoozed: false, pinned: false });
+  });
+
+  it("classifies a snoozed ready thread as a slim snoozed row", () => {
+    const snoozed = makeThread({
+      id: ThreadId.make("snoozed"),
+      title: "Snoozed",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    expect(resolveThreadListV2RootState({ thread: snoozed, ...base })).toEqual({
+      variant: "slim",
+      snoozed: true,
+      pinned: false,
+    });
+  });
+});
+
+describe("resolveDaysDraftCommit", () => {
+  const bounds = { minDays: 1, maxDays: 90 };
+  it.each([
+    { draft: "2", current: null, expected: 2 },
+    { draft: " 7 ", current: null, expected: 7 },
+    { draft: "90", current: 2, expected: 90 },
+  ])("commits valid draft $draft", ({ draft, current, expected }) => {
+    expect(resolveDaysDraftCommit({ draft, current, ...bounds })).toBe(expected);
+  });
+  it.each([
+    { draft: "2", current: 2 },
+    { draft: "3.5", current: null },
+    { draft: "3days", current: null },
+    { draft: "", current: null },
+    { draft: null, current: null },
+    { draft: "0", current: null },
+    { draft: "91", current: null },
+    { draft: "-3", current: null },
+  ])("rejects draft $draft without a write", ({ draft, current }) => {
+    expect(resolveDaysDraftCommit({ draft, current, ...bounds })).toBeNull();
   });
 });

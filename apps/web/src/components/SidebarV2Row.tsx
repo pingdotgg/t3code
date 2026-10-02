@@ -383,6 +383,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
       <SidebarMenuItem
         className={cn(
           "group/thread",
+          settled && "opacity-60",
           active && ACTIVE_ROW_ELEVATION,
           isSelected && "rounded-lg ring-1 ring-primary/30",
         )}
@@ -468,6 +469,7 @@ export const SidebarV2Row = memo(function SidebarV2Row({
       {...sortable?.listeners}
       className={cn(
         "group/thread [contain-intrinsic-size:auto_4rem] [content-visibility:auto]",
+        settled && "opacity-60",
         active && ACTIVE_ROW_ELEVATION,
         isSelected && "rounded-lg ring-1 ring-primary/30",
         // Group-level drag surfaces already dim the wrapper; keep row-level

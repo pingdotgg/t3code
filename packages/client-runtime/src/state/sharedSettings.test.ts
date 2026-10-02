@@ -50,6 +50,7 @@ describe("splitSharedServerPatch", () => {
 describe("pickSharedServerSettings", () => {
   it("returns only the shared keys", () => {
     expect(Object.keys(pickSharedServerSettings(DEFAULT_SERVER_SETTINGS)).sort()).toEqual([
+      "autoArchiveSettledAfterDays",
       "defaultThreadEnvMode",
       "newWorktreesStartFromOrigin",
       "sidebarAutoSettleAfterDays",

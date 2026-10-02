@@ -5,6 +5,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsPatch,
   ClientSettingsSchema,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT,
@@ -19,6 +20,8 @@ import {
   DEFAULT_SIDEBAR_TRANSLUCENCY,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_UI_DENSITY,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   RECOMMENDED_FONT_SIZES_BY_UI_DENSITY,
   ServerSettings,
   ServerSettingsPatch,
@@ -73,6 +76,34 @@ describe("ServerSettings.agentWorkflows", () => {
       enabled: false,
       promptTemplate: "Validate and fix these findings.",
     });
+  });
+});
+
+describe("ServerSettings.autoArchiveSettledAfterDays", () => {
+  it("defaults to two days", () => {
+    expect(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(2);
+    expect(DEFAULT_SERVER_SETTINGS.autoArchiveSettledAfterDays).toBe(2);
+    expect(decodeServerSettings({}).autoArchiveSettledAfterDays).toBe(2);
+  });
+
+  it("passes null through to disable auto-archive (fail closed)", () => {
+    expect(
+      decodeServerSettings({ autoArchiveSettledAfterDays: null }).autoArchiveSettledAfterDays,
+    ).toBeNull();
+    expect(
+      decodeServerSettingsPatch({ autoArchiveSettledAfterDays: null }).autoArchiveSettledAfterDays,
+    ).toBeNull();
+  });
+
+  it("accepts day values inside the 1-90 range in patches", () => {
+    expect(
+      decodeServerSettingsPatch({ autoArchiveSettledAfterDays: 2 }).autoArchiveSettledAfterDays,
+    ).toBe(2);
+  });
+
+  it("exports the range bounds mirroring the sidebar auto-settle pattern", () => {
+    expect(MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(1);
+    expect(MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS).toBe(90);
   });
 });
 
