@@ -15,14 +15,19 @@ The goal is: keep the PR moving until it is ready to merge. Do not merge the PR 
    - Prefer the current branch's PR: `gh pr view --json number,url,title,headRefName,baseRefName,state,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup`.
    - If there is no PR for the current branch, ask for the PR URL or number.
    - If the PR is closed or merged, report that and stop.
-2. State the current blocker in one short update:
+2. Declare the mode before polling (adapted from [backnotprop/pstack](https://github.com/backnotprop/pstack) `poteto-mode` babysit playbook, MIT):
+   - `drive` (default): run the loop to merge-ready, for "babysit this", "get it green", "merge-ready".
+   - `check`: one status pass and a report, for "check on X", "is it green", small or docs-only PRs.
+   - `threads-only`: answer review comments and touch nothing else, for "address the review comments".
+   - `background`: triage without blocking while other work is still executing.
+3. State the current blocker in one short update:
    - draft PR
    - failing or pending checks
    - merge conflicts or stale branch
    - review requested
    - changes requested
    - ready to merge
-3. If the PR is already ready to merge, report the URL and stop.
+4. If the PR is already ready to merge, report the URL and stop.
 
 ## Readiness Definition
 
@@ -49,11 +54,11 @@ Repeat until the PR is ready to merge, blocked on a human decision, or the user 
    - `git fetch origin`
    - `gh pr view --json number,url,title,headRefName,baseRefName,state,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup,reviews,comments`
    - `gh pr checks` or `gh pr checks --watch` when checks are pending.
-2. Handle the highest-priority blocker first.
+2. Handle the highest-priority blocker first. Order is conflicts, then review threads, then CI. Batch every known fix into one push wave.
    - **Draft:** ask before marking ready for review unless the user already asked you to make it ready.
-   - **Merge conflicts or stale base:** merge the base into the PR branch, resolve known conflicts, validate, commit, and push normally without another approval. Prefer this history-preserving path; rebasing or force-pushing requires explicit authorization. Ask only about ambiguous intent or narrower user restrictions.
-   - **Failed checks:** inspect the failing job logs with `gh run view --log-failed` or the relevant provider logs. Fix the root cause, run focused local validation, commit, and push.
-   - **Changes requested:** read review comments, make the requested changes when they are clear and appropriate, run focused validation, commit, and push. If a requested change is ambiguous, product-sensitive, or contradicts repo conventions, ask the user.
+   - **Merge conflicts or stale base:** merge the base into the PR branch, resolve known conflicts, validate, commit, and push normally without another approval. Prefer this history-preserving path; rebasing or force-pushing requires explicit authorization. Ask only about ambiguous intent or narrower user restrictions. Never retarget the PR base or rewrite stack topology from inside a babysit; report rebase-shaped work upward.
+   - **Failed checks:** classify before any retrigger. Flake or infra earns one fresh run, never a blind job retry; an identical second failure means it was never flake, so read the logs instead. A failure in code the diff never touches means a stale base, so check with `git merge-base --is-ancestor` before assuming flake. Only a failure in the diff's own code gets a code fix: inspect with `gh run view --log-failed`, fix the root cause, run focused local validation, commit, and push.
+   - **Changes requested:** read review comments, make the requested changes when they are clear and appropriate, run focused validation, commit, and push. If a requested change is ambiguous, product-sensitive, or contradicts repo conventions, ask the user. Triage bot reviewers skeptically: verify each claim against the code, fix real findings in the lowest owning scope, and dismiss noise with the concrete disproof rather than churning code.
    - **Pending checks:** wait for the existing run instead of starting duplicate long-running validation. If a check appears stuck, report the stuck check and elapsed time before retrying or asking.
    - **Pending review:** leave a concise status for the user. Do not pester reviewers from the agent unless the user asks.
 3. After each push, wait for checks to start and then continue monitoring.
