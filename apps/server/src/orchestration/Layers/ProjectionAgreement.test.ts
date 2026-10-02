@@ -146,7 +146,6 @@ layer("projection agreement", (it) => {
       });
       yield* assertProjectionsAgree(threadId);
 
-      // A running session is authoritative for the latest turn.
       yield* engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("agreement-session-running"),
@@ -166,8 +165,7 @@ layer("projection agreement", (it) => {
       });
       yield* assertProjectionsAgree(threadId);
 
-      // `activeMessageId` is the field the snapshot reader used to drop: it
-      // inlined its own session mapping instead of the shared one.
+      // The field the reader used to drop.
       const inMemory = yield* engine.getReadModel();
       assert.strictEqual(
         inMemory.threads.find((entry) => entry.id === threadId)?.session?.activeMessageId,
@@ -175,9 +173,7 @@ layer("projection agreement", (it) => {
         "precondition: the in-memory projector records activeMessageId",
       );
 
-      // Session stops while the turn row is still running. Both projections must
-      // terminalise the orphaned turn, or the decider refuses a queued dispatch
-      // the client believes it can make.
+      // Orphaned turn: both must terminalise it.
       yield* engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("agreement-session-ready"),

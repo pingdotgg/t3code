@@ -1954,11 +1954,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(fallbackThreadShell._tag, "Some");
       if (fallbackThreadShell._tag === "Some") {
         assert.equal(fallbackThreadShell.value.latestTurn?.turnId, asTurnId("turn-running"));
-        // The session is `ready` while a turn row is still `running`. The
-        // in-memory projector terminalises that orphaned turn (see
-        // `projector.test.ts` "marks running latest turn interrupted when
-        // session stops"); the reader must agree, or a thread the decider
-        // considers free reads as busy and refuses a queued dispatch.
+        // Session `ready` with a turn row still `running`: terminalised, to
+        // match projector.test.ts's "marks running latest turn interrupted".
         assert.equal(fallbackThreadShell.value.latestTurn?.state, "interrupted");
         assert.equal(fallbackThreadShell.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }

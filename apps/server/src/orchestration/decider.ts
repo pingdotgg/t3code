@@ -371,13 +371,10 @@ function appendChildLifecycleNotification(
   // Unfenced (pre-dispatch) work keeps the legacy behavior. Parent-side
   // signals carry parent authority and are never fenced.
   //
-  // Order matters: whether the signal is superseded is settled first, then the
-  // terminal-failure window, and only then is "this would mutate state"
-  // decided — a signal too old to count as a terminal failure must not become
-  // fenced merely by asking whether it mutates.
-  //
-  // Parent-side signals carry parent authority and are never fenced, so they
-  // short-circuit to a verdict that passes both checks.
+  // Supersession is settled before the terminal-failure window, and only then is
+  // `wouldMutate` decided: `classifyExecutionProvenance` takes no mutatesState
+  // argument precisely so a signal too old to count as terminal failure is not
+  // fenced just for asking whether it mutates.
   const provenance =
     input.authority === "parent"
       ? ("authorized" as const)

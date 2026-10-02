@@ -1965,8 +1965,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
-                // Shared mapper: inlining this dropped `activeMessageId`, which
-                // every other read path preserves.
                 sessionsByThread.set(row.threadId, mapSessionRow(row));
               }
 

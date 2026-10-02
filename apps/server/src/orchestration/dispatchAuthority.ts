@@ -17,35 +17,17 @@ export function activeDispatchTurnId(delegation: ThreadDelegation): string | nul
   return (delegation.dispatchTurnId as string | null | undefined) ?? null;
 }
 
-/**
- * How a signal's own provenance relates to the delegation's current execution
- * generation. Decided without reference to what the caller intends to do, so
- * callers can compose it with their own rules in any order.
- *
- * - `unfenced`: the delegation has no execution generation to fence against
- *   (absent, already settled, or predating generations). Nothing to prove.
- * - `superseded`: the signal provably comes from a retired generation. History
- *   only — never mutates delegation, decision, wait, or queue state.
- * - `unproven`: a generation exists but the signal carries no proof of which one
- *   it came from. It may act only where it mutates nothing.
- * - `authorized`: the signal provably comes from the active generation.
- */
 export type ExecutionProvenance = "unfenced" | "superseded" | "unproven" | "authorized";
 
 /**
- * Single authority for the generation fence. Both child-report admission
- * (`classifyChildReport`) and parent-waking lifecycle notification decide
- * through it, so a change to what counts as authorized proof cannot leave the
- * report path and the notification path disagreeing.
+ * The generation fence, shared by child-report admission and parent-waking
+ * lifecycle notification so the two cannot disagree about authorized proof.
+ * Terminality is the caller's rule: a settled delegation reports `unfenced`.
  *
  * Identity model: the logical assignment survives retries; the dispatch
  * identifies one authorized execution; the turn proves which execution is
  * reporting. Provenance must arrive WITH the signal from the reporting
  * execution's context — this classifier never substitutes live thread state.
- *
- * Terminality is deliberately not decided here: a settled delegation has no
- * live generation left to fence, so it reports `unfenced` and each caller
- * applies its own terminality rule.
  */
 export function classifyExecutionProvenance(input: {
   readonly delegation: ThreadDelegation | null | undefined;
@@ -61,9 +43,7 @@ export function classifyExecutionProvenance(input: {
   }
   const activeTurn = activeDispatchTurnId(delegation);
   if (activeTurn === null) {
-    // A claim that does not name the active dispatch is rejected before anything
-    // else, including on pre-fence delegations: a report must not be able to
-    // invent a generation that the delegation never minted.
+    // Rejected even when unfenced: a report must not invent a generation.
     if (
       input.claimedDispatchId !== null &&
       input.claimedDispatchId !== undefined &&
@@ -97,9 +77,6 @@ export function classifyExecutionProvenance(input: {
 }
 
 /**
- * Fences an attempt-scoped child report against the delegation's active
- * execution generation.
- *
  * - `accepted`: authoritative execution (or genuinely pre-fence history).
  * - `stale`: superseded execution, missing proof, unminted claim, or novel
  *   report on closed work. No task, wait, or queue mutation.
@@ -122,8 +99,7 @@ export function classifyChildReport(input: {
     claimedDispatchId: input.claimedDispatchId,
     claimedTurnId: input.claimedTurnId,
   });
-  // Progress mutates nothing, so unproven history stays complete; anything that
-  // would mutate task state requires proof of the active generation.
+  // Unproven progress stays accepted: it mutates nothing.
   const unprovenIsAcceptable = input.kind === "progress";
   return provenance === "authorized" ||
     provenance === "unfenced" ||
@@ -224,15 +200,10 @@ export function childReportDedupeKey(input: {
 }
 
 /**
- * Canonical identity of a child report: the assignment it belongs to, the
- * execution generation it resolved to, and the idempotency key derived from
- * them.
- *
- * This is the single derivation. The decider, the engine's durable receipt,
- * and replay lookup must all agree, otherwise a retried report is admitted
- * twice instead of replaying its recorded verdict. A report that carries no
- * explicit assignment or dispatch inherits both from the live delegation, so
- * callers must not re-derive those fallbacks themselves.
+ * Single derivation of a report's assignment, generation and idempotency key.
+ * The decider and the engine's durable receipt must agree or a retried report is
+ * admitted twice instead of replaying its recorded verdict. Callers must not
+ * re-derive the assignment and dispatch fallbacks themselves.
  */
 export function childReportIdentity<
   TAssignmentId extends ThreadDelegation["assignmentId"],
@@ -268,13 +239,10 @@ export function childReportIdentity<
 }
 
 /**
- * Report key as rendered by the pre-unification engine and by the receipt
- * backfill (migration 090), which read the dispatch straight off the report's
- * claimed provenance without inheriting the delegation's generation.
- *
- * Kept so receipts written before the canonical derivation stay reachable on
- * replay. Returns null when the claimed and inherited dispatches agree, i.e.
- * whenever the two forms were already identical.
+ * Report key as written by the pre-unification engine and by migration 090's
+ * backfill, which read the dispatch off the report's claimed provenance without
+ * inheriting the delegation's generation. Keeps those receipts reachable on
+ * replay; null when the two derivations already agree.
  */
 export function legacyChildReportKey(input: {
   readonly childThreadId: string;

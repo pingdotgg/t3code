@@ -250,9 +250,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   ) => {
     const delegation = model.threads.find((thread) => thread.id === command.threadId)?.nudging
       ?.delegation;
-    // Same derivation the decider uses for the emitted report id. The two must
-    // agree or a retried report is admitted twice instead of replaying its
-    // recorded verdict.
     const identity = childReportIdentity({
       childThreadId: command.threadId,
       delegation,
@@ -264,9 +261,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     if (!identity) return null;
     return {
       reportKey: identity.reportKey,
-      // Receipts written before the identity was unified (and by the migration
-      // that backfilled them) keyed off the claimed dispatch alone. Look the
-      // legacy form up as well so an in-flight retry still replays.
       legacyReportKey: legacyChildReportKey({
         childThreadId: command.threadId,
         claimedDispatchId: command.dispatchId,

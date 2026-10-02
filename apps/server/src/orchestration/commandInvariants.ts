@@ -119,14 +119,8 @@ export function requireThread(input: {
   );
 }
 
-/**
- * Whether a `provider.turn.start.failed` activity has landed for the thread's
- * latest user message, meaning no turn ever started for it.
- *
- * Shared by the in-flight and queued-start probes below: they answer different
- * questions but must agree on which messages count as "the provider never got
- * a turn", or a failed start blocks one and not the other.
- */
+// Shared by the two probes below: they ask different questions but must agree on
+// which messages count as "the provider never got a turn".
 function hasFailedTurnStartSinceLatestUserMessage(thread: OrchestrationThread): boolean {
   const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
   if (!latestUserMessage) {
