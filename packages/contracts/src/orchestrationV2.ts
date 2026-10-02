@@ -2545,6 +2545,10 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
+    /** Reject a delayed title repair if the title changed since it was read. */
+    expectedTitle: Schema.optional(Schema.String),
+    /** Match the active regeneration request; null requires no regeneration in progress. */
+    expectedTitleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),
     /** Kick off (true) or abandon (false) an async title regeneration. */
     regenerateTitle: Schema.optional(Schema.Boolean),
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
