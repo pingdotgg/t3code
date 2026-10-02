@@ -119,7 +119,6 @@ describe("CLIProxyAPI built-in management API", () => {
         const test = fixture();
         const api = yield* test.api;
         const result = yield* api.readAccounts(config);
-        expect(result.map((account) => account.accountId)).toEqual(["account-a", "account-b"]);
         expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
           { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
@@ -182,27 +181,24 @@ describe("CLIProxyAPI built-in management API", () => {
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: (request) => ({
+        upstream: () => ({
           status: 200,
-          body: request.url?.endsWith("/profile")
-            ? { organization: { uuid: "org-a" } }
-            : {
-                five_hour: { utilization: 10, resets_at: null },
-                seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
-                limits: [
-                  {
-                    kind: "weekly_scoped",
-                    percent: 80,
-                    resets_at: null,
-                    scope: { model: { display_name: "Fable" } },
-                  },
-                ],
+          body: {
+            five_hour: { utilization: 10, resets_at: null },
+            seven_day: { utilization: 50, resets_at: "2099-01-01T00:00:00Z" },
+            limits: [
+              {
+                kind: "weekly_scoped",
+                percent: 80,
+                resets_at: null,
+                scope: { model: { display_name: "Fable" } },
               },
+            ],
+          },
         }),
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.accountId).toBe("org-a");
       expect(
         result[0]?.usageLimits.windows.map((window) => [window.id, window.usedPercent]),
       ).toEqual([
@@ -312,20 +308,3 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 });
-
-it.effect("keeps Claude usage when optional organization identity cannot be read", () =>
-  Effect.gen(function* () {
-    const test = fixture({
-      accounts: [{ ...accounts[0]!, provider: "claude" }],
-      upstream: (request) =>
-        request.url?.endsWith("/profile")
-          ? { status: 403, body: { token: "private" } }
-          : { status: 200, body: { five_hour: { utilization: 10, resets_at: null } } },
-    });
-    const api = yield* test.api;
-    const result = yield* api.readAccounts(config);
-    expect(result[0]?.accountId).toBeUndefined();
-    expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(10);
-    expect(encodeJson(result)).not.toContain("private");
-  }),
-);

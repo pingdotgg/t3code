@@ -53,17 +53,13 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
-  it.effect.each([false, true])("resolves account config, relative: %s", (relativeConfigDir) =>
+  it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
       const executablePath = path.join(tempDir, "fake-claude.mjs");
       const invocationPath = path.join(tempDir, "invocation.json");
-      yield* fs.writeFileString(
-        path.join(tempDir, ".claude.json"),
-        '{"oauthAccount":{"organizationUuid":"org-a"}}',
-      );
       // The probe aborts the SDK without awaiting the child's exit, and on
       // Windows a directory that is still some process's cwd cannot be
       // removed. Keep the workspace outside the scoped directory and let it
@@ -140,13 +136,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       yield* fs.chmod(executablePath, 0o755);
 
       const capabilities = yield* probeClaudeCapabilities(
-        decodeClaudeSettings({
-          binaryPath: executablePath,
-          homePath: relativeConfigDir ? "" : tempDir,
-        }),
+        decodeClaudeSettings({ binaryPath: executablePath }),
         {
           ...process.env,
-          CLAUDE_CONFIG_DIR: path.relative(workspaceCwd, tempDir),
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
         },
@@ -154,7 +146,6 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       );
 
       assert.deepEqual(capabilities, {
-        accountId: "org-a",
         email: "dev@example.com",
         subscriptionType: "pro",
         tokenSource: "oauth",

@@ -64,11 +64,6 @@ the dialog.
 
 ## Track subscription limits
 
-Repeated instances of one subscription count once. Separate Codex workspaces or Claude
-organizations stay separate even when they share an email. Older snapshots can join one known
-subscription when their email and plan match unambiguously. Unidentified records stay separate
-unless identical credentials establish that they belong to one account.
-
 **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
 or Claude accounts across your environments and hubs you read one number per window rather than a
 list. Each window card shows how much of the pool is left and a bar with one segment per account,

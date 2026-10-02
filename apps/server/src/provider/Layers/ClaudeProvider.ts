@@ -42,7 +42,6 @@ import {
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
-import { claudeAccountConfigPath, readClaudeAccountId } from "./claudeResetCredits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
@@ -227,7 +226,6 @@ function nonEmptyProbeString(value: string): string | undefined {
 }
 
 type ClaudeCapabilitiesProbe = {
-  readonly accountId?: string;
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -339,10 +337,6 @@ const probeClaudeCapabilities = (
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-    const accountConfigPath = yield* claudeAccountConfigPath(
-      claudeEnvironment.CLAUDE_CONFIG_DIR,
-      cwd,
-    );
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
@@ -363,11 +357,11 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      return { q, init, accountConfigPath };
+      return { q, init };
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.flatMap(({ q, init, accountConfigPath }) =>
+    Effect.flatMap(({ q, init }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         const usageResult = yield* Effect.tryPromise(() =>
@@ -387,11 +381,7 @@ const probeClaudeCapabilities = (
               readonly apiProvider?: string;
             }
           | undefined;
-        const accountId = account?.subscriptionType
-          ? yield* readClaudeAccountId(accountConfigPath)
-          : undefined;
         return {
-          ...(accountId ? { accountId } : {}),
           email: account?.email,
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
@@ -602,7 +592,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       auth: {
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
-        ...(capabilities.accountId ? { accountId: capabilities.accountId } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
