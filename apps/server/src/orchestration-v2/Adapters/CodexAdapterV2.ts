@@ -14,6 +14,7 @@ import {
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ServerProviderShape } from "../../provider/Services/ServerProvider.ts";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import { buildCodexInitializeParams } from "../../provider/Layers/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -1548,6 +1549,11 @@ export interface CodexAdapterV2Options {
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // Managed ChatGPT sharing reports its failures as opaque provider codes, so a
+  // terminal failure carries them verbatim. Map those to the actionable copy
+  // users get from `classifyCodexManagedError`; native Codex errors stay raw.
+  const classifyManagedFailure = (value: unknown) =>
+    adapterOptions.resolveRuntime === undefined ? undefined : classifyCodexManagedError(value);
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -4946,6 +4952,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           ? "usage_limit"
                           : "provider_error",
                     });
+              // Managed sharing failures reach the terminal as raw provider text;
+              // rewrite them so the user sees the curated, actionable message.
+              const managed = classifyManagedFailure({
+                message: failure.message,
+                native: previousFailure?.nativeMessage ?? input.failureMessage,
+              });
+              const resolvedFailure =
+                managed === undefined
+                  ? failure
+                  : { ...failure, message: managed.message, code: managed.code };
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -4958,12 +4974,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ),
                 status: terminalStatus,
                 failure:
-                  failure.class === "usage_limit"
+                  resolvedFailure.class === "usage_limit"
                     ? {
-                        ...failure,
+                        ...resolvedFailure,
                         resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
                       }
-                    : failure,
+                    : resolvedFailure,
                 ...(input.providerRetry === undefined
                   ? {}
                   : {
