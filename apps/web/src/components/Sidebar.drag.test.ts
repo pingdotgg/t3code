@@ -621,6 +621,28 @@ describe("sidebar drag projection", () => {
     expect(result.get(sidebarMarkerId("snoozed-header"))).toEqual({ ...stationary, y: -46 });
   });
 
+  it("previews a time-ordered inbox drop at its time slot, above the Working shelf", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      marker("working-header"),
+      thread("w", "working"),
+      settledHeader,
+      marker("settled-placeholder"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: false };
+    // By pointer, the unpinned row lands between a1 and a2.
+    expect(preview(input, "p", "a1").get("a2")?.y).toBe(0);
+    // By time, it lands below a2, and the shelf does not move.
+    const byTime = preview({ ...input, activeOrder: ["a1", "a2", "p"] }, "p", "a1");
+    expect(byTime.get("a2")?.y).toBe(-83);
+    expect(byTime.get(sidebarMarkerId("working-header"))).toEqual(stationary);
+    expect(byTime.get("w")).toEqual(stationary);
+  });
+
   it("derives missing card geometry from the measured root scale", () => {
     const items = [
       pinnedHeader,
