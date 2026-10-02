@@ -15,11 +15,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
+const MIN_EXTERNAL_CLOUDFLARED_VERSION = [2025, 6, 1] as const;
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
@@ -207,6 +209,36 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     return platform === "win32" || (info.value.mode & 0o111) !== 0;
   });
 
+  const compatibleExternalVersion = (executablePath: string) =>
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make(executablePath, ["version"], {
+          shell: false,
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+      );
+      const output = yield* child.stdout.pipe(
+        Stream.take(16),
+        Stream.map((chunk) => chunk.subarray(0, 64)),
+        Stream.decodeText(),
+        Stream.mkString,
+      );
+      if (Number(yield* child.exitCode) !== 0) return null;
+      const match = /^cloudflared version (\d+)\.(\d+)\.(\d+)\b/mu.exec(output);
+      if (!match) return null;
+      const version = [Number(match[1]), Number(match[2]), Number(match[3])];
+      for (let index = 0; index < version.length; index += 1) {
+        if (version[index]! > MIN_EXTERNAL_CLOUDFLARED_VERSION[index]!) break;
+        if (version[index]! < MIN_EXTERNAL_CLOUDFLARED_VERSION[index]!) return null;
+      }
+      return `${version[0]}.${version[1]}.${version[2]}`;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout("2 seconds"),
+      Effect.orElseSucceed(() => null),
+    );
+
   const resolvePathExecutable = Effect.gen(function* () {
     const config = yield* loadCloudflaredConfig;
     const pathValue = Option.getOrUndefined(config.path);
@@ -216,7 +248,9 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       const trimmed = directory.trim().replace(/^"|"$/gu, "");
       if (trimmed.length === 0) continue;
       const candidate = path.join(trimmed, executableFileName(platform));
-      if (yield* isExecutableFile(candidate)) return candidate;
+      if (!(yield* isExecutableFile(candidate))) continue;
+      const version = yield* compatibleExternalVersion(candidate);
+      if (version) return { executablePath: candidate, version };
     }
     return null;
   });
@@ -224,12 +258,15 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   const resolve: RelayClientShape["resolve"] = Effect.gen(function* () {
     const config = yield* loadCloudflaredConfig;
     if (Option.isSome(config.executableOverride)) {
-      return (yield* isExecutableFile(config.executableOverride.value))
+      const version = (yield* isExecutableFile(config.executableOverride.value))
+        ? yield* compatibleExternalVersion(config.executableOverride.value)
+        : null;
+      return version
         ? {
             status: "available",
             executablePath: config.executableOverride.value,
             source: "override",
-            version: CLOUDFLARED_VERSION,
+            version,
           }
         : { status: "missing", version: CLOUDFLARED_VERSION };
     }
@@ -241,23 +278,17 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         version: CLOUDFLARED_VERSION,
       };
     }
+    if (releaseAsset) return { status: "missing", version: CLOUDFLARED_VERSION };
     const pathExecutable = yield* resolvePathExecutable;
     if (pathExecutable) {
       return {
         status: "available",
-        executablePath: pathExecutable,
+        executablePath: pathExecutable.executablePath,
         source: "path",
-        version: CLOUDFLARED_VERSION,
+        version: pathExecutable.version,
       };
     }
-    return releaseAsset
-      ? { status: "missing", version: CLOUDFLARED_VERSION }
-      : {
-          status: "unsupported",
-          platform,
-          arch,
-          version: CLOUDFLARED_VERSION,
-        };
+    return { status: "unsupported", platform, arch, version: CLOUDFLARED_VERSION };
   });
 
   const runCommand = Effect.fn("cloudflared.runCommand")(function* (
@@ -360,7 +391,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     if (Option.isSome(config.executableOverride)) {
       return yield* new RelayClientInstallError({
         reason: "override_missing",
-        message: `${CLOUDFLARED_PATH_ENV_NAME} does not point to an executable file.`,
+        message: `${CLOUDFLARED_PATH_ENV_NAME} must point to an executable cloudflared 2025.6.1 or newer.`,
       });
     }
     if (!releaseAsset) {
