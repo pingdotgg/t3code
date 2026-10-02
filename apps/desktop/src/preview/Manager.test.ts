@@ -1691,6 +1691,70 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("sets the opaque base as soon as a guest attaches", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, () => void>();
+        const attach = vi.fn();
+        const sendCommand = vi.fn(async () => undefined);
+        const wc = {
+          id: 44,
+          isDestroyed: () => false,
+          isDevToolsOpened: () => false,
+          getType: () => "webview",
+          getURL: () => "http://localhost:5173/README.md",
+          getTitle: () => "README.md",
+          isLoading: () => true,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          off: vi.fn(),
+          once: (event: string, listener: () => void) => {
+            listeners.set(event, listener);
+          },
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setIgnoreMenuShortcuts: vi.fn(),
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => attach.mock.calls.length > 0,
+            attach,
+            detach: vi.fn(),
+            sendCommand,
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        };
+        fromId.mockReturnValue(wc as never);
+
+        // The tab's first document can paint before the renderer registers the
+        // guest, so the opaque base has to be the first command on attach.
+        yield* manager.prepareWebview(wc as never);
+        expect(attach).toHaveBeenCalledTimes(1);
+        expect(sendCommand.mock.calls[0]).toEqual([
+          "Emulation.setDefaultBackgroundColorOverride",
+          { color: { r: 255, g: 255, b: 255, a: 1 } },
+        ]);
+
+        yield* manager.createTab("tab_early");
+        yield* manager.registerWebview("tab_early", 44);
+        yield* manager.setColorScheme("tab_early", "dark");
+        expect(attach).toHaveBeenCalledTimes(1);
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
+          features: [{ name: "prefers-color-scheme", value: "dark" }],
+        });
+
+        // A guest destroyed before a tab claims it releases its session.
+        listeners.get("destroyed")?.();
+        yield* Effect.yieldNow;
+        expect(wc.debugger.detach).toHaveBeenCalledTimes(1);
+      }),
+    ),
+  );
+
   const makeAudioWebContents = (id: number) => {
     const listeners = new Map<string, (...args: never[]) => void>();
     const setAudioMuted = vi.fn();
