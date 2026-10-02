@@ -5,6 +5,7 @@ import {
   CommandId,
   EventId,
   IsoDateTime,
+  isKnownOrchestrationV2EventType,
   NonNegativeInt,
   OrchestrationV2DomainEventJson,
   OrchestrationV2StoredEvent,
@@ -19,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -426,12 +428,20 @@ const makeEventStore = Effect.gen(function* () {
         );
       },
     ).pipe(
-      Stream.mapEffect((row) =>
-        rowToV2StoredEvent(row).pipe(
-          Effect.mapError(
-            toPersistenceDecodeError("OrchestrationEventStore.readAgentEvents:decode"),
-          ),
-        ),
+      Stream.filterMapEffect((row) =>
+        input?.skipUnknownEventTypes === true && !isKnownOrchestrationV2EventType(row.event_type)
+          ? // Written by a newer build; a known type with a bad payload still fails.
+            Effect.logWarning("Skipping an application event row with an unknown event type", {
+              threadId: row.stream_id,
+              sequence: row.sequence,
+              eventTypeLength: row.event_type.length,
+            }).pipe(Effect.as(Result.failVoid))
+          : rowToV2StoredEvent(row).pipe(
+              Effect.mapError(
+                toPersistenceDecodeError("OrchestrationEventStore.readAgentEvents:decode"),
+              ),
+              Effect.map(Result.succeed),
+            ),
       ),
     );
   };

@@ -51,6 +51,10 @@ export interface OrchestrationEventStoreShape {
    *
    * Reads in fixed-size sequence pages until the filtered range is exhausted;
    * `limit` caps the total emitted events across pages.
+   *
+   * A row whose `event_type` this build does not know fails the read unless
+   * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
+   * client thread replay opts in; anything that builds server state stays strict.
    */
   readonly readAgentEvents: (input?: {
     readonly afterSequence?: number;
@@ -59,6 +63,7 @@ export interface OrchestrationEventStoreShape {
     readonly commandId?: CommandId;
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     readonly limit?: number;
+    readonly skipUnknownEventTypes?: boolean;
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
   /** Measure one thread's bounded replay without loading or decoding its payloads. */

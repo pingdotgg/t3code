@@ -392,6 +392,109 @@ layer("OrchestrationEventStore", (it) => {
       );
     }),
   );
+
+  it.effect("readAgentEvents with skipUnknownEventTypes drops rows of an unknown event type", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:skip-unknown");
+      const baseline = yield* store.latestApplicationSequence;
+      const now = yield* DateTime.now;
+      const knownEvent = (id: string, ordinal: number): OrchestrationV2DomainEvent => ({
+        id: EventId.make(id),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`tool:${id}`),
+          type: "command_execution",
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "running",
+          title: "Known command",
+          input: "echo hi",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      });
+      // appendAgentEvents only accepts known types, so a row a newer build
+      // wrote is inserted directly.
+      const insertUnknown = (eventId: string, streamVersion: number) => sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${eventId}, 'thread', ${threadId}, ${streamVersion},
+          'thread.future-feature-added', '2026-01-05T00:00:01.000Z', 'server',
+          '{"anything":true}', '{}', 2
+        )
+      `;
+
+      const [before] = yield* store.appendAgentEvents({
+        events: [knownEvent("event:skip-unknown:before", 1)],
+      });
+      yield* insertUnknown("event:skip-unknown:middle", 1);
+      const [after] = yield* store.appendAgentEvents({
+        events: [knownEvent("event:skip-unknown:after", 2)],
+      });
+      yield* insertUnknown("event:skip-unknown:trailing", 3);
+
+      const replayed = yield* store
+        .readAgentEvents({ threadId, afterSequence: baseline, skipUnknownEventTypes: true })
+        .pipe(Stream.runCollect);
+      assert.deepEqual(
+        Array.from(replayed, (event) => event.sequence),
+        [before!.sequence, after!.sequence],
+      );
+
+      const strictResult = yield* Effect.result(
+        store.readAgentEvents({ threadId, afterSequence: baseline }).pipe(Stream.runCollect),
+      );
+      assert.equal(strictResult._tag, "Failure");
+      if (strictResult._tag === "Failure") {
+        assert.isTrue(isPersistenceDecodeError(strictResult.failure));
+      }
+    }),
+  );
+
+  it.effect(
+    "readAgentEvents with skipUnknownEventTypes still fails a known type with a broken payload",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread:skip-unknown-broken-known");
+        const baseline = yield* store.latestApplicationSequence;
+
+        yield* sql`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+          ) VALUES (
+            ${"event:skip-unknown-broken-known:broken"}, 'thread', ${threadId}, 0,
+            ${"turn-item.updated"}, '2026-01-05T00:00:03.000Z', 'server',
+            ${'{"this":"is not a valid command_execution payload"}'}, '{}', 2
+          )
+        `;
+
+        const result = yield* Effect.result(
+          store
+            .readAgentEvents({ threadId, afterSequence: baseline, skipUnknownEventTypes: true })
+            .pipe(Stream.runCollect),
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.isTrue(isPersistenceDecodeError(result.failure));
+        }
+      }),
+  );
 });
 
 for (const phase of ["high-water", "replay"] as const) {
