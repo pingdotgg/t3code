@@ -17,7 +17,9 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -761,6 +763,34 @@ describe("ThreadPullRequestReactor", () => {
           Layer.provideMerge(SqlitePersistenceMemory),
         ),
       ),
+    ),
+  );
+
+  it.effect("skips the startup backfill for threads older than the backfill window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const old = DateTime.formatIso(
+          DateTime.makeUnsafe(
+            Date.parse(NOW) - Duration.toMillis(ThreadPullRequestReactor.BACKFILL_WINDOW) - 1,
+          ),
+        );
+        const fixture = yield* makeHarness({
+          threads: [
+            thread("recent", { branch: "recent", settledAt: NOW }),
+            thread("old", { branch: "old", settledAt: old, updatedAt: old }),
+            // Auto-settle keeps the last activity as settledAt but stamps updatedAt now.
+            thread("auto-settled", { branch: "auto-settled", settledAt: old }),
+          ],
+          branchPullRequest: () => Effect.succeed(branchPullRequest()),
+        });
+        yield* TestClock.setTime(Date.parse(NOW));
+        yield* Effect.gen(function* () {
+          yield* fixture.start();
+          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+            "recent",
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
     ),
   );
 
