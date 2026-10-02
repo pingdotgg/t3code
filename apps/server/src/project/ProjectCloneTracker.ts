@@ -14,8 +14,10 @@ import {
   SourceControlRepositoryError,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -93,6 +95,18 @@ export interface ProjectCloneHooks {
 
 /** Finished snapshots stay visible this long so a late subscriber sees the outcome. */
 const DONE_RETENTION = "30 seconds";
+
+/**
+ * A tracked clone that emits no progress for this long is stalled, not
+ * slow: `git clone --progress` prints counter lines continuously while any
+ * bytes move, so a quiet window means the connection is dead. This is a
+ * progress-gated watchdog, not an overall deadline — a healthy multi-GB
+ * clone past this mark keeps running as long as progress lines arrive.
+ */
+const PROJECT_CLONE_STALL_TIMEOUT = "5 minutes";
+const PROJECT_CLONE_STALL_TIMEOUT_MS = Duration.toMillis(
+  Duration.fromInputUnsafe(PROJECT_CLONE_STALL_TIMEOUT),
+);
 
 function clampText(text: string, maxLength: number): string {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
@@ -221,28 +235,46 @@ export const make = Effect.gen(function* () {
    * `matchCause` handler would be skipped). Once git has finished the clone
    * is marked done before the post-clone hook runs, so a late Cancel cannot
    * tear down a complete checkout.
+   *
+   * The clone races a stall watchdog: git runs with no overall deadline so
+   * legitimately slow multi-GB clones can run past two minutes, but a
+   * connection that goes quiet (no `--progress` lines) for the stall window
+   * fails the clone as stalled instead of parking the tracker forever. The
+   * watchdog's failure is a typed error, not an interrupt, so the exit maps
+   * to "failed" and never to "cancelled".
    */
   const runClone = (projectId: ProjectId, tracked: TrackedClone) =>
-    repositories
-      .cloneRepository(
-        { remoteUrl: tracked.input.cloneUrl, destinationPath: tracked.input.destinationPath },
-        { onProgress: (update) => progress(projectId, update), timeoutMs: null },
-      )
-      .pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? finish(projectId, "done", null)
-            : Cause.hasInterruptsOnly(exit.cause)
-              ? finish(projectId, "cancelled", null)
-              : finish(projectId, "failed", describeCloneFailure(exit.cause)),
+    Effect.gen(function* () {
+      const lastProgressAt = yield* Ref.make(yield* Clock.currentTimeMillis);
+      const onProgress: SourceControlRepositoryService.SourceControlCloneOptions["onProgress"] = (
+        update,
+      ) =>
+        Effect.gen(function* () {
+          yield* progress(projectId, update);
+          yield* Ref.set(lastProgressAt, yield* Clock.currentTimeMillis);
+        });
+      return yield* Effect.raceFirst(
+        repositories.cloneRepository(
+          { remoteUrl: tracked.input.cloneUrl, destinationPath: tracked.input.destinationPath },
+          { onProgress, timeoutMs: null },
         ),
-        Effect.flatMap(() =>
-          tracked.hooks
-            .onCloned({ projectId, workspaceRoot: tracked.input.destinationPath })
-            .pipe(Effect.ignoreCause({ log: true })),
-        ),
-        Effect.ignoreCause(),
+        watchForCloneStall(lastProgressAt),
       );
+    }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit)
+          ? finish(projectId, "done", null)
+          : Cause.hasInterruptsOnly(exit.cause)
+            ? finish(projectId, "cancelled", null)
+            : finish(projectId, "failed", describeCloneFailure(exit.cause)),
+      ),
+      Effect.flatMap(() =>
+        tracked.hooks
+          .onCloned({ projectId, workspaceRoot: tracked.input.destinationPath })
+          .pipe(Effect.ignoreCause({ log: true })),
+      ),
+      Effect.ignoreCause(),
+    );
 
   const launch = (projectId: ProjectId) =>
     Effect.gen(function* () {
@@ -475,6 +507,39 @@ export const discardCloneForDeletedProject = (
   command: OrchestrationCommand,
 ): Effect.Effect<void> =>
   command.type === "project.delete" ? tracker.discard(command.projectId) : Effect.void;
+
+/**
+ * A tracked clone that emitted no progress for the stall window: the
+ * connection went quiet, so the clone is failed rather than parked forever.
+ * A typed failure (not an interrupt) so `runClone` maps it to "failed" and
+ * the snapshot carries the explanation instead of a bare cancel.
+ */
+export class ProjectCloneStallError extends Schema.TaggedError<ProjectCloneStallError>()(
+  "ProjectCloneStallError",
+  {},
+) {
+  override get message(): string {
+    return `Clone stalled: no progress for ${PROJECT_CLONE_STALL_TIMEOUT}`;
+  }
+}
+
+/**
+ * Fails with `ProjectCloneStallError` once a full stall window passes with
+ * no progress line. Raced against the clone in `runClone`: every progress
+ * line re-arms the window, so only a genuinely quiet connection trips it.
+ */
+const watchForCloneStall = (lastProgressAt: Ref.Ref<number>) =>
+  Effect.gen(function* () {
+    for (;;) {
+      yield* Effect.sleep(PROJECT_CLONE_STALL_TIMEOUT);
+      const idleFor = (yield* Clock.currentTimeMillis) - (yield* Ref.get(lastProgressAt));
+      // A progress line may have landed while the sleep was resolving; only
+      // fail once a full quiet window has really elapsed.
+      if (idleFor >= PROJECT_CLONE_STALL_TIMEOUT_MS) {
+        return yield* new ProjectCloneStallError({});
+      }
+    }
+  });
 
 function describeCloneFailure(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);

@@ -143,6 +143,68 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("fails a clone that goes quiet instead of parking it forever", () => {
+    const entered = Deferred.makeUnsafe<void>();
+    // The connection is blackholed: git never returns and never emits a
+    // progress line. Without the stall watchdog this parks the tracker in
+    // "running" forever.
+    const harness = makeHarness({
+      clone: () => Effect.andThen(Deferred.succeed(entered, undefined), Effect.never),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      // Spawn gate: the clone fiber must be in flight (and the watchdog
+      // sleeping) before the clock moves, or the adjust passes vacuously.
+      yield* Deferred.await(entered);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("running");
+
+      yield* TestClock.adjust("5 minutes");
+      const stalled = yield* tracker.get(projectId);
+      // A stall is a failure, not a user cancel: it lands in "failed" with
+      // the explanation, and the clone can be retried.
+      expect(stalled?.phase).toBe("failed");
+      expect(stalled?.error).toBe(new ProjectCloneTracker.ProjectCloneStallError({}).message);
+      expect(stalled?.error).toContain("stalled");
+      expect(yield* tracker.retry(projectId)).toBe(true);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("lets a slow clone that keeps emitting progress run past the stall window", () => {
+    const harness = makeHarness({
+      clone: (input, options) =>
+        Effect.gen(function* () {
+          // A slow-but-healthy clone: a progress line every minute for six
+          // minutes, well past the stall window.
+          for (let minute = 1; minute <= 6; minute++) {
+            yield* Effect.sleep("1 minute");
+            yield* (
+              options?.onProgress?.({
+                stage: "receiving",
+                percent: minute * 10,
+                detail: `${minute} MiB`,
+              }) ?? Effect.void
+            );
+          }
+          return { cwd: input.destinationPath, remoteUrl: input.remoteUrl ?? "", repository: null };
+        }),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+
+      // The watchdog wakes at the first window and re-arms: progress keeps
+      // arriving, so the clone is still running, not failed.
+      yield* TestClock.adjust("5 minutes");
+      expect((yield* tracker.get(projectId))?.phase).toBe("running");
+
+      yield* TestClock.adjust("1 minute");
+      expect(yield* tracker.get(projectId)).toMatchObject({ phase: "done", percent: 100 });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("cancel interrupts the clone and removes the partial checkout", () => {
     const harness = makeHarness({ clone: () => Effect.never });
     return Effect.gen(function* () {
