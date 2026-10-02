@@ -40,6 +40,7 @@ import {
   DEFAULT_CHAT_EXPORT_DETAIL_SETTINGS,
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
+  DEFAULT_FILE_PREVIEW_LINE_SPACING,
   DEFAULT_UNIFIED_SETTINGS,
   DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
@@ -70,8 +71,10 @@ import {
   DEFAULT_SIDEBAR_SEARCH_SHOW_SHORTCUT,
   DEFAULT_SIDEBAR_NEW_THREAD_CONFIRM,
   DEFAULT_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
+  FILE_PREVIEW_LINE_SPACING_VALUES,
   MAX_LOCAL_REBUILD_STALENESS_CHECK_MINUTES,
   type CodeFont,
+  type FilePreviewLineSpacing,
   type FontSize,
   type MessagePreviewLineCount,
   type SidebarRowSpacing,
@@ -631,6 +634,21 @@ export function isFontSize(value: unknown): value is FontSize {
   return FONT_SIZE_OPTIONS.some((option) => String(option.value) === String(value));
 }
 
+export const FILE_PREVIEW_LINE_SPACING_OPTIONS: ReadonlyArray<{
+  readonly value: FilePreviewLineSpacing;
+  readonly label: string;
+}> = [
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[0], label: "Compact" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[1], label: "Comfortable" },
+  { value: DEFAULT_FILE_PREVIEW_LINE_SPACING, label: "Default" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[3], label: "Relaxed" },
+  { value: FILE_PREVIEW_LINE_SPACING_VALUES[4], label: "Loose" },
+];
+
+export function isFilePreviewLineSpacing(value: unknown): value is FilePreviewLineSpacing {
+  return FILE_PREVIEW_LINE_SPACING_OPTIONS.some((option) => option.value === value);
+}
+
 const PULL_REQUESTS_STATE_OPTIONS: ReadonlyArray<{
   readonly value: PullRequestListState;
   readonly label: string;
@@ -1132,6 +1150,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.codeFont !== DEFAULT_UNIFIED_SETTINGS.codeFont ? ["Code font"] : []),
       ...(settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize
         ? ["Code font size"]
+        : []),
+      ...(settings.filePreviewLineSpacing !== DEFAULT_UNIFIED_SETTINGS.filePreviewLineSpacing
+        ? ["File preview line spacing"]
         : []),
       ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
         ? ["Chat font size"]
