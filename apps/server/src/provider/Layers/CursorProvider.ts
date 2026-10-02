@@ -653,7 +653,15 @@ const discoverCursorModelsViaListAvailableModels = (
     (acp) =>
       Effect.gen(function* () {
         yield* acp.start();
-        const response = yield* acp.request("cursor/list_available_models", {});
+        // A Cursor agent CLI that stays alive but stops answering extension
+        // requests must not hang model discovery forever.
+        const response = yield* acp.request(
+          "cursor/list_available_models",
+          {},
+          {
+            timeout: "30 seconds",
+          },
+        );
         const decoded = yield* decodeCursorListAvailableModelsResponse(response);
         return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
       }),

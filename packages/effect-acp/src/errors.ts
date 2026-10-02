@@ -368,6 +368,18 @@ export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpR
   }
 }
 
+export class AcpRequestTimeoutError extends Schema.TaggedError<AcpRequestTimeoutError>()(
+  "AcpRequestTimeoutError",
+  {
+    method: Schema.String,
+    requestId: AcpRequestId,
+  },
+) {
+  override get message() {
+    return `ACP request '${this.method}' (id ${this.requestId}) timed out waiting for a response.`;
+  }
+}
+
 export const AcpError = Schema.Union([
   AcpRequestError,
   AcpSpawnError,
@@ -375,6 +387,7 @@ export const AcpError = Schema.Union([
   AcpProtocolParseError,
   AcpTransportError,
   AcpInputStreamEndedError,
+  AcpRequestTimeoutError,
 ]);
 
 export type AcpError = typeof AcpError.Type;

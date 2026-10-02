@@ -285,6 +285,7 @@ export class AcpSessionRuntime extends Context.Service<
     readonly request: (
       method: string,
       payload: unknown,
+      options?: EffectAcpProtocol.AcpPatchedRequestOptions,
     ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
     /**
      * Sends a generic ACP extension notification.
@@ -1124,9 +1125,11 @@ export const make = (
             );
           }),
         ),
-      request: (method, payload) =>
+      request: (method, payload, options) =>
         ensureConnected.pipe(
-          Effect.andThen(runLoggedRequest(method, payload, acp.raw.request(method, payload))),
+          Effect.andThen(
+            runLoggedRequest(method, payload, acp.raw.request(method, payload, options)),
+          ),
         ),
       notify: (method, payload) =>
         ensureConnected.pipe(Effect.andThen(acp.raw.notify(method, payload))),

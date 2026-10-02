@@ -11,6 +11,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import * as AcpProtocol from "./protocol.ts";
@@ -764,6 +765,108 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         );
         assert.strictEqual(failure, error);
         assert.equal(yield* Queue.size(output), 0);
+      }),
+    );
+    it.effect("fails ext requests that never receive a response when a timeout is set", () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+        });
+
+        const fiber = yield* Effect.forkScoped(
+          transport
+            .request("x/test", { hello: "world" }, { timeout: "50 millis" })
+            .pipe(Effect.catch((error) => Effect.succeed(error))),
+        );
+        const outbound = yield* Queue.take(output);
+        assert.deepEqual(yield* decodeExtRequest(outbound), {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "x/test",
+          params: {
+            hello: "world",
+          },
+          headers: [],
+        });
+
+        // Advance the test clock past the deadline: the request itself fails
+        // with a timeout error instead of hanging on the wedged peer.
+        yield* TestClock.adjust("100 millis");
+        const error = yield* Fiber.join(fiber);
+        assert.instanceOf(error, AcpError.AcpRequestTimeoutError);
+        assert.strictEqual(error.method, "x/test");
+        assert.strictEqual(error.requestId, "1");
+        assert.match(error.message, /timed out/);
+
+        // A late response for the timed-out request is ignored, and the next
+        // request still routes by id — the pending entry was dropped.
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(ExtResponse, {
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ok: false },
+          }),
+        );
+        const pending = yield* transport
+          .request("x/test", { hello: "world" })
+          .pipe(Effect.forkScoped);
+        const outbound2 = yield* Queue.take(output);
+        assert.deepEqual(yield* decodeExtRequest(outbound2), {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "x/test",
+          params: {
+            hello: "world",
+          },
+          headers: [],
+        });
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(ExtResponse, {
+            jsonrpc: "2.0",
+            id: 2,
+            result: { ok: true },
+          }),
+        );
+        assert.deepEqual(yield* Fiber.join(pending), { ok: true });
+      }),
+    );
+
+    it.effect("keeps ext requests unbounded by default", () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+        });
+
+        // No timeout option: the existing behavior — waits until the peer
+        // answers, however long that takes.
+        const pending = yield* transport
+          .request("x/test", { hello: "world" })
+          .pipe(Effect.forkScoped);
+        const outbound = yield* Queue.take(output);
+        assert.deepEqual(yield* decodeExtRequest(outbound), {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "x/test",
+          params: {
+            hello: "world",
+          },
+          headers: [],
+        });
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(ExtResponse, {
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ok: true },
+          }),
+        );
+        assert.deepEqual(yield* Fiber.join(pending), { ok: true });
       }),
     );
   }

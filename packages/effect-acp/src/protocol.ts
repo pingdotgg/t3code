@@ -1,7 +1,9 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
@@ -68,11 +70,21 @@ export interface AcpPatchedProtocolOptions {
   readonly onTermination?: (error: AcpError.AcpError) => Effect.Effect<void, never, never>;
 }
 
+export interface AcpPatchedRequestOptions {
+  // Bounds how long the request waits for a response. A wedged peer must not
+  // hold the caller forever. Defaults to unbounded (existing behavior).
+  readonly timeout?: Duration.Input;
+}
+
 export interface AcpPatchedProtocol {
   readonly clientProtocol: RpcClient.Protocol["Service"];
   readonly serverProtocol: RpcServer.Protocol["Service"];
   readonly incoming: Stream.Stream<AcpIncomingNotification>;
-  readonly request: (method: string, payload: unknown) => Effect.Effect<unknown, AcpError.AcpError>;
+  readonly request: (
+    method: string,
+    payload: unknown,
+    options?: AcpPatchedRequestOptions,
+  ) => Effect.Effect<unknown, AcpError.AcpError>;
   readonly notify: (method: string, payload: unknown) => Effect.Effect<void, AcpError.AcpError>;
 }
 
@@ -585,7 +597,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     yield* Queue.offer(outgoing, encoded);
   });
 
-  const sendRequest = Effect.fn("sendRequest")(function* (method: string, payload: unknown) {
+  const sendRequest = Effect.fn("sendRequest")(function* (
+    method: string,
+    payload: unknown,
+    options?: AcpPatchedRequestOptions,
+  ) {
     yield* ensureActive;
     const requestId = yield* Ref.modify(
       nextRequestId,
@@ -602,9 +618,25 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       payload,
       headers: [],
     }).pipe(Effect.tapError(() => removeExtPending(requestId)));
-    return yield* Deferred.await(deferred).pipe(
+    if (options?.timeout === undefined) {
+      return yield* Deferred.await(deferred).pipe(
+        Effect.onInterrupt(() => removeExtPending(requestId)),
+      );
+    }
+    const response = yield* Deferred.await(deferred).pipe(
       Effect.onInterrupt(() => removeExtPending(requestId)),
+      Effect.timeoutOption(options.timeout),
     );
+    if (Option.isNone(response)) {
+      // The peer never answered. Drop the pending entry (a late response
+      // is ignored by resolveExtPending) and fail instead of hanging.
+      yield* removeExtPending(requestId);
+      return yield* new AcpError.AcpRequestTimeoutError({
+        method,
+        requestId: String(requestId),
+      });
+    }
+    return response.value;
   });
 
   return {
