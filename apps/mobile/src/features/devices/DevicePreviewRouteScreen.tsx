@@ -8,9 +8,10 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ActivityIndicator, Alert, AppState, Platform, Pressable, View } from "react-native";
+import { Alert, AppState, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText } from "../../components/AppText";
 import { ScreenHeader, type ScreenHeaderMenuItem } from "../../components/ScreenHeader";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
@@ -292,7 +293,7 @@ function DevicePreviewScreen({
               </Pressable>
             </>
           ) : focused && foreground ? (
-            <ActivityIndicator color={themeVariables["--color-icon"]} />
+            <AppActivityIndicator color={themeVariables["--color-icon"]} />
           ) : null}
         </View>
       )}
@@ -356,7 +357,7 @@ function OpenDevicePreview({
         </>
       ) : (
         <>
-          <ActivityIndicator color={themeVariables["--color-icon"]} />
+          <AppActivityIndicator color={themeVariables["--color-icon"]} />
           <AppText className="text-sm text-foreground-muted">Connecting to device...</AppText>
         </>
       )}

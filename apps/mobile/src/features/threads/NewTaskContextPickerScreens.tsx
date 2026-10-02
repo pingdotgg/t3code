@@ -1,3 +1,4 @@
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { MaterialListRow } from "../../components/MaterialListRow";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -11,15 +12,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Platform,
-  Pressable,
-  ScrollView,
-  TextInput,
-  View,
-} from "react-native";
+import { Alert, Platform, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -461,7 +454,7 @@ export function NewTaskBranchPickerRouteScreen() {
               : 0,
           }}
         >
-          {flow.branchesLoading ? <ActivityIndicator /> : null}
+          {flow.branchesLoading ? <AppActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {flow.branchesLoading
               ? "Loading branches…"
@@ -500,7 +493,7 @@ export function NewTaskBranchPickerRouteScreen() {
         ListFooterComponent={
           flow.branchesFetchingNextPage ? (
             <View className="items-center py-4">
-              <ActivityIndicator />
+              <AppActivityIndicator />
             </View>
           ) : null
         }

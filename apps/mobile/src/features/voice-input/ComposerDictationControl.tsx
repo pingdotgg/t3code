@@ -1,13 +1,6 @@
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Linking,
-  Platform,
-  Pressable,
-  View,
-  type LayoutChangeEvent,
-} from "react-native";
+import { Linking, Platform, Pressable, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
   LinearTransition,
@@ -19,6 +12,7 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
@@ -257,7 +251,7 @@ function VoiceActionButton(props: {
         ) : null}
         <View className="absolute inset-0 items-center justify-center">
           {props.loading ? (
-            <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+            <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
           ) : (
             <SymbolView
               name={props.icon}

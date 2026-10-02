@@ -1,8 +1,9 @@
 import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
 import { useCallback, useLayoutEffect, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, View } from "react-native";
+import { Linking, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
+import { AppActivityIndicator } from "../../../components/AppActivityIndicator";
 import { AppText as Text } from "../../../components/AppText";
 import { LoadingStrip } from "../../../components/LoadingStrip";
 import { SymbolView } from "../../../components/AppSymbol";
@@ -172,7 +173,7 @@ export function SettingsLegalDocumentRouteScreen({
         }}
         renderLoading={() => (
           <View className="absolute inset-0 items-center justify-center bg-sheet">
-            <ActivityIndicator />
+            <AppActivityIndicator />
           </View>
         )}
         style={{ flex: 1, backgroundColor: "transparent" }}

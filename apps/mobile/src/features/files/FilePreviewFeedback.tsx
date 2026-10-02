@@ -1,5 +1,6 @@
-import { ActivityIndicator, View } from "react-native";
+import { View } from "react-native";
 
+import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 
@@ -14,7 +15,7 @@ export function FilePreviewLoading(props: {
         props.background === "card" ? "bg-card" : "bg-sheet",
       )}
     >
-      <ActivityIndicator />
+      <AppActivityIndicator />
       <Text className="text-center text-sm text-foreground-muted">{props.message}</Text>
     </View>
   );
