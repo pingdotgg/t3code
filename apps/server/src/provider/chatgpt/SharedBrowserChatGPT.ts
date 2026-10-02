@@ -93,7 +93,10 @@ export class SharedBrowserChatGPT {
     });
   }
 
-  private async tab(scope: Scope, signal: AbortSignal): Promise<PreviewTabId> {
+  private async tab(
+    scope: Scope,
+    signal: AbortSignal,
+  ): Promise<{ readonly tabId: PreviewTabId; readonly needsNavigation: boolean }> {
     signal.throwIfAborted();
     const key = scope.providerSessionId;
     const assigned = this.tabs.get(key);
@@ -103,7 +106,7 @@ export class SharedBrowserChatGPT {
           tabId: assigned,
         });
         if (status.tabId === assigned && status.url?.startsWith("https://chatgpt.com"))
-          return assigned;
+          return { tabId: assigned, needsNavigation: true };
       } catch {
         // A closed preview tab is recreated below.
       }
@@ -118,18 +121,22 @@ export class SharedBrowserChatGPT {
     }
     if (current?.tabId && current.url?.startsWith("https://chatgpt.com")) {
       this.tabs.set(key, current.tabId);
-      return current.tabId;
+      return { tabId: current.tabId, needsNavigation: true };
     }
 
     const opened = await this.invoke<PreviewAutomationStatus>(
       scope,
       "open",
-      { url: "https://chatgpt.com/", open: true, reuseExistingTab: false },
+      {
+        url: "https://chatgpt.com/?temporary-chat=true",
+        open: true,
+        reuseExistingTab: false,
+      },
       30_000,
     );
     if (!opened.tabId) throw new Error("T3 shared browser did not open a ChatGPT tab.");
     this.tabs.set(key, opened.tabId);
-    return opened.tabId;
+    return { tabId: opened.tabId, needsNavigation: false };
   }
 
   async complete(prompt: string, signal: AbortSignal): Promise<string> {
@@ -139,23 +146,37 @@ export class SharedBrowserChatGPT {
     if (!scope.capabilities.has("preview"))
       throw new Error("Enable Agent browser access for this project to use ChatGPT Web.");
 
-    const tabId = await this.tab(scope, signal);
+    const { tabId, needsNavigation } = await this.tab(scope, signal);
     const invoke = <A>(
       operation: PreviewAutomationOperation,
       input: Record<string, unknown>,
       timeoutMs = 15_000,
     ) => this.invoke<A>(scope, operation, { ...input, tabId }, timeoutMs);
 
-    // Temporary chats keep each request self-contained; the bridge supplies history.
-    await invoke(
-      "navigate",
-      {
-        url: "https://chatgpt.com/?temporary-chat=true",
-        readiness: "domContentLoaded",
-        timeoutMs: 30_000,
-      },
-      35_000,
-    );
+    // Opening a fresh temporary chat directly avoids aborting its initial load
+    // with an immediate second navigation. Reused tabs navigate after loading.
+    const pageDeadline = DateTime.toEpochMillis(DateTime.nowUnsafe()) + 30_000;
+    let pageStatus = await invoke<PreviewAutomationStatus>("status", {});
+    while (pageStatus.loading && DateTime.toEpochMillis(DateTime.nowUnsafe()) < pageDeadline) {
+      signal.throwIfAborted();
+      await NodeTimersPromises.setTimeout(500, undefined, { signal });
+      pageStatus = await invoke<PreviewAutomationStatus>("status", {});
+    }
+    if (pageStatus.loading)
+      throw new ChatGPTInteractionRequiredError(
+        "ChatGPT is still loading in the visible T3 browser. Wait for the page, then retry; this did not start a cooldown.",
+        false,
+      );
+    if (needsNavigation)
+      await invoke(
+        "navigate",
+        {
+          url: "https://chatgpt.com/?temporary-chat=true",
+          readiness: "domContentLoaded",
+          timeoutMs: 30_000,
+        },
+        35_000,
+      );
 
     const inspect = () =>
       invoke<{
