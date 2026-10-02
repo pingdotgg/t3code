@@ -195,6 +195,7 @@ export function MicrophoneTest({
                 {phase === "recording" ? (
                   <>
                     <VoiceWaveform level={level / 100} />
+                    <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
                     <span
                       className="shrink-0 text-xs tabular-nums text-muted-foreground"
                       aria-label="Recording time"
