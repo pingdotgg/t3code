@@ -503,6 +503,7 @@ describe("MessagesTimeline", () => {
                   id: "long-edit",
                   createdAt,
                   turnId,
+                  sourceActivityKind: "tool.started",
                   tone: "tool",
                   label: "Edit file",
                   detail: "/workspace/src/durable-worktree-c...",
@@ -549,6 +550,9 @@ describe("MessagesTimeline", () => {
         expect(getComputedStyle(details!).getPropertyValue("text-size-adjust")).toBe("100%");
         expect(getComputedStyle(detail).backgroundColor).toBe("rgba(0, 0, 0, 0)");
         expect(detail.scrollWidth).toBeLessThanOrEqual(detail.clientWidth + 1);
+        const evidenceButton = page.getByRole("button", { name: "Load full tool evidence" });
+        await expect.element(evidenceButton).toBeVisible();
+        expect(getComputedStyle(evidenceButton.element()).fontSize).toBe(`${fontSize}px`);
       } finally {
         await screen.unmount();
       }
