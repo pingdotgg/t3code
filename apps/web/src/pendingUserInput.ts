@@ -82,6 +82,35 @@ export function setPendingUserInputCustomAnswer(
   };
 }
 
+export function pendingUserInputRequestKey(
+  environmentId: string,
+  threadId: string | null,
+  requestId: string | undefined,
+): string {
+  return JSON.stringify([environmentId, threadId, requestId]);
+}
+
+/** Drops a thread's drafts for requests that are no longer pending. Unchanged input is returned as is. */
+export function pruneResolvedUserInputDrafts<T>(
+  draftsByRequestKey: Record<string, T>,
+  environmentId: string,
+  threadId: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): Record<string, T> {
+  const threadPrefix = JSON.stringify([environmentId, threadId]).slice(0, -1);
+  const pendingKeys = new Set(
+    pendingRequestIds.map((requestId) =>
+      pendingUserInputRequestKey(environmentId, threadId, requestId),
+    ),
+  );
+  const retained = Object.entries(draftsByRequestKey).filter(
+    ([key]) => !key.startsWith(threadPrefix) || pendingKeys.has(key),
+  );
+  return retained.length === Object.keys(draftsByRequestKey).length
+    ? draftsByRequestKey
+    : Object.fromEntries(retained);
+}
+
 const DISPLACED_ANSWER_SEPARATOR = "\n\n";
 
 /**

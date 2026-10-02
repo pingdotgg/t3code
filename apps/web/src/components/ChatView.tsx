@@ -107,6 +107,7 @@ import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitation
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -150,6 +151,8 @@ import {
 import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
+  pendingUserInputRequestKey,
+  pruneResolvedUserInputDrafts,
   derivePendingUserInputProgress,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -540,6 +543,11 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+// Question answers outlive ChatView remounts (New thread, Settings) until their request resolves.
+const usePendingUserInputAnswers = create<
+  Record<string, Record<string, PendingUserInputDraftAnswer>>
+>(() => ({}));
+const usePendingUserInputQuestionIndex = create<Record<string, number>>(() => ({}));
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -1753,11 +1761,8 @@ export default function ChatView(props: ChatViewProps) {
     window.addEventListener("dragend", clearWorkspaceFileDrag);
     return () => window.removeEventListener("dragend", clearWorkspaceFileDrag);
   }, [isWorkspaceFileDragActive]);
-  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
-    Record<string, Record<string, PendingUserInputDraftAnswer>>
-  >({});
-  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
-    useState<Record<string, number>>({});
+  const pendingUserInputAnswersByRequestId = usePendingUserInputAnswers();
+  const pendingUserInputQuestionIndexByRequestId = usePendingUserInputQuestionIndex();
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
@@ -2916,11 +2921,11 @@ export default function ChatView(props: ChatViewProps) {
     [threadActivities],
   );
   const activePendingUserInput = pendingUserInputs[0] ?? null;
-  const activePendingRequestKey = JSON.stringify([
+  const activePendingRequestKey = pendingUserInputRequestKey(
     environmentId,
     activeThreadId,
     activePendingUserInput?.requestId,
-  ]);
+  );
   const pendingQuestionDraftKeys = useMemo(
     () =>
       activeThreadId
@@ -2970,6 +2975,17 @@ export default function ChatView(props: ChatViewProps) {
     if (routeThreadState.status !== "live" || routeThreadState.data._tag !== "Some") return;
     const questionThread = routeThreadState.data.value;
     const { userInputs: currentRequests } = derivePendingRequests(questionThread.activities);
+    const pendingRequestIds = currentRequests.map((request) => request.requestId);
+    usePendingUserInputAnswers.setState(
+      (existing) =>
+        pruneResolvedUserInputDrafts(existing, environmentId, questionThread.id, pendingRequestIds),
+      true,
+    );
+    usePendingUserInputQuestionIndex.setState(
+      (existing) =>
+        pruneResolvedUserInputDrafts(existing, environmentId, questionThread.id, pendingRequestIds),
+      true,
+    );
     const prefix = questionAttachmentDraftPrefix(environmentId, questionThread.id);
     const retained = new Set(
       currentRequests.flatMap((request) =>
@@ -8743,7 +8759,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!activePendingUserInput) {
         return;
       }
-      setPendingUserInputQuestionIndexByRequestId((existing) => ({
+      usePendingUserInputQuestionIndex.setState((existing) => ({
         ...existing,
         [activePendingRequestKey]: nextQuestionIndex,
       }));
@@ -8766,7 +8782,7 @@ export default function ChatView(props: ChatViewProps) {
       if (nextPrompt !== currentPrompt) {
         setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       }
-      setPendingUserInputAnswersByRequestId((existing) => {
+      usePendingUserInputAnswers.setState((existing) => {
         const question =
           (activePendingProgress?.activeQuestion?.id === questionId
             ? activePendingProgress.activeQuestion
@@ -8818,7 +8834,7 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       promptRef.current = value;
-      setPendingUserInputAnswersByRequestId((existing) => ({
+      usePendingUserInputAnswers.setState((existing) => ({
         ...existing,
         [activePendingRequestKey]: {
           ...existing[activePendingRequestKey],

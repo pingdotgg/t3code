@@ -5,6 +5,8 @@ import {
   carryDisplacedCustomAnswerIntoPrompt,
   countAnsweredPendingUserInputQuestions,
   derivePendingUserInputProgress,
+  pendingUserInputRequestKey,
+  pruneResolvedUserInputDrafts,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -339,5 +341,26 @@ describe("carryDisplacedCustomAnswerIntoPrompt", () => {
     expect(carryDisplacedCustomAnswerIntoPrompt("first half\n", "second half")).toBe(
       "first half\n\nsecond half",
     );
+  });
+});
+
+describe("pruneResolvedUserInputDrafts", () => {
+  const open = pendingUserInputRequestKey("env", "thread", "open");
+  const answered = pendingUserInputRequestKey("env", "thread", "answered");
+  const similarThread = pendingUserInputRequestKey("env", "thread-2", "other");
+  const otherEnvironment = pendingUserInputRequestKey("env-2", "thread", "answered");
+
+  it("drops only this thread's resolved requests", () => {
+    const drafts = { [open]: 1, [answered]: 2, [similarThread]: 3, [otherEnvironment]: 4 };
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["open"])).toEqual({
+      [open]: 1,
+      [similarThread]: 3,
+      [otherEnvironment]: 4,
+    });
+  });
+
+  it("returns the same object when nothing resolved", () => {
+    const drafts = { [open]: 1, [similarThread]: 3 };
+    expect(pruneResolvedUserInputDrafts(drafts, "env", "thread", ["open"])).toBe(drafts);
   });
 });
