@@ -56,6 +56,7 @@ import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
+import { MicrophoneTest } from "./MicrophoneTest";
 
 const SYSTEM_DEFAULT = "system-default";
 const PRIMARY_ENVIRONMENT = "primary-environment";
@@ -598,15 +599,16 @@ export function VoiceSettingsPanel() {
         />
       </SettingsSection>
       <SettingsSection title="Input">
-        <SettingsRow
-          {...searchableSetting("microphone")}
+        <MicrophoneTest
+          key={selectedMicrophone}
+          microphoneId={selectedMicrophone}
           description={
             selectedIsUnavailable
               ? "The selected microphone is unavailable. Select another microphone to record."
               : "Choose the microphone used by this browser or app."
           }
-          control={
-            <div className="flex w-full max-w-80 items-center gap-1.5">
+          microphoneControl={
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
               <Select
                 value={selectedMicrophone ? deviceValue(selectedMicrophone) : SYSTEM_DEFAULT}
                 disabled={loadingMicrophones}

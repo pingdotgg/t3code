@@ -512,7 +512,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "microphone",
     title: "Microphone",
     to: "/settings/voice",
-    desktopOnly: true,
+    searchTerms: ["mic test record playback input audio"],
   },
   {
     id: "dictionary",

@@ -1,16 +1,13 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useNavigate } from "@tanstack/react-router";
-import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const WAVEFORM_BAR_COUNT = 28;
-const WAVEFORM_BAR_IDS = Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) => String(index));
 
 type SpeechPresentation = {
   status: string | null;
@@ -89,42 +86,6 @@ export function resolveSpeechPresentation(
 function formatElapsed(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
-
-const VoiceWaveform = memo(function VoiceWaveform(props: { level: number }) {
-  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const barsRef = useRef<Array<HTMLSpanElement | null>>([]);
-  const levelsRef = useRef(Array<number>(WAVEFORM_BAR_COUNT).fill(0));
-
-  useEffect(() => {
-    const levels = levelsRef.current;
-    levels.copyWithin(0, 1);
-    levels[levels.length - 1] = props.level;
-    barsRef.current.forEach((bar, index) => {
-      if (!bar) return;
-      const level = levels[index] ?? 0;
-      bar.style.opacity = String(0.22 + level * 0.78);
-      bar.style.transform = `scaleY(${prefersReducedMotion ? 0.35 : Math.max(0.08, level)})`;
-    });
-  }, [prefersReducedMotion, props.level]);
-
-  return (
-    <div
-      aria-hidden
-      className="flex h-5 min-w-0 flex-1 items-center justify-between gap-px overflow-hidden"
-    >
-      {WAVEFORM_BAR_IDS.map((id, index) => (
-        <span
-          key={id}
-          ref={(bar) => {
-            barsRef.current[index] = bar;
-          }}
-          className="h-full w-0.5 shrink-0 origin-center rounded-full bg-primary opacity-25 transition-[transform,opacity] duration-100 ease-out motion-reduce:transition-none"
-          style={{ transform: `scaleY(${prefersReducedMotion ? 0.35 : 0.08})` }}
-        />
-      ))}
-    </div>
-  );
-});
 
 function RecordingStatus(props: { level: number }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -283,7 +244,7 @@ export function ComposerSpeechRecordingPill(props: {
     : (presentation.status ?? "Voice input is busy");
 
   return (
-    <div className="flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64">
+    <VoiceInputPill>
       <ComposerSpeechCancelButton
         state={props.state}
         shortcutLabel={props.cancelShortcutLabel ?? null}
@@ -326,6 +287,6 @@ export function ComposerSpeechRecordingPill(props: {
           </TooltipPopup>
         </Tooltip>
       )}
-    </div>
+    </VoiceInputPill>
   );
 }
