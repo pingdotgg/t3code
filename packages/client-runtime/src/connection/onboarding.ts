@@ -94,10 +94,10 @@ export const preparePairingRegistration = Effect.fn(
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
   if (compatibilityError !== null) return yield* compatibilityError;
+  // No scope request: the session inherits exactly what the pairing link grants.
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl: target.httpBaseUrl,
     credential: target.credential,
-    scopes: presentation.scopes,
     clientMetadata: presentation.metadata,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   const connectionId = `bearer:${descriptor.environmentId}`;

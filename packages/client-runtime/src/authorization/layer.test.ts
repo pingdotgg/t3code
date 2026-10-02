@@ -210,7 +210,6 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
               deviceType: "mobile",
               os: "test",
             },
-            scopes: AuthStandardClientScopes,
           }),
         ),
       ),
