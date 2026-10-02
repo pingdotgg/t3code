@@ -8,6 +8,7 @@ import {
   type NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderFailure,
@@ -15,6 +16,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
@@ -39,6 +41,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import type * as ProjectionStore from "./ProjectionStore.ts";
 import type {
   ProviderAdapterV2Event,
   ProviderAdapterV2RuntimePolicy,
@@ -144,13 +147,21 @@ export function selectInheritedBackgroundTurnItems(input: {
 
 type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
 
-type OpenRunOwnedSubagentProjection = {
+export type OpenRunOwnedSubagentProjection = {
   readonly subagents: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
   readonly turnItems: ReadonlyMap<NodeId, SubagentTurnItem>;
+  /** Open items on linked child threads, and on the run's own thread for the run. */
   readonly childTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>;
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
   /** Child threads once linked by a root-run subagent row; kept for cascade. */
   readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
+  // A live run's provider reports these itself. A run that never reached its
+  // provider has nothing to report them, so its read-model rows are passed in.
+  /** Pending requests; each settles with the node it waits on. */
+  readonly runtimeRequests?: ReadonlyArray<OrchestrationV2RuntimeRequest>;
+  readonly streamingMessages?: ReadonlyArray<OrchestrationV2ConversationMessage>;
+  /** Open provider turns of the run's own attempts. */
+  readonly providerTurns?: ReadonlyArray<OrchestrationV2ProviderTurn>;
 };
 
 type RunOwnedSubagentTerminalStatus = Extract<
@@ -200,6 +211,10 @@ function withLinkedChildThreadId(
   return { ...current, linkedChildThreadIds };
 }
 
+/**
+ * What a run that ends interrupted, failed or cancelled settles besides its
+ * root: the run's open work and the provider-native child threads it linked.
+ */
 export function cascadeTerminalizeRunOwnedSubagents(input: {
   readonly run: OrchestrationV2Run;
   readonly open: OpenRunOwnedSubagentProjection;
@@ -220,6 +235,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
         childThreadIds.add(item.childThreadId);
       }
     }
+    const settledNodeIds = new Set<NodeId>();
     const keys = new Set<NodeId>([
       ...input.open.subagents.keys(),
       ...input.open.turnItems.keys(),
@@ -248,10 +264,12 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
       const node = input.open.nodes.get(key);
       if (
         node !== undefined &&
+        node.id !== input.run.rootNodeId &&
         ((node.threadId === input.run.threadId && node.runId === input.run.id) ||
           childThreadIds.has(node.threadId)) &&
         isOpenExecutionNodeStatus(node.status)
       ) {
+        settledNodeIds.add(node.id);
         events.push({
           id: yield* input.allocateEventId(),
           type: "node.updated",
@@ -290,8 +308,11 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
         });
       }
     }
+    const ownsThreadRow = (row: { readonly threadId: ThreadId; readonly runId: string | null }) =>
+      childThreadIds.has(row.threadId) ||
+      (row.threadId === input.run.threadId && row.runId === input.run.id);
     for (const turnItem of input.open.childTurnItems.values()) {
-      if (!childThreadIds.has(turnItem.threadId) || isSettledTurnItemStatus(turnItem.status)) {
+      if (!ownsThreadRow(turnItem) || isSettledTurnItemStatus(turnItem.status)) {
         continue;
       }
       events.push({
@@ -311,8 +332,128 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
         },
       });
     }
+    for (const request of input.open.runtimeRequests ?? []) {
+      if (request.status !== "pending" || !settledNodeIds.has(request.nodeId)) continue;
+      const node = input.open.nodes.get(request.nodeId);
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "runtime-request.updated",
+        threadId: node?.threadId ?? input.run.threadId,
+        nodeId: request.nodeId,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: {
+          ...request,
+          status: "cancelled",
+          responseCapability: {
+            type: "not_resumable",
+            reason: "The run ended before this request was resolved.",
+          },
+          resolvedAt: input.completedAt,
+        },
+      });
+    }
+    for (const message of input.open.streamingMessages ?? []) {
+      if (!message.streaming || !ownsThreadRow(message)) continue;
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "message.updated",
+        threadId: message.threadId,
+        runId: message.runId ?? input.run.id,
+        ...(message.nodeId === null ? {} : { nodeId: message.nodeId }),
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: { ...message, streaming: false, updatedAt: input.completedAt },
+      });
+    }
+    for (const providerTurn of input.open.providerTurns ?? []) {
+      if (isTerminalProviderTurnStatus(providerTurn.status)) continue;
+      events.push({
+        id: yield* input.allocateEventId(),
+        type: "provider-turn.updated",
+        threadId: input.run.threadId,
+        runId: input.run.id,
+        nodeId: providerTurn.nodeId,
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: { ...providerTurn, status: input.status, completedAt: input.completedAt },
+      });
+    }
     return events;
   });
+}
+
+/**
+ * The cascade's input for a run that never reached its provider, read from the
+ * projection instead of tracked from a live event stream. `threads` holds the
+ * run's own thread and the provider-native child threads it linked.
+ */
+export function openRunOwnedWorkFromProjection(input: {
+  readonly run: OrchestrationV2Run;
+  readonly threads: ReadonlyArray<ProjectionStore.ProjectionRuntimeRecoveryState>;
+  readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
+}): OpenRunOwnedSubagentProjection {
+  const { run } = input;
+  const owns = (row: { readonly threadId: ThreadId; readonly runId: string | null }) =>
+    row.threadId === run.threadId
+      ? row.runId === run.id
+      : input.linkedChildThreadIds.has(row.threadId);
+  const rows = <Row>(
+    select: (thread: ProjectionStore.ProjectionRuntimeRecoveryState) => ReadonlyArray<Row>,
+  ) => input.threads.flatMap(select);
+  const runAttemptIds = new Set(
+    rows((thread) => thread.attempts)
+      .filter((attempt) => attempt.runId === run.id)
+      .map((attempt) => attempt.id),
+  );
+  // App-owned tasks (delegate_task) run in their own threads and outlive it.
+  const appOwnedTaskIds = new Set(
+    rows((thread) => thread.subagents)
+      .filter((subagent) => subagent.origin === "app_owned")
+      .map((subagent) => subagent.id),
+  );
+  const ownedTurnItems = rows((thread) => thread.turnItems).filter(
+    (item) =>
+      owns(item) &&
+      !isSettledTurnItemStatus(item.status) &&
+      !(item.type === "subagent" && item.origin === "app_owned"),
+  );
+  return {
+    subagents: new Map(
+      rows((thread) => thread.subagents)
+        .filter(
+          (subagent) =>
+            subagent.runId === run.id &&
+            subagent.origin === "provider_native" &&
+            !isSettledSubagentStatus(subagent.status),
+        )
+        .map((subagent) => [subagent.id, subagent]),
+    ),
+    turnItems: new Map(
+      ownedTurnItems.flatMap((item) =>
+        item.type === "subagent" && item.runId === run.id ? [[item.subagentId, item] as const] : [],
+      ),
+    ),
+    childTurnItems: new Map(
+      ownedTurnItems
+        .filter((item) => !(item.type === "subagent" && item.runId === run.id))
+        .map((item) => [item.id, item]),
+    ),
+    nodes: new Map(
+      rows((thread) => thread.nodes)
+        .filter(
+          (node) =>
+            owns(node) && !appOwnedTaskIds.has(node.id) && isOpenExecutionNodeStatus(node.status),
+        )
+        .map((node) => [node.id, node]),
+    ),
+    linkedChildThreadIds: input.linkedChildThreadIds,
+    runtimeRequests: rows((thread) => thread.runtimeRequests),
+    streamingMessages: rows((thread) => thread.messages).filter((message) => message.streaming),
+    providerTurns: rows((thread) => thread.providerTurns).filter(
+      (turn) => turn.runAttemptId !== null && runAttemptIds.has(turn.runAttemptId),
+    ),
+  };
 }
 
 export function finalProviderThreadStatus(

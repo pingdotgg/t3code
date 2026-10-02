@@ -4,9 +4,12 @@ import {
   EventId,
   MessageId,
   type ModelSelection,
+  NodeId,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -14,7 +17,9 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   type RunId,
+  RuntimeRequestId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -86,6 +91,313 @@ interface RestartAdapterState {
   }>;
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
+  /** Every replacement open fails, not just the first. */
+  readonly replacementOpenAlwaysFails?: boolean;
+  /** The first turn leaves an approval, a streaming reply, a subagent and a command open. */
+  readonly firstTurnLeavesWorkOpen?: boolean;
+}
+
+const providerNativeChildThreadId = (threadId: ThreadId) =>
+  ThreadId.make(`${threadId}:native-subagent`);
+
+// Work a turn leaves open when it is superseded: an approval it is waiting on,
+// a reply still streaming, a provider-native subagent whose own thread is still
+// running a command, and a background command.
+function openTurnWork(
+  providerSessionId: ProviderSessionId,
+  active: ActiveTurn,
+  now: DateTime.Utc,
+): ReadonlyArray<ProviderAdapterV2Event> {
+  const { input, providerTurnId } = active;
+  const base = {
+    threadId: input.threadId,
+    runId: input.runId,
+    providerThreadId: input.providerThread.id,
+    providerTurnId,
+    nativeItemRef: null,
+    parentItemId: null,
+    title: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+  const approvalNodeId = NodeId.make(`node:approval:${input.attemptId}`);
+  const subagentNodeId = NodeId.make(`node:subagent:${input.attemptId}`);
+  const childThreadId = providerNativeChildThreadId(input.threadId);
+  const grandchildThreadId = providerNativeChildThreadId(childThreadId);
+  const childApprovalNodeId = NodeId.make(`node:child-approval:${input.attemptId}`);
+  const childRequestId = RuntimeRequestId.make(`request:child-approval:${input.attemptId}`);
+  const requestId = RuntimeRequestId.make(`request:approval:${input.attemptId}`);
+  return [
+    {
+      type: "node.updated",
+      driver,
+      node: {
+        id: approvalNodeId,
+        threadId: input.threadId,
+        runId: input.runId,
+        parentNodeId: input.rootNodeId,
+        rootNodeId: input.rootNodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: input.providerThread.id,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: requestId,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    },
+    {
+      type: "runtime_request.updated",
+      driver,
+      threadId: input.threadId,
+      runtimeRequest: {
+        id: requestId,
+        nodeId: approvalNodeId,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:approval:${input.attemptId}`),
+        nodeId: approvalNodeId,
+        ordinal: 1,
+        status: "waiting",
+        type: "approval_request",
+        requestId,
+        requestKind: "command",
+      },
+    },
+    {
+      type: "message.updated",
+      driver,
+      message: {
+        id: MessageId.make(`message:reply:${input.attemptId}`),
+        threadId: input.threadId,
+        runId: input.runId,
+        nodeId: input.rootNodeId,
+        role: "assistant",
+        createdBy: "agent",
+        creationSource: "provider",
+        text: "Working on it",
+        attachments: [],
+        streaming: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    {
+      type: "app_thread.created",
+      driver,
+      appThread: {
+        ...input.appThread,
+        createdBy: "agent",
+        creationSource: "provider",
+        id: childThreadId,
+        title: "Explore",
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: input.threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: input.threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:subagent:${input.attemptId}`),
+        nodeId: subagentNodeId,
+        ordinal: 2,
+        status: "running",
+        type: "subagent",
+        subagentId: subagentNodeId,
+        origin: "provider_native",
+        driver,
+        providerInstanceId: input.modelSelection.instanceId,
+        childThreadId,
+        prompt: "Explore the repo",
+        result: null,
+      },
+    },
+    // The subagent is waiting on an approval in its own thread. Its rows carry
+    // no run id; the child thread has no runs.
+    {
+      type: "node.updated",
+      driver,
+      node: {
+        id: childApprovalNodeId,
+        threadId: childThreadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: childApprovalNodeId,
+        kind: "approval_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: input.providerThread.id,
+        providerTurnId,
+        nativeItemRef: null,
+        runtimeRequestId: childRequestId,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    },
+    {
+      type: "runtime_request.updated",
+      driver,
+      threadId: childThreadId,
+      runtimeRequest: {
+        id: childRequestId,
+        nodeId: childApprovalNodeId,
+        providerTurnId,
+        nativeRequestRef: null,
+        kind: "command",
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:child-approval:${input.attemptId}`),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: childApprovalNodeId,
+        ordinal: 3,
+        status: "waiting",
+        type: "approval_request",
+        requestId: childRequestId,
+        requestKind: "command",
+      },
+    },
+    {
+      type: "message.updated",
+      driver,
+      message: {
+        id: MessageId.make(`message:child-reply:${input.attemptId}`),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: null,
+        role: "assistant",
+        createdBy: "agent",
+        creationSource: "provider",
+        text: "Looking",
+        attachments: [],
+        streaming: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    // The subagent's own subagent already reported done, but its thread is
+    // still running a command.
+    {
+      type: "app_thread.created",
+      driver,
+      appThread: {
+        ...input.appThread,
+        createdBy: "agent",
+        creationSource: "provider",
+        id: grandchildThreadId,
+        title: "Search",
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: childThreadId,
+          relationshipToParent: "subagent",
+          rootThreadId: input.threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:nested-subagent:${input.attemptId}`),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: null,
+        ordinal: 2,
+        status: "completed",
+        completedAt: now,
+        type: "subagent",
+        subagentId: NodeId.make(`node:nested-subagent:${input.attemptId}`),
+        origin: "provider_native",
+        driver,
+        providerInstanceId: input.modelSelection.instanceId,
+        childThreadId: grandchildThreadId,
+        prompt: "Search for TODOs",
+        result: "done",
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:grandchild-command:${input.attemptId}`),
+        threadId: grandchildThreadId,
+        runId: null,
+        nodeId: null,
+        ordinal: 1,
+        status: "running",
+        type: "command_execution",
+        input: "rg FIXME",
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:child-command:${input.attemptId}`),
+        threadId: childThreadId,
+        runId: null,
+        nodeId: null,
+        ordinal: 1,
+        status: "running",
+        type: "command_execution",
+        input: "rg TODO",
+      },
+    },
+    {
+      type: "turn_item.updated",
+      driver,
+      turnItem: {
+        ...base,
+        id: TurnItemId.make(`turn-item:command:${input.attemptId}`),
+        nodeId: input.rootNodeId,
+        ordinal: 3,
+        status: "running",
+        type: "command_execution",
+        input: "npm run dev",
+      },
+    },
+  ];
 }
 
 function makeRestartAdapter(
@@ -108,7 +420,7 @@ function makeRestartAdapter(
         const failThisOpen = yield* Ref.modify(state, (current) => {
           const shouldFail =
             sessionInput.modelSelection.model === replacementSelection.model &&
-            !current.failedReplacementOpen;
+            (current.replacementOpenAlwaysFails === true || !current.failedReplacementOpen);
           return [
             shouldFail,
             {
@@ -258,6 +570,15 @@ function makeRestartAdapter(
                     completedAt: null,
                   },
                 });
+                if ((yield* Ref.get(state)).firstTurnLeavesWorkOpen === true) {
+                  for (const event of openTurnWork(
+                    sessionInput.providerSessionId,
+                    active,
+                    occurredAt,
+                  )) {
+                    yield* Queue.offer(events, event);
+                  }
+                }
                 return;
               }
               yield* publishTerminal(active, "completed");
@@ -533,6 +854,253 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         projection.providerSessions.find((session) => session.model === replacementSelection.model)
           ?.id,
       );
+    }),
+  ),
+);
+
+// A restart only replaces the root turn: the request, reply and command the
+// superseded attempt left open become the restarted run's to settle. When the
+// replacement never starts, failing the run must end them too, or the thread
+// waits on work nothing is running.
+it.live("settles the work a restarted run inherited when its replacement never opens", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "selection-restart-failed-start";
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(`thread:${name}`);
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: false,
+        replacementOpenAlwaysFails: true,
+        firstTurnLeavesWorkOpen: true,
+      });
+      const registry = ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state));
+
+      const {
+        projection,
+        nativeChildItems,
+        nativeChildStreaming,
+        nativeChildRequests,
+        nativeGrandchildItems,
+        delegatedItems,
+      } = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const awaitDomainEvent = (matches: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(matches),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: name,
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        // The parent's command item is the last open work the first turn reports.
+        const workOpen = yield* awaitDomainEvent(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.type === "command_execution" &&
+            event.payload.threadId === threadId,
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:first`),
+          threadId,
+          messageId: MessageId.make(`${name}:first`),
+          text: "first",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Fiber.join(workOpen);
+        const started = yield* orchestrator.getThreadProjection(threadId);
+        const runId = started.runs[0]?.id;
+        if (runId === undefined) return yield* Effect.die("the first run is missing");
+        // The run also delegated a task (delegate_task). Its thread runs on its
+        // own, so the failed restart must leave it running.
+        const now = yield* DateTime.now;
+        const delegatedThreadId = ThreadId.make(`${threadId}:delegated`);
+        const delegatedTaskId = NodeId.make(`node:delegated:${runId}`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`event:${name}:delegated-thread`),
+              type: "thread.created",
+              threadId: delegatedThreadId,
+              occurredAt: now,
+              payload: {
+                ...started.thread,
+                createdBy: "agent",
+                creationSource: "mcp",
+                id: delegatedThreadId,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: threadId,
+                  relationshipToParent: "subagent",
+                  rootThreadId: threadId,
+                },
+              },
+            },
+            {
+              id: EventId.make(`event:${name}:delegated-task`),
+              type: "subagent.updated",
+              threadId,
+              runId,
+              nodeId: delegatedTaskId,
+              driver,
+              providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: delegatedTaskId,
+                threadId,
+                runId,
+                parentNodeId: started.runs[0]!.rootNodeId!,
+                origin: "app_owned",
+                createdBy: "agent",
+                driver,
+                providerInstanceId,
+                providerThreadId: null,
+                childThreadId: delegatedThreadId,
+                nativeTaskRef: null,
+                prompt: "Write the tests",
+                title: null,
+                model: initialSelection.model,
+                status: "running",
+                result: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make(`event:${name}:delegated-command`),
+              type: "turn-item.updated",
+              threadId: delegatedThreadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`turn-item:${name}:delegated-command`),
+                threadId: delegatedThreadId,
+                runId: null,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution",
+                input: "vp test run",
+              },
+            },
+          ],
+        });
+
+        const runFailed = yield* awaitDomainEvent(
+          (event) => event.type === "run.updated" && event.payload.status === "failed",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:second`),
+          threadId,
+          messageId: MessageId.make(`${name}:second`),
+          text: "second",
+          attachments: [],
+          modelSelection: replacementSelection,
+          dispatchMode: { type: "restart_active", targetRunId: runId },
+        });
+        yield* Fiber.join(runFailed);
+        const openItems = (projection: OrchestrationV2ThreadProjection) =>
+          projection.turnItems.flatMap((item) =>
+            item.type === "approval_request" ||
+            item.type === "command_execution" ||
+            item.type === "subagent"
+              ? [[item.type, item.status]]
+              : [],
+          );
+        return {
+          projection: yield* orchestrator.getThreadProjection(threadId),
+          nativeChildItems: openItems(
+            yield* orchestrator.getThreadProjection(providerNativeChildThreadId(threadId)),
+          ),
+          nativeChildStreaming: (yield* orchestrator.getThreadProjection(
+            providerNativeChildThreadId(threadId),
+          )).messages.some((message) => message.streaming),
+          nativeChildRequests: (yield* orchestrator.getThreadProjection(
+            providerNativeChildThreadId(threadId),
+          )).runtimeRequests.map((request) => request.status),
+          nativeGrandchildItems: openItems(
+            yield* orchestrator.getThreadProjection(
+              providerNativeChildThreadId(providerNativeChildThreadId(threadId)),
+            ),
+          ),
+          delegatedItems: openItems(yield* orchestrator.getThreadProjection(delegatedThreadId)),
+        };
+      }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+
+      assert.deepEqual(
+        projection.runs.map((run) => run.status),
+        ["failed"],
+      );
+      assert.deepEqual(
+        projection.runtimeRequests.map((request) => request.status),
+        ["cancelled"],
+      );
+      assert.isFalse(projection.messages.some((message) => message.streaming));
+      assert.deepEqual(
+        projection.turnItems.flatMap((item) =>
+          item.type === "approval_request" ||
+          item.type === "command_execution" ||
+          item.type === "subagent"
+            ? [[item.type, item.status]]
+            : [],
+        ),
+        [
+          ["approval_request", "cancelled"],
+          ["subagent", "cancelled"],
+          ["command_execution", "cancelled"],
+        ],
+      );
+      // The provider-native subagent's own thread ends with the run, and so does
+      // the thread of a nested subagent whose row already settled.
+      assert.deepEqual(nativeChildItems, [
+        ["approval_request", "cancelled"],
+        ["subagent", "completed"],
+        ["command_execution", "cancelled"],
+      ]);
+      assert.isFalse(nativeChildStreaming);
+      assert.deepEqual(nativeChildRequests, ["cancelled"]);
+      assert.deepEqual(nativeGrandchildItems, [["command_execution", "cancelled"]]);
+      // The delegated task and its thread keep running.
+      assert.deepEqual(
+        projection.subagents.flatMap((subagent) =>
+          subagent.origin === "app_owned" ? [subagent.status] : [],
+        ),
+        ["running"],
+      );
+      assert.deepEqual(delegatedItems, [["command_execution", "running"]]);
     }),
   ),
 );
