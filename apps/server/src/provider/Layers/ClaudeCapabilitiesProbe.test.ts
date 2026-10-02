@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
+  makeClaudeCapabilitiesCache,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
@@ -221,5 +222,67 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     ]);
     assert.equal(capabilities?.usage, undefined);
     assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("answers one failed probe with the last good account, and never caches a failure", () =>
+  Effect.gen(function* () {
+    let initialization: "fails" | "succeeds" = "fails";
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => {
+            if (initialization === "fails") {
+              throw new Error("Claude Code process exited with code 1");
+            }
+            return {
+              account: {
+                email: "dev@example.com",
+                subscriptionType: "pro",
+                tokenSource: "oauth",
+              },
+              commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+            };
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: true,
+            rate_limits: {},
+          }),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const capabilities = yield* makeClaudeCapabilitiesCache(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    );
+
+    // Nothing good to fall back on yet, so the caller sees the failure.
+    const firstFailure = yield* Effect.flip(capabilities.get);
+    assert.equal(firstFailure._tag, "UnknownError");
+
+    initialization = "succeeds";
+    const good = yield* capabilities.get;
+    assert.equal(good.email, "dev@example.com");
+    assert.equal(good.usage?.rate_limits_available, true);
+    yield* capabilities.get;
+    assert.equal(query.mock.calls.length, 2);
+
+    initialization = "fails";
+    yield* TestClock.adjust("5 minutes");
+    const lastGood = yield* capabilities.get;
+    assert.equal(lastGood.email, "dev@example.com");
+    assert.equal(lastGood.subscriptionType, "pro");
+    assert.deepEqual(lastGood.slashCommands, [
+      { name: "review", description: "Review changes", input: { hint: "[path]" } },
+    ]);
+    // Five-minute-old usage windows would be republished as current.
+    assert.equal(lastGood.usage, undefined);
+    yield* capabilities.get;
+    assert.equal(query.mock.calls.length, 3);
+
+    // A second failure in a row reaches the caller, and the next check probes again.
+    yield* TestClock.adjust("5 minutes");
+    assert.equal((yield* Effect.flip(capabilities.get))._tag, "UnknownError");
+    yield* Effect.flip(capabilities.get);
+    assert.equal(query.mock.calls.length, 5);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

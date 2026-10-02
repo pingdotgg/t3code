@@ -4,8 +4,12 @@ import {
   type ServerProviderSlashCommand,
   type ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -34,7 +38,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { makeClaudeCapabilitiesCacheKey, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
@@ -168,9 +172,10 @@ function apiProviderAuthMetadata(
 
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the
 // Bedrock backend and runs the `awsAuthRefresh` credential hook before returning
-// account info. The previous 8s budget expired mid-init, so the probe returned
-// `undefined` and left the provider unverified and unselectable in the picker.
+// account info. The previous 8s budget expired mid-init, so the probe timed out
+// and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -237,9 +242,10 @@ type ClaudeCapabilitiesProbe = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   /**
-   * Subscription windows from the SDK's `get_usage` control request, or
-   * `undefined` when the request itself failed. Absent windows on an
-   * otherwise successful response mean the account has none (API key).
+   * Subscription windows from the SDK's `get_usage` control request.
+   * `undefined` when that request failed, or when the last good probe answers
+   * for a failed one. Absent windows on an otherwise successful response mean
+   * the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
 };
@@ -326,8 +332,8 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
  * account info and slash commands) but never starts an API request to
  * Anthropic. We read the init data and then abort the subprocess.
  *
- * This is used as a fallback when `claude auth status` does not include
- * subscription type information.
+ * Fails with the timeout or SDK error. `makeClaudeCapabilitiesCache` decides
+ * what a failed probe means for the provider snapshot.
  */
 const probeClaudeCapabilities = (
   claudeSettings: ClaudeSettings,
@@ -396,10 +402,57 @@ const probeClaudeCapabilities = (
         if (!abort.signal.aborted) abort.abort();
       }),
     ),
-    Effect.result,
-    Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
+    // Log only the tag. SDK errors can quote the CLI's stderr.
+    Effect.tapError((error) =>
+      Effect.logWarning("Claude capability probe failed.", { errorTag: error._tag }),
+    ),
   );
 };
+
+type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
+
+/**
+ * One Claude instance's capability probe, as `checkClaudeProviderStatus` reads
+ * it. Every answer is reused for five minutes. One stalled probe must not turn
+ * a working Claude into an auth warning, so when a probe fails, the last good
+ * probe answers once more, without its usage windows. Those would otherwise be
+ * republished as current. A failure with nothing to fall back on reaches the
+ * caller and is never cached, so the next status check probes again.
+ */
+export const makeClaudeCapabilitiesCache = Effect.fn("makeClaudeCapabilitiesCache")(function* (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+  cwd?: string,
+) {
+  // Keyed on binary + resolved HOME so account metadata never crosses instances.
+  const key = yield* makeClaudeCapabilitiesCacheKey(claudeSettings, cwd, environment);
+  // Emptied when it answers for a failed probe, so a second failure in a row surfaces.
+  const lastGood = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+  const cache = yield* Cache.makeWith(
+    (_key: string) =>
+      probeClaudeCapabilities(claudeSettings, environment, cwd).pipe(
+        Effect.tap((capabilities) => Ref.set(lastGood, capabilities)),
+        Effect.catch((error) =>
+          Effect.flatMap(Ref.getAndSet(lastGood, undefined), (last) => {
+            if (!last) return Effect.fail(error);
+            const { usage: _staleUsage, ...capabilities } = last;
+            return Effect.succeed<ClaudeCapabilitiesProbe>(capabilities);
+          }),
+        ),
+      ),
+    {
+      capacity: 1,
+      timeToLive: Exit.match({
+        onSuccess: () => CAPABILITIES_PROBE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  return {
+    get: Cache.get(cache, key),
+    invalidate: Cache.invalidateAll(cache),
+  };
+});
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
@@ -419,9 +472,9 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
 
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
-  resolveCapabilities?: (
+  resolveCapabilities: (
     claudeSettings: ClaudeSettings,
-  ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
+  ) => Effect.Effect<ClaudeCapabilitiesProbe, ClaudeCapabilitiesProbeError>,
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -533,31 +586,35 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
-    : undefined;
+  const probeResult = yield* resolveCapabilities(claudeSettings).pipe(Effect.result);
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
-  const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
-  if (!capabilities) {
+  if (Result.isFailure(probeResult)) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
-      slashCommands: dedupedSlashCommands,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       skills,
       probe: {
         installed: true,
         version: parsedVersion,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Could not verify Claude authentication status from initialization result.",
+        // A failed probe says nothing about the login, so name what failed.
+        message: Cause.isTimeoutError(probeResult.failure)
+          ? `Timed out after ${CAPABILITIES_PROBE_TIMEOUT_MS / 1_000}s while checking Claude account status.`
+          : "Claude Agent CLI failed while checking account status.",
       },
     });
   }
 
+  const capabilities = probeResult.success;
+  const dedupedSlashCommands = dedupeSlashCommands([
+    COMPACT_SLASH_COMMAND,
+    ...capabilities.slashCommands,
+  ]);
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
