@@ -339,7 +339,10 @@ const probeClaudeCapabilities = (
   const abort = new AbortController();
   return Effect.gen(function* () {
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-    const accountConfigPath = yield* claudeAccountConfigPath(claudeEnvironment.CLAUDE_CONFIG_DIR);
+    const accountConfigPath = yield* claudeAccountConfigPath(
+      claudeEnvironment.CLAUDE_CONFIG_DIR,
+      cwd,
+    );
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,

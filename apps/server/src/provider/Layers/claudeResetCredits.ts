@@ -190,9 +190,11 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
 );
 
 /** The CLI keeps the account record beside its settings, or in the home directory by default. */
-export const claudeAccountConfigPath = (configDir: string | undefined) =>
+export const claudeAccountConfigPath = (configDir: string | undefined, cwd?: string) =>
   Effect.map(Path.Path, (path) =>
-    configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
+    configDir
+      ? path.resolve(cwd ?? ".", configDir, ".claude.json")
+      : path.join(NodeOS.homedir(), ".claude.json"),
   );
 
 /** The quota and reset-credit organization is the subscription identity. */

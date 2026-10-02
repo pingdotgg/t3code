@@ -53,7 +53,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
-  it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
+  it.effect.each([false, true])("resolves account config, relative: %s", (relativeConfigDir) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -140,9 +140,13 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       yield* fs.chmod(executablePath, 0o755);
 
       const capabilities = yield* probeClaudeCapabilities(
-        decodeClaudeSettings({ binaryPath: executablePath, homePath: tempDir }),
+        decodeClaudeSettings({
+          binaryPath: executablePath,
+          homePath: relativeConfigDir ? "" : tempDir,
+        }),
         {
           ...process.env,
+          CLAUDE_CONFIG_DIR: path.relative(workspaceCwd, tempDir),
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
         },
