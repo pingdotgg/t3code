@@ -835,7 +835,7 @@ export type AntigravitySettings = typeof AntigravitySettings.Type;
 
 export const PiSettings = makeProviderSettingsSchema(
   {
-    // Disabled by default while Pi support is Early Access.
+    // Off by default like Cursor and Grok. Users opt in from Settings.
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
