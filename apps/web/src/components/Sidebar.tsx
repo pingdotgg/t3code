@@ -171,6 +171,7 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
+  isCollapsedSettledRow,
   resolveFilteredSidebarProjects,
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
@@ -183,6 +184,7 @@ import {
   resolveSidebarThreadClickKind,
   resolveThreadStatusPill,
   filterSidebarThreads,
+  partitionSettledSidebarRows,
   SIDEBAR_THREAD_FILTER_LABELS,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
@@ -365,6 +367,8 @@ interface SidebarThreadRowProps {
   jumpLabel: string | null;
   appSettingsConfirmThreadArchive: boolean;
   isPinned: boolean;
+  /** True when the row sits in a settled subtree; renders faded. */
+  settled: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
   setRenamingTitle: (title: string) => void;
@@ -420,6 +424,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     jumpLabel,
     appSettingsConfirmThreadArchive,
     isPinned,
+    settled,
     renamingThreadKey,
     renamingTitle,
     setRenamingTitle,
@@ -796,7 +801,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       style={sortable?.style}
       className={`w-full [contain-intrinsic-size:auto_1.75rem] [content-visibility:auto] ${
         sortable?.isDragging ? "z-20 opacity-80" : ""
-      } ${sortable?.isOver && !sortable.isDragging ? "rounded-md ring-1 ring-primary/40" : ""}`}
+      } ${sortable?.isOver && !sortable.isDragging ? "rounded-md ring-1 ring-primary/40" : ""}${
+        settled ? " opacity-60" : ""
+      }`}
       data-thread-item
       data-thread-prewarm-key={threadKey}
       onMouseLeave={handleMouseLeave}
@@ -1025,6 +1032,8 @@ interface SidebarProjectThreadListProps {
   orderedProjectThreadKeys: readonly string[];
   pinnedThreadKeys: readonly string[];
   renderedThreadRows: readonly SidebarThreadRowView[];
+  /** Every row key inside a settled subtree (roots and nested children). */
+  settledThreadKeys: ReadonlySet<string>;
   draftRows: readonly SidebarDraftRowData[];
   memberProjectByScopedKey: ReadonlyMap<string, SidebarProjectGroupMember>;
   showEmptyThreadState: boolean;
@@ -1104,6 +1113,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
     orderedProjectThreadKeys,
     pinnedThreadKeys,
     renderedThreadRows,
+    settledThreadKeys,
     draftRows,
     memberProjectByScopedKey,
     showEmptyThreadState,
@@ -1199,6 +1209,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
         jumpLabel: threadJumpLabelByKey.get(threadKey) ?? null,
         appSettingsConfirmThreadArchive,
         isPinned: row.depth === 0 && pinnedThreadKeySet.has(threadKey),
+        settled: settledThreadKeys.has(threadKey),
         renamingThreadKey,
         renamingTitle,
         setRenamingTitle,
@@ -1259,6 +1270,7 @@ const VisibleSidebarProjectThreadList = memo(function VisibleSidebarProjectThrea
       setConfirmingArchiveThreadKey,
       setRenamingTitle,
       setThreadPinned,
+      settledThreadKeys,
       toggleThreadExpanded,
       threadJumpLabelByKey,
     ],
@@ -1723,48 +1735,62 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     () => selectVisibleSidebarThreads(filterSidebarThreads(projectThreads, threadFilter)),
     [projectThreads, threadFilter],
   );
-  const { projectStatus, visibleProjectThreadRows, threadStatusByKey, orderedProjectThreadKeys } =
-    useMemo(() => {
-      const lastVisitedAtByThreadKey = new Map(
-        projectThreads.map((thread, index) => [
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-          threadLastVisitedAts[index] ?? null,
-        ]),
+  const {
+    projectStatus,
+    visibleProjectThreadRows,
+    threadStatusByKey,
+    orderedProjectThreadKeys,
+    settledThreadKeys,
+  } = useMemo(() => {
+    const lastVisitedAtByThreadKey = new Map(
+      projectThreads.map((thread, index) => [
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+        threadLastVisitedAts[index] ?? null,
+      ]),
+    );
+    const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
+      const lastVisitedAt = lastVisitedAtByThreadKey.get(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       );
-      const resolveProjectThreadStatus = (thread: SidebarThreadSummary) => {
-        const lastVisitedAt = lastVisitedAtByThreadKey.get(
-          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-        );
-        return resolveThreadStatusPill({
-          thread,
-          lastVisitedAt,
-        });
-      };
-      const threadRows = buildSidebarThreadRows({
-        threads: visibleProjectThreads,
-        pinnedThreadKeys,
-        activeThreadKey: activeRouteThreadKey ?? undefined,
-        expandedOverrideByThreadKey: threadExpandedOverrides,
-        sortOrder: threadSortOrder,
-        resolveThreadStatus: resolveProjectThreadStatus,
+      return resolveThreadStatusPill({
+        thread,
+        lastVisitedAt,
       });
-      return {
-        orderedProjectThreadKeys: threadRows.orderedThreadKeys,
-        projectStatus: threadRows.projectStatus,
-        visibleProjectThreads,
-        visibleProjectThreadRows: threadRows.rowViews,
-        threadStatusByKey: threadRows.statusByThreadKey,
-      };
-    }, [
-      activeRouteThreadKey,
-      threadExpandedOverrides,
+    };
+    const threadRows = buildSidebarThreadRows({
+      threads: visibleProjectThreads,
       pinnedThreadKeys,
-      projectThreads,
-      threadExpandedOverrides,
-      threadLastVisitedAts,
-      threadSortOrder,
+      activeThreadKey: activeRouteThreadKey ?? undefined,
+      expandedOverrideByThreadKey: threadExpandedOverrides,
+      sortOrder: threadSortOrder,
+      resolveThreadStatus: resolveProjectThreadStatus,
+    });
+    // Settled roots sink below active ones within this project, keeping
+    // their subtrees whole. `now` is read per evaluation rather than
+    // ticked: classification re-runs on every thread-list change, and the
+    // only time-dependent input is the two-minute queued-turn grace.
+    const partitioned = partitionSettledSidebarRows(threadRows.rowViews, {
+      now: new Date().toISOString(),
+      pinnedThreadKeys: new Set(pinnedThreadKeys),
+    });
+    return {
+      orderedProjectThreadKeys: partitioned.orderedThreadKeys,
+      projectStatus: threadRows.projectStatus,
       visibleProjectThreads,
-    ]);
+      visibleProjectThreadRows: partitioned.rowViews,
+      threadStatusByKey: threadRows.statusByThreadKey,
+      settledThreadKeys: partitioned.settledThreadKeys,
+    };
+  }, [
+    activeRouteThreadKey,
+    threadExpandedOverrides,
+    pinnedThreadKeys,
+    projectThreads,
+    threadExpandedOverrides,
+    threadLastVisitedAts,
+    threadSortOrder,
+    visibleProjectThreads,
+  ]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
@@ -1781,49 +1807,67 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   // The project header is the only collapse tier: once it is open every thread
   // of that project is listed, so nothing hides behind a second "show more".
-  const { renderedThreadRows, visibleDraftRows, showEmptyThreadState, shouldShowThreadPanel } =
-    useMemo(() => {
-      const pinnedCollapsedThreadKey = pinnedCollapsedThread
-        ? scopedThreadKey(
-            scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
-          )
-        : null;
-      const renderedThreadRows =
-        pinnedCollapsedThread && pinnedCollapsedThreadKey
-          ? [
-              {
-                thread: pinnedCollapsedThread,
-                threadKey: pinnedCollapsedThreadKey,
-                depth: 0,
-                hasChildren: false,
-                isExpanded: false,
-                childCount: 0,
-                status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
-                rolledUpStatus: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
-              } satisfies SidebarThreadRowView,
-            ]
-          : [...visibleProjectThreadRows];
-      const activeDraftRow = routeDraftId
-        ? draftRows.find((row) => row.draftId === routeDraftId)
-        : undefined;
-      const visibleDraftRows = projectExpanded ? draftRows : activeDraftRow ? [activeDraftRow] : [];
+  const {
+    renderedThreadRows,
+    visibleDraftRows,
+    showEmptyThreadState,
+    shouldShowThreadPanel,
+    settledThreadRowKeys,
+  } = useMemo(() => {
+    const pinnedCollapsedThreadKey = pinnedCollapsedThread
+      ? scopedThreadKey(
+          scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
+        )
+      : null;
+    const activeDraftRow = routeDraftId
+      ? draftRows.find((row) => row.draftId === routeDraftId)
+      : undefined;
+    if (pinnedCollapsedThread && pinnedCollapsedThreadKey) {
       return {
-        renderedThreadRows,
-        visibleDraftRows,
-        showEmptyThreadState:
-          projectExpanded && visibleProjectThreads.length === 0 && draftRows.length === 0,
-        shouldShowThreadPanel:
-          projectExpanded || pinnedCollapsedThread !== null || activeDraftRow !== undefined,
+        renderedThreadRows: [
+          {
+            thread: pinnedCollapsedThread,
+            threadKey: pinnedCollapsedThreadKey,
+            depth: 0,
+            hasChildren: false,
+            isExpanded: false,
+            childCount: 0,
+            status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+            rolledUpStatus: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+          } satisfies SidebarThreadRowView,
+        ],
+        settledThreadRowKeys: isCollapsedSettledRow({
+          status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+          thread: pinnedCollapsedThread,
+          now: new Date().toISOString(),
+        })
+          ? new Set([pinnedCollapsedThreadKey])
+          : new Set<string>(),
+        visibleDraftRows: activeDraftRow ? [activeDraftRow] : [],
+        showEmptyThreadState: false,
+        shouldShowThreadPanel: true,
       };
-    }, [
-      draftRows,
-      pinnedCollapsedThread,
-      projectExpanded,
-      routeDraftId,
-      threadStatusByKey,
-      visibleProjectThreads,
-      visibleProjectThreadRows,
-    ]);
+    }
+    const visibleDraftRows = projectExpanded ? draftRows : activeDraftRow ? [activeDraftRow] : [];
+    return {
+      renderedThreadRows: [...visibleProjectThreadRows],
+      settledThreadRowKeys: settledThreadKeys,
+      visibleDraftRows,
+      showEmptyThreadState:
+        projectExpanded && visibleProjectThreads.length === 0 && draftRows.length === 0,
+      shouldShowThreadPanel:
+        projectExpanded || pinnedCollapsedThread !== null || activeDraftRow !== undefined,
+    };
+  }, [
+    draftRows,
+    pinnedCollapsedThread,
+    projectExpanded,
+    routeDraftId,
+    settledThreadKeys,
+    threadStatusByKey,
+    visibleProjectThreads,
+    visibleProjectThreadRows,
+  ]);
 
   const handleProjectButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -2740,6 +2784,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         orderedProjectThreadKeys={orderedProjectThreadKeys}
         pinnedThreadKeys={pinnedThreadKeys}
         renderedThreadRows={renderedThreadRows}
+        settledThreadKeys={settledThreadRowKeys}
         draftRows={visibleDraftRows}
         memberProjectByScopedKey={memberProjectByScopedKey}
         showEmptyThreadState={showEmptyThreadState}
@@ -3969,7 +4014,12 @@ export default function Sidebar() {
               ) ?? null,
           }),
       });
-      return rowViews.map((row) => row.threadKey);
+      // Same settled-sink order as the rendered rows so jump labels and
+      // prev/next traversal agree with what is on screen.
+      return partitionSettledSidebarRows(rowViews, {
+        now: new Date().toISOString(),
+        pinnedThreadKeys: new Set(pinnedThreadKeysByProjectId[project.projectKey] ?? []),
+      }).orderedThreadKeys;
     });
   }, [
     activeFilterProject,

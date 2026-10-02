@@ -561,6 +561,9 @@ export const ServerSettings = Schema.Struct({
   autoArchiveReviewThreadsOnMerge: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  autoArchiveSettledAfterDays: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(2)),
+  ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -799,6 +802,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoArchiveReviewThreadsOnMerge: Schema.optionalKey(Schema.Boolean),
+  autoArchiveSettledAfterDays: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   sourceControlWritingStyle: Schema.optionalKey(Schema.String),
   // Server settings
@@ -960,3 +964,18 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 
 export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+
+export const MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS = 1;
+
+export const MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS = 90;
+
+export const AutoArchiveSettledAfterDays = Schema.Number.check(
+  Schema.isBetween({
+    minimum: MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+    maximum: MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  }),
+);
+
+export type AutoArchiveSettledAfterDays = typeof AutoArchiveSettledAfterDays.Type;
+
+export const DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS: AutoArchiveSettledAfterDays = 2;

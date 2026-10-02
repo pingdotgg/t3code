@@ -41,6 +41,9 @@ import {
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_THREAD_COMPLETION_NOTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_HEADER_SHOW_PROJECT_SCRIPTS,
   DEFAULT_HEADER_SHOW_OPEN_IN,
   DEFAULT_HEADER_SHOW_GIT_ACTIONS,
@@ -128,6 +131,8 @@ import {
   buildArchivedThreadGroupsFromSnapshots,
   filterArchivedThreadGroups,
   mergeCollaborativeAcceptancePolicy,
+  parseAutoArchiveSettledAfterDays,
+  resolveAutoArchiveSettledAfterDays,
   runSequentiallySettled,
   type CollaborativeAcceptancePolicyPatch,
 } from "./SettingsPanels.logic";
@@ -1628,6 +1633,16 @@ export function GeneralSettingsPanel() {
   const isOpeningKeybindings = openingPathByTarget.keybindings;
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
+  // `resolveAutoArchiveSettledAfterDays` still accepts undefined so the UI
+  // keeps the default if an older server omits the key.
+  const autoArchiveSettledAfterDays = resolveAutoArchiveSettledAfterDays(
+    settings.autoArchiveSettledAfterDays,
+  );
+  const updateAutoArchiveSettledAfterDays = useCallback(
+    (days: number | null) => updateSettings({ autoArchiveSettledAfterDays: days }),
+    [updateSettings],
+  );
+
   return (
     <SettingsPageContainer>
       <SettingsSection title="Pull request monitoring">
@@ -1714,6 +1729,59 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          title="Auto-archive settled threads"
+          description="Move settled threads to the archive after days without activity. Pinned and snoozed threads are skipped."
+          resetAction={
+            autoArchiveSettledAfterDays !== DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS ? (
+              <SettingResetButton
+                label="automatic settled thread archiving"
+                onClick={() =>
+                  updateAutoArchiveSettledAfterDays(DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS)
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={autoArchiveSettledAfterDays !== null}
+              onCheckedChange={(checked) =>
+                updateAutoArchiveSettledAfterDays(
+                  checked ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : null,
+                )
+              }
+              aria-label="Automatically archive settled threads after days without activity"
+            />
+          }
+        />
+        {autoArchiveSettledAfterDays !== null ? (
+          <SettingsRow
+            title="Days before archive"
+            description={`Whole days of inactivity before a settled thread is archived (${MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}–${MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}).`}
+            control={
+              <DraftInput
+                className="w-24"
+                value={String(autoArchiveSettledAfterDays)}
+                inputMode="numeric"
+                onCommit={(value) => {
+                  const days = parseAutoArchiveSettledAfterDays(value);
+                  if (days === null) {
+                    toastManager.add({
+                      type: "warning",
+                      title: `Days must be a whole number between ${MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS} and ${MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS}`,
+                    });
+                    return;
+                  }
+                  if (days !== autoArchiveSettledAfterDays) {
+                    updateAutoArchiveSettledAfterDays(days);
+                  }
+                }}
+                aria-label="Days before settled threads are archived"
+              />
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Pull requests">
