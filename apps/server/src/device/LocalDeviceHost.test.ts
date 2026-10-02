@@ -6,17 +6,21 @@ import {
   HostProcessIsExecutable,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const diagnose = (
   files: ReadonlyArray<string>,
@@ -223,7 +227,135 @@ describe("host spawn targets", () => {
       const files = new Set<string>();
       expect((yield* spawnTarget("emulator", files)).command).toBe("emulator");
       for (const file of sdkFiles(SDK_ROOT)) files.add(file);
-      expect((yield* spawnTarget("emulator", files)).command).toBe(`${SDK_ROOT}/emulator/emulator`);
+      const refreshed = yield* spawnTarget("emulator", files);
+      expect(refreshed.command).toBe(`${SDK_ROOT}/emulator/emulator`);
+      expect(refreshed.env.ANDROID_HOME).toBe(SDK_ROOT);
+      expect(refreshed.env.PATH).toBe(`${SDK_ROOT}/platform-tools:${SDK_ROOT}/emulator:`);
     }),
   );
 });
+
+it.effect("retains the host environment after construction while refreshing the SDK", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-environment-" });
+    const bin = `${home}/bin`;
+    const nodePath = `${bin}/node`;
+    yield* fs.makeDirectory(bin);
+    yield* fs.writeFileString(nodePath, "fixture");
+    yield* fs.chmod(nodePath, 0o755);
+    for (const [name, version, entry] of [
+      ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
+      ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
+    ] as const) {
+      const installDir = `${home}/tools/${name}/${version}`;
+      const entryPath = `${installDir}/node_modules/${name}/${entry}`;
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(entryPath, "fixture");
+      yield* fs.writeFileString(`${installDir}/.install-complete`, version);
+    }
+    const runs: ProcessRunner.ProcessRunInput[] = [];
+    const hubEnvironments: NodeJS.ProcessEnv[] = [];
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(ServerConfig.layerTest(home, home)),
+      Effect.provideService(HostProcessEnvironment, { HOME: home, PATH: bin }),
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provideService(NetService.NetService, {
+        ...NetService.make(),
+        reserveLoopbackPort: () => Effect.succeed(1234),
+      }),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
+            expect(command.command).toBe(nodePath);
+            hubEnvironments.push(command.options.env ?? {});
+            const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+            const stop = Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(
+              Effect.asVoid,
+            );
+            yield* Effect.addFinalizer(() => stop);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Deferred.await(exit),
+              isRunning: Effect.succeed(true),
+              kill: () => stop,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+        ),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) =>
+          Effect.gen(function* () {
+            runs.push(input);
+            if (input.args.includes("devices")) {
+              const stateDir = input.env?.AGENT_DEVICE_STATE_DIR;
+              if (!stateDir) return yield* Effect.die("Missing daemon state directory");
+              yield* fs
+                .writeFileString(`${stateDir}/daemon.json`, '{"httpPort":1235,"token":"fixture"}')
+                .pipe(Effect.orDie);
+            }
+            return {
+              stdout: "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            };
+          }),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("ok"))),
+        ),
+      ),
+    );
+    // Returned methods run outside the environment provided only to make().
+    const ready = yield* host.ensureReady(() => Effect.void);
+    expect(hubEnvironments[0]).toMatchObject({ HOME: home, PATH: bin });
+    const root = `${home}/Android/Sdk`;
+    for (const tool of [
+      "platform-tools/adb",
+      "emulator/emulator",
+      "cmdline-tools/latest/bin/avdmanager",
+    ]) {
+      const file = `${root}/${tool}`;
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+      yield* fs.writeFileString(file, "fixture");
+    }
+    expect((yield* host.platformAvailability("android")).available).toBe(true);
+    expect((yield* host.platformAvailability("ios")).available).toBe(false);
+    yield* ready.run("emulator", ["-list-avds"]);
+    const emulator = runs.find((input) => input.args.includes("-list-avds"));
+    expect(emulator?.command).toBe(`${root}/emulator/emulator`);
+    const environment = {
+      HOME: home,
+      ANDROID_HOME: root,
+      PATH: `${root}/platform-tools:${root}/emulator:${bin}`,
+    };
+    expect(emulator?.env).toMatchObject(environment);
+    yield* host.ensureAgentReady(() => Effect.void);
+    expect(runs.find((input) => input.args.includes("devices"))?.env).toMatchObject(environment);
+    yield* host.stop;
+    expect(runs.find((input) => input.args.includes("stop"))?.env).toMatchObject(environment);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    Effect.provideService(HostProcessIsExecutable, true),
+    Effect.provideService(HostProcessEnvironment, { HOME: "/other/home", PATH: "" }),
+    Effect.provideService(HostProcessPlatform, "win32"),
+  ),
+);

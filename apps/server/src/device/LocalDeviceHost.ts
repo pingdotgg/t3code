@@ -242,10 +242,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const httpClient = yield* HttpClient.HttpClient;
   const hostPlatform = yield* HostProcessPlatform;
+  const environment = yield* HostProcessEnvironment;
   const spawnTarget = (command: string) =>
     hostSpawn(command).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessEnvironment, environment),
+      Effect.provideService(HostProcessPlatform, hostPlatform),
     );
   const hostEnvironment = Effect.map(spawnTarget(process.execPath), (target) => target.env);
   const startLock = yield* Semaphore.make(1);
@@ -259,6 +262,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessEnvironment, environment),
+      Effect.provideService(HostProcessPlatform, hostPlatform),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
