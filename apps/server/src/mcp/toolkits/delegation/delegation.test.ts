@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
+import { Tool } from "effect/unstable/ai";
 
-import { DelegateWorkToolInput } from "./tools.ts";
+import { DelegateWorkTool, DelegateWorkToolInput } from "./tools.ts";
 
 const decodeInput = Schema.decodeUnknownSync(DelegateWorkToolInput);
 
@@ -54,5 +55,67 @@ describe("DelegateWorkToolInput", () => {
         concurrency: 2,
       }),
     ).toBe(true);
+  });
+
+  it("rejects whitespace-only model, project, branch, and path values", () => {
+    const base = { children: [{ title: "x", prompt: "y" }] };
+    expect(decodeSucceeds({ ...base, defaults: { model: "  " } })).toBe(false);
+    expect(decodeSucceeds({ ...base, defaults: { project: " " } })).toBe(false);
+    expect(
+      decodeSucceeds({
+        children: [
+          { title: "x", prompt: "y", workspace: { mode: "isolated", branch: " ", path: "/p" } },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      decodeSucceeds({
+        children: [
+          { title: "x", prompt: "y", workspace: { mode: "isolated", branch: "child", path: "  " } },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects unknown, duplicate, and empty prompt template blocks", () => {
+    const base = { children: [{ title: "x", prompt: "y" }] };
+    expect(
+      decodeSucceeds({ ...base, defaults: { promptTemplate: { blocks: ["implementation"] } } }),
+    ).toBe(true);
+    expect(
+      decodeSucceeds({ ...base, defaults: { promptTemplate: { blocks: ["not-a-block"] } } }),
+    ).toBe(false);
+    expect(
+      decodeSucceeds({
+        ...base,
+        defaults: { promptTemplate: { blocks: ["commit", "commit"] } },
+      }),
+    ).toBe(false);
+    expect(decodeSucceeds({ ...base, defaults: { promptTemplate: { blocks: [] } } })).toBe(false);
+  });
+
+  it("rejects duplicate prompt template evidence entries", () => {
+    expect(
+      decodeSucceeds({
+        children: [{ title: "x", prompt: "y" }],
+        defaults: {
+          promptTemplate: {
+            blocks: ["validation"],
+            validation: {
+              commands: ["pnpm test"],
+              evidence: ["screenshot", "screenshot"],
+            },
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("advertises the constrained prompt template contract to strict clients", () => {
+    // Strict MCP clients validate the advertised schema; if the enum or the
+    // uniqueness constraint were dropped here, only runtime would reject them.
+    const advertised = JSON.stringify(Tool.getJsonSchema(DelegateWorkTool));
+    expect(advertised).toContain("push-and-create-pr");
+    expect(advertised).toContain("uniqueItems");
   });
 });

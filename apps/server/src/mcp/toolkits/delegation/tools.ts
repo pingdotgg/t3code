@@ -4,6 +4,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { DELEGATION_PROMPT_BLOCKS } from "../../../delegationPrompt.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderSessionDirectory } from "../../../provider/Services/ProviderSessionDirectory.ts";
 import { ServerConfig } from "../../../config.ts";
@@ -12,8 +13,11 @@ import { ServerSettingsService } from "../../../serverSettings.ts";
 /**
  * Input shapes mirror the legacy `delegate_work` JSON contract in
  * `apps/server/src/mcpServer.ts` field for field (descriptions included),
- * so the advertised contract stays identical. The legacy implementation
- * remains the validation authority and re-checks everything at runtime.
+ * so the advertised contract stays identical. Values the legacy JSON contract
+ * constrains — known prompt blocks, unique blocks, non-blank strings — are
+ * constrained here too, so the gateway rejects them before an audit record is
+ * created. The legacy implementation remains the validation authority and
+ * re-checks everything at runtime.
  */
 const DelegationFollowUp = Schema.Literals(["automatic", "notify-only"]);
 const DelegationWait = Schema.Literals(["all", "any", "none"]);
@@ -21,13 +25,16 @@ const DelegationReasoning = Schema.Literals(["low", "medium", "high", "xhigh"]);
 
 const DelegationWorkspace = Schema.Struct({
   mode: Schema.Literal("isolated"),
-  branch: Schema.String.check(Schema.isMinLength(1)),
-  path: Schema.String.check(Schema.isMinLength(1)),
+  branch: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
   baseRef: Schema.optional(Schema.String),
 });
 
 const DelegationPromptTemplate = Schema.Struct({
-  blocks: Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMinLength(1)),
+  blocks: Schema.Array(Schema.Literals([...DELEGATION_PROMPT_BLOCKS])).check(
+    Schema.isMinLength(1),
+    Schema.isUnique(),
+  ),
   repository: Schema.optional(
     Schema.Struct({
       context: Schema.optional(Schema.String),
@@ -45,7 +52,10 @@ const DelegationPromptTemplate = Schema.Struct({
         Schema.Array(Schema.String.check(Schema.isMinLength(1))).check(Schema.isMinLength(1)),
       ),
       evidence: Schema.optional(
-        Schema.Array(Schema.Literals(["screenshot", "recording"])).check(Schema.isMinLength(1)),
+        Schema.Array(Schema.Literals(["screenshot", "recording"])).check(
+          Schema.isMinLength(1),
+          Schema.isUnique(),
+        ),
       ),
       owner: Schema.optional(Schema.Literals(["child", "parent"])),
     }),
@@ -77,9 +87,9 @@ const DelegationPromptTemplate = Schema.Struct({
 
 const DelegationDefaults = Schema.Struct({
   followUp: Schema.optional(DelegationFollowUp),
-  project: Schema.optional(Schema.String),
+  project: Schema.optional(TrimmedNonEmptyString),
   promptTemplate: Schema.optional(DelegationPromptTemplate),
-  model: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  model: Schema.optional(TrimmedNonEmptyString),
   reasoning: Schema.optional(DelegationReasoning),
   dryRun: Schema.optional(Schema.Boolean),
 });
@@ -87,9 +97,9 @@ const DelegationDefaults = Schema.Struct({
 const DelegationChild = Schema.Struct({
   title: TrimmedNonEmptyString,
   prompt: TrimmedNonEmptyString,
-  project: Schema.optional(Schema.String),
+  project: Schema.optional(TrimmedNonEmptyString),
   promptTemplate: Schema.optional(DelegationPromptTemplate),
-  model: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  model: Schema.optional(TrimmedNonEmptyString),
   reasoning: Schema.optional(DelegationReasoning),
   dryRun: Schema.optional(Schema.Boolean),
   followUp: Schema.optional(DelegationFollowUp),
