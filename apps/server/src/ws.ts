@@ -188,6 +188,44 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
 
+// Sync setup scripts (`async: false`) block the thread bootstrap until the
+// script's completion settles. 30 minutes is generous for a real install
+// (a cold-cache `pnpm i` lands well under it) while bounding a wedged
+// script — network stall, stdin prompt — instead of parking the thread
+// card at "setup-script: running" forever.
+export const SYNC_SETUP_SCRIPT_TIMEOUT = Duration.minutes(30);
+
+/**
+ * Joins a sync setup script's completion fiber with a timeout. On expiry the
+ * stage is marked failed and the fiber is interrupted; interrupting only
+ * unsubscribes the terminal listener, the terminal itself stays on the card.
+ */
+export const awaitSyncSetupScriptCompletion = (
+  completionFiber: Fiber.Fiber<void, never>,
+  options: {
+    readonly threadId: ThreadId;
+    readonly worktreeSetupTracker: WorktreeSetupTracker.WorktreeSetupTracker["Service"];
+    readonly timeout?: Duration.Duration;
+  },
+): Effect.Effect<void> => {
+  const timeout = options.timeout ?? SYNC_SETUP_SCRIPT_TIMEOUT;
+  return Fiber.join(completionFiber).pipe(
+    Effect.timeoutOption(timeout),
+    Effect.flatMap((settled) =>
+      Option.isNone(settled)
+        ? options.worktreeSetupTracker
+            .stageStatus(
+              options.threadId,
+              "setup-script",
+              "failed",
+              `setup script timed out after ${Duration.format(timeout)}`,
+            )
+            .pipe(Effect.andThen(Fiber.interrupt(completionFiber)))
+        : Effect.void,
+    ),
+  );
+};
+
 const resolveDiscoveryForConfig = <A, E, R>(
   discovery: Effect.Effect<A, E, R>,
   onTimeout: () => A,
@@ -1326,7 +1364,12 @@ const makeWsRpcLayer = (
                 Effect.forkDetach,
               );
               if (!setupResult.async) {
-                yield* Fiber.join(completionFiber);
+                // Bounded join: a wedged sync script fails the stage instead
+                // of parking the thread card at "setup-script: running" forever.
+                yield* awaitSyncSetupScriptCompletion(completionFiber, {
+                  threadId,
+                  worktreeSetupTracker,
+                });
                 return null;
               }
               return completionFiber;
