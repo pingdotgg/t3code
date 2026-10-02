@@ -5262,6 +5262,7 @@ function ChatViewBody(
               <PullRequestDetailPanel
                 environmentId={surface.environmentId}
                 reference={surface.reference}
+                visible={visible}
                 onClose={() => {
                   if (activeThreadRef) {
                     useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);

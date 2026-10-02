@@ -478,11 +478,19 @@ export function PullRequestDetailPanel({
   environmentId,
   reference,
   listEntry = null,
+  visible = true,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly listEntry?: PullRequestListEntry | null;
+  /**
+   * Whether this panel is the one the reader is looking at. Opened surfaces stay mounted so
+   * their scroll position and folded rows survive a tab switch, which would otherwise leave every
+   * backgrounded panel polling GitHub on its own schedule — one conversation read per open
+   * surface per interval, forever, with a single surface visible.
+   */
+  readonly visible?: boolean;
   readonly onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -537,12 +545,25 @@ export function PullRequestDetailPanel({
       environmentId,
       reference,
     }),
-    // While GitHub's quota is exhausted every poll fails identically; back
-    // off to the server's failure cooldown instead of re-walking the review
-    // threads every 30s. Recovery is still automatic on the next poll.
-    refetchInterval: (query) =>
-      tab === "timeline" ? (isRateLimitQueryError(query.state.error) ? 60_000 : 30_000) : false,
+    // A backgrounded panel keeps its last answer but stops asking for a new one: the reader is
+    // looking at another surface, and a conversation read is one host request per interval.
+    // While GitHub's quota is exhausted every poll fails identically; back off to the server's
+    // failure cooldown instead of re-walking the review threads every 30s. Recovery is still
+    // automatic on the next poll.
+    refetchInterval: (query) => {
+      if (!visible || tab !== "timeline") return false;
+      return isRateLimitQueryError(query.state.error) ? 60_000 : 30_000;
+    },
   });
+  // Resuming an interval does not fetch, so a surface returning to view would show the
+  // conversation as it stood when it was last focused. Ask once on the way back in; the
+  // server's own read cache absorbs the cost when nothing has moved.
+  const wasVisibleRef = useRef(visible);
+  useEffect(() => {
+    const returning = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (returning) void activityQuery.refetch();
+  }, [visible, activityQuery.refetch]);
   const [comment, setComment] = useState("");
   const [actionPending, setActionPending] = useState<PullRequestAction | null>(null);
   const [mediaPreview, setMediaPreview] = useState<PullRequestMediaPreview | null>(null);
