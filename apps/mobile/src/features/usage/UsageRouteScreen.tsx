@@ -457,7 +457,7 @@ function CursorEnableLimits({
         <ProviderIcon provider="cursor" size={18} />
         <Text className="text-base font-t3-medium text-foreground">Cursor</Text>
       </View>
-      <View className="items-start gap-3 rounded-[24px] border-continuous bg-card p-4">
+      <View className="items-start gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
         <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
         <View className="flex-row flex-wrap gap-2">
           {environments.map((environment) => (
@@ -491,7 +491,7 @@ function ChartCard(props: {
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
 
   return (
-    <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
+    <View className="gap-4 rounded-[24px] border-continuous bg-grouped-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
           {metric === "cost" ? "Raw token cost" : "Processed tokens"}

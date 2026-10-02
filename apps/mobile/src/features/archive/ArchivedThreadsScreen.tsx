@@ -190,7 +190,7 @@ function ArchivedThreadRow(props: {
   readonly thread: EnvironmentThreadShell;
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const cardColor = useUniwindTheme()["--color-card"];
+  const cardColor = useUniwindTheme()["--color-grouped-card"];
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
@@ -224,7 +224,7 @@ function ArchivedThreadRow(props: {
     >
       {() => (
         <View
-          className={`flex-row items-center gap-3 bg-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
+          className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
         >
           <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
             <SymbolView

@@ -54,6 +54,7 @@ function SelectionRow(props: {
   if (Platform.OS === "android") {
     return (
       <MaterialListRow
+        className="bg-grouped-card"
         title={props.title}
         subtitle={props.subtitle}
         leading={
@@ -85,7 +86,7 @@ function SelectionRow(props: {
       accessibilityRole="radio"
       accessibilityState={{ checked: props.selected }}
       className={cn(
-        "min-h-14 flex-row items-center gap-3 bg-card px-4 py-3 active:bg-subtle",
+        "min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle",
         !props.isLast && "border-b border-border-subtle",
       )}
       disabled={props.disabled}
@@ -131,7 +132,7 @@ function ToggleRow(props: {
   readonly onValueChange: (value: boolean) => void;
 }) {
   return (
-    <View className="min-h-14 flex-row items-center gap-3 bg-card px-4 py-3">
+    <View className="min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3">
       <Text
         className={cn(
           "min-w-0 flex-1 text-base text-foreground",
@@ -192,8 +193,8 @@ function PickerSurface(props: { readonly children: ReactNode }) {
     <View
       className={
         Platform.OS === "android"
-          ? "overflow-hidden rounded-[28px] bg-card"
-          : "overflow-hidden rounded-2xl bg-card"
+          ? "overflow-hidden rounded-[28px] bg-grouped-card"
+          : "overflow-hidden rounded-2xl bg-grouped-card"
       }
     >
       {props.children}

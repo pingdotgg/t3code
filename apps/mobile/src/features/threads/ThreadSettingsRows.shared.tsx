@@ -41,7 +41,7 @@ export function ModelRowContent(
     <View
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
       className={cn(
-        "mx-4 min-h-11 flex-row items-center gap-2 bg-card px-4",
+        "mx-4 min-h-11 flex-row items-center gap-2 bg-grouped-card px-4",
         props.selectedClassName,
         props.isFirst && "rounded-t-2xl",
         props.isLast ? "rounded-b-2xl" : "border-b border-border-subtle",
@@ -123,7 +123,7 @@ export function ChoiceRowContent(props: ChoiceRowProps & RowSelectionProps) {
       onPress={props.onPress}
       style={props.minimumHeight === undefined ? undefined : { minHeight: props.minimumHeight }}
       className={cn(
-        "min-h-14 flex-row items-center gap-3 bg-card px-4 py-3 active:bg-subtle",
+        "min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle",
         !props.isLast && "border-b border-border-subtle",
       )}
     >
