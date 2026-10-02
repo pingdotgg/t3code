@@ -1394,6 +1394,38 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("keeps a prepared connection that already carries the catalog target", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared))).toBe(
+        PREPARED_CONNECTION,
+      );
+    }),
+  );
+
+  it.effect("stores the catalog target when a prepared connection omits it", () =>
+    Effect.gen(function* () {
+      const { target: _omitted, ...withoutTarget } = PREPARED_CONNECTION;
+      const harness = yield* makeHarness({
+        prepare: () => Effect.succeed(withoutTarget as PreparedConnection),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const stored = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      expect(stored.target).toBe(TARGET);
+      expect(stored.httpBaseUrl).toBe(PREPARED_CONNECTION.httpBaseUrl);
+      expect(stored.socketUrl).toBe(PREPARED_CONNECTION.socketUrl);
+    }),
+  );
+
   it.effect("does not lose an explicit disconnect among concurrent wakeup signals", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

@@ -273,6 +273,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }),
   );
 
+  /**
+   * Restores the catalog target on the connection stored for this session.
+   * Desktop browser host selection reads that target to keep a desktop-local
+   * loopback server on localhost.
+   */
+  const preparedWithTarget = (value: PreparedConnection): PreparedConnection =>
+    value.target === target ? value : { ...value, target };
+
   const reportProgress = Effect.fn("EnvironmentSupervisor.reportProgress")(function* (
     attempt: number,
     generation: number,
@@ -280,7 +288,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     progress: ConnectionDriver.ConnectionDriverProgress,
   ) {
     if ("prepared" in progress) {
-      yield* SubscriptionRef.set(prepared, Option.some(progress.prepared));
+      yield* SubscriptionRef.set(prepared, Option.some(preparedWithTarget(progress.prepared)));
     }
     yield* setState(
       connectingState(yield* Ref.get(intent), generation, attempt, lastFailure, progress.stage),
@@ -566,7 +574,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
 
     const connectedAt = yield* Clock.currentTimeMillis;
-    yield* SubscriptionRef.set(prepared, Option.some(active.lease.prepared));
+    yield* SubscriptionRef.set(prepared, Option.some(preparedWithTarget(active.lease.prepared)));
     yield* SubscriptionRef.set(session, Option.some(active.lease.session));
     yield* setState({
       desired: true,

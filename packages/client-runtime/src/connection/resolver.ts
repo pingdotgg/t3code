@@ -281,7 +281,17 @@ export const make = Effect.gen(function* () {
     if (compatibilityError !== null) {
       return yield* compatibilityError;
     }
-    return { ...prepared, socketUrl: appendOrchestrationProtocol(prepared.socketUrl) };
+    // Host selection in the desktop browser reads this target to keep a
+    // desktop-local loopback server on localhost. Stamp the catalog target
+    // on the value the supervisor stores so a broker return cannot drop it.
+    return {
+      environmentId: prepared.environmentId,
+      label: prepared.label,
+      httpBaseUrl: prepared.httpBaseUrl,
+      socketUrl: appendOrchestrationProtocol(prepared.socketUrl),
+      httpAuthorization: prepared.httpAuthorization,
+      target,
+    } satisfies PreparedConnection;
   });
 
   return ConnectionResolver.of({ prepare });

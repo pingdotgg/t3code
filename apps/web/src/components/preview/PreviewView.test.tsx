@@ -1,3 +1,4 @@
+import { BearerConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -11,10 +12,24 @@ import { act, createElement, Profiler } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { desktopLocalConnectionId } from "~/connection/desktopLocal";
+
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
-  readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
+  readPreparedConnection: vi.fn(
+    (): {
+      httpBaseUrl: string;
+      target: BearerConnectionTarget;
+    } => ({
+      httpBaseUrl: "http://172.25.85.75:3773",
+      target: new BearerConnectionTarget({
+        connectionId: "saved-lan",
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "LAN",
+      }),
+    }),
+  ),
   submittedUrl: null as ((url: string) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
   togglePictureInPicture: null as (() => void) | null,
@@ -330,7 +345,15 @@ describe("PreviewView navigation", () => {
   beforeEach(() => {
     mocks.navigate.mockClear();
     mocks.rememberPreviewUrl.mockClear();
-    mocks.readPreparedConnection.mockClear();
+    mocks.readPreparedConnection.mockReset();
+    mocks.readPreparedConnection.mockImplementation(() => ({
+      httpBaseUrl: "http://172.25.85.75:3773",
+      target: new BearerConnectionTarget({
+        connectionId: "saved-lan",
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "LAN",
+      }),
+    }));
     mocks.submittedUrl = null;
     mocks.emptyStateUrl = null;
     mocks.togglePictureInPicture = null;
@@ -464,7 +487,7 @@ describe("PreviewView navigation", () => {
     });
   });
 
-  it("maps an empty-state localhost server onto the WSL host", async () => {
+  it("maps an empty-state localhost server onto a remote private-network host", async () => {
     mocks.showEmptyState = true;
     renderToStaticMarkup(
       <PreviewView
@@ -497,6 +520,47 @@ describe("PreviewView navigation", () => {
       expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
         expect.objectContaining({ threadId: expect.anything() }),
         "http://localhost:5173/app?mode=test#top",
+      ),
+    );
+  });
+
+  it("opens an empty-state localhost server on localhost for a desktop-local WSL environment", async () => {
+    mocks.readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://172.24.66.27:3773",
+      target: new BearerConnectionTarget({
+        connectionId: desktopLocalConnectionId("wsl:Ubuntu"),
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "WSL (Ubuntu)",
+      }),
+    });
+    mocks.showEmptyState = true;
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={{
+          environmentId: EnvironmentId.make("environment-1"),
+          threadId: ThreadId.make("thread-1"),
+        }}
+        tabId="tab-1"
+        visible
+      />,
+    );
+
+    mocks.emptyStateUrl?.("http://localhost:3001/");
+
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "http://localhost:3001/"),
+    );
+    expect(mocks.rememberPreviewUrl).toHaveBeenCalledWith(
+      {
+        environmentId: "environment-1",
+        threadId: "thread-1",
+      },
+      "http://localhost:3001/",
+    );
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: expect.anything() }),
+        "http://localhost:3001/",
       ),
     );
   });

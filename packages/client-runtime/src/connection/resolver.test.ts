@@ -30,6 +30,7 @@ import {
   RelayConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
+  type PreparedConnection,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
@@ -305,10 +306,47 @@ describe("ConnectionResolver", () => {
       });
       const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
 
-      expect(
-        (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
-      ).toContain("wsTicket=ticket");
+      const prepared = yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+      expect(prepared.socketUrl).toContain("wsTicket=ticket");
+      expect(prepared.target).toBe(target);
+      expect(prepared.httpBaseUrl).toBe(ENDPOINT.httpBaseUrl);
       expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "secret-bearer", method: "direct" }]);
+    }),
+  );
+
+  it.effect("requires every prepared connection to carry a target", () =>
+    Effect.sync(() => {
+      const required = true satisfies undefined extends PreparedConnection["target"] ? never : true;
+      expect(required).toBe(true);
+    }),
+  );
+
+  it.effect("propagates a desktop-local bearer target onto the prepared connection", () =>
+    Effect.gen(function* () {
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "WSL (Ubuntu)",
+        connectionId: "local:wsl:Ubuntu",
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: target.label,
+        httpBaseUrl: "http://172.24.66.27:3773",
+        wsBaseUrl: "ws://172.24.66.27:3773",
+      });
+      const brokerLayer = yield* makeDependencies({
+        credentials: [
+          [target.connectionId, new BearerConnectionCredential({ token: "wsl-bearer" })],
+        ],
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const prepared = yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+      expect(prepared.target).toBe(target);
+      expect(prepared.httpBaseUrl).toBe("http://172.24.66.27:3773");
     }),
   );
 
