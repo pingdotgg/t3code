@@ -62,6 +62,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
@@ -6608,12 +6609,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(processQueues.length, 1);
         const firstProcess = processQueues[0]!;
         yield* Queue.offer(firstProcess, wakeTaskStarted);
+        // The shell leaves the roster before its notification arrives, so
+        // nothing runs in this process any more and a model change may
+        // replace it. Wake eligibility outlives the empty level.
+        yield* Queue.offer(
+          firstProcess,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "00000000-0000-4000-8000-000000000603",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.offer(firstProcess, turnOneResult);
         yield* awaitUntil(
           () => events.some((event) => event.type === "turn.terminal"),
           "first turn terminal",
         );
-        assert.isTrue(yield* hasPendingBackgroundWork);
+        assert.isFalse(yield* hasPendingBackgroundWork);
 
         const alternateModel = {
           ...CLAUDE_TEST_MODEL_SELECTION,
@@ -7117,8 +7131,172 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("refuses a model change that would kill a running background subagent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SUBAGENT_TASK_ID = "task-model-change-running-subagent";
+        const SUBAGENT_TOOL_USE_ID = "toolu-model-change-running-subagent";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-model-change-running-subagent-",
+        });
+        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+        const events: Array<ProviderAdapterV2Event> = [];
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          idAllocator,
+          continuationRequests: { offer: () => Effect.void },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () =>
+              Effect.gen(function* () {
+                const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                processQueues.push(sdkMessages);
+                return {
+                  messages: Stream.fromQueue(sdkMessages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(sdkMessages),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-model-change-running-subagent");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-model-change-running-subagent",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const terminals = () => events.filter((event) => event.type === "turn.terminal");
+        const now = yield* DateTime.now;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-a"),
+            text: "Spawn a background subagent and stop.",
+            attachments: [],
+          }),
+        );
+        const firstProcess = processQueues[0]!;
+        yield* Queue.offer(
+          firstProcess,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: SUBAGENT_TOOL_USE_ID,
+            description: "Background research",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Research, then report.",
+            uuid: "00000000-0000-4000-8000-000000000901",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          firstProcess,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000902",
+            result: "Spawned the subagent in the background.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 1, "first turn terminal");
+        const settledTurn = terminals()[0]!;
+
+        // The subagent runs inside the first CLI process. Another model needs
+        // another process, so the turn must not start and close this one.
+        const alternateModel = {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: "claude-haiku-4-5-20251001",
+        } satisfies ModelSelection;
+        const switchTurn = (attempt: string) =>
+          runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make(attempt),
+              text: "Switch model while the subagent runs.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              modelSelection: alternateModel,
+            }),
+          );
+        const refused = yield* switchTurn("attempt-claude-model-change-running-subagent-b").pipe(
+          Effect.flip,
+        );
+        assert.equal(
+          makeProviderFailure({ cause: refused, class: "provider_error" }).message,
+          new ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError().message,
+        );
+        assert.lengthOf(processQueues, 1);
+
+        // Stop ends the background work, so the switch may replace the process.
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: settledTurn.providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        yield* switchTurn("attempt-claude-model-change-running-subagent-c");
+        assert.lengthOf(processQueues, 2);
+
+        // The stopped subagent never reports its end, so it must not block
+        // later changes on the replacement process either.
+        yield* Queue.offer(
+          processQueues[1]!,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000903",
+            result: "Switched model.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 2, "switched turn terminal");
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread: { ...providerThread, status: "active" },
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-d"),
+            text: "Switch back.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+          }),
+        );
+        assert.lengthOf(processQueues, 3);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect(
-    "clears process-scoped roster when same-native-thread replacement open fails after close",
+    "keeps the process and its roster when a model change meets a running background shell",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -7236,17 +7414,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             )
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failedStart));
-          // Old process was closed before the failed open: roster must not stick.
-          yield* awaitUntil(
-            () =>
-              providerThreadRosterEvents(events).some(
-                (event) =>
-                  event.providerThread.status === "idle" &&
-                  (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
-              ),
-            "roster cleared after failed same-thread replacement open",
-          );
-          assert.isFalse(yield* hasPendingBackgroundWork);
+          // The shell runs in the first process, so it is never closed and
+          // no replacement is opened.
+          assert.equal(openCount, 1);
+          assert.isTrue(yield* hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );
