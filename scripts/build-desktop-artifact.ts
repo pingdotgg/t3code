@@ -3053,7 +3053,7 @@ export const verifyWindowsPrimaryFffNativeLoad = Effect.fn(
   });
   const fffEntryPath = path.join(
     input.asarPath,
-    "node_modules/@ff-labs/fff-node/dist/src/index.js",
+    "node_modules/@ff-labs/fff-node/dist/index.js",
   );
   const probeEnv = { ...process.env };
   delete probeEnv.ELECTRON_NO_ASAR;
