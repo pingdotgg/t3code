@@ -299,6 +299,46 @@ describe("interval restrictions at dispatch and across DST", () => {
     expect(next && DateTime.toEpochMillis(next)).toBe(DateTime.toEpochMillis(from) + 25 * 60_000);
   });
 
+  it("uses the repeated window when it closes inside a fall-back hour", () => {
+    // 05:40Z is the first 01:40 (EDT), after the first 01:10-01:30 window
+    // closed; the same wall-clock window repeats at 06:10Z (EST).
+    const from = DateTime.makeZonedUnsafe("2026-11-01T05:40:00Z", {
+      timeZone: "America/New_York",
+    });
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 60_000, window: { start: "01:10", end: "01:30" } },
+      from,
+    );
+    expect(next && DateTime.formatIso(next)).toBe("2026-11-01T06:10:00.000Z");
+  });
+
+  it("re-enters a window that straddles the start of a repeated fall-back hour", () => {
+    // 00:30-01:30 closed at the first 01:30 (EDT); the clock re-enters the
+    // window when 02:00 EDT falls back to 01:00 EST at 06:00Z.
+    const from = DateTime.makeZonedUnsafe("2026-11-01T05:40:00Z", {
+      timeZone: "America/New_York",
+    });
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 60_000, window: { start: "00:30", end: "01:30" } },
+      from,
+    );
+    expect(next && DateTime.formatIso(next)).toBe("2026-11-01T06:00:00.000Z");
+  });
+
+  it("handles a half-hour fall-back when re-entering a window", () => {
+    // Lord Howe falls back 30 minutes: 02:00 (+11:00) becomes 01:30 (+10:30)
+    // at 2026-04-04T15:00Z, re-entering a 01:00-01:45 window.
+    const from = DateTime.makeZonedUnsafe("2026-04-04T14:50:00Z", {
+      timeZone: "Australia/Lord_Howe",
+    });
+    expect(DateTime.toParts(from)).toMatchObject({ hour: 1, minute: 50 });
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 60_000, window: { start: "01:00", end: "01:45" } },
+      from,
+    );
+    expect(next && DateTime.formatIso(next)).toBe("2026-04-04T15:00:00.000Z");
+  });
+
   it("finds the next Sunday window even when it opens inside a spring-forward gap", () => {
     const from = zoned("America/New_York", { year: 2026, month: 3, day: 1, hour: 5, minute: 0 });
     const next = nextScheduledRunAt(
