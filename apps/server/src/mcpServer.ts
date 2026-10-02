@@ -653,7 +653,7 @@ async function appendNestedThreadOperationAudit(
   });
 }
 
-async function withNestedThreadAudit(
+export async function withNestedThreadAudit(
   options: McpServeOptions,
   toolName: NestedThreadCreationPolicy["toolName"],
   toolCallId: string,
@@ -2026,7 +2026,7 @@ function delegateWorkChild(
   };
 }
 
-async function delegateWorkTool(
+export async function delegateWorkTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},

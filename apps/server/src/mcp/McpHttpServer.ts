@@ -28,7 +28,9 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 import { PullRequestMonitorToolkitHandlersLive } from "./toolkits/pullRequestMonitor/handlers.ts";
+import { DelegationToolkitHandlersLive } from "./toolkits/delegation/handlers.ts";
 import { PullRequestMonitorToolkit } from "./toolkits/pullRequestMonitor/tools.ts";
+import { DelegationToolkit } from "./toolkits/delegation/tools.ts";
 import { CollaborativeAcceptanceToolkitHandlersLive } from "./toolkits/collaborativeAcceptance/handlers.ts";
 import { CollaborativeAcceptanceToolkit } from "./toolkits/collaborativeAcceptance/tools.ts";
 import { TerminalToolkitHandlersLive } from "./toolkits/terminal/handlers.ts";
@@ -545,6 +547,14 @@ export const PullRequestMonitorToolkitRegistrationLive = McpServer.toolkit(
   PullRequestMonitorToolkit,
 ).pipe(Layer.provide(PullRequestMonitorToolkitHandlersLive));
 
+/**
+ * Nested-thread delegation. Thread identity comes from the same per-session
+ * credential, so a child is always bound to the calling chat's workspace.
+ */
+export const DelegationToolkitRegistrationLive = McpServer.toolkit(DelegationToolkit).pipe(
+  Layer.provide(DelegationToolkitHandlersLive),
+);
+
 export const CollaborativeAcceptanceToolkitRegistrationLive = McpServer.toolkit(
   CollaborativeAcceptanceToolkit,
 ).pipe(Layer.provide(CollaborativeAcceptanceToolkitHandlersLive));
@@ -578,6 +588,7 @@ export const layer = Layer.mergeAll(
   PullRequestMonitorToolkitRegistrationLive,
   CollaborativeAcceptanceToolkitRegistrationLive,
   TerminalToolkitRegistrationLive,
+  DelegationToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(mcpTransport("/mcp")));
 
 export const layerWithDevice = Layer.mergeAll(
@@ -585,5 +596,6 @@ export const layerWithDevice = Layer.mergeAll(
   PullRequestMonitorToolkitRegistrationLive,
   CollaborativeAcceptanceToolkitRegistrationLive,
   TerminalToolkitRegistrationLive,
+  DelegationToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(mcpTransport("/mcp-device")));
