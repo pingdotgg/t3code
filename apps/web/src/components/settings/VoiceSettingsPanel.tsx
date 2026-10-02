@@ -57,6 +57,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { VoicePostProcessingSettings } from "./VoicePostProcessingSettings";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { TranscriptionTest } from "./TranscriptionTest";
 
 const SYSTEM_DEFAULT = "system-default";
 const PRIMARY_ENVIRONMENT = "primary-environment";
@@ -685,16 +686,14 @@ export function VoiceSettingsPanel() {
         />
       </SettingsSection>
       <SettingsSection title="Transcription models" id={searchableSetting("local-voice-input").id}>
-        <SettingsRow
-          title="Active model"
-          description="Models run on the selected environment. Recordings are deleted after transcription."
-          control={
-            <span className="text-sm text-muted-foreground">
-              {currentStatus?.supported
-                ? (activeModel?.name ?? "No model selected")
-                : "Unavailable"}
-            </span>
+        <TranscriptionTest
+          key={`${environmentId}:${activeModel?.id}:${selectedMicrophone}`}
+          prepared={prepared}
+          microphoneId={selectedMicrophone}
+          modelName={
+            currentStatus?.supported ? (activeModel?.name ?? "No model selected") : "Unavailable"
           }
+          disabled={!currentStatus?.supported || !activeModel || operation !== null}
         />
         <SettingsRow
           title="Transcription language"

@@ -515,6 +515,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["mic test record playback input audio"],
   },
   {
+    id: "transcription-test",
+    title: "Transcription test",
+    to: "/settings/voice",
+    searchTerms: ["test voice speech model transcription"],
+  },
+  {
     id: "dictionary",
     title: "Dictionary",
     to: "/settings/voice",

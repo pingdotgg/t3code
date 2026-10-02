@@ -87,7 +87,7 @@ function formatElapsed(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function RecordingStatus(props: { level: number }) {
+function RecordingStatus(props: { level: number; recordingLimitSeconds?: number | undefined }) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -105,6 +105,9 @@ function RecordingStatus(props: { level: number }) {
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
       <span className="shrink-0 text-secondary-label text-xs tabular-nums">
         {formatElapsed(elapsedSeconds)}
+        {props.recordingLimitSeconds !== undefined
+          ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
+          : ""}
       </span>
     </>
   );
@@ -114,6 +117,7 @@ export function ComposerSpeechStatus(props: {
   state: VoiceInputState<true>;
   progress: { downloaded: number; total: number } | null;
   level: number;
+  recordingLimitSeconds?: number | undefined;
 }) {
   const presentation = resolveSpeechPresentation(props.state, props.progress);
 
@@ -129,7 +133,7 @@ export function ComposerSpeechStatus(props: {
       aria-label={presentation.status}
     >
       {isRecording ? (
-        <RecordingStatus level={props.level} />
+        <RecordingStatus level={props.level} recordingLimitSeconds={props.recordingLimitSeconds} />
       ) : (
         <span
           className={cn(
@@ -232,6 +236,7 @@ export function ComposerSpeechRecordingPill(props: {
   finishShortcutLabel?: string | null;
   cancelShortcutLabel?: string | null;
   level: number;
+  recordingLimitSeconds?: number | undefined;
   onStop(): void;
   onCancel(): void;
   onSkipPostProcessing(): void;
@@ -250,7 +255,12 @@ export function ComposerSpeechRecordingPill(props: {
         shortcutLabel={props.cancelShortcutLabel ?? null}
         onCancel={props.onCancel}
       />
-      <ComposerSpeechStatus state={props.state} progress={props.progress} level={props.level} />
+      <ComposerSpeechStatus
+        state={props.state}
+        progress={props.progress}
+        level={props.level}
+        recordingLimitSeconds={props.recordingLimitSeconds}
+      />
       {props.state.phase === "post-processing" ? (
         <Button
           type="button"

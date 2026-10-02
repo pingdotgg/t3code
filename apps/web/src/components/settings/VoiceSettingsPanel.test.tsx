@@ -86,6 +86,10 @@ vi.mock("../ui/textarea", () => ({ Textarea: "textarea" }));
 vi.mock("../ui/badge", () => ({ Badge: "span" }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
 vi.mock("./VoicePostProcessingSettings", () => ({ VoicePostProcessingSettings: () => null }));
+vi.mock("./TranscriptionTest", () => ({
+  TranscriptionTest: ({ modelName }: { modelName: string }) =>
+    createElement("span", null, modelName),
+}));
 vi.mock("./MicrophoneTest", () => ({
   MicrophoneTest: ({ microphoneControl }: { microphoneControl: ReactNode }) => microphoneControl,
 }));
