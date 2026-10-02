@@ -11,6 +11,13 @@ import type * as Redacted from "effect/Redacted";
 
 export const DEFAULT_PORT = 3773;
 
+/**
+ * Selects the `dev` state directory in {@link deriveServerPaths}. Only the
+ * presence of the URL matters, never its value, so callers that merely need the
+ * dev-flavour state paths can reuse this placeholder.
+ */
+export const DEV_STATE_VARIANT_URL = new URL("http://localhost");
+
 export const RuntimeMode = Schema.Literals(["web", "desktop"]);
 export type RuntimeMode = typeof RuntimeMode.Type;
 

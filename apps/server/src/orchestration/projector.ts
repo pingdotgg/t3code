@@ -853,6 +853,7 @@ export function projectEvent(
           "session",
         );
         const session = shouldPreserveActiveMessageId({
+          previousActiveTurnId: thread.session?.activeTurnId ?? null,
           activeTurnId: decodedSession.activeTurnId,
           activeMessageId: decodedSession.activeMessageId,
         })

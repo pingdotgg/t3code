@@ -152,10 +152,43 @@ describe("ProjectionPolicy", () => {
     expect(terminalTurnStateForSessionStatus("error")).toBe("error");
     expect(terminalTurnStateForSessionStatus("idle")).toBe("interrupted");
     expect(
-      shouldPreserveActiveMessageId({ activeTurnId: "turn-1", activeMessageId: undefined }),
+      shouldPreserveActiveMessageId({
+        previousActiveTurnId: "turn-1",
+        activeTurnId: "turn-1",
+        activeMessageId: undefined,
+      }),
     ).toBe(true);
-    expect(shouldPreserveActiveMessageId({ activeTurnId: null, activeMessageId: undefined })).toBe(
-      false,
-    );
+    // A provider session report can arrive after the server started the turn but
+    // before the provider reports `turn.started`; the authenticated message stays.
+    expect(
+      shouldPreserveActiveMessageId({
+        previousActiveTurnId: null,
+        activeTurnId: null,
+        activeMessageId: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      shouldPreserveActiveMessageId({
+        previousActiveTurnId: null,
+        activeTurnId: "turn-1",
+        activeMessageId: undefined,
+      }),
+    ).toBe(true);
+    // The turn ended, so the active message is released.
+    expect(
+      shouldPreserveActiveMessageId({
+        previousActiveTurnId: "turn-1",
+        activeTurnId: null,
+        activeMessageId: undefined,
+      }),
+    ).toBe(false);
+    // An explicit value always wins.
+    expect(
+      shouldPreserveActiveMessageId({
+        previousActiveTurnId: null,
+        activeTurnId: null,
+        activeMessageId: null,
+      }),
+    ).toBe(false);
   });
 });

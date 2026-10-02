@@ -33,7 +33,12 @@ import { join } from "node:path";
 import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
 import * as BootService from "../cloud/bootService.ts";
-import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../config.ts";
+import {
+  deriveServerPaths,
+  DEV_STATE_VARIANT_URL,
+  ServerConfig,
+  type ServerConfigShape,
+} from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { DurationFromString } from "./duration.ts";
 import * as OwnedSecretStore from "../auth/ServerSecretStore.ts";
@@ -59,7 +64,6 @@ const TAILSCALE_PROBE_RETRY_DELAY = Duration.seconds(1);
 const TAILSCALE_LOCK_TIMEOUT_MS = 15_000;
 const TAILSCALE_LOCK_POLL_INTERVAL_MS = 100;
 const TAILSCALE_LOCK_INCOMPLETE_OWNER_STALE_MS = 5_000;
-const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
 type PairStateVariant = "userdata" | "dev";
 
@@ -417,7 +421,7 @@ export const resolveCandidatesForBaseDir = Effect.fn(function* (
 ) {
   const serviceStatePath = serviceStatePathOverride ?? (yield* resolveServiceStatePath(baseDir));
   const userdataPaths = yield* deriveServerPaths(baseDir, undefined);
-  const devPaths = yield* deriveServerPaths(baseDir, DEV_VARIANT_PLACEHOLDER_URL);
+  const devPaths = yield* deriveServerPaths(baseDir, DEV_STATE_VARIANT_URL);
   return [
     ...(serviceStatePath
       ? [
@@ -452,7 +456,7 @@ export const discoverPairTargetFromCandidates = Effect.fn("pair.discoverCandidat
     if (Option.isNone(state) || !processIsOwnedAndAlive(state.value.pid)) continue;
     const derivedPaths = yield* deriveServerPaths(
       candidate.baseDir,
-      candidate.variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
+      candidate.variant === "dev" ? DEV_STATE_VARIANT_URL : undefined,
     );
     const environmentId = yield* Effect.tryPromise(() =>
       readFile(derivedPaths.environmentIdPath, "utf8"),
@@ -503,7 +507,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
   const devUrl = input.target.state.devUrl ? new URL(input.target.state.devUrl) : undefined;
   const derivedPaths = yield* deriveServerPaths(
     input.target.baseDir,
-    input.target.variant === "dev" ? DEV_VARIANT_PLACEHOLDER_URL : undefined,
+    input.target.variant === "dev" ? DEV_STATE_VARIANT_URL : undefined,
   );
   return {
     logLevel: input.logLevel,
