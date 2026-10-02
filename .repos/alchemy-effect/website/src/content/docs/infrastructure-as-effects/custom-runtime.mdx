@@ -1,10 +1,10 @@
 ---
 title: Custom Runtime
-description: Implement your own Function/Server resource on the Platform type — a Provider that provisions the compute and bundles the runtime Effect.
+description: Implement your own Runtime resource on the Platform type — a Provider that provisions the compute and bundles the runtime Effect.
 ---
 
 Worker, Lambda, and Container cover the common cases. This guide is
-for bringing the [Functions & Servers](/infrastructure-as-effects/functions-and-servers)
+for bringing the [Runtime](/infrastructure-as-effects/runtime)
 model to a new compute target. A custom runtime is a
 [Provider](/infrastructure-as-code/provider) with two jobs: provision
 the compute infrastructure, and bundle + upload the runtime Effect.
@@ -32,7 +32,7 @@ export const TaskProvider = () =>
   Provider.effect(Task, Effect.gen(function* () { /* ... */ }));
 ```
 
-`Platform` handles the Effect plumbing — running the user's init
+`Platform` handles the Effect plumbing — running the user's constructor
 Effect, collecting handlers, wiring [Bindings](/infrastructure-as-effects/binding)
 — so the provider only has to do what every provider does:
 reconcile cloud state.
@@ -81,8 +81,8 @@ export interface Platform<
 | Parameter        | ECS Task instantiation                                  | Meaning                                                        |
 | ---------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
 | `Resource`       | `Task`                                                  | The Resource contract above                                     |
-| `Services`       | `Credentials \| Region \| ServerHost \| AWSEnvironment` | Services the runtime provides to the user's init Effect        |
-| `MainShape`      | `Main<TaskServices>`                                    | What the init Effect may return — `{ fetch?: HttpEffect }`     |
+| `Services`       | `Credentials \| Region \| ServerHost \| AWSEnvironment` | Services the runtime provides to the user's constructor Effect        |
+| `MainShape`      | `Main<TaskServices>`                                    | What the constructor Effect may return — `{ fetch?: HttpEffect }`     |
 | `RuntimeContext` | `TaskRuntimeContext extends HostRuntimeContext`         | The mutable context that collects handlers, env, and exports   |
 
 The value-level factory takes the type string and a
@@ -106,7 +106,7 @@ export const Task: Platform<Task, TaskServices, TaskShape, TaskRuntimeContext> =
 ## The RuntimeContext
 
 `createRuntimeContext(id)` returns the object that accumulates
-everything the init Effect registers. Its contract is
+everything the constructor Effect registers. Its contract is
 `BaseRuntimeContext` from `alchemy/RuntimeContext`:
 
 ```typescript
@@ -152,9 +152,9 @@ exports: Effect.sync(() => ({
 })),
 ```
 
-After running the init Effect, `Platform` hands any returned `fetch`
+After running the constructor Effect, `Platform` hands any returned `fetch`
 handler to `serve`, then folds the context back onto the resource's
-Props — so everything init recorded reaches your provider:
+Props — so everything the constructor recorded reaches your provider:
 
 ```typescript
 // inside Platform (Platform.ts) — what your provider receives as `news`
@@ -257,7 +257,7 @@ loops stay alive; your platform provides whatever its host needs.
 
 ## Honor the phase split
 
-The same init Effect runs twice — at plantime to record bindings,
+The same constructor Effect runs twice — at plantime to record bindings,
 and at cold start inside the artifact to build live clients. See
 [Phases](/infrastructure-as-effects/phases). Two mechanisms keep the
 two runs honest, and `Bundle.build` wires the first automatically:
@@ -294,7 +294,7 @@ encoded (the host context JSON-serializes on `set` and
 
 ## Bindings flow through the host
 
-When the user writes `yield* AWS.S3.GetObject(bucket)` in the init
+When the user writes `yield* AWS.S3.GetObject(bucket)` in the constructor
 Effect, the capability calls ``host.bind`${bucket}`(data)`` with
 data matching your Binding Contract. The engine collects those and
 hands them to `reconcile` as the `bindings` argument:
@@ -334,7 +334,7 @@ definition. A binding removed from code arrives with
 ## What users get
 
 The finished runtime reads like any other Function — infrastructure
-props, an init Effect, a `{ fetch }` handler:
+props, a constructor Effect, a `{ fetch }` handler:
 
 ```typescript
 import * as AWS from "alchemy/AWS";
@@ -358,15 +358,15 @@ export default class ApiTask extends AWS.ECS.Task<ApiTask>()(
 ```
 
 Everything on this page sits behind that surface: `Platform` runs
-the init Effect and collects `host.run` + `fetch` into
+the constructor Effect and collects `host.run` + `fetch` into
 `exports.program`, and the provider bundles that program into an
 image and reconciles the task definition around it.
 
 ## Where next
 
-- [Functions & Servers](/infrastructure-as-effects/functions-and-servers) —
+- [Runtime](/infrastructure-as-effects/runtime) —
   the model this guide implements a new target for.
 - [Custom Provider](/infrastructure-as-code/custom-provider) — the
   lifecycle contract (`reconcile`, `delete`, `diff`, `read`) in depth.
-- [Phases](/infrastructure-as-effects/phases) — the init/runtime split
+- [Phases](/infrastructure-as-effects/phases) — the Construction/Runtime split
   your bundle must honor.

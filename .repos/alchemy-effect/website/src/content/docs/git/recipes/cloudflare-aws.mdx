@@ -1,0 +1,133 @@
+---
+title: Bytes in S3, hashing on Lambda
+description: Compute on Cloudflare, bytes in S3, and large pushes hashed one Lambda per chunk. One stack carries both provider sets, and Alchemy mints the cross-cloud identity.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The Worker and the Durable Objects stay on Cloudflare. Packs, bundles,
+and spilled pushes live in S3, and every 4 MiB chunk of a push is
+hashed on its own Lambda:
+
+```typescript
+// src/git.ts
+import * as AWS from "alchemy/AWS";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Git from "alchemy/Git";
+import * as GitHasher from "alchemy/Git/Hasher";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as Http from "alchemy/Http";
+
+const GitObjects = AWS.S3.Bucket("GitObjects");
+
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(Git.BlobStoreS3(GitObjects)),
+  Layer.provide(GitHasher.HasherLambda(GitHasher.HasherFunction)),
+  Layer.provide(AWS.Lambda.InvokeFunctionHttp),
+);
+
+export default class GitHost extends Cloudflare.Worker<GitHost>()(
+  "Git",
+  { main: import.meta.url, ...Git.GIT_WORKER_OPTIONS },
+  Effect.gen(function* () {
+    const fetch = yield* HttpRouter.toHttpEffect(GitLive.pipe(Layer.provide(Http.Platform)));
+    return { fetch };
+  }),
+) {}
+```
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import GitHost from "./src/git.ts";
+
+export default Alchemy.Stack(
+  "GitService",
+  {
+    providers: Layer.mergeAll(Cloudflare.providers(), AWS.providers()),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const git = yield* GitHost;
+    return { url: git.url.as<string>() };
+  }),
+);
+```
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## What gets created
+
+On Cloudflare, the same Worker and Durable Object namespaces as
+[All on Cloudflare](/git/recipes/cloudflare), minus the bucket.
+
+On AWS:
+
+- `GitObjects`, an S3 bucket with an engine-generated name in the
+  deploying profile's region.
+- `HasherFunction`, a 3 GB Lambda whose only handler answers hash
+  events, with its execution role.
+- One IAM user, one access key, and one least-privilege role the Worker
+  assumes. `BlobStoreS3` and `InvokeFunctionHttp` share that identity:
+  the key and the role's ARN are bound onto the Worker, each request is
+  signed with credentials assumed at runtime, and the role is granted
+  the S3 actions on that one bucket and `lambda:InvokeFunction` on that
+  one function.
+
+## What crosses the internet
+
+A push's chunks go to Lambda and their scan results come back. Pack
+reads for a fetch, bundle streams for a clone, and pack writes from
+compaction all go to S3. Reads are coalesced into few large ranges,
+and the Worker streams bundle bytes straight through, but every one of
+those is a hop the R2 stack does not make.
+
+## When it is worth it
+
+Take this stack when the bytes have to be in AWS. Take the Lambda
+hasher on its own when pushes are regularly wider than four chunks.
+Lambda hashes every chunk at once. The loaded Workers hash four at a
+time:
+
+```diff lang="typescript"
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+-  Layer.provide(GitHasher.HasherWorkerLoader()),
++  Layer.provide(GitHasher.HasherLambda(GitHasher.HasherFunction)),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
++  Layer.provide(AWS.Lambda.InvokeFunctionHttp),
+);
+```
+
+Measured on the same 40 MiB delta-heavy push, the two hashers land
+within a second of each other. [Hasher](/git/blocks/hasher) has the
+table.

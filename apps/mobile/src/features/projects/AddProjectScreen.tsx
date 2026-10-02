@@ -1,3 +1,7 @@
+import { MaterialListRow } from "../../components/MaterialListRow";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { MaterialButton } from "../../components/MaterialButton";
 import {
   addProjectRemoteSourceLabel,
   addProjectRemoteSourcePathHint,
@@ -11,6 +15,9 @@ import {
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  getNewProjectGitHubRepository,
+  getNewProjectGitHubTarget,
+  getNewProjectPathPreview,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -41,15 +48,14 @@ import {
 import { CommonActions, StackActions, useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { Platform, ActivityIndicator, Alert, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as Order from "effect/Order";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { cn } from "../../lib/cn";
-
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
@@ -58,6 +64,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/App
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ErrorBanner";
 import { SourceControlIcon } from "../../components/SourceControlIcon";
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -74,9 +81,13 @@ interface EnvironmentOption {
   readonly platform: string;
   readonly machine: EnvironmentMachineKind;
   readonly baseDirectory: string | null;
+  /** Folder for projects started from just a name; null on servers without it. */
+  readonly newProjectsRoot: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
+  /** Server runs clones in the background and streams progress; older servers block. */
+  readonly supportsCloneTracking: boolean;
 }
 
 const environmentOptionOrder = Order.mapInput(
@@ -121,13 +132,19 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
 
 function SectionTitle(props: { readonly children: string }) {
   return (
-    <Text className="px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted">
+    <Text
+      className={
+        Platform.OS === "android"
+          ? "px-4 text-sm font-t3-medium text-primary-text"
+          : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
+      }
+    >
       {props.children}
     </Text>
   );
 }
 
-function AddProjectShell(props: { readonly children: ReactNode }) {
+function AddProjectShell(props: { readonly children: ReactNode; readonly title: string }) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -136,25 +153,35 @@ function AddProjectShell(props: { readonly children: ReactNode }) {
     // scroll-view frame correction mistakes this full-height wrapper for a
     // "header" sibling, coercing the ScrollView to zero height (blank sheet
     // as soon as the sheet re-lays-out, e.g. when the keyboard opens).
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title={props.title}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{
-          paddingHorizontal: 20,
+          paddingHorizontal: Platform.OS === "android" ? 16 : 20,
           paddingTop: 16,
           paddingBottom: Math.max(insets.bottom, 18) + 18,
-          gap: 10,
+          gap: Platform.OS === "android" ? 16 : 10,
         }}
       >
         {props.children}
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 
 function ListSection(props: { readonly children: ReactNode }) {
-  return <View className="overflow-hidden rounded-[24px] bg-card">{props.children}</View>;
+  return (
+    <View
+      className={
+        Platform.OS === "android"
+          ? "overflow-hidden rounded-[28px] bg-card"
+          : "overflow-hidden rounded-[24px] bg-card"
+      }
+    >
+      {props.children}
+    </View>
+  );
 }
 
 function ListRow(props: {
@@ -167,6 +194,20 @@ function ListRow(props: {
   readonly right?: ReactNode;
   readonly onPress?: () => void;
 }) {
+  if (Platform.OS === "android") {
+    return (
+      <MaterialListRow
+        title={props.title}
+        subtitle={props.subtitle}
+        leading={props.icon}
+        trailing={props.right}
+        disabled={props.disabled}
+        onPress={props.onPress}
+        accessibilityRole={props.selected !== undefined ? "radio" : "button"}
+        accessibilityState={props.selected !== undefined ? { checked: props.selected } : undefined}
+      />
+    );
+  }
   return (
     <Pressable
       disabled={props.disabled}
@@ -201,7 +242,7 @@ function ListRow(props: {
           <SymbolView
             name="chevron.right"
             size={13}
-            tintColorClassName={"accent-chevron"}
+            tintColorClassName="accent-chevron"
             type="monochrome"
           />
         ) : null}
@@ -216,6 +257,7 @@ function PrimaryActionButton(props: {
   readonly loading?: boolean;
   readonly onPress: () => void;
 }) {
+  if (Platform.OS === "android") return <MaterialButton {...props} tone="primary" fullWidth />;
   return (
     <Pressable
       disabled={props.disabled}
@@ -363,12 +405,17 @@ function useEnvironmentOptions(): ReadonlyArray<EnvironmentOption> {
         platform: platformFromOs(config?.environment.platform.os ?? null),
         machine: resolveEnvironmentMachineKind(config ?? null),
         baseDirectory: config?.settings.addProjectBaseDirectory ?? null,
+        newProjectsRoot: config?.newProjectsRoot ?? null,
         connectionState: runtime?.connectionState ?? "available",
         connectionError: runtime?.connectionError ?? null,
         connectionErrorTraceId: runtime?.connectionErrorTraceId ?? null,
+        supportsCloneTracking: config?.environment.capabilities.projectCloneTracking === true,
       };
     });
-    return Arr.sort(options, environmentOptionOrder);
+    return Arr.sort(
+      options.filter((environment) => canCreateProjectInEnvironment(environment.connectionState)),
+      environmentOptionOrder,
+    );
   }, [connectedEnvironments, savedConnectionsById, serverConfigByEnvironmentId]);
 }
 
@@ -432,9 +479,18 @@ function SourceControlRow(props: {
       : `Clone ${addProjectRemoteSourceLabel(props.source)} ${props.hint}`;
   const icon =
     props.source === "url" ? (
-      <SymbolView name="link" size={17} tintColorClassName={"accent-icon"} type="monochrome" />
+      <SymbolView
+        name="link"
+        size={Platform.OS === "android" ? 24 : 17}
+        tintColorClassName="accent-icon"
+        type="monochrome"
+      />
     ) : (
-      <SourceControlIcon kind={props.source} size={18} colorClassName="accent-icon" />
+      <SourceControlIcon
+        kind={props.source}
+        size={Platform.OS === "android" ? 24 : 18}
+        colorClassName="accent-icon"
+      />
     );
 
   if (!props.ready) {
@@ -479,7 +535,7 @@ export function AddProjectSourceScreen() {
   );
 
   return (
-    <AddProjectShell>
+    <AddProjectShell title="Add project">
       {selectedEnvironment === null ? <EmptyEnvironmentState /> : null}
 
       {environmentOptions.length > 1 ? (
@@ -492,7 +548,7 @@ export function AddProjectSourceScreen() {
                 title={environment.label}
                 subtitle={
                   canCreateProjectInEnvironment(environment.connectionState)
-                    ? environment.environmentId
+                    ? undefined
                     : connectionStatusText({
                         phase: environment.connectionState,
                         error: environment.connectionError,
@@ -502,7 +558,7 @@ export function AddProjectSourceScreen() {
                 icon={
                   <EnvironmentMachineSymbol
                     kind={environment.machine}
-                    size={17}
+                    size={Platform.OS === "android" ? 24 : 17}
                     tintColorClassName="accent-icon"
                   />
                 }
@@ -513,8 +569,8 @@ export function AddProjectSourceScreen() {
                   environment.environmentId === selectedEnvironment?.environmentId ? (
                     <SymbolView
                       name="checkmark"
-                      size={14}
-                      tintColorClassName={"accent-icon"}
+                      size={Platform.OS === "android" ? 20 : 14}
+                      tintColorClassName="accent-icon"
                       type="monochrome"
                     />
                   ) : null
@@ -529,18 +585,40 @@ export function AddProjectSourceScreen() {
       {selectedEnvironment ? (
         <>
           <ListSection>
+            {selectedEnvironment.newProjectsRoot !== null ? (
+              <ListRow
+                title="New project"
+                subtitle="Start a new Git repository from a name"
+                icon={
+                  <SymbolView
+                    name="plus"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon"
+                    type="monochrome"
+                  />
+                }
+                isFirst
+                onPress={() =>
+                  navigation.dispatch(
+                    StackActions.push("AddProjectNew", {
+                      environmentId: selectedEnvironment.environmentId,
+                    }),
+                  )
+                }
+              />
+            ) : null}
             <ListRow
               title="Local folder"
               subtitle="Browse a folder on disk"
               icon={
                 <SymbolView
                   name="folder.badge.plus"
-                  size={17}
-                  tintColorClassName={"accent-icon"}
+                  size={Platform.OS === "android" ? 24 : 17}
+                  tintColorClassName="accent-icon"
                   type="monochrome"
                 />
               }
-              isFirst
+              isFirst={selectedEnvironment.newProjectsRoot === null}
               onPress={() =>
                 navigation.dispatch(
                   StackActions.push("AddProjectLocal", {
@@ -567,11 +645,20 @@ export function AddProjectSourceScreen() {
             )}
           </ListSection>
           {discoveryState.isPending ? (
-            <ActivityIndicator colorClassName={"accent-icon-muted"} />
+            <ActivityIndicator colorClassName="accent-icon-muted" />
           ) : null}
         </>
       ) : null}
     </AddProjectShell>
+  );
+}
+
+function openNewTaskDraft(
+  navigation: { dispatch: (action: ReturnType<typeof CommonActions.reset>) => void },
+  params: { environmentId: EnvironmentId; projectId: ProjectId; title: string; cloning?: "1" },
+) {
+  navigation.dispatch(
+    CommonActions.reset({ index: 0, routes: [{ name: "NewTaskDraft", params }] }),
   );
 }
 
@@ -711,7 +798,7 @@ export function AddProjectRepositoryScreen(props: {
   }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
 
   return (
-    <AddProjectShell>
+    <AddProjectShell title={source === "url" ? "Git URL" : addProjectRemoteSourceLabel(source)}>
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -788,7 +875,7 @@ function FolderBrowser(props: {
       <ListSection>
         {browseState.isPending && browseState.data === null ? (
           <View className="items-center py-5">
-            <ActivityIndicator colorClassName={"accent-icon-muted"} />
+            <ActivityIndicator colorClassName="accent-icon-muted" />
           </View>
         ) : null}
         {browsePath.canBrowseUp ? (
@@ -797,8 +884,8 @@ function FolderBrowser(props: {
             icon={
               <SymbolView
                 name="arrow.turn.left.up"
-                size={17}
-                tintColorClassName={"accent-icon-muted"}
+                size={Platform.OS === "android" ? 24 : 17}
+                tintColorClassName="accent-icon-muted"
                 type="monochrome"
               />
             }
@@ -820,8 +907,8 @@ function FolderBrowser(props: {
             icon={
               <SymbolView
                 name="folder"
-                size={17}
-                tintColorClassName={"accent-icon-muted"}
+                size={Platform.OS === "android" ? 24 : 17}
+                tintColorClassName="accent-icon-muted"
                 type="monochrome"
               />
             }
@@ -837,6 +924,236 @@ function FolderBrowser(props: {
         ))}
       </ListSection>
     </>
+  );
+}
+
+/**
+ * New project: a name, then the server makes the folder, README, icon, and
+ * first commit. Optionally publishes it to GitHub as a private repository.
+ */
+export function AddProjectNewScreen(props: { readonly environmentId?: string | string[] }) {
+  const navigation = useNavigation();
+  // Starts on the machine picked in Add project; the rows below switch it.
+  const environmentOptions = useEnvironmentOptions().filter(
+    (option) => option.newProjectsRoot !== null,
+  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(
+    () => stringParam(props.environmentId) as EnvironmentId | null,
+  );
+  const environment = resolveAddProjectEnvironment(environmentOptions, selectedEnvironmentId);
+  const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
+    reportFailure: false,
+  });
+  const discoveryState = useEnvironmentQuery(
+    environment === null
+      ? null
+      : sourceControlEnvironment.discovery({
+          environmentId: environment.environmentId,
+          input: {},
+        }),
+  );
+  const githubTarget = getNewProjectGitHubTarget(discoveryState.data);
+  const [name, setName] = useState("");
+  const [publishesToGitHub, setPublishesToGitHub] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedName = name.trim();
+  const pathPreview =
+    environment?.newProjectsRoot != null
+      ? getNewProjectPathPreview(environment.newProjectsRoot, trimmedName)
+      : null;
+
+  // Shown when there is a choice, or when the selected machine went away and
+  // another one can take over.
+  const showMachines =
+    environmentOptions.length > 1 || (environment === null && environmentOptions.length > 0);
+  const machineRows = showMachines ? (
+    <ListSection>
+      {environmentOptions.map((option, index) => {
+        const selected = option.environmentId === environment?.environmentId;
+        return (
+          <ListRow
+            key={option.environmentId}
+            title={option.label}
+            icon={
+              <EnvironmentMachineSymbol
+                kind={option.machine}
+                size={Platform.OS === "android" ? 24 : 17}
+                tintColorClassName="accent-icon"
+              />
+            }
+            selected={selected}
+            // The create in flight keeps the machine it started on.
+            disabled={isSubmitting}
+            isFirst={index === 0}
+            right={
+              selected ? (
+                <SymbolView
+                  name="checkmark"
+                  size={Platform.OS === "android" ? 20 : 14}
+                  tintColorClassName="accent-icon"
+                  type="monochrome"
+                />
+              ) : null
+            }
+            onPress={() => setSelectedEnvironmentId(option.environmentId)}
+          />
+        );
+      })}
+    </ListSection>
+  ) : null;
+
+  // State lags a render behind, so a double tap could start a second create.
+  const submittingRef = useRef(false);
+  const submit = async () => {
+    if (!environment || trimmedName.length === 0 || submittingRef.current) return;
+    submittingRef.current = true;
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const result = await createNew({
+        environmentId: environment.environmentId,
+        input: { name: trimmedName },
+      });
+      if (AsyncResult.isFailure(result)) {
+        setError(errorMessage(Cause.squash(result.cause)));
+        return;
+      }
+      const { projectId, workspaceRoot, commitError } = result.value;
+      if (commitError !== undefined) {
+        Alert.alert("Created without a first commit", commitError);
+      }
+      if (publishesToGitHub && githubTarget !== null) {
+        void publishRepository({
+          environmentId: environment.environmentId,
+          input: {
+            cwd: workspaceRoot,
+            provider: "github",
+            repository: getNewProjectGitHubRepository(githubTarget, workspaceRoot),
+            visibility: "private",
+          },
+        }).then((publishResult) => {
+          if (AsyncResult.isFailure(publishResult)) {
+            Alert.alert(
+              "Could not create the GitHub repository",
+              errorMessage(Cause.squash(publishResult.cause)),
+            );
+          }
+        });
+      }
+      // The draft screen resolves its project from the client store, so it
+      // must not open before the create event has arrived.
+      const project = await waitForProject(
+        { environmentId: environment.environmentId, projectId },
+        15_000,
+      );
+      if (project === null) {
+        // The project exists, so clearing the name keeps Create from making a `-2` copy.
+        setName("");
+        setError(
+          "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+        );
+        return;
+      }
+      openNewTaskDraft(navigation, {
+        environmentId: environment.environmentId,
+        projectId,
+        title: trimmedName,
+      });
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <AddProjectShell title="New project">
+      {error ? <ErrorBanner message={error} /> : null}
+      {environment ? (
+        <>
+          <TextInput
+            className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
+            value={name}
+            onChangeText={setName}
+            autoCorrect={false}
+            autoFocus
+            placeholder="Project name"
+            returnKeyType="done"
+            onSubmitEditing={() => void submit()}
+          />
+          {pathPreview !== null ? (
+            <Text className="px-1 text-sm leading-snug text-foreground-muted" numberOfLines={2}>
+              {trimmedName.length > 0
+                ? `Creates ${pathPreview}`
+                : `Goes in ${environment.newProjectsRoot}`}
+              {showMachines ? ` on ${environment.label}` : null}
+            </Text>
+          ) : null}
+          {machineRows}
+          {githubTarget !== null ? (
+            <ListSection>
+              <ListRow
+                title="Create private repository on GitHub"
+                subtitle={
+                  trimmedName.length > 0 && pathPreview !== null
+                    ? getNewProjectGitHubRepository(githubTarget, pathPreview)
+                    : githubTarget.account
+                }
+                icon={
+                  <SourceControlIcon
+                    kind="github"
+                    size={Platform.OS === "android" ? 24 : 18}
+                    colorClassName="accent-icon"
+                  />
+                }
+                isFirst
+                right={
+                  <ThemedSwitch
+                    accessibilityLabel="Create private repository on GitHub"
+                    value={publishesToGitHub}
+                    onValueChange={setPublishesToGitHub}
+                  />
+                }
+                onPress={() => setPublishesToGitHub((publishes) => !publishes)}
+              />
+            </ListSection>
+          ) : null}
+          <PrimaryActionButton
+            label="Create project"
+            disabled={isSubmitting || trimmedName.length === 0}
+            onPress={() => void submit()}
+            loading={isSubmitting}
+          />
+          <ListSection>
+            <ListRow
+              title="Add existing project"
+              subtitle="Open a folder or clone a repository"
+              icon={
+                <SymbolView
+                  name="folder.badge.plus"
+                  size={Platform.OS === "android" ? 24 : 17}
+                  tintColorClassName="accent-icon"
+                  type="monochrome"
+                />
+              }
+              isFirst
+              // New project opens from Add project, so going back shows the
+              // other sources. A deep link has nothing behind it.
+              onPress={() =>
+                navigation.canGoBack()
+                  ? navigation.goBack()
+                  : navigation.dispatch(StackActions.replace("AddProject"))
+              }
+            />
+          </ListSection>
+        </>
+      ) : environmentOptions.length > 0 ? (
+        machineRows
+      ) : (
+        <EmptyEnvironmentState />
+      )}
+    </AddProjectShell>
   );
 }
 
@@ -870,7 +1187,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   }, [createProject, environment, isBrowseNavigating, isSubmitting, pathInput]);
 
   return (
-    <AddProjectShell>
+    <AddProjectShell title="Local folder">
       {error ? <ErrorBanner message={error} /> : null}
       {environment ? (
         <>
@@ -908,6 +1225,10 @@ export function AddProjectDestinationScreen(props: {
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
+  const startProjectClone = useAtomCommand(sourceControlEnvironment.startProjectClone, {
+    reportFailure: false,
+  });
+  const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
   const createProject = useCreateProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
@@ -938,6 +1259,48 @@ export function AddProjectDestinationScreen(props: {
     }
 
     setIsSubmitting(true);
+    if (environment.supportsCloneTracking) {
+      // The server creates the project and clones in the background; the
+      // draft screen shows progress and holds Start until the files land.
+      const projectId = ProjectId.make(uuidv4());
+      const title = inferProjectTitleFromPath(resolved.path);
+      const startResult = await startProjectClone({
+        environmentId: environment.environmentId,
+        input: {
+          projectId,
+          title,
+          createdAt: new Date().toISOString(),
+          remoteUrl,
+          destinationPath: resolved.path,
+        },
+      });
+      if (AsyncResult.isFailure(startResult)) {
+        setError(errorMessage(Cause.squash(startResult.cause)));
+      } else {
+        // The draft screen resolves its project from the client store, so it
+        // must not open before the create event has arrived (it would fall
+        // back to the project picker and lose the clone controls). Stay in
+        // the submitting state until then; the clone keeps running either way.
+        const project = await waitForProject(
+          { environmentId: environment.environmentId, projectId },
+          15_000,
+        );
+        if (project === null) {
+          setError(
+            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+          );
+        } else {
+          openNewTaskDraft(navigation, {
+            environmentId: environment.environmentId,
+            projectId,
+            title,
+            cloning: "1",
+          });
+        }
+      }
+      setIsSubmitting(false);
+      return;
+    }
     const cloneResult = await cloneRepository({
       environmentId: environment.environmentId,
       input: {
@@ -960,12 +1323,14 @@ export function AddProjectDestinationScreen(props: {
     environment,
     isBrowseNavigating,
     isSubmitting,
+    navigation,
     pathInput,
     remoteUrl,
+    startProjectClone,
   ]);
 
   return (
-    <AddProjectShell>
+    <AddProjectShell title="Clone destination">
       {error ? <ErrorBanner message={error} /> : null}
       {repositoryTitle ? (
         <View className="rounded-[24px] bg-card px-4 py-3">

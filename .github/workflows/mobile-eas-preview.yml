@@ -66,7 +66,10 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          # eas-cli 22 renamed `project` to `app` in build JSON, and
+          # continuous-deploy-fingerprint still reads `build.project.ownerAccount`.
+          # Unpin once https://github.com/expo/expo-github-action/issues/358 is fixed.
+          eas-version: 21.8.0
           token: ${{ secrets.EXPO_TOKEN }}
           # npm, not pnpm: this only installs eas-cli into the action's own
           # tool dir, and pnpm 11 hard-fails that install on dtrace-provider's
@@ -78,7 +81,19 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas env:pull preview --non-interactive
+        run: |
+          eas env:pull preview --non-interactive
+          # EAS Update disables dotenv loading. Keep the downloaded native config
+          # in its process environment so Android build and OTA fingerprints match.
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
+          if (googleServicesFile) {
+            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
+          }
+          NODE
 
       - name: Deploy with fingerprint check
         if: steps.expo-token.outputs.present == 'true'

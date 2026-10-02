@@ -1,7 +1,0 @@
-interface:
-  display_name: "Scratchpad"
-  short_description: "Extract examples into scratchpad"
-  default_prompt: "Use $scratchpad to extract the active JSDoc example into scratchpad."
-
-policy:
-  allow_implicit_invocation: true
