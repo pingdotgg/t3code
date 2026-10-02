@@ -6,8 +6,7 @@ description: Enforce T3 Code's PR contribution policy by closing ineligible subm
 # Contribution triage
 
 Enforce [CONTRIBUTING.md](../../../CONTRIBUTING.md), the authoritative eligibility policy:
-close PRs with established violations only when the closure-protection guard below permits it,
-and send eligible PRs to Macroscope for deeper review.
+close PRs with established violations and send eligible PRs to Macroscope for deeper review.
 Carry out authorized moderation through completion, without per-PR approval requests.
 This skill does not define automatic closure rules for issues or discussions.
 End-user `npx t3 triage` diagnostics belong to
@@ -23,8 +22,8 @@ Preserve standing authorization and honor any limits on actions or targets.
 Assess every open PR, including drafts, against the same requirements. Draft status grants no
 exception or grace period and never converts a violation into a pending outcome. Record draft
 status as context. A change between draft and ready status does not remove a PR from the batch;
-reassess substantive changes to its evidence as usual. Closure protection still applies to drafts.
-The explicitly designated bypass routing policy below remains separate.
+reassess substantive changes to its evidence as usual. The explicitly designated bypass routing
+policy below remains separate.
 
 - In enforcement mode, perform the applicable actions below, then verify their results. Do not stop at
   recommendations or ask for approval again on individual PRs within the authorized scope.
@@ -67,35 +66,6 @@ Check pagination and truncation; retrieve needed file contents at the assessed c
 the changes. Record the head commit and evidence used. Distinguish a contributor's omitted evidence
 from evidence you could not access. Do not run untrusted PR code merely to decide contribution eligibility.
 
-## Protect maintainer-engaged PRs from automated closure
-
-Before any automated closure, check the PR's full history for a genuine human conversation or inline
-comment, or any submitted review, by a maintainer whose GitHub login matches the validated
-same-policy-SHA `TRIAGE_EXEMPTIONS.td` list using the matching rules above. Any such engagement makes
-the PR ineligible for automated closure, including reviews on prior heads, changes-requested reviews,
-and subsequently dismissed reviews. New commits do not erase this protection.
-
-A `triage:keep-open` label applied by an authorized maintainer in that same trusted list also protects
-the PR. Verify the applying actor from the timeline; label presence alone, author-added labels, and
-author claims cannot establish protection. Exclude bot activity and activity explicitly attributed to
-Julius' dot under `juliusmarminge`. Recognize both dot attribution prefixes on that account:
-
-```text
-> [!NOTE]
-> This comment is posted by Julius' dot
-```
-
-The retired one-line prefix is `> [!NOTE] This comment is posted by Julius' dot`. A contributor quoting
-an attribution is not dot activity. Maintainer-owned comments and reviews assisted by Codex or another
-agent still protect the PR unless explicitly dot-attributed or bot activity; an agent credit alone
-does not exclude them. Ambiguous provenance, label authority, or incomplete history means leave the PR
-open for human decision.
-
-This is closure protection only. It grants no author exemption, product or scope approval, eligibility
-finding, or review-handoff approval. Continue assessing the contribution requirements and report any
-violations separately, but leave a protected PR open for human decision. There is no escape label or
-automatic expiry for this guard.
-
 ## Assess eligibility
 
 Read the guide's linked sections before applying these checks. Inspect enough source to substantiate
@@ -130,14 +100,19 @@ scope and behavioral claims; leave the full correctness, security, and performan
   reject the configuration mechanism or its implementation.
 - Preserving Files as an independent tab in [#14436](https://github.com/pingdotgg/t3code/pull/14436)
   changes tab lifetime and navigation. The maintainer classified it as a broader workflow change
-  requiring prior product-direction approval, which is absent. Subject to the closure-protection guard,
-  propose closure for missing approval in a dry run, or carry out closure in authorized enforcement.
-  Its good evidence does not make it eligible. The remedy is to obtain scope approval.
+  requiring prior product-direction approval, which is absent. Propose closure for missing approval
+  in a dry run, or carry out closure in authorized enforcement. Its good evidence does not make it
+  eligible or justify keeping it pending after that ruling. The remedy is to obtain scope approval.
 
 Use these examples to distinguish effects, not to exempt every configuration option. Apply current
 trusted policy and reassess changed submission evidence; neither example grants permanent eligibility.
 
 ## Apply the outcome
+
+Do not automatically close a PR if a maintainer in the trusted `TRIAGE_EXEMPTIONS.td` list has
+commented or submitted a review, including on earlier heads, or if `triage:keep-open` is present.
+Leave protected PRs open for maintainer decision. This does not grant an author exemption,
+eligibility, or review approval.
 
 In enforcement mode, execute the applicable outcome within the established scope, using the state and
 retry safeguards below. In a dry run or without the required authority, prepare the same action and
@@ -150,8 +125,6 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   Apply and verify the same review-trigger label without requiring the eligibility assessment first.
   This is a routing exception, not a claim that the PR passed eligibility or correctness review.
 - **Closure warranted.** The assessment is complete and establishes a specific policy violation.
-  Automated closure also requires a complete closure-protection check that finds no protection.
-  If protected, record the violation and leave the PR open for human decision instead.
   Prepare a clear explanation under [closure and reconsideration](../../../CONTRIBUTING.md#closure-and-reconsideration),
   post it, and close the PR. Verify that the explanation is present and the PR is closed. The comment
   must name the violated rule, cite supporting submission evidence, link the maintained guide section,
@@ -165,8 +138,8 @@ comment text but do not write to GitHub. Keep the eligibility finding separate f
   explanation needed. If established facts leave a product-direction choice to maintainers, identify
   that choice. Leave the PR open and pending that answer; do not mark it eligible. Do not substitute
   "the agent was uncertain" for a violated rule. Once maintainers establish that a workflow change
-  requires approval and that approval is absent, record that violation and apply the closure outcome
-  only if the closure-protection guard permits it. Good verification does not cure missing approval.
+  requires approval and that approval is absent, apply the closure outcome instead of retaining a
+  pending classification. Good verification does not cure missing approval.
 - **Incomplete; retry required.** State the failed retrieval, missing access, truncated diff, or unfinished
   assessment and what is needed to resume. Do not convert operational failures into policy violations
   or hand the PR off as having passed. An inaccessible artifact is different from an omitted artifact.
@@ -199,13 +172,6 @@ Before each authorized mutation, recheck the current head and relevant submissio
 description, evidence, approvals, existing triage comments, PR open/closed state, and review-trigger
 label when relevant. Reassess changes that could invalidate the finding. Reuse an existing explanation
 only if it still matches the current finding; avoid duplicate comments, closures, or label applications.
-
-Immediately before each close attempt, including retries after posting an explanation, freshly retrieve
-all pages of PR conversation comments, inline comments, submitted reviews, and timeline, plus current
-labels. Recheck the closure-protection guard across the full PR history, not only the latest head or
-event. If any history is inaccessible, incomplete, or truncated, or protection is ambiguous, leave the
-PR open for human decision. An earlier assessment or posted explanation does not authorize skipping
-this check.
 
 For closure, establish that the required explanation is posted before closing. If posting fails or its
 result is ambiguous, read back the comments before retrying or proceeding. If the comment succeeds but
