@@ -46,6 +46,11 @@ function causeMessage(cause: unknown): string | undefined {
           message =
             "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
           break;
+        // Run execution stops the provider turn when its events cannot be saved.
+        case "ProviderEventPublishError":
+          message =
+            "T3 Code could not save this turn's progress, so it stopped the agent. Send a message to continue.";
+          break;
         case "ProviderAdapterOpenSessionError":
           message =
             "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";

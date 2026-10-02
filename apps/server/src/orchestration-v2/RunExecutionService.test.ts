@@ -32,10 +32,12 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -3200,13 +3202,131 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
           }),
         ),
     });
-    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.deepEqual(
+      observed.filter((entry) => !entry.startsWith("turn-interrupted:")),
+      ["run:failed", "pull-requests-refreshed"],
+    );
     assert.deepEqual(
       written.map((item) => item.type),
       ["error"],
     );
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+  }),
+);
+
+it.effect("stops the agent and records the run failed when its events cannot be saved", () =>
+  Effect.gen(function* () {
+    const finalizationWriteFailed = yield* Deferred.make<void>();
+    const ids = backgroundScenarioIds("lost-ingestion");
+    const capture = yield* captureRootRunTermination({
+      key: "lost-ingestion",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.make(rootTerminalEvent(ids, "completed")),
+      ingestNormalized: (event) =>
+        Effect.fail(
+          new ProviderEventIngestor.ProviderEventPublishError({
+            providerSessionId: event.providerSessionId,
+            eventCount: 1,
+            cause: "database is locked",
+          }),
+        ),
+      // The lock that broke ingestion is still held for the first failed write.
+      failedFinalizationWrites: 1,
+      onFinalizationWriteFailed: Deferred.succeed(finalizationWriteFailed, undefined),
+    }).pipe(Effect.forkChild);
+
+    yield* Deferred.await(finalizationWriteFailed);
+    for (let step = 0; step < 12; step++) {
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+    }
+    const { observed, written, turnInterrupted } = yield* Fiber.join(capture);
+
+    assert.equal(yield* Deferred.await(turnInterrupted), ids.rootProviderTurnId);
+    assert.deepEqual(
+      observed.filter((entry) => !entry.startsWith("turn-interrupted:")),
+      ["run:failed", "pull-requests-refreshed"],
+    );
+    const error = written.find((item) => item.type === "error");
+    assert.include(error?.failure.message ?? "", "could not save this turn's progress");
+  }),
+);
+
+it.effect("stops the root turn even when saving fails before the turn is reported", () =>
+  Effect.gen(function* () {
+    const ids = backgroundScenarioIds("lost-ingestion-early");
+    const now = yield* DateTime.now;
+    const lateTurnId = ProviderTurnId.make("provider-turn:lost-ingestion-early:native");
+    const firstWriteFailed = yield* Deferred.make<void>();
+    const providerThreadEvent = {
+      type: "provider_thread.updated",
+      driver,
+      providerThread: { id: ids.providerThreadId } as OrchestrationV2ProviderThread,
+    } as ProviderAdapterV2Event;
+    const rootTurnEvent: ProviderAdapterV2Event = {
+      type: "provider_turn.updated",
+      driver,
+      threadId: ids.threadId,
+      providerTurn: {
+        id: lateTurnId,
+        providerThreadId: ids.providerThreadId,
+        nodeId: ids.rootNodeId,
+        runAttemptId: ids.attemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    };
+    const { observed, turnInterrupted } = yield* captureRootRunTermination({
+      key: "lost-ingestion-early",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      attemptProviderTurnId: null,
+      // The provider reports its turn only after the first write has failed.
+      events: () =>
+        Stream.make(providerThreadEvent).pipe(
+          Stream.concat(
+            Stream.fromEffect(Deferred.await(firstWriteFailed).pipe(Effect.as(rootTurnEvent))),
+          ),
+        ),
+      ingestNormalized: (event) =>
+        Deferred.succeed(firstWriteFailed, undefined).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: event.providerSessionId,
+                eventCount: 1,
+                cause: "database is locked",
+              }),
+            ),
+          ),
+        ),
+    });
+    assert.equal(yield* Deferred.await(turnInterrupted), lateTurnId);
+    assert.include(observed, "run:failed");
+  }),
+);
+
+it.effect("does not record a lost run as failed after the run moved on", () =>
+  Effect.gen(function* () {
+    const { observed, written } = yield* captureRootRunTermination({
+      key: "lost-ingestion-superseded",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+      ingestNormalized: (event) =>
+        Effect.fail(
+          new ProviderEventIngestor.ProviderEventPublishError({
+            providerSessionId: event.providerSessionId,
+            eventCount: 1,
+            cause: "database is locked",
+          }),
+        ),
+      runIsCurrent: false,
+    });
+    assert.notInclude(observed, "run:failed");
+    assert.deepEqual(written, []);
   }),
 );
 
@@ -3262,6 +3382,14 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"];
+  /** Fails this many run-finalization writes before letting one through. */
+  readonly failedFinalizationWrites?: number;
+  readonly onFinalizationWriteFailed?: Effect.Effect<void>;
+  /** False when another attempt or a Stop already moved the run on. */
+  readonly runIsCurrent?: boolean;
+  /** Null when the provider has not reported the root turn yet. */
+  readonly attemptProviderTurnId?: ProviderTurnId | null;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3276,8 +3404,30 @@ function captureRootRunTermination(input: {
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
+    const failedWrites = yield* Ref.make(input.failedFinalizationWrites ?? 0);
+    const turnInterrupted = yield* Deferred.make<ProviderTurnId>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
+    const recordFinalization = (
+      events: Parameters<EventSink.EventSinkV2Shape["writeWithEffects"]>[0]["events"],
+    ) =>
+      Effect.gen(function* () {
+        if ((yield* Ref.getAndUpdate(failedWrites, (count) => count - 1)) > 0) {
+          yield* input.onFinalizationWriteFailed ?? Effect.void;
+          return yield* new EventSink.EventSinkWriteError({
+            eventCount: events.length,
+            cause: "database is locked",
+          });
+        }
+        for (const event of events) {
+          if (event.type === "turn-item.updated") {
+            yield* captureTurnItem(event.payload);
+          }
+          if (event.type === "run.updated") {
+            yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
+          }
+        }
+      });
     const testLayer = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -3292,26 +3442,17 @@ function captureRootRunTermination(input: {
                 }
                 return [];
               }),
-            writeWithEffects: (payload) =>
-              Effect.gen(function* () {
-                for (const event of payload.events) {
-                  if (event.type === "turn-item.updated") {
-                    yield* captureTurnItem(event.payload);
-                  }
-                  if (event.type === "run.updated") {
-                    yield* Ref.update(observed, (current) => [
-                      ...current,
-                      `run:${event.payload.status}`,
-                    ]);
-                  }
-                }
-                return [];
-              }),
-            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            writeWithEffects: (payload) => recordFinalization(payload.events).pipe(Effect.as([])),
+            writeIfRunCurrent: (payload) =>
+              input.runIsCurrent === false
+                ? Effect.succeed({ committed: false, storedEvents: [] })
+                : recordFinalization(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  ),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3363,6 +3504,11 @@ function captureRootRunTermination(input: {
             close: Deferred.succeed(ingestionDone, undefined),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
+          interruptTurn: ({ providerTurnId }: { readonly providerTurnId: ProviderTurnId }) =>
+            Ref.update(observed, (current) => [
+              ...current,
+              `turn-interrupted:${providerTurnId}`,
+            ]).pipe(Effect.andThen(Deferred.succeed(turnInterrupted, providerTurnId))),
         } as unknown as ProviderAdapterV2SessionRuntime,
         run: {
           id: ids.runId,
@@ -3383,7 +3529,10 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId:
+            input.attemptProviderTurnId === undefined
+              ? ids.rootProviderTurnId
+              : input.attemptProviderTurnId,
         } as OrchestrationV2RunAttempt,
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
@@ -3416,7 +3565,11 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return {
+      written: yield* Ref.get(writtenItems),
+      observed: yield* Ref.get(observed),
+      turnInterrupted,
+    };
   });
 }
 
