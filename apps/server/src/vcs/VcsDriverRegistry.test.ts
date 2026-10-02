@@ -1,6 +1,7 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -130,11 +131,15 @@ describe("VcsDriverRegistry", () => {
     );
 
     return Effect.gen(function* () {
+      // The negative lookup needs a real directory: an unresolvable cwd is a
+      // detection failure, not confirmed absence.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-registry-" });
       const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
-      assert.equal(yield* registry.detect({ cwd: "/repo" }), null);
-      assert.equal((yield* registry.detect({ cwd: "/repo" }))?.repository.rootPath, "/repo");
+      assert.equal(yield* registry.detect({ cwd }), null);
+      assert.equal((yield* registry.detect({ cwd }))?.repository.rootPath, "/repo");
       assert.equal(insideWorkTreeChecks, 2);
-    }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(layer, NodeServices.layer)));
   });
 });

@@ -43,6 +43,7 @@ import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
+
 import { worktreeRepairDependenciesTestLayer } from "../ProviderTurnStartService.testkit.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
@@ -440,6 +441,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         runFinalizationServiceProvided,
+        checkpointCaptureServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
         providerTurnControlServiceProvided,

@@ -27,6 +27,8 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -81,6 +83,7 @@ export class OrchestrationEffectExecutorV2 extends Context.Service<
 export const executorLayer: Layer.Layer<
   OrchestrationEffectExecutorV2,
   never,
+  | CheckpointCapture.CheckpointCaptureServiceV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunFinalizationService.RunFinalizationService
   | CheckpointRollbackService.CheckpointRollbackServiceV2
@@ -104,6 +107,8 @@ export const executorLayer: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
+
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -394,6 +399,23 @@ export const executorLayer: Layer.Layer<
           case "checkpoint.capture":
             return runFinalization
               .finalize({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                scopeId: effect.request.scopeId,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "checkpoint.baseline.cleanup":
+            return checkpointCapture
+              .cleanupBaseline({
                 threadId: effect.threadId,
                 runId: effect.request.runId,
                 scopeId: effect.request.scopeId,

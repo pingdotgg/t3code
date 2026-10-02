@@ -11,7 +11,8 @@ import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
 import { layer as projectServiceLayer } from "../project/ProjectService.ts";
 import { layer as projectSetupScriptRunnerLayer } from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
-import { layer as checkpointCaptureServiceLayer } from "./CheckpointCaptureService.ts";
+import * as CheckpointCapture from "./CheckpointCaptureService.ts";
+
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "./CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
@@ -172,7 +173,7 @@ const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
     ),
   ),
 );
-const checkpointCaptureServiceProvided = checkpointCaptureServiceLayer.pipe(
+const checkpointCaptureServiceProvided = CheckpointCapture.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       checkpointServiceProvided,
@@ -263,6 +264,7 @@ const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
       runFinalizationServiceProvided,
+      checkpointCaptureServiceProvided,
       checkpointRollbackServiceProvided,
       providerSessionManagerProvided,
       providerTurnControlServiceProvided,
