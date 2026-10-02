@@ -238,6 +238,7 @@ export const make = Effect.gen(function* () {
           ),
         );
       const events: Array<OrchestrationV2DomainEvent> = [];
+      const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
       // Background work that outlived its settled turn. The provider transcript
       // cannot record its death, so the next provider turn is told instead.
       // Shutdown records it too: a graceful restart cancels it there first.
@@ -304,6 +305,19 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const run of runs) {
+        const node = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+        if (node?.checkpointScopeId != null) {
+          effects.push({
+            id: `effect:checkpoint.baseline.cleanup:${run.id}`,
+            commandId,
+            threadId: projection.thread.id,
+            request: {
+              type: "checkpoint.baseline.cleanup",
+              runId: run.id,
+              scopeId: node.checkpointScopeId,
+            },
+          });
+        }
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
@@ -636,16 +650,14 @@ export const make = Effect.gen(function* () {
         continueAfterRestart && trigger === "startup"
           ? restartContinuationRun(projection, new Set(cancelledBackgroundWork.keys()))
           : undefined;
-      const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
-        ? [
-            {
-              id: `effect:restart-continuation:${continuationRun.id}`,
-              commandId,
-              threadId: projection.thread.id,
-              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
-            },
-          ]
-        : [];
+      if (continuationRun !== undefined) {
+        effects.push({
+          id: `effect:restart-continuation:${continuationRun.id}`,
+          commandId,
+          threadId: projection.thread.id,
+          request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+        });
+      }
       const stoppedSessions = projection.providerSessions.filter(
         (candidate) => candidate.status !== "stopped" && candidate.status !== "error",
       ).length;

@@ -80,6 +80,25 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       occurredAt: now,
       payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
     });
+    const scopeId =
+      run.rootNodeId === null
+        ? null
+        : (projection.nodes.find((node) => node.id === run.rootNodeId)?.checkpointScopeId ?? null);
+    if (scopeId !== null) {
+      // Deletion cancels the run before a queued checkpoint.capture can enqueue
+      // its own cleanup, and deleted threads never re-enter recovery, so this
+      // is the only path that drops the turn-start baseline ref.
+      effects.push({
+        id: `effect:checkpoint.baseline.cleanup:${run.id}`,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        request: {
+          type: "checkpoint.baseline.cleanup",
+          runId: run.id,
+          scopeId,
+        },
+      });
+    }
   }
   for (const attempt of projection.attempts) {
     const run = activeRunById.get(attempt.runId);
