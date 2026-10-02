@@ -124,6 +124,21 @@
       ]
     },
     {
+      "bundles": ["android", "ios", "mobile"],
+      "license": "BSD-3-Clause",
+      "name": "WebRTC",
+      "sourceUrl": "https://webrtc.googlesource.com/src",
+      "generatedNotices": [
+        {
+          "licenseId": "BSD-3-Clause",
+          "copyrights": ["Copyright (c) 2011, The WebRTC project authors. All rights reserved."],
+          "preamble": [
+            "WebRTC\n\nVoice conversations use the libwebrtc build that react-native-webrtc links into the iOS and Android apps."
+          ]
+        }
+      ]
+    },
+    {
       "bundles": ["android", "assets", "mobile"],
       "license": "Apache-2.0",
       "name": "MesloLGS NF",

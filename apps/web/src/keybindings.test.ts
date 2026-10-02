@@ -599,6 +599,23 @@ describe("thread navigation helpers", () => {
       ),
     );
   });
+
+  it("toggles voice with a bare F8 unless the terminal has focus", () => {
+    const input = event({ key: "F8", code: "F8" });
+    assert.strictEqual(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "voice.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
 });
 
 describe("model picker navigation helpers", () => {
