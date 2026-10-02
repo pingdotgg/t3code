@@ -17,7 +17,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
 import type { AcpSessionRuntimeEvent } from "../provider/acp/AcpSessionRuntime.ts";
@@ -31,6 +31,7 @@ import {
 
 type TextRuntime = Effect.Success<ReturnType<AntigravityTextGenerationOptions["makeRuntime"]>>;
 
+const requestContext = { requestId: "test-request", method: "test" };
 const SESSION_ID = "047c62f6-607b-44db-bfbe-f83b67e9e8b1";
 const modelSelection = {
   instanceId: ProviderInstanceId.make("antigravity-test"),
@@ -361,14 +362,17 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.forkChild);
       yield* Deferred.await(fixture.enteredPrompt);
-      const reply = yield* fixture.incoming.permission({
-        sessionId: SESSION_ID,
-        toolCall: { toolCallId: "question-1", title: "Choose a title", kind: "other" },
-        options: [
-          { optionId: "first-native-choice", name: "Use this title", kind: "allow_once" },
-          { optionId: "second-native-choice", name: "Use this title", kind: "allow_once" },
-        ],
-      });
+      const reply = yield* fixture.incoming.permission(
+        {
+          sessionId: SESSION_ID,
+          toolCall: { toolCallId: "question-1", title: "Choose a title", kind: "other" },
+          options: [
+            { optionId: "first-native-choice", name: "Use this title", kind: "allow_once" },
+            { optionId: "second-native-choice", name: "Use this title", kind: "allow_once" },
+          ],
+        },
+        requestContext,
+      );
       const error = yield* Fiber.join(child).pipe(Effect.flip);
       expect(reply).toEqual({ outcome: { outcome: "cancelled" } });
       expect(error.detail).toContain("permission or user input");
@@ -383,14 +387,17 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .generateThreadTitle(fixture.titleInput)
         .pipe(Effect.forkChild);
       yield* Deferred.await(fixture.enteredPrompt);
-      const reply = yield* fixture.incoming.question({
-        sessionId: SESSION_ID,
-        mode: "form",
-        message: "Name this branch",
-        requestedSchema: { type: "object", properties: {} },
-      });
+      const reply = yield* fixture.incoming.question(
+        {
+          sessionId: SESSION_ID,
+          mode: "form",
+          message: "Name this branch",
+          requestedSchema: { type: "object", properties: {} },
+        },
+        requestContext,
+      );
       const error = yield* Fiber.join(child).pipe(Effect.flip);
-      expect(reply).toEqual({ action: { action: "decline" } });
+      expect(reply).toEqual({ action: "decline" });
       expect(error.detail).toContain("user input");
       yield* fixture.assertCleaned;
     }).pipe(Effect.scoped),
@@ -407,10 +414,16 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         yield* Deferred.await(fixture.enteredPrompt);
         const request =
           kind === "file"
-            ? fixture.incoming.readFile({ sessionId: SESSION_ID, path: "/not-allowed" })
+            ? fixture.incoming.readFile(
+                { sessionId: SESSION_ID, path: "/not-allowed" },
+                requestContext,
+              )
             : kind === "terminal"
-              ? fixture.incoming.createTerminal({ sessionId: SESSION_ID, command: "not-allowed" })
-              : fixture.incoming.extension("_ask_user", {});
+              ? fixture.incoming.createTerminal(
+                  { sessionId: SESSION_ID, command: "not-allowed" },
+                  requestContext,
+                )
+              : fixture.incoming.extension("_ask_user", {}, requestContext);
         const denied = yield* request.pipe(Effect.exit);
         expect(Exit.isFailure(denied)).toBe(true);
         const error = yield* Fiber.join(child).pipe(Effect.flip);

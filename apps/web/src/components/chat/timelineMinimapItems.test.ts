@@ -12,7 +12,7 @@ function rows(
     role,
     text,
     streaming: false,
-    turnId: null,
+    runId: null,
     createdAt: new Date(index * 1000).toISOString(),
     updatedAt: new Date(index * 1000).toISOString(),
   }));

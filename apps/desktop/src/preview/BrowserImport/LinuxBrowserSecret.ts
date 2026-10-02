@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import { DesktopEnvironment } from "../../app/DesktopEnvironment.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 
 /** Absolute path to the helper shipped with this desktop instance. */
 export const LinuxBrowserSecretPath = Context.Reference<string | undefined>(
@@ -14,7 +14,7 @@ export const LinuxBrowserSecretPath = Context.Reference<string | undefined>(
 export const layer = Layer.effect(
   LinuxBrowserSecretPath,
   Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "linux") return undefined;
     const fileSystem = yield* FileSystem.FileSystem;
     const relative = environment.path.join("browser-secret", "t3-browser-secret");

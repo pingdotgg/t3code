@@ -14,7 +14,9 @@ import type {
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
   ReviewCommentContextRecord,
+  ScopedThreadRef,
   TerminalContextRecord,
+  ThreadContextRecord,
   ThreadId,
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
@@ -152,6 +154,28 @@ export function previewAnnotationContextReference(
     kind: "preview-annotation",
     contextId: previewAnnotationContextId(annotation.id),
     label: previewAnnotationContextLabel(annotation),
+  };
+}
+
+/** One record per thread: attaching the same thread twice reuses the chip. */
+function threadContextId(threadId: ThreadId): ComposerContextId {
+  return toKindScopedComposerContextId("thread", threadId);
+}
+
+export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
+  return { kind: "thread", contextId: record.contextId, label: record.label };
+}
+
+export function threadContextRecord(ref: ScopedThreadRef, title: string): ThreadContextRecord {
+  const label = sanitizeComposerContextLabel(title, "thread");
+  return {
+    version: 1,
+    kind: "thread",
+    contextId: threadContextId(ref.threadId),
+    label,
+    environmentId: ref.environmentId,
+    threadId: ref.threadId,
+    title: label,
   };
 }
 
@@ -295,6 +319,7 @@ export function buildMessageContext(input: {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  threadContexts?: ReadonlyArray<ThreadContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   // An annotation's screenshot travels as the image attachment that reuses its id.
@@ -306,6 +331,7 @@ export function buildMessageContext(input: {
   const records: ComposerContextRecord[] = [
     ...input.terminalContexts.map(terminalContextRecord),
     ...input.reviewComments.map(reviewCommentContextRecord),
+    ...(input.threadContexts ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

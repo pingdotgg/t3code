@@ -10,22 +10,30 @@ import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import { GrokDriver } from "./GrokDriver.ts";
+
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-grok-driver-update-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(ServerSettingsService.layerTest()),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
       shouldRunScopeWork: () => Effect.succeed(false),
     }),
   ),
-  Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,

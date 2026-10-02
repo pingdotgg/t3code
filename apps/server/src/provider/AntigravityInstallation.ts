@@ -30,7 +30,7 @@ import * as NodeFSP from "node:fs/promises";
 import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { makeAntigravityAcpRuntime } from "./acp/AntigravityAcpSupport.ts";
 import {
   buildAntigravityAcpSpawnInput,
@@ -111,7 +111,7 @@ export class AntigravityInstallation extends Context.Service<
   static readonly layer = Layer.effect(
     AntigravityInstallation,
     Effect.gen(function* () {
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       return yield* makeAntigravityInstallation({ baseDir: config.baseDir });
     }),
   );
@@ -495,7 +495,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         if (
           initialized.agentInfo?.name !== "antigravity-acp" ||
           initialized.agentInfo.version !== expectedVersion ||
-          initialized.protocolVersion !== 1 ||
+          // Antigravity 1.1.1 can report 2 with the legacy ACP response shape.
+          // The ACP client chooses the session wire format from that shape.
+          (initialized.protocolVersion !== 1 && initialized.protocolVersion !== 2) ||
           initialized.agentCapabilities?.loadSession !== true ||
           !initialized.agentCapabilities.sessionCapabilities?.resume ||
           !initialized.agentCapabilities.auth?.logout ||

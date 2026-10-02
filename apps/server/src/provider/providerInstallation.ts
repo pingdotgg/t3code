@@ -12,15 +12,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { CodexInstallation, type CodexInstallationError } from "./CodexInstallation.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  AntigravityInstallation,
-  type AntigravityInstallationError,
-} from "./AntigravityInstallation.ts";
+import * as CodexInstallation from "./CodexInstallation.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
-import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderInstanceRegistry from "./Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 
 const ANTIGRAVITY = ProviderDriverKind.make("antigravity");
@@ -30,11 +27,11 @@ const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings
 
 /** Route instance setup to the environment-owned installer without owning the download. */
 export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(function* () {
-  const antigravityInstallation = yield* AntigravityInstallation;
-  const codexInstallation = yield* CodexInstallation;
-  const instances = yield* ProviderInstanceRegistry;
-  const providers = yield* ProviderRegistry;
-  const settings = yield* ServerSettingsService;
+  const antigravityInstallation = yield* AntigravityInstallation.AntigravityInstallation;
+  const codexInstallation = yield* CodexInstallation.CodexInstallation;
+  const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const readEntries = Effect.fn("ProviderInstallation.readEntries")(function* (
     instanceId: ProviderInstanceId,
@@ -102,7 +99,11 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
 
   const failure =
     (instanceId: ProviderInstanceId) =>
-    (error: AntigravityInstallationError | CodexInstallationError) =>
+    (
+      error:
+        | AntigravityInstallation.AntigravityInstallationError
+        | CodexInstallation.CodexInstallationError,
+    ) =>
       new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {

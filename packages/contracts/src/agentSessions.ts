@@ -20,11 +20,6 @@ export const AgentSessionImportSource = Schema.Struct({
 });
 export type AgentSessionImportSource = typeof AgentSessionImportSource.Type;
 
-/** Imported message ids retain their origin after event metadata is projected into SQLite. */
-export function isImportedAgentSessionMessageId(messageId: string): boolean {
-  return messageId.startsWith("import:");
-}
-
 /**
  * Empty for now. Kept as a struct so future scan options (source filters,
  * explicit roots) can be added without a new method.

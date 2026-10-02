@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { BUNDLED_MODEL_MANIFEST, ModelManifest, type ModelManifestData } from "./ModelManifest.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 import { expect, it } from "@effect/vitest";
 import {
   HostProcessArchitecture,
@@ -15,12 +15,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as NodeCrypto from "node:crypto";
-import {
-  makeCodexInstallation,
-  type CodexInstallation,
-  type CodexInstallationOptions,
-  resolveCodexReleaseAsset,
-} from "./CodexInstallation.ts";
+import * as CodexInstallation from "./CodexInstallation.ts";
 
 const archive = Buffer.from(
   "H4sIAAAAAAAC/+3W0W6DIBQGYB/FcD0sKNSkD7J7aom6tmAQtzXL3n3QZM3qdWVt+n8XoCckJp78wLY3q8bu9Ge2HBbUUp7nYD4H8s9zrNdSsCxnWQLT6JULn8ye09K9h/u2/c0/jSM9xqGzo0+bf3Gdf15WQiD/Kdy61/CA+z8dlO9Wrv2387+c5Z9VZY38p7BY0+Gh8t/sVauLt9Ga9Pnnop7ln1e4/6fxRQ7qZCf/qt3YW0M2OX/JyfvljbCCy3XBSaiGH9VqH4tKuaZbC6qG4aDpTrmP3sQV2nh3Gmxvzqsud0vyjaABAAAAAAAAAAAAAAAk8gOq19rvACgAAA==",
@@ -35,8 +30,8 @@ const asset = {
 };
 const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   input: {
-    options?: Partial<CodexInstallationOptions>;
-    manifestCurrent?: Effect.Effect<ModelManifestData>;
+    options?: Partial<CodexInstallation.CodexInstallationOptions>;
+    manifestCurrent?: Effect.Effect<ModelManifest.ModelManifestData>;
     body?: Stream.Stream<Uint8Array>;
     baseDir?: string;
     local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
@@ -57,16 +52,16 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     );
   }
   let downloads = 0;
-  const installation = yield* makeCodexInstallation({
+  const installation = yield* CodexInstallation.makeCodexInstallation({
     baseDir,
     releaseAsset: asset,
     validate: () => Effect.void,
     ...input.options,
   }).pipe(
-    Effect.provideService(ModelManifest, {
-      current: input.manifestCurrent ?? Effect.succeed(BUNDLED_MODEL_MANIFEST),
-      refresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
-      forceRefresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
+    Effect.provideService(ModelManifest.ModelManifest, {
+      current: input.manifestCurrent ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refreshInBackground: Effect.void,
     }),
     Effect.provideService(HostProcessPlatform, "darwin"),
@@ -90,7 +85,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   );
   return { installation, fs, baseDir, localBinaryPath, probeLog, downloads: () => downloads };
 });
-const terminalState = (installation: CodexInstallation["Service"]) =>
+const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
   installation.changes.pipe(
     Stream.filter((state) => ["succeeded", "failed", "cancelled"].includes(state.phase)),
     Stream.runHead,
@@ -183,7 +178,7 @@ it.effect("rechecks compatibility after the local executable is replaced", () =>
 
 it.effect("rechecks a cached local executable when the shared manifest policy changes", () =>
   Effect.gen(function* () {
-    let manifest = BUNDLED_MODEL_MANIFEST;
+    let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
     const h = yield* makeHarness({
       local: { version: "0.156.0" },
       manifestCurrent: Effect.sync(() => manifest),
@@ -217,7 +212,10 @@ it.effect("uses bundled Codex compatibility when the remote manifest omits its p
   Effect.gen(function* () {
     const h = yield* makeHarness({
       local: { version: "0.156.0" },
-      manifestCurrent: Effect.succeed({ ...BUNDLED_MODEL_MANIFEST, compatibility: [] }),
+      manifestCurrent: Effect.succeed({
+        ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+        compatibility: [],
+      }),
     });
     expect((yield* h.installation.start).source).toBe("local");
     expect(h.downloads()).toBe(0);
@@ -361,6 +359,8 @@ it.effect("keeps an activated runtime when a later update fails verification", (
 it("publishes complete packages for all supported platforms", () => {
   for (const platform of ["darwin", "linux", "win32"] as const)
     for (const arch of ["x64", "arm64"])
-      expect(resolveCodexReleaseAsset(platform, arch)?.url).toContain("codex-package-");
-  expect(resolveCodexReleaseAsset("linux", "riscv64")).toBeNull();
+      expect(CodexInstallation.resolveCodexReleaseAsset(platform, arch)?.url).toContain(
+        "codex-package-",
+      );
+  expect(CodexInstallation.resolveCodexReleaseAsset("linux", "riscv64")).toBeNull();
 });

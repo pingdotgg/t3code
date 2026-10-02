@@ -80,7 +80,6 @@ export type WorktreeSetupSnapshot = typeof WorktreeSetupSnapshot.Type;
  * after a reload.
  */
 export const WORKTREE_SETUP_ACTIVITY_KIND = "worktree-setup";
-export const worktreeSetupActivityId = (threadId: ThreadId) => `worktree-setup:${threadId}`;
 
 export const WorktreeSetupSubscribeInput = Schema.Struct({
   threadId: ThreadId,

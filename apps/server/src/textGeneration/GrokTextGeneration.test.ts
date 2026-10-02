@@ -20,7 +20,7 @@ import { execScriptSource, writeFakeCli } from "../testUtils/fakeCli.ts";
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
+const mockAgentPath = NodePath.join(__dirname, "../provider/testFixtures/grok-text-mock-agent.mjs");
 
 const GrokTextGenerationTestLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",

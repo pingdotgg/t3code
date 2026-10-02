@@ -13,7 +13,6 @@ import {
   threadWokeAt,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 const NOW = "2026-04-10T12:00:00.000Z";
 const SNOOZED_AT = "2026-04-10T09:00:00.000Z";
@@ -63,10 +62,7 @@ function makeShell(input: {
   };
 }
 
-type QueuedTurnShell = Pick<
-  OrchestrationThreadShell,
-  "latestUserMessageAt" | "latestTurn" | "session"
->;
+type QueuedTurnShell = Parameters<typeof hasQueuedTurnStart>[0];
 
 function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
   return { latestUserMessageAt: null, latestTurn: null, session: null, ...overrides };

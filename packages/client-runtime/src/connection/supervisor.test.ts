@@ -14,11 +14,7 @@ import * as Tracer from "effect/Tracer";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
-import {
-  ManagedRelayClient,
-  ManagedRelayDpopSigner,
-  ManagedRelayRequestTimeoutError,
-} from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { fetchEnvironmentSessionState } from "../state/session.ts";
@@ -1247,12 +1243,12 @@ describe("EnvironmentSupervisor", () => {
             return Promise.reject(new Error(`Unexpected HTTP request to ${request.url}`));
         }
       }) satisfies typeof fetch;
-      const signer = ManagedRelayDpopSigner.of({
+      const signer = ManagedRelay.ManagedRelayDpopSigner.of({
         thumbprint: Effect.succeed("test-thumbprint"),
         createProof: () => Effect.succeed("test-proof"),
       });
       const unused = () => Effect.die("Unexpected relay operation.");
-      const relay = ManagedRelayClient.of({
+      const relay = ManagedRelay.ManagedRelayClient.of({
         relayUrl: "https://relay.example.test",
         listEnvironments: unused,
         listDevices: unused,
@@ -1263,7 +1259,7 @@ describe("EnvironmentSupervisor", () => {
         connectEnvironment: Effect.fn("TestConnectionHttp.connectEnvironment")(function* () {
           yield* Ref.update(bootstrapCalls, (count) => count + 1);
           if (yield* Ref.get(bootstrapFails)) {
-            return yield* new ManagedRelayRequestTimeoutError({
+            return yield* new ManagedRelay.ManagedRelayRequestTimeoutError({
               activity: "Relay environment connection",
               timeoutMs: 6_000,
               traceId: null,
@@ -1287,8 +1283,8 @@ describe("EnvironmentSupervisor", () => {
         Effect.provide(
           Layer.mergeAll(
             httpLayer,
-            Layer.succeed(ManagedRelayDpopSigner, signer),
-            Layer.succeed(ManagedRelayClient, relay),
+            Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
+            Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
             Layer.succeed(ClientCapabilities.CloudSession, {
               identity: Effect.succeedSome({ accountId: "test-account" }),
               clerkToken: Effect.succeed("clerk-token"),

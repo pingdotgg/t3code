@@ -149,6 +149,8 @@ describe("AcpCoreRuntimeEvents", () => {
         threadId: "thread-1" as never,
         turnId,
         payload: {
+          nativePlanId: "plan-1",
+          kind: "items",
           plan: [{ step: "Inspect state", status: "inProgress" }],
         },
         source: "acp.cursor.extension",

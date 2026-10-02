@@ -8,7 +8,7 @@ import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
 // The override checks POSIX exec bits on a real file under a linux platform

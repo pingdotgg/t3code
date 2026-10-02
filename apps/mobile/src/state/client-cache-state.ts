@@ -2,7 +2,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 
-import { type ClientCacheKind, MobileDatabase } from "../persistence/mobile-database";
+import * as MobileDatabase from "../persistence/mobile-database";
 import { projectFaviconDatabaseCache } from "../lib/projectFaviconDatabaseCache";
 import * as Runtime from "../lib/runtime";
 
@@ -10,7 +10,7 @@ export interface EnvironmentClientCacheSummary {
   readonly environmentId: EnvironmentId;
   readonly recordCount: number;
   readonly payloadBytes: number;
-  readonly kinds: Readonly<Partial<Record<ClientCacheKind, number>>>;
+  readonly kinds: Readonly<Partial<Record<MobileDatabase.ClientCacheKind, number>>>;
 }
 
 export interface ClientCacheSummary {
@@ -26,7 +26,7 @@ export type ClientCacheClearScope =
 function aggregateCacheSummary(
   rows: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
-    readonly kind: ClientCacheKind;
+    readonly kind: MobileDatabase.ClientCacheKind;
     readonly recordCount: number;
     readonly payloadBytes: number;
   }>,
@@ -63,7 +63,7 @@ const clientCacheRuntime = Atom.runtime(Runtime.runtimeContextLayer);
 
 export const clientCacheSummaryAtom = clientCacheRuntime
   .atom(
-    MobileDatabase.pipe(
+    MobileDatabase.MobileDatabase.pipe(
       Effect.flatMap((database) => database.inspectCaches),
       Effect.map(aggregateCacheSummary),
     ),
@@ -77,7 +77,7 @@ export const clearClientCacheAtom = clientCacheRuntime
         ? projectFaviconDatabaseCache.clearAll()
         : projectFaviconDatabaseCache.clearEnvironment(scope.environmentId),
     ).pipe(
-      Effect.andThen(MobileDatabase),
+      Effect.andThen(MobileDatabase.MobileDatabase),
       Effect.flatMap((database) =>
         scope.type === "all"
           ? database.clearAllCaches

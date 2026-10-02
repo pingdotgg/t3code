@@ -2,17 +2,15 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   mobileProjectGroupingModePatch,
   resolveMobileProjectGroupingSettings,
 } from "../../state/project-grouping";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
@@ -57,37 +55,15 @@ export function SettingsProjectGroupingRouteScreen() {
       >
         <SettingsSection title="Project grouping">
           {GROUPING_OPTIONS.map((option, index) => (
-            <Pressable
+            <SettingsChoiceRow
               key={option.mode}
-              accessibilityRole="radio"
-              accessibilityState={{
-                checked: selectedMode === option.mode,
-                disabled: !preferencesReady,
-              }}
+              label={option.label}
+              description={option.description}
+              selected={selectedMode === option.mode}
+              separated={index > 0}
               disabled={!preferencesReady}
               onPress={() => savePreferences(mobileProjectGroupingModePatch(option.mode))}
-              className={
-                index === 0
-                  ? "flex-row items-center gap-4 p-4"
-                  : "flex-row items-center gap-4 border-t border-border-subtle p-4"
-              }
-            >
-              <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-lg text-foreground">{option.label}</Text>
-                <Text className="text-sm leading-normal text-foreground-muted">
-                  {option.description}
-                </Text>
-              </View>
-              {selectedMode === option.mode ? (
-                <SymbolView
-                  name="checkmark"
-                  size={18}
-                  tintColorClassName={"accent-icon"}
-                  type="monochrome"
-                  weight="semibold"
-                />
-              ) : null}
-            </Pressable>
+            />
           ))}
         </SettingsSection>
       </ScrollView>

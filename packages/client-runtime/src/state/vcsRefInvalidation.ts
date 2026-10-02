@@ -4,7 +4,7 @@ import * as PartitionedSemaphore from "effect/PartitionedSemaphore";
 import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import * as Persistence from "../platform/persistence.ts";
 
 export interface VcsRefsInvalidationTarget {
   readonly environmentId: EnvironmentId;
@@ -60,7 +60,7 @@ export const invalidateCachedVcsRefs = Effect.fn("VcsRefsState.invalidateCached"
   registry: AtomRegistry.AtomRegistry,
   target: CachedVcsRefsInvalidationTarget,
 ) {
-  const cache = yield* EnvironmentCacheStore;
+  const cache = yield* Persistence.EnvironmentCacheStore;
   yield* withVcsRefsPersistenceLock(
     target.environmentId,
     Effect.gen(function* () {

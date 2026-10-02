@@ -10,7 +10,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { ServerConfig } from "../../../config.ts";
+import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
@@ -175,7 +175,7 @@ const handlers = {
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
-      const config = yield* ServerConfig;
+      const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const platform = yield* HostProcessPlatform;
       const shimDir = yield* ensureAgentDeviceShim({

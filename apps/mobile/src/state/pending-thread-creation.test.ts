@@ -169,8 +169,8 @@ describe("pendingThreadCreationShell", () => {
       interactionMode: "default",
       branch: "main",
       worktreePath: null,
-      latestTurn: null,
-      session: null,
+      latestRun: null,
+      runtime: null,
       latestUserMessageAt: creation.createdAt,
     });
   });
@@ -248,7 +248,6 @@ describe("pendingThreadCreationMessage", () => {
       id: creation.messageId,
       role: "user",
       text: creation.text,
-      turnId: null,
       streaming: false,
       createdAt: creation.createdAt,
       updatedAt: creation.createdAt,

@@ -15,7 +15,6 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
     connectionState: "connected",
     connectionError: null,
     shellSnapshotError: null,
-    latestCachedSnapshotReceivedAt: null,
     networkStatus: "online",
     ...overrides,
   };

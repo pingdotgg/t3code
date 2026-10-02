@@ -17,7 +17,7 @@ import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import * as Persistable from "effect/unstable/persistence/Persistable";
 import * as PersistedCache from "effect/unstable/persistence/PersistedCache";
 import * as Persistence from "effect/unstable/persistence/Persistence";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 
 const CONCURRENT_READS = 512;
 type ReadError = PullRequestOperationError | PullRequestUnavailableError;
@@ -164,7 +164,7 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(

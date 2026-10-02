@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ThreadId,
+  ProjectId,
   WS_METHODS,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
@@ -206,7 +207,7 @@ describe("vcsActionState", () => {
     });
   });
 
-  it("clears running presentation state once the action finishes", () => {
+  it("keeps running presentation state until the finished action settles", () => {
     const initial = beginVcsActionState({
       operation: "run_change_request",
       label: "Running source control action",
@@ -235,18 +236,18 @@ describe("vcsActionState", () => {
     );
 
     expect(finished).toMatchObject({
-      isRunning: false,
+      isRunning: true,
       operation: "run_change_request",
       actionId,
       action,
-      currentLabel: null,
-      currentPhaseLabel: null,
+      currentLabel: "Pushing...",
+      currentPhaseLabel: "Pushing...",
       lastOutputLine: null,
       error: null,
     });
   });
 
-  it("retains a terminal action error for presentation", () => {
+  it("keeps running presentation state and retains a terminal action error until settle", () => {
     const initial = beginVcsActionState({
       operation: "run_change_request",
       label: "Running source control action",
@@ -265,7 +266,7 @@ describe("vcsActionState", () => {
     );
 
     expect(failed).toMatchObject({
-      isRunning: false,
+      isRunning: true,
       operation: "run_change_request",
       actionId,
       action,
@@ -586,11 +587,16 @@ describe("vcsActionState", () => {
         const targetKey = { environmentId, cwd };
         const successfulActionId = "invalidate-success";
         const failedActionId = "invalidate-failure";
+        const interruptedActionId = "invalidate-interrupted";
         const successfulTransportActionId = createVcsActionTransportId(
           targetKey,
           successfulActionId,
         );
         const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
+        const interruptedTransportActionId = createVcsActionTransportId(
+          targetKey,
+          interruptedActionId,
+        );
         const rpcInputs = new Array<GitRunStackedActionInput>();
         const client = {
           [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
@@ -604,16 +610,18 @@ describe("vcsActionState", () => {
                     result,
                   }),
                 )
-              : Stream.make(
-                  progress({
-                    kind: "action_failed",
-                    actionId: failedTransportActionId,
-                    cwd,
-                    action,
-                    phase: "push",
-                    message: "push failed after creating the branch",
-                  }),
-                ),
+              : input.actionId === interruptedTransportActionId
+                ? Stream.fromEffect(Effect.interrupt)
+                : Stream.make(
+                    progress({
+                      kind: "action_failed",
+                      actionId: failedTransportActionId,
+                      cwd,
+                      action,
+                      phase: "push",
+                      message: "push failed after creating the branch",
+                    }),
+                  ),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target,
@@ -656,20 +664,23 @@ describe("vcsActionState", () => {
 
         expect(registry.get(state).revision).toBe(0);
         const threadId = ThreadId.make("thread-stacked-action");
+        const projectId = ProjectId.make("project-stacked-action");
         const successfulResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
             threadId,
+            projectId,
           }),
         );
 
         expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
+        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
         // The server links a created pull request to this thread, so the id must ride along.
         expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId },
+          { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
         ]);
 
         const failedResult = yield* Effect.promise(() =>
@@ -680,8 +691,29 @@ describe("vcsActionState", () => {
         );
 
         expect(AsyncResult.isFailure(failedResult)).toBe(true);
+        expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
+          isRunning: false,
+          operation: "run_change_request",
+          actionId: failedActionId,
+          error: "Source control action 'commit_push' failed during push.",
+        });
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
+
+        const interruptedResult = yield* Effect.promise(() =>
+          manager.runStackedAction(targetKey).run(registry, {
+            actionId: interruptedActionId,
+            action,
+          }),
+        );
+
+        expect(AsyncResult.isFailure(interruptedResult)).toBe(true);
+        if (AsyncResult.isFailure(interruptedResult)) {
+          expect(Cause.hasInterruptsOnly(interruptedResult.cause)).toBe(true);
+        }
+        expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+        expect(registry.get(state).revision).toBe(3);
+        expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
       }),
     ),
   );

@@ -14,7 +14,7 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "../providerUsageLimits.ts";
-import { readMacCursorAccessToken } from "../cursorCredentialStore.ts";
+import { readMacCursorAccessToken } from "../cursorKeychainToken.ts";
 
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
@@ -71,7 +71,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     const path = yield* Path.Path;
     const platform = yield* HostProcessPlatform;
     const endpoint = (
-      settings.apiEndpoint.trim() ||
+      settings.apiEndpoint?.trim() ||
       environment.CURSOR_API_ENDPOINT?.trim() ||
       DEFAULT_CURSOR_API_ENDPOINT
     ).replace(/\/$/, "");

@@ -13,7 +13,6 @@ import {
   AgentSessionImportSource,
   IsoDateTime,
   ProviderInstanceId,
-  ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -32,6 +31,8 @@ import {
  *
  * @module ProviderSessionRuntimeRepository
  */
+
+const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,

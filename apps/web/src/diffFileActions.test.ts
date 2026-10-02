@@ -12,7 +12,7 @@ const THREAD_REF = scopeThreadRef(
 
 describe("openDiffFilePrimaryAction", () => {
   beforeEach(() => {
-    useRightPanelStore.setState({ byThreadKey: {} });
+    useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   });
 
   it("opens diff files in the thread file viewer", () => {

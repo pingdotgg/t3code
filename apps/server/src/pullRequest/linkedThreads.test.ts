@@ -1,9 +1,12 @@
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { listLinkedPullRequestThreads } from "./linkedThreads.ts";
+
+const encodePayload = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.effect(
   "finds active and archived threads for exactly one pull request, excluding deleted and dismissed links",
@@ -12,10 +15,6 @@ it.effect(
       const sql = yield* SqlClient.SqlClient;
       const createdAt = "2026-09-01T00:00:00.000Z";
       const archivedAt = "2026-09-03T00:00:00.000Z";
-      yield* sql`
-      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
-      VALUES ('project-1', 'Project', '/tmp/project', '[]', ${createdAt}, ${createdAt})
-    `;
       const fixtures = [
         {
           id: "forgejo-old",
@@ -86,22 +85,59 @@ it.effect(
         },
       ];
       for (const fixture of fixtures) {
+        const payload = yield* encodePayload({
+          linkedPullRequest: null,
+          pullRequests: [{ ...fixture, linkedAt: createdAt, snapshot: null, stack: null }],
+        });
         yield* sql`
-        INSERT INTO projection_threads (
-          thread_id, project_id, title, model_selection_json, created_at, updated_at, archived_at, deleted_at
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, archived_at, deleted_at, payload_json
         ) VALUES (
-          ${fixture.id}, 'project-1', ${fixture.id}, '{"instanceId":"codex","model":"gpt-5.4"}',
+          ${fixture.id}, 'project-1', ${fixture.id}, 'codex', 'full-access', 'default',
           ${createdAt}, ${fixture.id === "archived" ? archivedAt : createdAt},
           ${fixture.id === "archived" ? archivedAt : null},
-          ${fixture.id === "deleted" ? archivedAt : null}
+          ${fixture.id === "deleted" ? archivedAt : null}, ${payload}
         )
       `;
-        yield* sql`
-        INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
-        VALUES (${fixture.id}, ${fixture.host}, ${fixture.repository}, ${fixture.number},
-          ${fixture.url ?? "https://github.com/acme/web/pull/7"}, ${fixture.source}, ${createdAt})
-      `;
       }
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, payload_json
+        ) VALUES (
+          'legacy-single', 'project-1', 'legacy-single', 'codex', 'full-access', 'default',
+          ${createdAt}, ${createdAt},
+          '{"linkedPullRequest":{"projectId":"project-1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"}}'
+        )
+      `;
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, payload_json
+        ) VALUES (
+          'explicitly-unlinked', 'project-1', 'explicitly-unlinked', 'codex', 'full-access', 'default',
+          ${createdAt}, ${createdAt},
+          '{"linkedPullRequest":{"projectId":"project-1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"},"pullRequests":[]}'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES ('project-1', 'Project', '/tmp/project', '[]', ${createdAt}, ${createdAt})
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, created_at, updated_at
+        ) VALUES ('v1-only', 'project-1', 'v1-only',
+          '{"instanceId":"codex","model":"gpt-5.4"}', ${createdAt}, ${createdAt})
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_pull_requests (
+          thread_id, host, repository, number, url, source, linked_at
+        ) VALUES ('v1-only', 'github.com', 'acme/web', 7,
+          'https://github.com/acme/web/pull/7', 'manual', ${createdAt})
+      `;
 
       expect(
         (yield* listLinkedPullRequestThreads({
@@ -133,6 +169,7 @@ it.effect(
         threads: [
           { id: "archived", projectId: "project-1", title: "archived", archivedAt },
           { id: "active", projectId: "project-1", title: "active", archivedAt: null },
+          { id: "legacy-single", projectId: "project-1", title: "legacy-single", archivedAt: null },
         ],
       });
       assert.deepStrictEqual(

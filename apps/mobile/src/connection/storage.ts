@@ -1,13 +1,11 @@
 import {
-  ConnectionPersistenceError,
-  ConnectionRegistrationStore,
-  ConnectionTargetStore,
   putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
   removeCatalogValue,
   replaceCatalogValue,
+  Persistence,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -21,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+
 import * as CatalogStore from "./catalog-store";
 
 function targetPersistenceError(
@@ -32,7 +31,7 @@ function targetPersistenceError(
     | "set-connection-enabled",
   error: ConnectionTransientError,
 ) {
-  return new ConnectionPersistenceError({
+  return new Persistence.ConnectionPersistenceError({
     operation,
     message: error.message,
   });
@@ -47,7 +46,7 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog.update((document) => ({ ...document, githubRoutingPermissions })),
     });
 
-    const targetStore = ConnectionTargetStore.of({
+    const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((error) => targetPersistenceError("list-targets", error)),
@@ -57,7 +56,7 @@ export const connectionStorageLayer = Layer.effectContext(
         Effect.mapError((error) => targetPersistenceError("list-disabled-targets", error)),
       ),
     });
-    const registrationStore = ConnectionRegistrationStore.of({
+    const registrationStore = Persistence.ConnectionRegistrationStore.of({
       register: (registration) =>
         catalog
           .update((document) => registerConnectionInCatalog(document, registration))
@@ -144,9 +143,9 @@ export const connectionStorageLayer = Layer.effectContext(
           ),
         })),
     });
-    return Context.make(ConnectionTargetStore, targetStore).pipe(
+    return Context.make(Persistence.ConnectionTargetStore, targetStore).pipe(
       Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
-      Context.add(ConnectionRegistrationStore, registrationStore),
+      Context.add(Persistence.ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),

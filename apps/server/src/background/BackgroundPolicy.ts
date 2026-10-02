@@ -22,7 +22,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import * as HostPowerMonitor from "./HostPowerMonitor.ts";
 
@@ -211,7 +211,7 @@ function computeSnapshot(input: {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
-  const serverSettings = yield* ServerSettingsService;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());
   const changes = yield* PubSub.sliding<BackgroundPolicySnapshot>(1);
   const publishMutex = yield* Semaphore.make(1);

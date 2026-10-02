@@ -1,9 +1,11 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3ProjectFile } from "./t3ProjectFile.ts";
+import { T3ProjectFile, type T3ProjectFile as T3ProjectFileType } from "./t3ProjectFile.ts";
 
-const decode = Schema.decodeUnknownSync(T3ProjectFile);
+const decode = Schema.decodeUnknownSync(T3ProjectFile as never) as (
+  input: unknown,
+) => T3ProjectFileType;
 
 describe("T3ProjectFile", () => {
   it("decodes a full project file", () => {

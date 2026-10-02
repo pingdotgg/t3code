@@ -85,6 +85,50 @@ for (const operation of [
   );
 }
 
+it.effect("reads checks and PR state without diff, mergeability, or permission requests", () =>
+  Effect.gen(function* () {
+    const pullRequest = Result.getOrThrow(
+      decodePullRequestJson(`{
+      "id": 1, "title": "Checks", "state": "OPEN",
+      "source": { "branch": { "name": "feature" } },
+      "destination": { "branch": { "name": "main" } },
+      "created_on": "2026-09-16T00:00:00Z", "updated_on": "2026-09-16T00:00:00Z",
+      "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+    }`),
+    );
+    let limited = false;
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          listChecks: () =>
+            limited
+              ? Effect.fail(
+                  new BitbucketApi.BitbucketResponseError({
+                    operation: "request",
+                    status: 429,
+                    responseBodyLength: 0,
+                    retryAt: 120_000,
+                  }),
+                )
+              : Effect.succeed([
+                  { name: "build", status: "failure" as const, description: null, url: null },
+                ]),
+        }),
+      ),
+    );
+    const read = provider.getChangeRequestChecks;
+    if (read === undefined) return yield* Effect.die("checks read missing");
+    const input = { cwd: "/repo", repository: "acme/web", host: "bitbucket.org", number: 1 };
+    expect((yield* read(input)).checks[0]?.status).toBe("failure");
+    limited = true;
+    expect(yield* Effect.flip(read(input))).toMatchObject({
+      reason: "rate-limited",
+      retryAt: 120_000,
+    });
+  }),
+);
+
 describe("bitbucketProviderFailure", () => {
   it("treats only an HTTP 401 as unusable credentials", () => {
     const responseError = (status: number) =>

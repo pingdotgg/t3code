@@ -1,7 +1,7 @@
 import type {
   EnvironmentId,
   OrchestrationProjectShell,
-  OrchestrationShellSnapshot,
+  OrchestrationV2ShellSnapshot,
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
@@ -19,7 +19,7 @@ export function createEnvironmentProjectAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
     environmentId: EnvironmentId,
-  ) => Atom.Atom<OrchestrationShellSnapshot | null>;
+  ) => Atom.Atom<OrchestrationV2ShellSnapshot | null>;
 }) {
   const environmentProjectsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(

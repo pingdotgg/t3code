@@ -16,7 +16,7 @@ const createFixtureDatabase = Effect.fn("createSqliteStateFixtureDatabase")(func
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const stateDir = path.join(baseDir, "userdata");
-  const databasePath = path.join(stateDir, "state.sqlite");
+  const databasePath = path.join(stateDir, "statev2.sqlite");
   yield* fs.makeDirectory(stateDir, { recursive: true });
   yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

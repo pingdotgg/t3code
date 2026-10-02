@@ -15,9 +15,9 @@ import { HttpClient } from "effect/unstable/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
   AVAILABLE_CONNECTION_STATE,
-  EnvironmentSupervisor,
   type PreparedConnection,
   PrimaryConnectionTarget,
+  EnvironmentSupervisor,
 } from "@t3tools/client-runtime/connection";
 import { type RpcSession } from "@t3tools/client-runtime/rpc";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -77,7 +77,7 @@ function registryLayer(options?: {
   readonly installEvents?: ReadonlyArray<RelayClientInstallProgressEvent>;
 }) {
   return Layer.effect(
-    EnvironmentRegistry,
+    EnvironmentRegistry.EnvironmentRegistry,
     Effect.gen(function* () {
       const client = {
         [WS_METHODS.cloudGetRelayClientStatus]: () =>
@@ -99,7 +99,7 @@ function registryLayer(options?: {
         httpBaseUrl: TARGET.httpBaseUrl,
         wsBaseUrl: TARGET.wsBaseUrl,
       });
-      const supervisor = EnvironmentSupervisor.of({
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
         target,
         state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
         session: yield* SubscriptionRef.make(Option.some(session)),
@@ -107,14 +107,14 @@ function registryLayer(options?: {
         connect: Effect.void,
         disconnect: Effect.void,
         retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor["Service"]);
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
       const registry = {
         run: <A, E, R>(_environmentId: EnvironmentId, effect: Effect.Effect<A, E, R>) =>
-          Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         runStream: <A, E, R>(_environmentId: EnvironmentId, stream: Stream.Stream<A, E, R>) =>
-          Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-      } as unknown as EnvironmentRegistry["Service"];
-      return EnvironmentRegistry.of(registry);
+          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"];
+      return EnvironmentRegistry.EnvironmentRegistry.of(registry);
     }),
   );
 }
@@ -127,7 +127,9 @@ function withServices<A, E>(
   effect: Effect.Effect<
     A,
     E,
-    HttpClient.HttpClient | ManagedRelay.ManagedRelayClient | EnvironmentRegistry
+    | HttpClient.HttpClient
+    | ManagedRelay.ManagedRelayClient
+    | EnvironmentRegistry.EnvironmentRegistry
   >,
   options?: Parameters<typeof registryLayer>[0],
 ) {

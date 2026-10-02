@@ -8,7 +8,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/unstable/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -21,24 +21,23 @@ export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   shellStateValueAtom: environmentShell.stateValueAtom,
 });
 
-const EMPTY_ENVIRONMENT_SHELL_STATE_ATOM = Atom.make(
-  AsyncResult.success<EnvironmentShellState>({
-    snapshot: Option.none(),
-    status: "empty",
-    error: Option.none(),
-  }),
-).pipe(Atom.withLabel("mobile-environment-shell:empty"));
+const EMPTY_ENVIRONMENT_SHELL_STATE_ATOM = Atom.make<EnvironmentShellState>({
+  snapshot: Option.none(),
+  status: "empty",
+  error: Option.none(),
+});
 
-/** Reads one environment's shell projection without waiting on other environments. */
-export function useEnvironmentShellState(environmentId: EnvironmentId | null) {
-  const result = useAtomValue(
+const shellStatus = (state: EnvironmentShellState) => state.status;
+const shellHasError = (state: EnvironmentShellState) => Option.isSome(state.error);
+
+/** Snapshot contents do not affect whether the route is still hydrating. */
+export function useEnvironmentShellReadiness(environmentId: EnvironmentId | null) {
+  const atom =
     environmentId === null
       ? EMPTY_ENVIRONMENT_SHELL_STATE_ATOM
-      : environmentShell.stateAtom(environmentId),
-  );
-  return Option.getOrElse(AsyncResult.value(result), () => ({
-    snapshot: Option.none(),
-    status: "empty" as const,
-    error: Option.none(),
-  }));
+      : environmentShell.stateValueAtom(environmentId);
+  return {
+    status: useAtomValue(atom, shellStatus),
+    hasError: useAtomValue(atom, shellHasError),
+  };
 }

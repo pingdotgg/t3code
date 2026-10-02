@@ -10,6 +10,7 @@ import {
 
 const codex = ProviderDriverKind.make("codex");
 const claude = ProviderDriverKind.make("claudeAgent");
+const acpRegistry = ProviderDriverKind.make("acpRegistry");
 
 describe("resolveProviderInstanceDisplayName", () => {
   it("keeps a snapshot name that differs from the brand label", () => {
@@ -89,6 +90,33 @@ describe("normalizeProviderAccentColor", () => {
 });
 
 describe("shouldShowInstanceBadge", () => {
+  it("hides badges for distinct ACP agents sharing the registry driver", () => {
+    const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
+    const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin" };
+    expect(shouldShowInstanceBadge(mistral, [mistral, devin])).toBe(false);
+    expect(shouldShowInstanceBadge(devin, [mistral, devin])).toBe(false);
+  });
+
+  it("shows badges for multiple instances of the same ACP agent", () => {
+    const first = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
+    const second = { ...first };
+    expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
+  });
+
+  it("keeps an explicit accent on a single ACP agent", () => {
+    const entry = {
+      driverKind: acpRegistry,
+      acpRegistryAgentId: "mistral-vibe",
+      accentColor: "#ff8800",
+    };
+    expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
+  });
+
+  it("distinguishes registry instances whose agent identity is unavailable", () => {
+    const entry = { driverKind: acpRegistry };
+    expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(true);
+  });
+
   it("shows the badge when the entry has an accent color", () => {
     const entry = { driverKind: codex, accentColor: "#ff8800" };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);

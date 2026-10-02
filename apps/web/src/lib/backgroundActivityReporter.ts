@@ -177,7 +177,7 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
       return;
     }
 
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const clock = yield* Clock.Clock;
     const reportRequests = yield* Queue.sliding<void>(1);
     const requestReport = () => Queue.offerUnsafe(reportRequests, undefined);

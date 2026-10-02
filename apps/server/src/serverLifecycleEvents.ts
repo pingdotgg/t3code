@@ -8,7 +8,8 @@ import * as Stream from "effect/Stream";
 
 type LifecycleEventInput =
   | Omit<Extract<ServerLifecycleStreamEvent, { type: "welcome" }>, "sequence">
-  | Omit<Extract<ServerLifecycleStreamEvent, { type: "ready" }>, "sequence">;
+  | Omit<Extract<ServerLifecycleStreamEvent, { type: "ready" }>, "sequence">
+  | Omit<Extract<ServerLifecycleStreamEvent, { type: "legacyThreadMigration" }>, "sequence">;
 
 interface SnapshotState {
   readonly sequence: number;
@@ -39,10 +40,10 @@ const make = Effect.gen(function* () {
           ...event,
           sequence: nextSequence,
         } satisfies ServerLifecycleStreamEvent;
-        const nextEvents =
-          nextEvent.type === "welcome"
-            ? [nextEvent, ...current.events.filter((entry) => entry.type !== "welcome")]
-            : [nextEvent, ...current.events.filter((entry) => entry.type !== "ready")];
+        const nextEvents = [
+          nextEvent,
+          ...current.events.filter((entry) => entry.type !== nextEvent.type),
+        ];
         return [nextEvent, { sequence: nextSequence, events: nextEvents }] as const;
       }).pipe(Effect.tap((event) => PubSub.publish(pubsub, event))),
     snapshot: Ref.get(state),

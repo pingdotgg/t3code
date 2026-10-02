@@ -54,6 +54,44 @@ describe("mobile model options", () => {
     ]);
   });
 
+  it("carries configured ACP identity into model and provider catalogs", () => {
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/antigravity-acp.svg";
+    const config = {
+      providers: [
+        {
+          instanceId: "acpRegistry_antigravity",
+          driver: "acpRegistry",
+          displayName: "Antigravity",
+          iconUrl,
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          models: [
+            {
+              slug: "default",
+              name: "Default",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const [group] = groupByProvider(buildModelOptions(config, null));
+
+    expect(group).toMatchObject({
+      providerKey: "acpRegistry_antigravity",
+      providerLabel: "Antigravity",
+      models: [
+        {
+          providerDriver: "acpRegistry",
+          providerIconUrl: iconUrl,
+        },
+      ],
+    });
+  });
+
   it("distinguishes same-name OpenCode models without changing their routing", () => {
     const sources = [
       { id: "anthropic", label: "Anthropic" },
@@ -146,6 +184,13 @@ describe("mobile model options", () => {
     expect(option?.capabilities?.optionDescriptors?.[0]?.id).toBe("serviceTier");
     expect(option?.selection.options).toBeUndefined();
 
+    const [emptyOption] = buildModelOptions(config, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-test",
+      options: [],
+    });
+    expect(emptyOption?.selection).toEqual(option?.selection);
+
     const [explicitOption] = buildModelOptions(config, {
       instanceId: ProviderInstanceId.make("codex"),
       model: "gpt-test",
@@ -153,6 +198,56 @@ describe("mobile model options", () => {
     });
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
+
+  it("limits existing threads to their provider while new tasks keep every provider", () => {
+    const providers = ["codex", "claudeAgent"].map((instanceId) => ({
+      instanceId,
+      driver: instanceId,
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      models: [{ slug: "test", name: instanceId, capabilities: null }],
+    }));
+    const config = { providers } as unknown as ServerConfig;
+    const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
+
+    expect(buildModelOptions(config, selection).map((option) => option.providerKey)).toEqual([
+      "codex",
+      "claudeAgent",
+    ]);
+    expect(buildModelOptions(config, selection, selection.instanceId)).toEqual(
+      buildModelOptions(config, selection).filter((option) => option.providerKey === "codex"),
+    );
+  });
+
+  it.each(["disabled", "unavailable", "missing"] as const)(
+    "retains the selected %s provider's fallback in a filtered catalog",
+    (state) => {
+      const selection = {
+        instanceId: ProviderInstanceId.make("google_work"),
+        model: "saved-model",
+        options: [{ id: "native-option", value: "saved-choice" }],
+      };
+      const provider = {
+        instanceId: selection.instanceId,
+        driver: "antigravity",
+        displayName: "Google Work",
+        enabled: state !== "disabled",
+        installed: true,
+        availability: state === "unavailable" ? "unavailable" : "available",
+        auth: { status: "authenticated" },
+        models: [{ slug: selection.model, name: "Saved model", capabilities: null }],
+      };
+      const config = {
+        providers: state === "missing" ? [] : [provider],
+        settings: { providerInstances: { google_work: { driver: "antigravity" } } },
+      } as unknown as ServerConfig;
+      const options = buildModelOptions(config, selection, selection.instanceId);
+      expect(options).toEqual(buildModelOptions(config, selection));
+      expect(options).toHaveLength(1);
+      expect(options[0]).toMatchObject({ selection, isUnavailable: true });
+    },
+  );
 
   it("rejects stored selections whose provider is not usable", () => {
     const config = {

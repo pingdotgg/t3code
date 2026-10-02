@@ -34,7 +34,7 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useServerConfigs } from "../../state/entities";
-import { useWorkspaceState } from "../../state/workspace";
+import { useConnectionsReady } from "../../state/workspace";
 import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
@@ -47,7 +47,7 @@ import {
   useKnownTerminalSessions,
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
@@ -248,11 +248,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
-  const { state: workspaceState } = useWorkspaceState();
+  const connectionsReady = useConnectionsReady();
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
-  const selectedThreadDetail = useSelectedThreadDetail();
+  const selectedThreadDetail = useSelectedThreadProjection();
+  const selectedThreadDetailWorktreePath =
+    selectedThreadDetail?.projection.thread.worktreePath ?? null;
   const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
   const routeThreadIdRaw = firstRouteParam(params.threadId);
   const routeEnvironmentId = routeEnvironmentIdRaw
@@ -368,13 +370,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       activeSessionLocation: activeKnownSession?.state.summary ?? null,
       workspaceRoot: selectedThreadProject.workspaceRoot,
       threadShellWorktreePath: selectedThread.worktreePath ?? null,
-      threadDetailWorktreePath: selectedThreadDetail?.worktreePath ?? null,
+      threadDetailWorktreePath: selectedThreadDetailWorktreePath,
     });
   }, [
     activeKnownSession?.state.summary,
     pendingLaunch,
     selectedThread,
-    selectedThreadDetail?.worktreePath,
+    selectedThreadDetailWorktreePath,
     selectedThreadProject?.workspaceRoot,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({
@@ -1139,7 +1141,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [retryEnvironment, routeEnvironmentId]);
 
   if (!selectedThread) {
-    if (workspaceState.isLoadingConnections) {
+    if (!connectionsReady) {
       return <LoadingScreen message="Opening terminal…" />;
     }
 

@@ -6,10 +6,10 @@ import * as References from "effect/References";
 import * as OtlpExporter from "effect/unstable/observability/OtlpExporter";
 import * as OtlpLogger from "effect/unstable/observability/OtlpLogger";
 
-import { otlpResource, ServerConfig } from "./config.ts";
+import * as ServerConfig from "./config.ts";
 
 export const ServerLoggerLive = Effect.gen(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const minimumLogLevelLayer = Layer.succeed(References.MinimumLogLevel, config.logLevel);
 
   const logs = config.otlpLogsExport;
@@ -20,7 +20,7 @@ export const ServerLoggerLive = Effect.gen(function* () {
           url: config.otlpLogsUrl,
           exportInterval: `${logs.exportIntervalMs} millis`,
           headers: logs.headers,
-          resource: otlpResource(config),
+          resource: ServerConfig.otlpResource(config),
         });
 
   // `Logger.layer` writes the whole logger set rather than adding to it, so

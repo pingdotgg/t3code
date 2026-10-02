@@ -15,6 +15,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  msgpackr-extract: true
   msw: false
   node-pty: true
   sharp: true
@@ -211,6 +212,12 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
+  # OpenCode 2's protocol and schema packages hard-pin an older Effect rc as a
+  # dependency, and their schemas fail to decode under a second Effect copy.
+  # The `effect` override above already collapses them; these name the edge so it
+  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  "@opencode/protocol>effect": "catalog:"
+  "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
@@ -263,6 +270,12 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+
+# @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
+# walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
+# pnpm keeps optional deps inside the virtual store, so hoist it to the root.
+publicHoistPattern:
+  - "@cursor/sdk-*"
 
 supportedArchitectures:
   cpu: [current, x64]

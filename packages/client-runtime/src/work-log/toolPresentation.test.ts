@@ -3,6 +3,18 @@ import { describe, expect, it } from "@effect/vitest";
 import { extractToolActivityPresentation } from "./toolPresentation.ts";
 
 describe("extractToolActivityPresentation", () => {
+  it("retains valid image paths independently of redacted output", () => {
+    expect(
+      extractToolActivityPresentation({ viewedImagePath: " /workspace/reference.webp " }),
+    ).toEqual({ viewedImagePath: "/workspace/reference.webp" });
+    for (const viewedImagePath of [
+      "/workspace/README.md",
+      "/workspace/a.png\nother",
+      "x".repeat(4097) + ".png",
+    ])
+      expect(extractToolActivityPresentation({ viewedImagePath })).toEqual({});
+  });
+
   it("reads provider-neutral presentation fields", () => {
     expect(
       extractToolActivityPresentation({

@@ -1367,3 +1367,20 @@ function commandProgramNameInternal(
 export function commandProgramName(command: string, depth = 0): string | null {
   return commandProgramNameInternal(command, depth, "shell", MAX_COMMAND_SEGMENTS);
 }
+
+/** Removes a plain shell -c wrapper for display; callers retain the original for details. */
+export function commandDisplayText(command: string): string {
+  const trimmed = command.trim();
+  const split = splitFirstShellCommand(trimmed);
+  if (split.remainingCommand !== null) return trimmed;
+  const tokens = tokenizeShellCommand(trimmed);
+  const program = tokens?.[0]
+    ?.split(/[\\/]/u)
+    .at(-1)
+    ?.replace(/\.exe$/iu, "");
+  if (!tokens || !program || !SHELL_PROGRAMS.has(program)) return trimmed;
+  const scriptIndex = shellCommandArgumentIndex(tokens, 1);
+  // Positional arguments can affect the script; keep those invocations intact.
+  if (scriptIndex === null || scriptIndex !== tokens.length - 1) return trimmed;
+  return tokens[scriptIndex]?.trim() || trimmed;
+}

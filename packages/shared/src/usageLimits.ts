@@ -13,7 +13,6 @@ import {
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
-  type OrchestrationThreadActivity,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -26,32 +25,9 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";
-const CHATGPT_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded";
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {
   return provider?.auth.status === "authenticated" && provider.auth.subscriptionSharing === true;
-}
-
-/** A historical limit must not turn an unrelated current failure into a usage notice. */
-export function isChatGptUsageLimitError(
-  activities: readonly OrchestrationThreadActivity[],
-  error: string | null | undefined,
-): boolean {
-  if (!error) return false;
-  for (let index = activities.length - 1; index >= 0; index--) {
-    const activity = activities[index]!;
-    if (activity.kind !== "runtime.error") continue;
-    const payload = activity.payload;
-    return (
-      typeof payload === "object" &&
-      payload !== null &&
-      "code" in payload &&
-      payload.code === CHATGPT_USAGE_LIMIT_CODE &&
-      "message" in payload &&
-      payload.message === error
-    );
-  }
-  return false;
 }
 
 export const CURSOR_USAGE_WINDOWS = [

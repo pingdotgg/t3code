@@ -46,8 +46,31 @@ it.effect(
       assertTrue(Option.isSome(ready));
       assert.equal(ready.value.sequence, 2);
 
+      yield* lifecycleEvents.publish({
+        version: 1,
+        type: "legacyThreadMigration",
+        payload: {
+          status: "running",
+          totalThreadCount: 12,
+        },
+      });
+      yield* lifecycleEvents.publish({
+        version: 1,
+        type: "legacyThreadMigration",
+        payload: {
+          status: "complete",
+          totalThreadCount: 12,
+        },
+      });
+
       const snapshot = yield* lifecycleEvents.snapshot;
-      assert.equal(snapshot.sequence, 2);
-      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), ["ready", "welcome"]);
+      assert.equal(snapshot.sequence, 4);
+      assert.deepEqual(snapshot.events.map((event) => event.type).toSorted(), [
+        "legacyThreadMigration",
+        "ready",
+        "welcome",
+      ]);
+      const migration = snapshot.events.find((event) => event.type === "legacyThreadMigration");
+      assert.equal(migration?.payload.status, "complete");
     }).pipe(Effect.provide(ServerLifecycleEvents.layer)),
 );
