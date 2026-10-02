@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { EventId, ThreadId } from "@t3tools/contracts";
+import { ComposerContextId, EventId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -527,6 +527,225 @@ it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
         ORDER BY sequence
       `;
       assert.deepStrictEqual(eventsAfterRestart, eventsBeforeRetry);
+    }),
+  );
+});
+
+// Own layer: importPendingTranscripts counts every pending thread in the database.
+it.layer(TestLayer)("LegacyV1ThreadImporter unreadable message context", (it) => {
+  it.effect("drops an unreadable context and keeps the message and readable contexts", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:legacy-context");
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES (
+          'project:legacy-context', 'Legacy project', '/tmp/legacy-context',
+          '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at
+        ) VALUES (
+          ${threadId}, 'project:legacy-context', 'Migrated conversation',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
+      // The latest message is the shell preview, so its context is read at startup.
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, role, text, attachments_json, context_json,
+          is_streaming, created_at, updated_at
+        ) VALUES
+          ('message:context:1', ${threadId}, 'user', 'Use $pinchtab', '[]',
+            '{"version":1,"records":[{"version":1,"contextId":"ctx_1","kind":"skill","label":"$pinchtab","name":"pinchtab"}]}',
+            0, '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'),
+          ('message:context:2', ${threadId}, 'assistant', 'Done', '[]', NULL, 0,
+            '2026-01-01T02:00:00.000Z', '2026-01-01T02:00:00.000Z'),
+          ('message:context:3', ${threadId}, 'user', 'Hello', '[]',
+            '{"version":2,"records":[]}', 0,
+            '2026-01-02T01:00:00.000Z', '2026-01-02T01:00:00.000Z')
+      `;
+
+      assert.deepStrictEqual(yield* importer.reconcileShells, {
+        importedThreadCount: 1,
+        importedMessageCount: 1,
+      });
+      const shellProjection = yield* projections.getThreadProjection(threadId);
+      assert.deepStrictEqual(
+        shellProjection.messages.map((message) => [message.id, message.text, message.context]),
+        [["message:context:3", "Hello", undefined]],
+      );
+
+      yield* importer.ensureTranscript(threadId);
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.deepStrictEqual(
+        projection.messages.map((message) => message.id),
+        ["message:context:1", "message:context:2", "message:context:3"],
+      );
+      assert.deepStrictEqual(projection.messages[0]?.context, {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: ComposerContextId.make("ctx_1"),
+            kind: "skill",
+            label: "$pinchtab",
+            name: "pinchtab",
+          },
+        ],
+      });
+    }),
+  );
+
+  it.effect("hydrates later threads when an older message's context is unreadable", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStoreV2;
+      // Sorts first, so a failure here would have stopped the good thread's hydration.
+      const badThreadId = ThreadId.make("thread:legacy-transcript-bad");
+      const goodThreadId = ThreadId.make("thread:legacy-transcript-good");
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES (
+          'project:legacy-transcript', 'Legacy project', '/tmp/legacy-transcript',
+          '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at
+        ) VALUES
+          (${badThreadId}, 'project:legacy-transcript', 'Bad thread',
+            '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          (${goodThreadId}, 'project:legacy-transcript', 'Good thread',
+            '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, role, text, attachments_json, context_json,
+          is_streaming, created_at, updated_at
+        ) VALUES
+          ('message:bad:1', ${badThreadId}, 'user', 'Old question', '[]',
+            '{"version":2,"records":[]}', 0,
+            '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'),
+          ('message:bad:2', ${badThreadId}, 'assistant', 'Old answer', '[]', NULL, 0,
+            '2026-01-01T02:00:00.000Z', '2026-01-01T02:00:00.000Z'),
+          ('message:bad:3', ${badThreadId}, 'user', 'Latest question', '[]', NULL, 0,
+            '2026-01-02T01:00:00.000Z', '2026-01-02T01:00:00.000Z'),
+          ('message:good:1', ${goodThreadId}, 'user', 'Good question', '[]', NULL, 0,
+            '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z')
+      `;
+
+      assert.equal((yield* importer.reconcileShells).importedThreadCount, 2);
+      assert.deepStrictEqual(yield* importer.importPendingTranscripts, {
+        importedThreadCount: 2,
+        importedMessageCount: 2,
+      });
+      assert.deepStrictEqual(
+        yield* sql<{ readonly last_error: string | null }>`
+          SELECT last_error FROM orchestration_v2_legacy_imports
+          WHERE transcript_imported_at IS NULL OR last_error IS NOT NULL
+        `,
+        [],
+      );
+
+      const badProjection = yield* projections.getThreadProjection(badThreadId);
+      assert.deepStrictEqual(
+        badProjection.messages.map((message) => message.id),
+        ["message:bad:1", "message:bad:2", "message:bad:3"],
+      );
+      assert.isUndefined(badProjection.messages[0]?.context);
+      const goodProjection = yield* projections.getThreadProjection(goodThreadId);
+      assert.deepStrictEqual(
+        goodProjection.messages.map((message) => message.id),
+        ["message:good:1"],
+      );
+    }),
+  );
+
+  it.effect("records a failed thread and keeps hydrating the rest", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStoreV2;
+      const failingThreadId = ThreadId.make("thread:legacy-defect-failing");
+      const laterThreadId = ThreadId.make("thread:legacy-defect-later");
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, scripts_json, created_at, updated_at
+        ) VALUES (
+          'project:legacy-defect', 'Legacy project', '/tmp/legacy-defect',
+          '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at
+        ) VALUES
+          (${failingThreadId}, 'project:legacy-defect', 'Failing thread',
+            '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          (${laterThreadId}, 'project:legacy-defect', 'Later thread',
+            '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+            '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `;
+      // The unparseable timestamp sorts before real ones, so it stays out of
+      // the shell preview and fails only transcript hydration.
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, role, text, attachments_json, context_json,
+          is_streaming, created_at, updated_at
+        ) VALUES
+          ('message:failing:1', ${failingThreadId}, 'user', 'Old question', '[]', NULL, 0,
+            '0000-not-a-date', '0000-not-a-date'),
+          ('message:failing:2', ${failingThreadId}, 'user', 'Latest question', '[]', NULL, 0,
+            '2026-01-02T01:00:00.000Z', '2026-01-02T01:00:00.000Z'),
+          ('message:later:1', ${laterThreadId}, 'user', 'Old question', '[]', NULL, 0,
+            '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'),
+          ('message:later:2', ${laterThreadId}, 'assistant', 'Old answer', '[]', NULL, 0,
+            '2026-01-01T02:00:00.000Z', '2026-01-01T02:00:00.000Z'),
+          ('message:later:3', ${laterThreadId}, 'user', 'Latest question', '[]', NULL, 0,
+            '2026-01-02T01:00:00.000Z', '2026-01-02T01:00:00.000Z')
+      `;
+
+      assert.equal((yield* importer.reconcileShells).importedThreadCount, 2);
+      assert.deepStrictEqual(yield* importer.importPendingTranscripts, {
+        importedThreadCount: 1,
+        importedMessageCount: 2,
+      });
+      assert.deepStrictEqual(
+        yield* sql<{ readonly thread_id: string; readonly last_error: string | null }>`
+          SELECT thread_id, last_error FROM orchestration_v2_legacy_imports
+          WHERE transcript_imported_at IS NULL OR last_error IS NOT NULL
+        `,
+        [
+          {
+            thread_id: failingThreadId,
+            last_error: "Transcript hydration failed; retry on next open.",
+          },
+        ],
+      );
+      const laterProjection = yield* projections.getThreadProjection(laterThreadId);
+      assert.deepStrictEqual(
+        laterProjection.messages.map((message) => message.id),
+        ["message:later:1", "message:later:2", "message:later:3"],
+      );
     }),
   );
 });
