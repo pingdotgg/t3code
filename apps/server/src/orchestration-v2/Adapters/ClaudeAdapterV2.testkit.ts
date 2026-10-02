@@ -1116,6 +1116,11 @@ function sanitizeSdkMessageForReplay(input: {
       session_id: message.session_id,
     };
   }
+  // Like init's slash_commands, the recording account's commands and skills
+  // are local configuration, not protocol.
+  if (message.type === "system" && message.subtype === "commands_changed") {
+    return { ...message, commands: [] };
+  }
   if (message.type === "rate_limit_event") {
     return {
       ...message,

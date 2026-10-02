@@ -70,6 +70,7 @@ import {
 import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_monitor_wake/input.ts";
 import { CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_background_subagent_wake/input.ts";
 import { CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/input.ts";
+import { CLAUDE_MCP_TOOL_PRESENTATION_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_mcp_tool_presentation/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
 import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
 import {
@@ -250,6 +251,14 @@ const CLAUDE_RECORDINGS = {
   claude_nested_subagent_model: {
     prompts: [CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT],
     defaultTranscriptFile: "fixtures/claude_nested_subagent_model/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
+  // Needs the claude.ai Firecrawl connector on the recording account. Claude
+  // Code describes MCP tool uses in an undeclared `tool_use_meta` field.
+  claude_mcp_tool_presentation: {
+    prompts: [CLAUDE_MCP_TOOL_PRESENTATION_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_mcp_tool_presentation/claude_transcript.ndjson",
     queryMode: "streaming",
     enableTools: true,
   },
