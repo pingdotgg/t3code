@@ -23,6 +23,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/Services/OrchestrationEventStore.ts";
+import { withWriteTransaction } from "./writeTransaction.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -332,7 +333,8 @@ const baseLayer: Layer.Layer<
         "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
       });
 
-      const storedEvents = yield* sql.withTransaction(
+      const storedEvents = yield* withWriteTransaction(
+        sql,
         Effect.gen(function* () {
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
@@ -365,7 +367,8 @@ const baseLayer: Layer.Layer<
           "orchestration_v2.thread_id": input.threadId,
         });
 
-        const result = yield* sql.withTransaction(
+        const result = yield* withWriteTransaction(
+          sql,
           Effect.gen(function* () {
             const rows = yield* sql<{
               readonly status: string;
@@ -424,7 +427,8 @@ const baseLayer: Layer.Layer<
         "orchestration_v2.expected_last_run_ordinal": input.expectedLastRunOrdinal,
       });
 
-      const result = yield* sql.withTransaction(
+      const result = yield* withWriteTransaction(
+        sql,
         Effect.gen(function* () {
           const rows = yield* sql<{
             readonly active_attempt_id: string | null;
@@ -490,7 +494,8 @@ const baseLayer: Layer.Layer<
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
-      const result = yield* sql.withTransaction(
+      const result = yield* withWriteTransaction(
+        sql,
         Effect.gen(function* () {
           const reserved = yield* commandReceipts.insertIfAbsent({
             commandId: input.commandId,
@@ -558,7 +563,8 @@ const baseLayer: Layer.Layer<
     const commitRejectedCommandEffect = Effect.fn(
       "orchestrationV2.EventSink.commitRejectedCommand",
     )(function* (input: Parameters<EventSinkV2Shape["commitRejectedCommand"]>[0]) {
-      return yield* sql.withTransaction(
+      return yield* withWriteTransaction(
+        sql,
         Effect.gen(function* () {
           const sequence = yield* eventStore.latestSequence({ threadId: input.threadId });
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
@@ -593,7 +599,8 @@ const baseLayer: Layer.Layer<
 
     const commitProjectCommandEffect = Effect.fn("orchestrationV2.EventSink.commitProjectCommand")(
       function* (input: Parameters<EventSinkV2Shape["commitProjectCommand"]>[0]) {
-        const result = yield* sql.withTransaction(
+        const result = yield* withWriteTransaction(
+          sql,
           Effect.gen(function* () {
             const reserved: CommandReceiptStore.ProjectCommandReceiptV2 = {
               commandId: input.commandId,
@@ -624,7 +631,8 @@ const baseLayer: Layer.Layer<
     const commitRejectedProjectCommandEffect = Effect.fn(
       "orchestrationV2.EventSink.commitRejectedProjectCommand",
     )(function* (input: Parameters<EventSinkV2Shape["commitRejectedProjectCommand"]>[0]) {
-      return yield* sql.withTransaction(
+      return yield* withWriteTransaction(
+        sql,
         Effect.gen(function* () {
           const receipt: CommandReceiptStore.ProjectCommandReceiptV2 = {
             commandId: input.commandId,
