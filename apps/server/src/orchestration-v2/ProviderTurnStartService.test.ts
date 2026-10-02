@@ -168,6 +168,10 @@ function makeLocalCommandHarness(input: {
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
+  /** Drops the provider session binding, so a start fails before any provider call. */
+  readonly missingProviderSession?: boolean;
+  /** Loads the provider thread, then fails the read that rechecks the run. */
+  readonly recheckReadFailure?: unknown;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -202,7 +206,7 @@ function makeLocalCommandHarness(input: {
     id: providerThreadId,
     driver: ProviderDriverKind.make("codex"),
     providerInstanceId: newInstanceId,
-    providerSessionId,
+    providerSessionId: input.missingProviderSession === true ? null : providerSessionId,
     appThreadId: threadId,
     ownerNodeId: null,
     nativeThreadRef: null,
@@ -393,7 +397,7 @@ function makeLocalCommandHarness(input: {
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
+      : "historyReadFailureAfterFallback" in input || "recheckReadFailure" in input
         ? Effect.succeed(resumeFallbackSession as never)
         : "ensureThreadFailure" in input
           ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -449,6 +453,7 @@ function makeLocalCommandHarness(input: {
           return { committed, storedEvents: [] };
         }),
   );
+  let recoveryReads = 0;
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -471,14 +476,21 @@ function makeLocalCommandHarness(input: {
               ),
             }),
           getRuntimeRecoveryProjection: () =>
-            Effect.succeed({
-              ...projection,
-              hasConversation: projection.messages.some(
-                (m) =>
-                  m.role === "user" &&
-                  (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
-              ),
-            }),
+            "recheckReadFailure" in input && (recoveryReads += 1) > 1
+              ? Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: input.recheckReadFailure,
+                  }),
+                )
+              : Effect.succeed({
+                  ...projection,
+                  hasConversation: projection.messages.some(
+                    (m) =>
+                      m.role === "user" &&
+                      (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
+                  ),
+                }),
           getTurnStartHistory: () =>
             Effect.fail(
               new ProjectionStore.ProjectionStoreReadError({
@@ -506,6 +518,14 @@ function makeLocalCommandHarness(input: {
     newInstanceId,
     attemptId,
     projection: () => projection,
+    interruptRun,
+    failStartingRun: (failedRunId: RunId = runId) =>
+      Effect.gen(function* () {
+        yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).failStartingRun({
+          threadId,
+          runId: failedRunId,
+        });
+      }).pipe(Effect.provide(layer)),
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
@@ -701,6 +721,82 @@ effectIt.effect(
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
     }),
+);
+
+effectIt.effect("fails a starting run whose start gave up outside the provider", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue", missingProviderSession: true });
+
+    yield* harness.start.pipe(Effect.flip);
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+
+    yield* harness.failStartingRun();
+
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    const projection = harness.projection();
+    expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+    expect(projection.turnItems).toMatchObject([
+      {
+        type: "error",
+        status: "failed",
+        title: "Turn failed to start",
+        failure: {
+          class: "unknown",
+          message:
+            "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.",
+        },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("returns a failed recheck read instead of finishing with the run starting", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      recheckReadFailure: new Error("database unavailable"),
+    });
+
+    const error = yield* harness.start.pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+  }),
+);
+
+effectIt.effect("returns the write failure when a starting run cannot be failed", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      writeFailure: new Error("database unavailable"),
+    });
+
+    const error = yield* harness.failStartingRun().pipe(Effect.flip);
+
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(harness.projection().runs.at(-1)?.status).toBe("starting");
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("does not fail a run that already left starting", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({ text: "Continue" });
+    harness.interruptRun();
+
+    yield* harness.failStartingRun();
+    // A run that no longer exists has nothing left to fail either.
+    yield* harness.failStartingRun(RunId.make("run-that-was-removed"));
+
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("interrupted");
+    expect(harness.projection().turnItems).toEqual([]);
+  }),
 );
 
 effectIt.effect("does not overwrite a run interrupted while its thread loads", () =>

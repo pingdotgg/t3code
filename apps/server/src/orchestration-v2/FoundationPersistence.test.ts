@@ -2370,6 +2370,81 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps a run-start effect claimable past its attempt budget until it settles", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const effectId = "effect:foundation-run-start-past-budget";
+      const executions = yield* Ref.make(0);
+      const executorLayer = Layer.succeed(
+        EffectWorker.OrchestrationEffectExecutorV2,
+        EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: () =>
+            Ref.updateAndGet(executions, (count) => count + 1).pipe(
+              Effect.flatMap((attempt) =>
+                attempt < 3
+                  ? Effect.fail(
+                      new EffectWorker.OrchestrationEffectExecutionError({
+                        effectId,
+                        effectType: "provider-turn.start",
+                        cause: "simulated storage outage",
+                      }),
+                    )
+                  : Effect.void,
+              ),
+            ),
+        }),
+      );
+      const workerLayer = EffectWorker.layerWithOptions({
+        workerId: "run-start-past-budget-worker",
+        maxAttempts: 1,
+      }).pipe(
+        Layer.provide(
+          Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), executorLayer),
+        ),
+      );
+      const storedEffect = outbox
+        .get(effectId)
+        .pipe(Effect.map(Option.map(({ status, attemptCount }) => ({ status, attemptCount }))));
+
+      yield* Effect.gen(function* () {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* outbox.enqueue([
+          {
+            id: effectId,
+            commandId: CommandId.make("command:foundation-run-start-past-budget"),
+            threadId: ThreadId.make("thread:foundation-run-start-past-budget"),
+            request: {
+              type: "provider-turn.start",
+              runId: RunId.make("run:foundation-run-start-past-budget"),
+            },
+          },
+        ]);
+
+        // The only budgeted attempt fails: the row is rescheduled, not failed.
+        assert.isTrue(yield* worker.runOnce);
+        assert.deepEqual(
+          yield* storedEffect,
+          Option.some({ status: "pending" as const, attemptCount: 1 }),
+        );
+        assert.isFalse(yield* worker.runOnce);
+
+        yield* TestClock.adjust("100 millis");
+        assert.isTrue(yield* worker.runOnce);
+        assert.deepEqual(
+          yield* storedEffect,
+          Option.some({ status: "pending" as const, attemptCount: 2 }),
+        );
+
+        yield* TestClock.adjust("200 millis");
+        assert.isTrue(yield* worker.runOnce);
+        assert.deepEqual(
+          yield* storedEffect,
+          Option.some({ status: "succeeded" as const, attemptCount: 3 }),
+        );
+      }).pipe(Effect.provide(workerLayer));
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("runs distinct threads concurrently while serializing effects within a thread", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
