@@ -54,7 +54,7 @@ import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-li
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
   Suspense,

@@ -12,7 +12,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
-import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 

@@ -7,7 +7,7 @@ import {
   StackActions,
   useNavigation,
 } from "@react-navigation/native";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { useConnectionController } from "../connection/useConnectionController";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";

@@ -3212,6 +3212,8 @@ describe("OpenCode2 adapter", () => {
       const seen: Array<string> = [];
       const ended = yield* Deferred.make<void>();
       const nextEnded = yield* Deferred.make<void>();
+      // One consumer reads every terminal; a second reader would race it for the queue.
+      const thirdEnded = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
           Effect.gen(function* () {
@@ -3219,6 +3221,7 @@ describe("OpenCode2 adapter", () => {
             seen.push(event.status);
             if (seen.length === 1) yield* Deferred.succeed(ended, undefined);
             if (seen.length === 2) yield* Deferred.succeed(nextEnded, undefined);
+            if (seen.length === 3) yield* Deferred.succeed(thirdEnded, undefined);
           }),
         ),
         Stream.runDrain,
@@ -3250,7 +3253,7 @@ describe("OpenCode2 adapter", () => {
         providerTurnOrdinal: 3,
         attemptId: RunAttemptId.make("attempt:opencode2-adapter:3"),
       });
-      yield* terminalOf(runtime);
+      yield* Deferred.await(thirdEnded);
     }).pipe(Effect.scoped),
   );
 

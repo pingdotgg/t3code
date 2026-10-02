@@ -84,7 +84,7 @@ vi.mock("./entities", () => ({
 }));
 
 vi.mock("./server", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
 });
 
@@ -97,7 +97,7 @@ vi.mock("./use-atom-command", () => ({
 }));
 
 vi.mock("./use-thread-outbox", async () => {
-  const { Atom } = await import("effect/unstable/reactivity");
+  const { Atom } = await import("effect/reactivity");
   return {
     editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
     useThreadOutboxMessages: () => ({}),

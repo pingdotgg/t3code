@@ -13,7 +13,7 @@ import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/serv
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";

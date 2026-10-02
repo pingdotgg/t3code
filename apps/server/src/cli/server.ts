@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { Command, GlobalFlag } from "effect/unstable/cli";
+import { Command, GlobalFlag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
 import { runServer } from "../server.ts";

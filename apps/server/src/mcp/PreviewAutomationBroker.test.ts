@@ -24,8 +24,8 @@ import * as Result from "effect/Result";
 import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcTest from "effect/unstable/rpc/RpcTest";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcTest from "effect/rpc/RpcTest";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 

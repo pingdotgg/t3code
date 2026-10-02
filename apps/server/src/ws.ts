@@ -5,7 +5,7 @@ import * as NodeCrypto from "node:crypto";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
-import * as Encoding from "effect/Encoding";
+import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -103,8 +103,8 @@ import {
   HttpServerRequest,
   HttpServerRespondable,
   HttpServerResponse,
-} from "effect/unstable/http";
-import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+} from "effect/http";
+import { RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
@@ -216,7 +216,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -288,7 +288,7 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
           message: `Attachment ${attachment.name} has an invalid image payload.`,
         });
       }
-      const bytes = yield* Effect.fromResult(Encoding.decodeBase64(parsed.base64)).pipe(
+      const bytes = yield* Effect.fromResult(Base64.decode(parsed.base64)).pipe(
         Effect.mapError(
           (cause) =>
             new PersistChatAttachmentsError({

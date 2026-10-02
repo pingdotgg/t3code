@@ -8,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse, UrlParams } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ClaudeResetCredits from "./claudeResetCredits.ts";

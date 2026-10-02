@@ -5,7 +5,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -910,7 +910,7 @@ export const make = Effect.gen(function* () {
           ),
         )
         .pipe(
-          Effect.map(Encoding.encodeHex),
+          Effect.map(Hex.encode),
           Effect.mapError(
             (cause) =>
               new ManagedEndpointProvisioningFailed({

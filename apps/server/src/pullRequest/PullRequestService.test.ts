@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";

@@ -6,7 +6,7 @@ import {
   useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Linking, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";

@@ -18,11 +18,11 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import type * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcClientError from "effect/rpc/RpcClientError";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";

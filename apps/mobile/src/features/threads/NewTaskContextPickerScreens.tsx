@@ -3,7 +3,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,

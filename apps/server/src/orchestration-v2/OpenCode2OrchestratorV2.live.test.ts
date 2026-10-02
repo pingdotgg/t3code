@@ -39,8 +39,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient, HttpClient } from "effect/http";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe } from "vite-plus/test";
 
 import * as ResetCreditCoordinator from "../provider/Layers/resetCreditCoordinator.ts";

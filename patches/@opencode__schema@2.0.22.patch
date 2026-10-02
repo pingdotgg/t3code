@@ -1,0 +1,168 @@
+diff --git a/dist/event.js b/dist/event.js
+index a0f0831..c4d39e2 100644
+--- a/dist/event.js
++++ b/dist/event.js
+@@ -4,7 +4,7 @@ import { optional } from "./schema.js";
+ import { ascending } from "./identifier.js";
+ import { Location } from "./location.js";
+ import { statics } from "./schema.js";
+-export const ID = Schema.String.check(Schema.isStartsWith("evt_")).pipe(Schema.brand("Event.ID"), statics((schema) => ({ create: () => schema.make("evt_" + ascending()) })));
++export const ID = Schema.String.check(Schema.isStartingWith("evt_")).pipe(Schema.brand("Event.ID"), statics((schema) => ({ create: () => schema.make("evt_" + ascending()) })));
+ /**
+  * Position in one aggregate's durable log. Values originate from the durable
+  * event envelope and synced markers;
+diff --git a/dist/form.js b/dist/form.js
+index 920d0dd..bd4799d 100644
+--- a/dist/form.js
++++ b/dist/form.js
+@@ -3,7 +3,7 @@ import { Schema } from "effect";
+ import { ephemeral, inventory } from "./event.js";
+ import { ascending } from "./identifier.js";
+ import { NonNegativeInt, optional, statics } from "./schema.js";
+-const IDSchema = Schema.String.check(Schema.isStartsWith("frm_")).pipe(Schema.brand("Form.ID"));
++const IDSchema = Schema.String.check(Schema.isStartingWith("frm_")).pipe(Schema.brand("Form.ID"));
+ export const ID = IDSchema.pipe(statics((schema) => ({ create: (id) => schema.make(id ?? "frm_" + ascending()) })));
+ export const Metadata = Schema.Record(Schema.String, Schema.Unknown).annotate({ identifier: "Form.Metadata" });
+ export const Option = Schema.Struct({
+diff --git a/dist/permission.js b/dist/permission.js
+index d004da5..9b3f133 100644
+--- a/dist/permission.js
++++ b/dist/permission.js
+@@ -5,7 +5,7 @@ import { ephemeral, inventory } from "./event.js";
+ import { ascending } from "./identifier.js";
+ import { SessionID } from "./session-id.js";
+ import { statics } from "./schema.js";
+-export const ID = Schema.String.check(Schema.isStartsWith("per")).pipe(Schema.brand("Permission.ID"), statics((schema) => ({ create: (id) => schema.make(id ?? "per_" + ascending()) })));
++export const ID = Schema.String.check(Schema.isStartingWith("per")).pipe(Schema.brand("Permission.ID"), statics((schema) => ({ create: (id) => schema.make(id ?? "per_" + ascending()) })));
+ export const Source = Schema.Union([
+     Schema.Struct({
+         type: Schema.Literal("tool"),
+diff --git a/dist/pty.js b/dist/pty.js
+index b69f558..f5872fd 100644
+--- a/dist/pty.js
++++ b/dist/pty.js
+@@ -4,7 +4,7 @@ import { optional } from "./schema.js";
+ import { ephemeral, inventory } from "./event.js";
+ import { ascending } from "./identifier.js";
+ import { NonNegativeInt, PositiveInt, statics } from "./schema.js";
+-const IDSchema = Schema.String.check(Schema.isStartsWith("pty")).pipe(Schema.brand("PtyID"));
++const IDSchema = Schema.String.check(Schema.isStartingWith("pty")).pipe(Schema.brand("PtyID"));
+ export const ID = IDSchema.pipe(statics((schema) => {
+     const create = () => schema.make("pty_" + ascending());
+     return {
+diff --git a/dist/schema.js b/dist/schema.js
+index d90b9f6..ab09ced 100644
+--- a/dist/schema.js
++++ b/dist/schema.js
+@@ -7,7 +7,17 @@ export const optional = (schema) => Schema.optionalKey(schema).pipe(Schema.decod
+     decode: SchemaGetter.passthrough({ strict: false }),
+     encode: SchemaGetter.transformOptional(Option.filter((value) => value !== undefined)),
+ }));
+-export const statics = (methods) => (schema) => Object.assign(schema, methods(schema));
++export const statics = (methods) => (schema) => {
++    // Effect 4.0.0 caches `make` as a non-configurable own property on first
++    // read, so a static that overrides it is defined before anything reads it:
++    // `methods` sees a view whose `make` comes from a fresh rebuild.
++    const base = schema.rebuild(schema.ast);
++    const view = new Proxy(schema, { get: (target, key) => (key === "make" ? base.make : Reflect.get(target, key)) });
++    for (const [key, value] of Object.entries(methods(view))) {
++        Object.defineProperty(schema, key, { value, writable: true, enumerable: true, configurable: true });
++    }
++    return schema;
++};
+ export const DateTimeUtcFromMillis = Schema.Finite.pipe(Schema.decodeTo(Schema.DateTimeUtc, {
+     decode: SchemaGetter.transform((value) => DateTime.makeUnsafe(value)),
+     encode: SchemaGetter.transform((value) => DateTime.toEpochMillis(value)),
+diff --git a/dist/session-id.js b/dist/session-id.js
+index fe5f778..03ef1e6 100644
+--- a/dist/session-id.js
++++ b/dist/session-id.js
+@@ -1,7 +1,7 @@
+ import { Schema } from "effect";
+ import { descending } from "./identifier.js";
+ import { statics } from "./schema.js";
+-export const SessionID = Schema.String.check(Schema.isStartsWith("ses")).pipe(Schema.brand("SessionID"), statics((schema) => {
++export const SessionID = Schema.String.check(Schema.isStartingWith("ses")).pipe(Schema.brand("SessionID"), statics((schema) => {
+     const create = () => schema.make("ses_" + descending());
+     return {
+         create,
+diff --git a/dist/session-message.js b/dist/session-message.js
+index 9ddeda7..6a0a1e2 100644
+--- a/dist/session-message.js
++++ b/dist/session-message.js
+@@ -18,7 +18,7 @@ import { Skill as SkillSchema } from "./skill.js";
+ import { Money } from "./money.js";
+ import { Snapshot } from "./snapshot.js";
+ import { TokenUsage } from "./token-usage.js";
+-export const ID = Schema.String.check(Schema.isStartsWith("msg_")).pipe(Schema.brand("Session.Message.ID"), statics((schema) => ({
++export const ID = Schema.String.check(Schema.isStartingWith("msg_")).pipe(Schema.brand("Session.Message.ID"), statics((schema) => ({
+     create: () => schema.make("msg_" + ascending()),
+     fromEvent: (eventID) => schema.make(eventID.replace(/^evt_/, "msg_")),
+ })));
+diff --git a/dist/shell.js b/dist/shell.js
+index 75b981e..969160a 100644
+--- a/dist/shell.js
++++ b/dist/shell.js
+@@ -4,7 +4,7 @@ import { optional } from "./schema.js";
+ import { ephemeral, inventory } from "./event.js";
+ import { ascending } from "./identifier.js";
+ import { NonNegativeInt, statics } from "./schema.js";
+-const IDSchema = Schema.String.check(Schema.isStartsWith("sh_")).pipe(Schema.brand("Shell.ID"));
++const IDSchema = Schema.String.check(Schema.isStartingWith("sh_")).pipe(Schema.brand("Shell.ID"));
+ export const ID = IDSchema.pipe(statics((schema) => {
+     const create = () => schema.make("sh_" + ascending());
+     return {
+diff --git a/dist/v1/permission.js b/dist/v1/permission.js
+index 86af654..d4008e5 100644
+--- a/dist/v1/permission.js
++++ b/dist/v1/permission.js
+@@ -5,7 +5,7 @@ import { ascending } from "../identifier.js";
+ import { Project } from "../project.js";
+ import { statics } from "../schema.js";
+ import { SessionID } from "../session-id.js";
+-export const ID = Schema.String.check(Schema.isStartsWith("per")).pipe(Schema.brand("PermissionV1.ID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "per_" + ascending()) })));
++export const ID = Schema.String.check(Schema.isStartingWith("per")).pipe(Schema.brand("PermissionV1.ID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "per_" + ascending()) })));
+ export const Action = Schema.Literals(["allow", "deny", "ask"]).annotate({ identifier: "PermissionV1.Action" });
+ export const Rule = Schema.Struct({ permission: Schema.String, pattern: Schema.String, action: Action }).annotate({
+     identifier: "PermissionV1.Rule",
+diff --git a/dist/v1/question.js b/dist/v1/question.js
+index ec9afe6..2713f32 100644
+--- a/dist/v1/question.js
++++ b/dist/v1/question.js
+@@ -5,7 +5,7 @@ import { ascending } from "../identifier.js";
+ import { statics } from "../schema.js";
+ import { SessionID } from "../session-id.js";
+ import { SessionV1 } from "./session.js";
+-export const ID = Schema.String.check(Schema.isStartsWith("que")).pipe(Schema.brand("QuestionV1.ID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "que_" + ascending()) })));
++export const ID = Schema.String.check(Schema.isStartingWith("que")).pipe(Schema.brand("QuestionV1.ID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "que_" + ascending()) })));
+ export const Option = Schema.Struct({
+     label: Schema.String.annotate({ description: "Display text (1-5 words, concise)" }),
+     description: Schema.String.annotate({ description: "Explanation of choice" }),
+diff --git a/dist/v1/session.js b/dist/v1/session.js
+index 003dca0..0f7f124 100644
+--- a/dist/v1/session.js
++++ b/dist/v1/session.js
+@@ -11,8 +11,8 @@ import { WorkspaceID } from "../workspace-id.js";
+ import { PermissionV1 } from "./permission.js";
+ import { FileDiff } from "../file-diff.js";
+ const Timestamp = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+-export const MessageID = Schema.String.check(Schema.isStartsWith("msg")).pipe(Schema.brand("SessionV1.MessageID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "msg_" + ascending()) })));
+-export const PartID = Schema.String.check(Schema.isStartsWith("prt")).pipe(Schema.brand("SessionV1.PartID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "prt_" + ascending()) })));
++export const MessageID = Schema.String.check(Schema.isStartingWith("msg")).pipe(Schema.brand("SessionV1.MessageID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "msg_" + ascending()) })));
++export const PartID = Schema.String.check(Schema.isStartingWith("prt")).pipe(Schema.brand("SessionV1.PartID"), statics((schema) => ({ ascending: (id) => schema.make(id ?? "prt_" + ascending()) })));
+ const namedError = (name, fields) => {
+     const schema = Schema.Struct({ name: Schema.Literal(name), data: Schema.Struct(fields) }).annotate({
+         identifier: name,
+diff --git a/dist/workspace-id.js b/dist/workspace-id.js
+index 4bed474..4ec8671 100644
+--- a/dist/workspace-id.js
++++ b/dist/workspace-id.js
+@@ -1,7 +1,7 @@
+ import { Schema } from "effect";
+ import { ascending } from "./identifier.js";
+ import { statics } from "./schema.js";
+-export const WorkspaceID = Schema.String.check(Schema.isStartsWith("wrk")).pipe(Schema.brand("Workspace.ID"), statics((schema) => {
++export const WorkspaceID = Schema.String.check(Schema.isStartingWith("wrk")).pipe(Schema.brand("Workspace.ID"), statics((schema) => {
+     const create = () => schema.make("wrk_" + ascending());
+     return {
+         ascending: (id) => {

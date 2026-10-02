@@ -45,7 +45,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { McpSchema, McpServer } from "effect/unstable/ai";
+import { McpSchema, McpServer } from "effect/ai";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -75,6 +75,13 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
+
+// Effect returns a declared tool failure as `isError` with its encoded payload
+// as JSON text, never as `structuredContent`.
+const declaredFailure = (result: McpSchema.CallToolResult) => {
+  const text = result.content[0];
+  return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
+};
 
 const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
@@ -1158,7 +1165,7 @@ describe("orchestrator MCP toolkit", () => {
               truncated: true,
             });
             const missingQueueRead = yield* invoke("t3_queue_read", { queuedRunId: parentRun.id });
-            expect(missingQueueRead.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(declaredFailure(missingQueueRead)).toMatchObject({ code: "invalid_request" });
             const queueRaceStatus = yield* invoke("task_status", { taskId: queueRace.task.id });
             expect(queueRaceStatus.isError).toBe(false);
             yield* waitForProjection(
@@ -1312,7 +1319,7 @@ describe("orchestrator MCP toolkit", () => {
               "t3_thread_update",
               { action: "rename", title: "Denied title" },
             );
-            expect(deniedThreadUpdate.structuredContent).toMatchObject({
+            expect(declaredFailure(deniedThreadUpdate)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "capability_denied",
             });
@@ -1725,7 +1732,7 @@ describe("orchestrator MCP toolkit", () => {
               mode: "async",
               clientRequestId: "delegate-rejected-options-1",
             });
-            expect(rejectedOptionsCall.structuredContent).toMatchObject({
+            expect(declaredFailure(rejectedOptionsCall)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "invalid_request",
               message: expect.stringContaining("rejected options"),
@@ -1746,7 +1753,7 @@ describe("orchestrator MCP toolkit", () => {
               mode: "async",
               clientRequestId: "delegate-duplicate-options-1",
             });
-            expect(duplicateOptionsCall.structuredContent).toMatchObject({
+            expect(declaredFailure(duplicateOptionsCall)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "invalid_request",
               message: expect.stringContaining("more than once"),
@@ -2322,7 +2329,7 @@ describe("orchestrator MCP toolkit", () => {
               threadId: foreignThreadId,
               action: "pin",
             });
-            expect(foreignOrganizeCall.structuredContent).toMatchObject({
+            expect(declaredFailure(foreignOrganizeCall)).toMatchObject({
               code: "thread_not_found",
             });
             expect((yield* orchestrator.getThreadShell(foreignThreadId))?.pinnedAt).toBeNull();
@@ -2330,7 +2337,7 @@ describe("orchestrator MCP toolkit", () => {
             const foreignReadCall = yield* invoke("t3_thread_read", {
               threadId: foreignThreadId,
             });
-            expect(foreignReadCall.structuredContent).toMatchObject({
+            expect(declaredFailure(foreignReadCall)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });
@@ -2339,7 +2346,7 @@ describe("orchestrator MCP toolkit", () => {
               action: "rename",
               title: "Should stay foreign",
             });
-            expect(foreignUpdateCall.structuredContent).toMatchObject({
+            expect(declaredFailure(foreignUpdateCall)).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });

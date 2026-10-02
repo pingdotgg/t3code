@@ -17,7 +17,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { afterEach, describe, expect, vi } from "vite-plus/test";
 
 import { makeCli } from "../binCli.ts";

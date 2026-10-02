@@ -1,5 +1,5 @@
 diff --git a/lib/Test/Vitest.js b/lib/Test/Vitest.js
-index 0ecf9ccff01bb6556bf3e471d5a93254d16224a7..c0f1237e6a98e698718b0bbde5de8eb58c859e8e 100644
+index bada542..f135b00 100644
 --- a/lib/Test/Vitest.js
 +++ b/lib/Test/Vitest.js
 @@ -3,7 +3,7 @@ import { it } from "@effect/vitest";
@@ -12,7 +12,7 @@ index 0ecf9ccff01bb6556bf3e471d5a93254d16224a7..c0f1237e6a98e698718b0bbde5de8eb5
  export { executeWhenReady, getWhenReady, guardContentType, guardedFetchLayer, rpcClientLayer, WorkerNotReady, } from "./Http.js";
  export const defaultStage = Core.defaultStage;
 diff --git a/src/Test/Vitest.ts b/src/Test/Vitest.ts
-index c321e6d4924d0f6b3ae53292a12af88167692ccb..673929a81d066bdd6a2dd94e9c1d95bb69f3e3cd 100644
+index 7dd3576..0bcfc4d 100644
 --- a/src/Test/Vitest.ts
 +++ b/src/Test/Vitest.ts
 @@ -8,7 +8,7 @@ import {

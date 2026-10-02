@@ -1,0 +1,844 @@
+diff --git a/dist/api.d.ts b/dist/api.d.ts
+index 68fe350..7c8f3f5 100644
+--- a/dist/api.d.ts
++++ b/dist/api.d.ts
+@@ -1,5 +1,5 @@
+ import { Context } from "effect";
+-import { HttpApi, HttpApiGroup, HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApi, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
+ import { SchemaErrorMiddleware } from "./middleware/schema-error.js";
+ import { GenerateGroup } from "./groups/generate.js";
+ import { MessageGroup } from "./groups/message.js";
+diff --git a/dist/api.js b/dist/api.js
+index c68e3ea..0ed6447 100644
+--- a/dist/api.js
++++ b/dist/api.js
+@@ -1,5 +1,5 @@
+ import { Context } from "effect";
+-import { HttpApi, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/unstable/httpapi";
++import { HttpApi, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/http-api";
+ import { SchemaErrorMiddleware } from "./middleware/schema-error.js";
+ import { GenerateGroup } from "./groups/generate.js";
+ import { MessageGroup } from "./groups/message.js";
+diff --git a/dist/client.d.ts b/dist/client.d.ts
+index bf2406f..2fec735 100644
+--- a/dist/client.d.ts
++++ b/dist/client.d.ts
+@@ -1,7 +1,7 @@
+ import { InvalidRequestError, SessionNotFoundError } from "./errors.js";
+ import type { Api } from "./api.js";
+ import type { Context } from "effect";
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ import type { EventGroup } from "./groups/event.js";
+ declare const LocationMiddleware_base: HttpApiMiddleware.ServiceClass<LocationMiddleware, "@opencode/client/LocationMiddleware", {
+     requires: never;
+diff --git a/dist/client.js b/dist/client.js
+index fdddcf7..d1af494 100644
+--- a/dist/client.js
++++ b/dist/client.js
+@@ -1,6 +1,6 @@
+ import { InvalidRequestError, SessionNotFoundError } from "./errors.js";
+ import { makeDefaultApi } from "./api.js";
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ class LocationMiddleware extends HttpApiMiddleware.Service()("@opencode/client/LocationMiddleware") {
+ }
+ class SessionLocationMiddleware extends HttpApiMiddleware.Service()("@opencode/client/SessionLocationMiddleware", { error: [InvalidRequestError, SessionNotFoundError] }) {
+diff --git a/dist/groups/agent.d.ts b/dist/groups/agent.d.ts
+index ef9632e..57ba96c 100644
+--- a/dist/groups/agent.d.ts
++++ b/dist/groups/agent.d.ts
+@@ -1,6 +1,6 @@
+ import { Agent } from "@opencode/schema/agent";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { AgentNotFoundError } from "../errors.js";
+ export declare const AgentGroup: HttpApiGroup.HttpApiGroup<"server.agent", HttpApiEndpoint.HttpApiEndpoint<"agent.list", "GET", "/api/agent", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/agent.js b/dist/groups/agent.js
+index 130bcc5..edcebfc 100644
+--- a/dist/groups/agent.js
++++ b/dist/groups/agent.js
+@@ -1,7 +1,7 @@
+ import { Agent } from "@opencode/schema/agent";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ import { AgentNotFoundError } from "../errors.js";
+ export const AgentGroup = HttpApiGroup.make("server.agent")
+diff --git a/dist/groups/command.d.ts b/dist/groups/command.d.ts
+index b24f481..373b95c 100644
+--- a/dist/groups/command.d.ts
++++ b/dist/groups/command.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ export declare const CommandGroup: HttpApiGroup.HttpApiGroup<"server.command", HttpApiEndpoint.HttpApiEndpoint<"command.list", "GET", "/api/command", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+         readonly directory: Schema.optional<Schema.String>;
+diff --git a/dist/groups/command.js b/dist/groups/command.js
+index cd89b47..341eb23 100644
+--- a/dist/groups/command.js
++++ b/dist/groups/command.js
+@@ -1,7 +1,7 @@
+ import { Command } from "@opencode/schema/command";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const CommandGroup = HttpApiGroup.make("server.command")
+     .add(HttpApiEndpoint.get("command.list", "/api/command", {
+diff --git a/dist/groups/config.d.ts b/dist/groups/config.d.ts
+index 31f1042..0432fc2 100644
+--- a/dist/groups/config.d.ts
++++ b/dist/groups/config.d.ts
+@@ -1,6 +1,6 @@
+ import { Config } from "@opencode/schema/config";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ export declare const ConfigGroup: HttpApiGroup.HttpApiGroup<"server.config", HttpApiEndpoint.HttpApiEndpoint<"config.get", "GET", "/api/config", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+         readonly directory: Schema.optional<Schema.String>;
+diff --git a/dist/groups/config.js b/dist/groups/config.js
+index 228002a..14748f6 100644
+--- a/dist/groups/config.js
++++ b/dist/groups/config.js
+@@ -1,7 +1,7 @@
+ import { Config } from "@opencode/schema/config";
+ import { ConfigShell } from "@opencode/schema/config/shell";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const ConfigGroup = HttpApiGroup.make("server.config")
+     .add(HttpApiEndpoint.get("config.get", "/api/config", {
+diff --git a/dist/groups/credential.d.ts b/dist/groups/credential.d.ts
+index 12de0a3..a4c616e 100644
+--- a/dist/groups/credential.d.ts
++++ b/dist/groups/credential.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { ConflictError } from "../errors.js";
+ export declare const CredentialGroup: HttpApiGroup.HttpApiGroup<"server.credential", HttpApiEndpoint.HttpApiEndpoint<"credential.list", "GET", "/api/credential", never, never, never, never, Schema.toCodecJson<Schema.Struct<{
+     readonly data: Schema.$Array<Schema.Struct<{
+diff --git a/dist/groups/credential.js b/dist/groups/credential.js
+index bbdf76c..8e8ce95 100644
+--- a/dist/groups/credential.js
++++ b/dist/groups/credential.js
+@@ -1,6 +1,6 @@
+ import { Credential } from "@opencode/schema/credential";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ConflictError } from "../errors.js";
+ export const CredentialGroup = HttpApiGroup.make("server.credential")
+     .add(HttpApiEndpoint.get("credential.list", "/api/credential", {
+diff --git a/dist/groups/debug.d.ts b/dist/groups/debug.d.ts
+index accad9f..5a74541 100644
+--- a/dist/groups/debug.d.ts
++++ b/dist/groups/debug.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ export declare const DebugGroup: HttpApiGroup.HttpApiGroup<"server.debug", HttpApiEndpoint.HttpApiEndpoint<"debug.location", "GET", "/api/debug/location", never, never, never, never, Schema.toCodecJson<Schema.$Array<Schema.Struct<{
+     readonly directory: Schema.brand<Schema.String, "AbsolutePath">;
+ }>>>, never, never, never> | HttpApiEndpoint.HttpApiEndpoint<"debug.location.evict", "DELETE", "/api/debug/location", never, Schema.toCodecStringTree<Schema.Struct<{
+diff --git a/dist/groups/debug.js b/dist/groups/debug.js
+index 8062413..9721272 100644
+--- a/dist/groups/debug.js
++++ b/dist/groups/debug.js
+@@ -1,6 +1,6 @@
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const DebugGroup = HttpApiGroup.make("server.debug")
+     .add(HttpApiEndpoint.get("debug.location", "/api/debug/location", {
+diff --git a/dist/groups/event.d.ts b/dist/groups/event.d.ts
+index 3275a63..7ddc811 100644
+--- a/dist/groups/event.d.ts
++++ b/dist/groups/event.d.ts
+@@ -1,7 +1,7 @@
+ import { Event } from "@opencode/schema/event";
+ import type { Definition } from "@opencode/schema/event";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ export declare const makeEventGroup: <const Definitions extends ReadonlyArray<Definition>>(definitions: Definitions) => HttpApiGroup.HttpApiGroup<"server.event", HttpApiEndpoint.HttpApiEndpoint<"event.subscribe", "GET", "/api/event", never, never, never, never, HttpApiSchema.StreamSse<HttpApiSchema.SseEventFromData<Schema.Union<readonly [...Definitions, Schema.Struct<{
+     readonly id: Schema.brand<Schema.String, "Event.ID"> & {
+         create: () => string & import("effect/Brand").Brand<"Event.ID">;
+diff --git a/dist/groups/event.js b/dist/groups/event.js
+index 7d086fe..667e078 100644
+--- a/dist/groups/event.js
++++ b/dist/groups/event.js
+@@ -2,7 +2,7 @@ import { Event } from "@opencode/schema/event";
+ import { EventManifest } from "@opencode/schema/event-manifest";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ const fields = {
+     id: Event.ID,
+     metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+diff --git a/dist/groups/form.d.ts b/dist/groups/form.d.ts
+index ef9289e..efff3f0 100644
+--- a/dist/groups/form.d.ts
++++ b/dist/groups/form.d.ts
+@@ -1,5 +1,5 @@
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effect/http-api";
+ export declare const makeFormGroup: <LocationId extends HttpApiMiddleware.AnyId, LocationService>(locationMiddleware: Context.Key<LocationId, LocationService>) => HttpApiGroup.HttpApiGroup<"server.form", HttpApiEndpoint.HttpApiEndpoint<"form.list", "GET", "/api/form", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+         readonly directory: Schema.optional<Schema.String>;
+diff --git a/dist/groups/form.js b/dist/groups/form.js
+index 7b97820..d68d534 100644
+--- a/dist/groups/form.js
++++ b/dist/groups/form.js
+@@ -1,7 +1,7 @@
+ import { Form } from "@opencode/schema/form";
+ import { Location } from "@opencode/schema/location";
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const makeFormGroup = (locationMiddleware) => HttpApiGroup.make("server.form")
+     .add(HttpApiEndpoint.get("form.list", "/api/form", {
+diff --git a/dist/groups/fs.d.ts b/dist/groups/fs.d.ts
+index c8294ac..af3ac60 100644
+--- a/dist/groups/fs.d.ts
++++ b/dist/groups/fs.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { FileNotFoundError } from "../errors.js";
+ export declare const FileSystemGroup: HttpApiGroup.HttpApiGroup<"server.fs", HttpApiEndpoint.HttpApiEndpoint<"fs.read", "GET", "/api/fs/read/*", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/fs.js b/dist/groups/fs.js
+index 313dbeb..68ff2ef 100644
+--- a/dist/groups/fs.js
++++ b/dist/groups/fs.js
+@@ -2,7 +2,7 @@ import { FileSystem } from "@opencode/schema/filesystem";
+ import { Location } from "@opencode/schema/location";
+ import { PositiveInt } from "@opencode/schema/schema";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { FileNotFoundError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ const ListQuery = Schema.Struct({
+diff --git a/dist/groups/generate.d.ts b/dist/groups/generate.d.ts
+index 2ea5421..048d57e 100644
+--- a/dist/groups/generate.d.ts
++++ b/dist/groups/generate.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ export declare const GenerateGroup: HttpApiGroup.HttpApiGroup<"server.generate", HttpApiEndpoint.HttpApiEndpoint<"generate.text", "POST", "/api/experimental/generate", never, never, Schema.toCodecJson<Schema.Struct<{
+     readonly prompt: Schema.String;
+diff --git a/dist/groups/generate.js b/dist/groups/generate.js
+index 51e5d60..e019d4e 100644
+--- a/dist/groups/generate.js
++++ b/dist/groups/generate.js
+@@ -1,6 +1,6 @@
+ import { Model } from "@opencode/schema/model";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ export const GenerateGroup = HttpApiGroup.make("server.generate")
+     .add(HttpApiEndpoint.post("generate.text", "/api/experimental/generate", {
+diff --git a/dist/groups/integration.d.ts b/dist/groups/integration.d.ts
+index e7b4bf8..d3b5d1f 100644
+--- a/dist/groups/integration.d.ts
++++ b/dist/groups/integration.d.ts
+@@ -1,6 +1,6 @@
+ import { Integration } from "@opencode/schema/integration";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { IntegrationAttemptNotFoundError, IntegrationMethodNotFoundError, IntegrationNotFoundError, InvalidRequestError } from "../errors.js";
+ export declare const IntegrationGroup: HttpApiGroup.HttpApiGroup<"server.integration", HttpApiEndpoint.HttpApiEndpoint<"integration.list", "GET", "/api/integration", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/integration.js b/dist/groups/integration.js
+index 6ca6f55..27b3792 100644
+--- a/dist/groups/integration.js
++++ b/dist/groups/integration.js
+@@ -2,7 +2,7 @@ import { Integration } from "@opencode/schema/integration";
+ import { Location } from "@opencode/schema/location";
+ import { Form } from "@opencode/schema/form";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { IntegrationAttemptNotFoundError, IntegrationMethodNotFoundError, IntegrationNotFoundError, InvalidRequestError, } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const IntegrationGroup = HttpApiGroup.make("server.integration")
+diff --git a/dist/groups/location.d.ts b/dist/groups/location.d.ts
+index 5f3ef6b..96cdcd3 100644
+--- a/dist/groups/location.d.ts
++++ b/dist/groups/location.d.ts
+@@ -1,5 +1,5 @@
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
+ import { ServiceUnavailableError } from "../errors.js";
+ export declare const LocationQuery: Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/location.js b/dist/groups/location.js
+index 7fa63bf..10f4969 100644
+--- a/dist/groups/location.js
++++ b/dist/groups/location.js
+@@ -1,6 +1,6 @@
+ import { Location } from "@opencode/schema/location";
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ServiceUnavailableError } from "../errors.js";
+ export const LocationQuery = Schema.Struct({
+     location: Schema.optional(Schema.Struct({
+diff --git a/dist/groups/mcp.d.ts b/dist/groups/mcp.d.ts
+index fc661e0..8c7dbe8 100644
+--- a/dist/groups/mcp.d.ts
++++ b/dist/groups/mcp.d.ts
+@@ -1,6 +1,6 @@
+ import { Mcp } from "@opencode/schema/mcp";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { McpServerNotFoundError } from "../errors.js";
+ export declare const McpGroup: HttpApiGroup.HttpApiGroup<"server.mcp", HttpApiEndpoint.HttpApiEndpoint<"mcp.list", "GET", "/api/mcp", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/mcp.js b/dist/groups/mcp.js
+index 60fdde9..658d875 100644
+--- a/dist/groups/mcp.js
++++ b/dist/groups/mcp.js
+@@ -1,7 +1,7 @@
+ import { Mcp } from "@opencode/schema/mcp";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { McpServerNotFoundError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const McpGroup = HttpApiGroup.make("server.mcp")
+diff --git a/dist/groups/message.d.ts b/dist/groups/message.d.ts
+index c9d470d..a50943a 100644
+--- a/dist/groups/message.d.ts
++++ b/dist/groups/message.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { InvalidCursorError, SessionNotFoundError, UnknownError } from "../errors.js";
+ export declare const SessionMessagesQuery: Schema.Struct<{
+     readonly limit: Schema.optional<Schema.NumberFromString>;
+diff --git a/dist/groups/message.js b/dist/groups/message.js
+index 135878a..9c546b0 100644
+--- a/dist/groups/message.js
++++ b/dist/groups/message.js
+@@ -2,7 +2,7 @@ import { Session } from "@opencode/schema/session";
+ import { SessionMessage } from "@opencode/schema/session-message";
+ import { Location } from "@opencode/schema/location";
+ import { Schema, Struct } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { InvalidCursorError, SessionNotFoundError, UnknownError } from "../errors.js";
+ export const SessionMessagesQuery = Schema.Struct({
+     limit: Schema.optional(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(200))).annotate({
+diff --git a/dist/groups/migration.d.ts b/dist/groups/migration.d.ts
+index 627b223..4a9323d 100644
+--- a/dist/groups/migration.d.ts
++++ b/dist/groups/migration.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ export declare const V1MigrationStatus: Schema.Union<readonly [Schema.Struct<{
+     readonly status: Schema.Literals<readonly ["required", "completed"]>;
+ }>, Schema.Struct<{
+diff --git a/dist/groups/migration.js b/dist/groups/migration.js
+index 20cf324..ef048e9 100644
+--- a/dist/groups/migration.js
++++ b/dist/groups/migration.js
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ const V1MigrationProgress = Schema.Struct({
+     label: Schema.String,
+     numerator: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+diff --git a/dist/groups/model.d.ts b/dist/groups/model.d.ts
+index 8bb1daa..787fe05 100644
+--- a/dist/groups/model.d.ts
++++ b/dist/groups/model.d.ts
+@@ -1,6 +1,6 @@
+ import { Model } from "@opencode/schema/model";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { ServiceUnavailableError } from "../errors.js";
+ export declare const ModelGroup: HttpApiGroup.HttpApiGroup<"server.model", HttpApiEndpoint.HttpApiEndpoint<"model.list", "GET", "/api/model", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/model.js b/dist/groups/model.js
+index 47d96e7..3d89ba9 100644
+--- a/dist/groups/model.js
++++ b/dist/groups/model.js
+@@ -1,7 +1,7 @@
+ import { Model } from "@opencode/schema/model";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { ServiceUnavailableError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const ModelGroup = HttpApiGroup.make("server.model")
+diff --git a/dist/groups/permission.d.ts b/dist/groups/permission.d.ts
+index ac963db..47951f3 100644
+--- a/dist/groups/permission.d.ts
++++ b/dist/groups/permission.d.ts
+@@ -1,5 +1,5 @@
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
+ import { PermissionNotFoundError, SessionNotFoundError } from "../errors.js";
+ export declare const makePermissionGroup: <LocationId extends HttpApiMiddleware.AnyId, LocationService, SessionLocationId extends HttpApiMiddleware.AnyId, SessionLocationService>(locationMiddleware: Context.Key<LocationId, LocationService>, sessionLocationMiddleware: Context.Key<SessionLocationId, SessionLocationService>) => HttpApiGroup.HttpApiGroup<"server.permission", HttpApiEndpoint.HttpApiEndpoint<"permission.request.list", "GET", "/api/permission/request", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/permission.js b/dist/groups/permission.js
+index 2f32d26..94728d3 100644
+--- a/dist/groups/permission.js
++++ b/dist/groups/permission.js
+@@ -5,7 +5,7 @@ import { PermissionSaved } from "@opencode/schema/permission-saved";
+ import { Project } from "@opencode/schema/project";
+ import { Session } from "@opencode/schema/session";
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { PermissionNotFoundError, SessionNotFoundError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const makePermissionGroup = (locationMiddleware, sessionLocationMiddleware) => HttpApiGroup.make("server.permission")
+diff --git a/dist/groups/persistent-pty.d.ts b/dist/groups/persistent-pty.d.ts
+index efb7472..b6b786b 100644
+--- a/dist/groups/persistent-pty.d.ts
++++ b/dist/groups/persistent-pty.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { ForbiddenError, InvalidRequestError, PtyNotFoundError, ServiceUnavailableError } from "../errors.js";
+ import { PTY_CONNECT_TICKET_QUERY, PTY_CONNECT_TOKEN_HEADER, PTY_CONNECT_TOKEN_HEADER_VALUE } from "./pty.js";
+ export { PTY_CONNECT_TICKET_QUERY, PTY_CONNECT_TOKEN_HEADER, PTY_CONNECT_TOKEN_HEADER_VALUE };
+diff --git a/dist/groups/persistent-pty.js b/dist/groups/persistent-pty.js
+index 85ad02f..b64c896 100644
+--- a/dist/groups/persistent-pty.js
++++ b/dist/groups/persistent-pty.js
+@@ -3,7 +3,7 @@ import { Pty } from "@opencode/schema/pty";
+ import { PtyTicket } from "@opencode/schema/pty-ticket";
+ import { Session } from "@opencode/schema/session";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ForbiddenError, InvalidRequestError, PtyNotFoundError, ServiceUnavailableError } from "../errors.js";
+ import { PTY_CONNECT_TICKET_QUERY, PTY_CONNECT_TOKEN_HEADER, PTY_CONNECT_TOKEN_HEADER_VALUE } from "./pty.js";
+ export { PTY_CONNECT_TICKET_QUERY, PTY_CONNECT_TOKEN_HEADER, PTY_CONNECT_TOKEN_HEADER_VALUE };
+diff --git a/dist/groups/plugin.d.ts b/dist/groups/plugin.d.ts
+index 30d0f78..8bd4ecd 100644
+--- a/dist/groups/plugin.d.ts
++++ b/dist/groups/plugin.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ export declare const PluginGroup: HttpApiGroup.HttpApiGroup<"server.plugin", HttpApiEndpoint.HttpApiEndpoint<"plugin.list", "GET", "/api/plugin", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/plugin.js b/dist/groups/plugin.js
+index 90d5b91..dd72e92 100644
+--- a/dist/groups/plugin.js
++++ b/dist/groups/plugin.js
+@@ -1,7 +1,7 @@
+ import { Location } from "@opencode/schema/location";
+ import { Plugin } from "@opencode/schema/plugin";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const PluginGroup = HttpApiGroup.make("server.plugin")
+diff --git a/dist/groups/project.d.ts b/dist/groups/project.d.ts
+index e4558f6..ab6952a 100644
+--- a/dist/groups/project.d.ts
++++ b/dist/groups/project.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { ProjectNotFoundError } from "../errors.js";
+ export declare const ProjectGroup: HttpApiGroup.HttpApiGroup<"server.project", HttpApiEndpoint.HttpApiEndpoint<"project.list", "GET", "/api/project", never, never, never, never, Schema.toCodecJson<Schema.$Array<Schema.Struct<{
+     readonly id: Schema.brand<Schema.String, "Project.ID"> & {
+diff --git a/dist/groups/project.js b/dist/groups/project.js
+index 7424c4e..b67f839 100644
+--- a/dist/groups/project.js
++++ b/dist/groups/project.js
+@@ -1,6 +1,6 @@
+ import { Project } from "@opencode/schema/project";
+ import { Schema, Struct } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { ProjectNotFoundError } from "../errors.js";
+ const root = "/api/project";
+ const UpdatePayload = Schema.Struct(Struct.omit(Project.UpdateInput.fields, ["projectID"]));
+diff --git a/dist/groups/provider.d.ts b/dist/groups/provider.d.ts
+index 2671555..89118fe 100644
+--- a/dist/groups/provider.d.ts
++++ b/dist/groups/provider.d.ts
+@@ -1,6 +1,6 @@
+ import { Provider } from "@opencode/schema/provider";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { ProviderNotFoundError, ServiceUnavailableError } from "../errors.js";
+ export declare const ProviderGroup: HttpApiGroup.HttpApiGroup<"server.provider", HttpApiEndpoint.HttpApiEndpoint<"provider.list", "GET", "/api/provider", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/provider.js b/dist/groups/provider.js
+index b587f80..20f52fa 100644
+--- a/dist/groups/provider.js
++++ b/dist/groups/provider.js
+@@ -1,7 +1,7 @@
+ import { Provider } from "@opencode/schema/provider";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { ProviderNotFoundError, ServiceUnavailableError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const ProviderGroup = HttpApiGroup.make("server.provider")
+diff --git a/dist/groups/pty.d.ts b/dist/groups/pty.d.ts
+index a1ec2fb..7bbe99b 100644
+--- a/dist/groups/pty.d.ts
++++ b/dist/groups/pty.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { ForbiddenError, PtyNotFoundError } from "../errors.js";
+ export declare const PTY_CONNECT_TICKET_QUERY = "ticket";
+ export declare const PTY_CONNECT_TOKEN_HEADER = "x-opencode-ticket";
+diff --git a/dist/groups/pty.js b/dist/groups/pty.js
+index dd17efa..88eb22b 100644
+--- a/dist/groups/pty.js
++++ b/dist/groups/pty.js
+@@ -2,7 +2,7 @@ import { Pty } from "@opencode/schema/pty";
+ import { PtyTicket } from "@opencode/schema/pty-ticket";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ForbiddenError, PtyNotFoundError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const PTY_CONNECT_TICKET_QUERY = "ticket";
+diff --git a/dist/groups/reference.d.ts b/dist/groups/reference.d.ts
+index 5ac4e70..09f3d67 100644
+--- a/dist/groups/reference.d.ts
++++ b/dist/groups/reference.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ export declare const ReferenceGroup: HttpApiGroup.HttpApiGroup<"server.reference", HttpApiEndpoint.HttpApiEndpoint<"reference.list", "GET", "/api/reference", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+         readonly directory: Schema.optional<Schema.String>;
+diff --git a/dist/groups/reference.js b/dist/groups/reference.js
+index e96827b..e615fd1 100644
+--- a/dist/groups/reference.js
++++ b/dist/groups/reference.js
+@@ -1,7 +1,7 @@
+ import { Location } from "@opencode/schema/location";
+ import { Reference } from "@opencode/schema/reference";
+ import { Schema, Struct } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ const PublicLocalSource = Schema.Struct(Struct.omit(Reference.LocalSource.fields, ["description", "hidden"])).annotate({
+     identifier: "Reference.LocalSource",
+diff --git a/dist/groups/rpc.d.ts b/dist/groups/rpc.d.ts
+index 3790115..08e86ec 100644
+--- a/dist/groups/rpc.d.ts
++++ b/dist/groups/rpc.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { RpcError, RpcInternalError } from "../errors.js";
+ export declare const RpcInput: Schema.Struct<{
+     readonly input: Schema.decodeTo<Schema.optional<Schema.toType<Schema.Unknown>>, Schema.optionalKey<Schema.Unknown>, never, never>;
+diff --git a/dist/groups/rpc.js b/dist/groups/rpc.js
+index c12866c..36dadc6 100644
+--- a/dist/groups/rpc.js
++++ b/dist/groups/rpc.js
+@@ -1,6 +1,6 @@
+ import { optional } from "@opencode/schema/schema";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { RpcError, RpcInternalError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const RpcInput = Schema.Struct({ input: optional(Schema.Unknown) }).annotate({ identifier: "Rpc.Input" });
+diff --git a/dist/groups/server.d.ts b/dist/groups/server.d.ts
+index 19479ef..75cb643 100644
+--- a/dist/groups/server.d.ts
++++ b/dist/groups/server.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { UnauthorizedError } from "../errors.js";
+ export declare const ServerInfo: Schema.Struct<{
+     readonly version: Schema.String;
+diff --git a/dist/groups/server.js b/dist/groups/server.js
+index bda1503..ebb3c0f 100644
+--- a/dist/groups/server.js
++++ b/dist/groups/server.js
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { UnauthorizedError } from "../errors.js";
+ export const ServerInfo = Schema.Struct({
+     version: Schema.String,
+diff --git a/dist/groups/session.d.ts b/dist/groups/session.d.ts
+index cd4d1e5..4d287c8 100644
+--- a/dist/groups/session.d.ts
++++ b/dist/groups/session.d.ts
+@@ -2,7 +2,7 @@ import { PromptInput } from "@opencode/schema/prompt-input";
+ import { InstructionEntry } from "@opencode/schema/instruction-entry";
+ import { Event } from "@opencode/schema/event";
+ import { Context, Effect, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
+ import { ConflictError, CommandExecutionError, CommandNotFoundError, FormAlreadySettledError, FormInvalidAnswerError, FormNotFoundError, InvalidCursorError, InvalidRequestError, MessageNotFoundError, ServiceUnavailableError, SessionBusyError, SessionNotFoundError, SkillNotFoundError, UnknownError } from "../errors.js";
+ import { SessionEvent } from "@opencode/schema/session-event";
+ declare const SessionsCursorInput: Schema.Union<readonly [Schema.Struct<{
+diff --git a/dist/groups/session.js b/dist/groups/session.js
+index ef86ffa..3ae727b 100644
+--- a/dist/groups/session.js
++++ b/dist/groups/session.js
+@@ -7,8 +7,9 @@ import { InstructionEntry } from "@opencode/schema/instruction-entry";
+ import { Project } from "@opencode/schema/project";
+ import { AbsolutePath, DateTimeUtcFromMillis, NonNegativeInt, PositiveInt, RelativePath, statics, } from "@opencode/schema/schema";
+ import { Event } from "@opencode/schema/event";
+-import { Context, Effect, Encoding, Result, Schema, SchemaGetter, Struct } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { Context, Effect, Result, Schema, SchemaGetter, Struct } from "effect";
++import * as Base64Url from "effect/encoding/Base64Url";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ConflictError, CommandExecutionError, CommandNotFoundError, FormAlreadySettledError, FormInvalidAnswerError, FormNotFoundError, InvalidCursorError, InvalidRequestError, MessageNotFoundError, ServiceUnavailableError, SessionBusyError, SessionNotFoundError, SkillNotFoundError, UnknownError, } from "../errors.js";
+ import { Agent } from "@opencode/schema/agent";
+ import { Skill } from "@opencode/schema/skill";
+@@ -65,9 +66,9 @@ const invalidCursor = "Invalid cursor";
+ export const SessionsCursor = Schema.String.pipe(Schema.brand("SessionsCursor"), statics((schema) => {
+     const make = schema.make.bind(schema);
+     return {
+-        make: (input) => make(Encoding.encodeBase64Url(encodeSessionsCursor(input))),
++        make: (input) => make(Base64Url.encode(encodeSessionsCursor(input))),
+         parse: (input) => Effect.suspend(() => {
+-            const result = Encoding.decodeBase64UrlString(input);
++            const result = Base64Url.decodeString(input);
+             return Result.isFailure(result)
+                 ? Effect.fail(invalidCursor)
+                 : decodeSessionsCursor(result.success).pipe(Effect.mapError(() => invalidCursor));
+diff --git a/dist/groups/shell.d.ts b/dist/groups/shell.d.ts
+index 55b3455..dd1cfe3 100644
+--- a/dist/groups/shell.d.ts
++++ b/dist/groups/shell.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { ShellNotFoundError } from "../errors.js";
+ export declare const ShellGroup: HttpApiGroup.HttpApiGroup<"server.shell", HttpApiEndpoint.HttpApiEndpoint<"shell.list", "GET", "/api/shell", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/shell.js b/dist/groups/shell.js
+index 2a8b690..ca57be9 100644
+--- a/dist/groups/shell.js
++++ b/dist/groups/shell.js
+@@ -1,7 +1,7 @@
+ import { Shell } from "@opencode/schema/shell";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ShellNotFoundError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const ShellGroup = HttpApiGroup.make("server.shell")
+diff --git a/dist/groups/skill.d.ts b/dist/groups/skill.d.ts
+index 91a34c5..8a40476 100644
+--- a/dist/groups/skill.d.ts
++++ b/dist/groups/skill.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ export declare const SkillGroup: HttpApiGroup.HttpApiGroup<"server.skill", HttpApiEndpoint.HttpApiEndpoint<"skill.list", "GET", "/api/skill", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+         readonly directory: Schema.optional<Schema.String>;
+diff --git a/dist/groups/skill.js b/dist/groups/skill.js
+index a55e3ed..b419ad2 100644
+--- a/dist/groups/skill.js
++++ b/dist/groups/skill.js
+@@ -1,7 +1,7 @@
+ import { Skill } from "@opencode/schema/skill";
+ import { Location } from "@opencode/schema/location";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const SkillGroup = HttpApiGroup.make("server.skill")
+     .add(HttpApiEndpoint.get("skill.list", "/api/skill", {
+diff --git a/dist/groups/vcs.d.ts b/dist/groups/vcs.d.ts
+index b1ac33f..55f54cf 100644
+--- a/dist/groups/vcs.d.ts
++++ b/dist/groups/vcs.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { ServiceUnavailableError } from "../errors.js";
+ export declare const VcsGroup: HttpApiGroup.HttpApiGroup<"server.vcs", HttpApiEndpoint.HttpApiEndpoint<"vcs.get", "GET", "/api/vcs", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/vcs.js b/dist/groups/vcs.js
+index b7daea0..f576101 100644
+--- a/dist/groups/vcs.js
++++ b/dist/groups/vcs.js
+@@ -3,7 +3,7 @@ import { Location } from "@opencode/schema/location";
+ import { NonNegativeInt, PositiveInt, optional } from "@opencode/schema/schema";
+ import { Vcs } from "@opencode/schema/vcs";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ import { ServiceUnavailableError } from "../errors.js";
+ const BranchesQuery = Schema.Struct({
+diff --git a/dist/groups/websearch.d.ts b/dist/groups/websearch.d.ts
+index 6532991..1f59338 100644
+--- a/dist/groups/websearch.d.ts
++++ b/dist/groups/websearch.d.ts
+@@ -1,6 +1,6 @@
+ import { WebSearch } from "@opencode/schema/websearch";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ export declare const WebSearchGroup: HttpApiGroup.HttpApiGroup<"server.websearch", HttpApiEndpoint.HttpApiEndpoint<"websearch.providers", "GET", "/api/websearch/provider", never, Schema.toCodecStringTree<Schema.Struct<{
+     readonly location: Schema.optional<Schema.Struct<{
+diff --git a/dist/groups/websearch.js b/dist/groups/websearch.js
+index ef2da5f..d486e9e 100644
+--- a/dist/groups/websearch.js
++++ b/dist/groups/websearch.js
+@@ -1,7 +1,7 @@
+ import { Location } from "@opencode/schema/location";
+ import { WebSearch } from "@opencode/schema/websearch";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+ import { InvalidRequestError, ServiceUnavailableError } from "../errors.js";
+ import { LocationQuery, locationQueryOpenApi } from "./location.js";
+ export const WebSearchGroup = HttpApiGroup.make("server.websearch")
+diff --git a/dist/groups/worktree.d.ts b/dist/groups/worktree.d.ts
+index 67b175b..f916c09 100644
+--- a/dist/groups/worktree.d.ts
++++ b/dist/groups/worktree.d.ts
+@@ -1,5 +1,5 @@
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+ import { ProjectNotFoundError } from "../errors.js";
+ declare const WorktreeError_base: Schema.Class<WorktreeError, Schema.Struct<{
+     readonly name: Schema.Literal<"WorktreeError">;
+diff --git a/dist/groups/worktree.js b/dist/groups/worktree.js
+index 58b03ca..6711bdb 100644
+--- a/dist/groups/worktree.js
++++ b/dist/groups/worktree.js
+@@ -1,6 +1,6 @@
+ import { Worktree } from "@opencode/schema/worktree";
+ import { Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { Project } from "@opencode/schema/project";
+ import { ProjectNotFoundError } from "../errors.js";
+ const root = "/api/worktree";
+diff --git a/dist/middleware/authorization.d.ts b/dist/middleware/authorization.d.ts
+index 2d043d9..f84b1df 100644
+--- a/dist/middleware/authorization.d.ts
++++ b/dist/middleware/authorization.d.ts
+@@ -1,4 +1,4 @@
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ import { UnauthorizedError } from "../errors.js";
+ declare const Authorization_base: HttpApiMiddleware.ServiceClass<Authorization, "@opencode/HttpApiAuthorization", {
+     requires: never;
+diff --git a/dist/middleware/authorization.js b/dist/middleware/authorization.js
+index caa2b43..1888d92 100644
+--- a/dist/middleware/authorization.js
++++ b/dist/middleware/authorization.js
+@@ -1,4 +1,4 @@
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ import { UnauthorizedError } from "../errors.js";
+ export class Authorization extends HttpApiMiddleware.Service()("@opencode/HttpApiAuthorization", {
+     error: UnauthorizedError,
+diff --git a/dist/middleware/schema-error.d.ts b/dist/middleware/schema-error.d.ts
+index 1391162..4bcdc50 100644
+--- a/dist/middleware/schema-error.d.ts
++++ b/dist/middleware/schema-error.d.ts
+@@ -1,4 +1,4 @@
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ import { InvalidRequestError } from "../errors.js";
+ declare const SchemaErrorMiddleware_base: HttpApiMiddleware.ServiceClass<SchemaErrorMiddleware, "@opencode/HttpApiSchemaError", {
+     requires: never;
+diff --git a/dist/middleware/schema-error.js b/dist/middleware/schema-error.js
+index b95e4dd..5d3f9bb 100644
+--- a/dist/middleware/schema-error.js
++++ b/dist/middleware/schema-error.js
+@@ -1,4 +1,4 @@
+-import { HttpApiMiddleware } from "effect/unstable/httpapi";
++import { HttpApiMiddleware } from "effect/http-api";
+ import { InvalidRequestError } from "../errors.js";
+ export class SchemaErrorMiddleware extends HttpApiMiddleware.Service()("@opencode/HttpApiSchemaError", { error: InvalidRequestError }) {
+ }
+diff --git a/dist/simulation.d.ts b/dist/simulation.d.ts
+index 36f1d26..36373b1 100644
+--- a/dist/simulation.d.ts
++++ b/dist/simulation.d.ts
+@@ -1,5 +1,5 @@
+ import { Effect, Schema } from "effect";
+-import { Rpc, RpcGroup } from "effect/unstable/rpc";
++import { Rpc, RpcGroup } from "effect/rpc";
+ export declare namespace JsonRpc {
+     const RequestFields: {
+         jsonrpc: Schema.Literal<"2.0">;
+diff --git a/dist/simulation.js b/dist/simulation.js
+index 3e52010..ce8f56e 100644
+--- a/dist/simulation.js
++++ b/dist/simulation.js
+@@ -1,5 +1,5 @@
+ import { Effect, Schema } from "effect";
+-import { Rpc, RpcGroup } from "effect/unstable/rpc";
++import { Rpc, RpcGroup } from "effect/rpc";
+ const JsonRpcID = Schema.Union([Schema.String, Schema.Number, Schema.Null]);
+ const decodeJson = Schema.decodeUnknownSync(Schema.Json);
+ export var JsonRpc;

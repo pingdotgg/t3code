@@ -18,7 +18,7 @@ import {
   HttpClientResponse,
   HttpServerRequest,
   type HttpClientRequest,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE, EnvironmentId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";

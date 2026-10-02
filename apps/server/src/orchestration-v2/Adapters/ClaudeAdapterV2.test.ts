@@ -43,7 +43,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
