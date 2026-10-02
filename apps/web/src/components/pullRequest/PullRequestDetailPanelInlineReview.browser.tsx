@@ -1,6 +1,9 @@
 import "../../index.css";
 
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type {
+  CollaborativeAcceptanceCaseLookupResult,
+  CollaborativeAcceptanceStatus,
   EnvironmentApi,
   PullRequestActivity,
   PullRequestDetail,
@@ -22,6 +25,7 @@ import {
   __setEnvironmentApiOverrideForTests,
 } from "../../environmentApi";
 import { __resetLocalApiForTests } from "../../localApi";
+import { selectEnvironmentState, useStore } from "../../store";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
   PULL_REQUEST_INLINE_REVIEW_ACTIVITY,
@@ -63,11 +67,13 @@ const expectedReviewInput = {
 } satisfies PullRequestSubmitReviewInput;
 
 let queryClient: QueryClient | undefined;
+const initialStoreState = useStore.getState();
 
 afterEach(async () => {
   window.getSelection()?.removeAllRanges();
   queryClient?.clear();
   queryClient = undefined;
+  useStore.setState(initialStoreState, true);
   usePullRequestReviewStore.getState().clear(reviewKey);
   usePullRequestReviewStore.getState().clearSubmitted(reviewKey, "");
   __resetEnvironmentApiOverridesForTests();
@@ -89,15 +95,78 @@ function createMonitorStatus(): Awaited<
   };
 }
 
+function addCreationThread(detail: PullRequestDetail, threadId: ThreadId): void {
+  const state = useStore.getState();
+  const environmentState = selectEnvironmentState(state, environmentId);
+  useStore.setState({
+    environmentStateById: {
+      ...state.environmentStateById,
+      [environmentId]: {
+        ...environmentState,
+        threadIds: environmentState.threadIds.includes(threadId)
+          ? environmentState.threadIds
+          : [...environmentState.threadIds, threadId],
+        threadShellById: {
+          ...environmentState.threadShellById,
+          [threadId]: {
+            id: threadId,
+            environmentId,
+            codexThreadId: null,
+            projectId: reference.projectId,
+            parentThreadId: null,
+            title: "Created PR thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("copilot"),
+              model: "gpt-6-luna",
+            },
+            runtimeMode: "full-access",
+            pendingRuntimeMode: null,
+            interactionMode: "default",
+            error: null,
+            createdAt: "2026-09-21T00:00:00.000Z",
+            archivedAt: null,
+            branch: null,
+            worktreePath: null,
+            pullRequest: null,
+            pullRequests: [
+              {
+                pullRequest: {
+                  number: detail.number,
+                  title: detail.title,
+                  url: detail.url,
+                  baseBranch: detail.baseBranch,
+                  headBranch: detail.headBranch,
+                  state: detail.state,
+                },
+                source: "created",
+                linkedAt: "2026-09-21T00:00:00.000Z",
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+}
+
 async function renderPanel(
   submitReview: EnvironmentApi["pullRequests"]["submitReview"],
   detail: PullRequestDetail = PULL_REQUEST_INLINE_REVIEW_DETAIL,
   activity: PullRequestActivity = PULL_REQUEST_INLINE_REVIEW_ACTIVITY,
+  options?: {
+    readonly monitorStatus?: Awaited<ReturnType<EnvironmentApi["pullRequestMonitors"]["status"]>>;
+    readonly acceptanceLookup?: EnvironmentApi["collaborativeAcceptance"]["resolveForPullRequest"];
+    readonly acceptanceStatus?: EnvironmentApi["collaborativeAcceptance"]["status"];
+    readonly creationThreadId?: ThreadId;
+  },
 ): Promise<void> {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
   });
   queryClient = client;
+  if (options?.creationThreadId) {
+    addCreationThread(detail, options.creationThreadId);
+  }
   Reflect.set(window, "nativeApi", {
     persistence: { getClientSettings: async () => null },
   });
@@ -114,9 +183,20 @@ async function renderPanel(
       submitReview,
     }),
     pullRequestMonitors: Object.assign({} as EnvironmentApi["pullRequestMonitors"], {
-      status: async () => createMonitorStatus(),
+      status: async () => options?.monitorStatus ?? createMonitorStatus(),
     }),
-    collaborativeAcceptance: {} as EnvironmentApi["collaborativeAcceptance"],
+    collaborativeAcceptance: Object.assign({} as EnvironmentApi["collaborativeAcceptance"], {
+      resolveForPullRequest:
+        options?.acceptanceLookup ??
+        (async () => {
+          throw new Error("Unexpected collaborative acceptance lookup");
+        }),
+      status:
+        options?.acceptanceStatus ??
+        (async () => {
+          throw new Error("Unexpected collaborative acceptance status read");
+        }),
+    }),
     workflow: {} as EnvironmentApi["workflow"],
     server: {} as EnvironmentApi["server"],
     orchestration: {} as EnvironmentApi["orchestration"],
@@ -127,7 +207,7 @@ async function renderPanel(
   client.setQueryData(pullRequestQueryKeys.activity(environmentId, reference), activity);
   client.setQueryData(
     pullRequestQueryKeys.monitorStatus(environmentId, reference),
-    createMonitorStatus(),
+    options?.monitorStatus ?? createMonitorStatus(),
   );
   client.setQueryData(pullRequestQueryKeys.diffInfinite(environmentId, reference), {
     pages: [PULL_REQUEST_INLINE_REVIEW_DIFF],
@@ -395,5 +475,165 @@ describe("PullRequestDetailPanel inline review comments", () => {
     expect(submitReview).toHaveBeenNthCalledWith(2, expectedReviewInput);
     await expect.element(page.getByText("3 pending line comments")).not.toBeInTheDocument();
     expect(usePullRequestReviewStore.getState().commentsByKey[reviewKey]).toBeUndefined();
+  });
+
+  it("keeps paused collaborative acceptance visible through the creator thread when monitor ownership is missing", async () => {
+    const creatorThreadId = ThreadId.make("creator-thread");
+    const caseId = "case-1" as never;
+    const lookupResult = {
+      caseId,
+      status: {
+        record: {
+          revision: 1,
+          case: {
+            caseId,
+            assignmentId: "assignment-1",
+            parentThreadId: creatorThreadId,
+            pullRequest: reference,
+            contractRevision: "contract-1",
+            currentCandidate: {
+              candidateId: "candidate-1" as never,
+              reviewEpoch: 1,
+              headSha: "head-1",
+              contractRevision: "contract-1",
+              reviewWorkflow: { identity: "workflow", version: "1" },
+              createdAt: "2026-09-21T00:00:00.000Z",
+            },
+            criteria: [],
+            policy: {
+              automation: "off",
+              reviewTrigger: "manual",
+              reviewWorkflow: { identity: "workflow", version: "1" },
+              commentPolicy: "blocking-only",
+              budgets: {
+                exchanges: 2,
+                modelSpendCents: 0,
+                retries: 0,
+                disputeRounds: 0,
+                executionDurationSeconds: 0,
+                waitingDeadlineSeconds: 0,
+              },
+            },
+            createdAt: "2026-09-21T00:00:00.000Z",
+            updatedAt: "2026-09-21T00:00:00.000Z",
+          },
+          projection: {
+            caseId,
+            candidateId: "candidate-1" as never,
+            headSha: "head-1",
+            executionPhase: "paused",
+            collaborationStatus: "none",
+            acceptanceLifecycle: "monitoring",
+            readiness: "blocked",
+            reasons: ["Waiting for explicit resume"],
+            staleAssessmentIds: [],
+            updatedAt: "2026-09-21T00:00:00.000Z",
+          },
+          evidence: [],
+          obligations: [],
+          exchanges: [],
+          assessments: [],
+          candidates: [],
+        },
+        pauseReason: "ambiguous-outcome",
+      },
+    } as unknown as CollaborativeAcceptanceCaseLookupResult;
+    const statusResult = {
+      record: {
+        revision: 1,
+        case: {
+          caseId,
+          assignmentId: "assignment-1",
+          parentThreadId: creatorThreadId,
+          pullRequest: reference,
+          contractRevision: "contract-1",
+          currentCandidate: {
+            candidateId: "candidate-1" as never,
+            reviewEpoch: 1,
+            headSha: "head-1",
+            contractRevision: "contract-1",
+            reviewWorkflow: { identity: "workflow", version: "1" },
+            createdAt: "2026-09-21T00:00:00.000Z",
+          },
+          criteria: [],
+          policy: {
+            automation: "off",
+            reviewTrigger: "manual",
+            reviewWorkflow: { identity: "workflow", version: "1" },
+            commentPolicy: "blocking-only",
+            budgets: {
+              exchanges: 2,
+              modelSpendCents: 0,
+              retries: 0,
+              disputeRounds: 0,
+              executionDurationSeconds: 0,
+              waitingDeadlineSeconds: 0,
+            },
+          },
+          createdAt: "2026-09-21T00:00:00.000Z",
+          updatedAt: "2026-09-21T00:00:00.000Z",
+        },
+        projection: {
+          caseId,
+          candidateId: "candidate-1" as never,
+          headSha: "head-1",
+          executionPhase: "paused",
+          collaborationStatus: "none",
+          acceptanceLifecycle: "monitoring",
+          readiness: "blocked",
+          reasons: ["Waiting for explicit resume"],
+          staleAssessmentIds: [],
+          updatedAt: "2026-09-21T00:00:00.000Z",
+        },
+        evidence: [],
+        obligations: [],
+        exchanges: [],
+        assessments: [],
+        candidates: [],
+      },
+      pauseReason: "ambiguous-outcome",
+    } as unknown as CollaborativeAcceptanceStatus;
+    const resolveForPullRequest: EnvironmentApi["collaborativeAcceptance"]["resolveForPullRequest"] =
+      vi.fn(async (_input) => lookupResult);
+    const status: EnvironmentApi["collaborativeAcceptance"]["status"] = vi.fn(
+      async (_input) => statusResult,
+    );
+
+    await renderPanel(
+      vi.fn(),
+      PULL_REQUEST_INLINE_REVIEW_DETAIL,
+      PULL_REQUEST_INLINE_REVIEW_ACTIVITY,
+      {
+        creationThreadId: creatorThreadId,
+        monitorStatus: {
+          ...createMonitorStatus(),
+          monitor: {
+            id: "monitor-1",
+            projectId: reference.projectId,
+            repository: reference.repository,
+            number: reference.number,
+            canonicalKey: `${reference.repository}#${reference.number}`,
+            enabled: false,
+            status: "stopped",
+            ownerThreadId: null,
+            linkedReviewThreadId: null,
+            lastError: null,
+          } as never,
+        },
+        acceptanceLookup: resolveForPullRequest,
+        acceptanceStatus: status,
+      },
+    );
+
+    await page.getByRole("tab", { name: "Agent Collaboration" }).click();
+
+    await expect.element(page.getByText("Automation paused")).toBeVisible();
+    await page.getByText("Automation paused").click();
+    await expect.element(page.getByRole("button", { name: "Resume Automation" })).toBeVisible();
+    expect(resolveForPullRequest).toHaveBeenCalledWith({
+      threadId: creatorThreadId,
+      pullRequest: reference,
+    });
+    expect(status).toHaveBeenCalledWith({ threadId: creatorThreadId, caseId });
   });
 });

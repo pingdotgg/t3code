@@ -611,7 +611,7 @@ export function PullRequestDetailPanel({
     }
     return null;
   }, [monitorContextQuery.data?.findingDetails]);
-  const acceptanceThreadId = monitorQuery.data?.monitor?.ownerThreadId ?? owner?.id ?? null;
+  const acceptanceThreadId = monitorQuery.data?.monitor?.ownerThreadId ?? sourceThread?.id ?? null;
   const reviewThreadId =
     monitorQuery.data?.monitor?.linkedReviewThreadId ??
     monitorContextQuery.data?.findingDetails?.find(
