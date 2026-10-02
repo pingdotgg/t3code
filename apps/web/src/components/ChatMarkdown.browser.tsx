@@ -26,6 +26,7 @@ const {
   navigateMock: vi.fn(async () => undefined),
   readLocalApiMock: vi.fn(),
 }));
+
 readLocalApiMock.mockImplementation(() => ({
   server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
   shell: { openInEditor: vi.fn(async () => undefined) },
