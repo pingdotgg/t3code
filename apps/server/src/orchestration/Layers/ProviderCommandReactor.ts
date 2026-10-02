@@ -8,6 +8,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationThread,
   ProviderDriverKind,
+  ProviderInstanceId,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -841,9 +842,8 @@ const make = Effect.gen(function* () {
     }
 
     const sourceSession = sourceThread.session;
-    if (!sourceSession || sourceSession.status === "stopped") {
-      const detail = `Source thread '${event.payload.sourceThreadId}' has no active provider session to fork.`;
-      yield* setThreadSession({
+    const failFork = (summary: string, detail: string) =>
+      setThreadSession({
         threadId: event.payload.threadId,
         session: {
           threadId: event.payload.threadId,
@@ -858,45 +858,90 @@ const make = Effect.gen(function* () {
           updatedAt: event.payload.createdAt,
         },
         createdAt: event.payload.createdAt,
-      });
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.session.fork.failed",
-        summary: "Provider fork failed",
-        detail,
-        turnId: null,
-        createdAt: event.payload.createdAt,
-      });
+      }).pipe(
+        Effect.flatMap(() =>
+          appendProviderFailureActivity({
+            threadId: event.payload.threadId,
+            kind: "provider.session.fork.failed",
+            summary,
+            detail,
+            turnId: null,
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+      );
+
+    if (
+      !sourceSession ||
+      sourceSession.status === "stopped" ||
+      sourceSession.providerName === null
+    ) {
+      const status = sourceSession?.status ?? "missing";
+      return yield* failFork(
+        "Provider fork failed",
+        `Source provider session status is '${status}'; no active provider session is available to fork.`,
+      );
     }
 
     const sourceAssistantTurnCount = assistantTurnCount(sourceThread.messages);
-    if (event.payload.targetTurnCount !== sourceAssistantTurnCount) {
-      const detail =
-        "Copilot native forking currently supports only the latest completed assistant response. Mid-conversation forks keep visible T3 history but cannot safely reuse provider context.";
-      yield* setThreadSession({
-        threadId: event.payload.threadId,
-        session: {
-          threadId: event.payload.threadId,
-          status: "error",
-          providerName: sourceSession.providerName,
-          ...(sourceSession.providerInstanceId !== undefined
-            ? { providerInstanceId: sourceSession.providerInstanceId }
-            : {}),
-          runtimeMode: targetThread.runtimeMode,
-          activeTurnId: null,
-          lastError: detail,
-          updatedAt: event.payload.createdAt,
-        },
-        createdAt: event.payload.createdAt,
-      });
-      return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
-        kind: "provider.session.fork.failed",
-        summary: "Provider fork unavailable",
-        detail,
-        turnId: null,
-        createdAt: event.payload.createdAt,
-      });
+    if (event.payload.targetTurnCount > sourceAssistantTurnCount) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        "Source run status is 'rolled-back'; the selected turn is no longer present in the source thread.",
+      );
+    }
+
+    if (
+      sourceSession.status === "running" ||
+      sourceSession.activeTurnId !== null ||
+      sourceThread.latestTurn?.state === "running"
+    ) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        "Source run status is 'running'; only provider-finished runs can be forked.",
+      );
+    }
+
+    const capabilities = yield* providerService.getCapabilities(
+      sourceSession.providerInstanceId ?? ProviderInstanceId.make(sourceSession.providerName),
+    );
+    if (capabilities.canForkThread === false) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        `Source run status is '${sourceThread.latestTurn?.state ?? "provider-finished"}'; provider '${sourceSession.providerName}' does not declare thread forking support.`,
+      );
+    }
+
+    const canForkFromTurn = capabilities.canForkFromTurn ?? false;
+    if (!canForkFromTurn && event.payload.targetTurnCount !== sourceAssistantTurnCount) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        `Source run status is '${sourceThread.latestTurn?.state ?? "provider-finished"}'; provider '${sourceSession.providerName}' only supports whole-thread forks.`,
+      );
+    }
+
+    const sourceTurnIds = new Set<string>();
+    let targetTurnIndex = -1;
+    for (const message of sourceThread.messages) {
+      if (message.turnId === null || sourceTurnIds.has(message.turnId)) continue;
+      sourceTurnIds.add(message.turnId);
+      if (message.turnId === event.payload.targetTurnId) {
+        targetTurnIndex = sourceTurnIds.size - 1;
+      }
+    }
+    const forkAnchor =
+      canForkFromTurn && event.payload.targetTurnId !== null && targetTurnIndex >= 0
+        ? { turnId: event.payload.targetTurnId, turnIndex: targetTurnIndex }
+        : undefined;
+    if (
+      canForkFromTurn &&
+      event.payload.targetTurnCount !== sourceAssistantTurnCount &&
+      forkAnchor === undefined
+    ) {
+      return yield* failFork(
+        "Provider fork unavailable",
+        "Source run status is 'provider-finished', but its selected provider turn cannot be resolved from the source history.",
+      );
     }
 
     yield* setThreadSession({
@@ -932,6 +977,7 @@ const make = Effect.gen(function* () {
           ? { providerInstanceId: sourceSession.providerInstanceId }
           : {}),
         ...(cwd !== undefined ? { cwd } : {}),
+        ...(forkAnchor !== undefined ? { forkAnchor } : {}),
         modelSelection: targetThread.modelSelection,
         interactionMode: targetThread.interactionMode,
         runtimeMode: targetThread.runtimeMode,

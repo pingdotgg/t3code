@@ -35,6 +35,16 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /**
+   * Declares native whole-thread forking. Omitted capabilities preserve the
+   * existing eager adapter call path for compatibility.
+   */
+  readonly canForkThread?: boolean;
+  /**
+   * Declares whether native forks can be anchored after a selected provider
+   * turn. Omitted capabilities retain the existing whole-thread behavior.
+   */
+  readonly canForkFromTurn?: boolean;
 }
 
 export interface ProviderThreadTurnSnapshot {

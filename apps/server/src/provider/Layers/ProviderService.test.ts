@@ -35,7 +35,10 @@ import {
   ProviderValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterCapabilities,
+  ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import {
   ProviderInstanceRegistry,
   type ProviderInstanceRegistryShape,
@@ -191,7 +194,10 @@ type LegacyProviderRuntimeEvent = {
   readonly [key: string]: unknown;
 };
 
-function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
+function makeFakeCodexAdapter(
+  provider: ProviderDriverKind = CODEX_DRIVER,
+  capabilities: Partial<ProviderAdapterCapabilities> = {},
+) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
@@ -318,6 +324,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
       startSession({
         ...input,
         provider,
+        ...(input.forkAnchor !== undefined ? { resumeCursor: input.forkAnchor } : {}),
       }),
   );
 
@@ -325,6 +332,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...capabilities,
     },
     startSession,
     forkSession,
@@ -2365,6 +2373,91 @@ describe("agent MCP access", () => {
       }).pipe(Effect.provide(providerLayer));
 
       assert.deepEqual(issued, [sourceThreadId, targetThreadId]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("forwards turn anchors only to adapters that declare turn-level forking", () =>
+    Effect.gen(function* () {
+      const turnForkAdapter = makeFakeCodexAdapter(CODEX_DRIVER, { canForkFromTurn: true });
+      const wholeThreadAdapter = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const noThreadForkAdapter = makeFakeCodexAdapter(CURSOR_DRIVER, { canForkThread: false });
+      const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(runtimeRepositoryLayer),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderInstanceRegistry,
+            makeInstanceRegistryMock({
+              [CODEX_DRIVER]: turnForkAdapter.adapter,
+              [CLAUDE_AGENT_DRIVER]: wholeThreadAdapter.adapter,
+              [CURSOR_DRIVER]: noThreadForkAdapter.adapter,
+            }),
+          ),
+        ),
+        Layer.provide(directoryLayer),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+      );
+      const anchor = { turnId: asTurnId("fork-anchor-turn"), turnIndex: 1 };
+      const forked = yield* Effect.gen(function* () {
+        const provider = yield* ProviderService;
+        yield* provider.startSession(asThreadId("anchor-source"), {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: asThreadId("anchor-source"),
+          runtimeMode: "full-access",
+        });
+        yield* provider.startSession(asThreadId("whole-source"), {
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          threadId: asThreadId("whole-source"),
+          runtimeMode: "full-access",
+        });
+        yield* provider.startSession(asThreadId("unsupported-source"), {
+          provider: CURSOR_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          threadId: asThreadId("unsupported-source"),
+          runtimeMode: "full-access",
+        });
+        const anchored = yield* provider.forkSession({
+          sourceThreadId: asThreadId("anchor-source"),
+          threadId: asThreadId("anchor-target"),
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+          forkAnchor: anchor,
+        });
+        const wholeThread = yield* provider.forkSession({
+          sourceThreadId: asThreadId("whole-source"),
+          threadId: asThreadId("whole-target"),
+          provider: CLAUDE_AGENT_DRIVER,
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "full-access",
+          forkAnchor: anchor,
+        });
+        const unsupported = yield* provider
+          .forkSession({
+            sourceThreadId: asThreadId("unsupported-source"),
+            threadId: asThreadId("unsupported-target"),
+            provider: CURSOR_DRIVER,
+            providerInstanceId: ProviderInstanceId.make("cursor"),
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.flip);
+        return { anchored, wholeThread, unsupported };
+      }).pipe(Effect.provide(providerLayer));
+
+      assert.deepEqual(forked.anchored.resumeCursor, anchor);
+      assert.deepEqual(forked.wholeThread.resumeCursor, {
+        opaque: "resume-whole-target",
+      });
+      assert.include(forked.unsupported.message, "does not declare native thread forking support");
+      assert.equal(noThreadForkAdapter.forkSession.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

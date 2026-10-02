@@ -2126,11 +2126,140 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
       });
 
     const forkSession: PiAdapterShape["forkSession"] = (input) =>
-      Effect.fail(
-        new ProviderAdapterRequestError({
-          provider: PROVIDER,
-          method: "session/fork",
-          detail: `Provider '${PROVIDER}' native forking is not wired yet for thread '${input.sourceThreadId}'.`,
+      withThreadLock(
+        input.sourceThreadId,
+        Effect.gen(function* () {
+          if (input.threadId === input.sourceThreadId) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: "sourceThreadId and threadId must be different.",
+            });
+          }
+          if (input.provider !== undefined && input.provider !== PROVIDER) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: `Expected provider '${PROVIDER}' but received '${input.provider}'.`,
+            });
+          }
+
+          const source = yield* requireSession(input.sourceThreadId);
+          if (source.activeTurn !== null) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: "Cannot fork while a Pi turn is active.",
+            });
+          }
+          const sourceFile = source.sessionFile.trim();
+          if (sourceFile.length === 0) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/fork",
+              detail: "Pi fork source has no session file.",
+            });
+          }
+
+          let forkEntryId: string | null | undefined = null;
+          let forkedTurnEntryIds = [...source.turnEntryIds];
+          if (input.forkAnchor !== undefined) {
+            const { turnIndex } = input.forkAnchor;
+            if (!Number.isInteger(turnIndex) || turnIndex >= source.turnEntryIds.length) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/fork",
+                detail: "Pi fork boundary has no captured session-tree entry.",
+              });
+            }
+            forkEntryId = piRollbackForkEntry(source.turnEntryIds.slice(turnIndex + 1));
+            if (forkEntryId === undefined) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session/fork",
+                detail: "Pi fork boundary has no captured session-tree entry.",
+              });
+            }
+            forkedTurnEntryIds = source.turnEntryIds.slice(0, turnIndex + 1);
+          }
+
+          const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+          if (!resolvedLaunchArgs.ok) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "forkSession",
+              issue: resolvedLaunchArgs.message,
+            });
+          }
+          const cwd = path.resolve(input.cwd?.trim() || source.session.cwd || serverConfig.cwd);
+          const launch = buildPiRpcLaunch({
+            launchArgs: resolvedLaunchArgs.args,
+            environment: baseEnvironment,
+            mcpSession: undefined,
+            extensionPath: undefined,
+            disableExtensions: true,
+            disableTools: true,
+          });
+          const forked = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const connection = yield* makePiRpcConnection({
+                command: piSettings.binaryPath || "pi",
+                args: [...launch.args, "--fork", sourceFile],
+                cwd,
+                env: launch.env,
+              }).pipe(Effect.mapError(requestError("session/fork")));
+              if (forkEntryId !== null && forkEntryId !== undefined) {
+                const result = yield* connection
+                  .request({ type: "fork", entryId: forkEntryId }, PI_SESSION_TIMEOUT_MS)
+                  .pipe(Effect.mapError(requestError("session/fork")));
+                if (recordField(result, "cancelled") === true) {
+                  return yield* new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "session/fork",
+                    detail: "A Pi extension cancelled the session fork.",
+                  });
+                }
+              }
+              const state = yield* connection
+                .request({ type: "get_state" }, PI_SESSION_TIMEOUT_MS)
+                .pipe(Effect.mapError(requestError("session/fork")));
+              const sessionFile = recordString(state, "sessionFile");
+              if (sessionFile === undefined || sessionFile === sourceFile) {
+                return yield* new ProviderAdapterRequestError({
+                  provider: PROVIDER,
+                  method: "session/fork",
+                  detail: "Pi fork did not create a distinct session file.",
+                });
+              }
+              // The forked state is reopened as a fresh adapter session. Its
+              // model and thinking caches start unset and are re-read/applied
+              // by startSession rather than inherited from the source process.
+              return sessionFile;
+            }),
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+
+          const now = yield* nowIso;
+          const modelSelection = input.modelSelection;
+          const model =
+            modelSelection?.instanceId === boundInstanceId
+              ? modelSelection.model
+              : source.session.model;
+          return {
+            provider: PROVIDER,
+            providerInstanceId: input.providerInstanceId ?? boundInstanceId,
+            status: "ready",
+            runtimeMode: input.runtimeMode,
+            cwd,
+            ...(model !== undefined ? { model } : {}),
+            threadId: input.threadId,
+            resumeCursor: {
+              schemaVersion: 1,
+              sessionFile: forked,
+              turnEntryIds: forkedTurnEntryIds,
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
         }),
       );
 
@@ -2163,7 +2292,11 @@ export function makePiAdapter(piSettings: PiSettings, options?: PiAdapterLiveOpt
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        canForkThread: true,
+        canForkFromTurn: true,
+      },
       startSession,
       forkSession,
       sendTurn,

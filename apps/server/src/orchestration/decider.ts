@@ -1595,6 +1595,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
         });
       }
+      if (
+        sourceThread.session?.status === "running" ||
+        sourceThread.session?.activeTurnId != null ||
+        sourceThread.latestTurn?.state === "running"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Source run status is 'running'; only provider-finished runs can be forked.",
+        });
+      }
       const targetMessageIndex = sourceThread.messages.findIndex(
         (message) => message.id === command.targetMessageId,
       );

@@ -804,15 +804,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           `Provider instance '${routed.instanceId}' belongs to driver '${resolvedProvider}', not '${parsed.provider}'.`,
         );
       }
+      if (routed.adapter.capabilities.canForkThread === false) {
+        return yield* new ProviderAdapterRequestError({
+          provider: resolvedProvider,
+          method: "session/fork",
+          detail: `Provider '${resolvedProvider}' does not declare native thread forking support.`,
+        });
+      }
 
       // Lock ordering: resolve and operate on the source provider session first,
       // then bind the target thread only after the adapter has forked. Future
       // fork paths should preserve source-before-target ordering to avoid
       // deadlocks with per-thread session locks.
       const credential = yield* prepareMcpSession(parsed.threadId, routed.instanceId);
+      const { forkAnchor, ...inputWithoutAnchor } = parsed;
+      const adapterInput =
+        routed.adapter.capabilities.canForkFromTurn === true
+          ? { ...inputWithoutAnchor, ...(forkAnchor === undefined ? {} : { forkAnchor }) }
+          : inputWithoutAnchor;
       const session = yield* routed.adapter
         .forkSession({
-          ...parsed,
+          ...adapterInput,
           provider: resolvedProvider,
           providerInstanceId: routed.instanceId,
         })

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
   EventId,
@@ -76,6 +76,13 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 export const ProviderSessionForkInput = Schema.Struct({
   sourceThreadId: ThreadId,
   threadId: ThreadId,
+  forkAnchor: Schema.optional(
+    Schema.Struct({
+      turnId: TurnId,
+      /** Zero-based provider-turn position in the source session. */
+      turnIndex: NonNegativeInt,
+    }),
+  ),
   provider: Schema.optional(ProviderDriverKind),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   cwd: Schema.optional(TrimmedNonEmptyString),

@@ -2176,7 +2176,11 @@ export function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        canForkThread: true,
+        canForkFromTurn: false,
+      },
       startSession,
       prewarmSession,
       forkSession,

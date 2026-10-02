@@ -192,4 +192,52 @@ describe("decider thread.fork", () => {
       ),
     ).rejects.toThrow("still streaming");
   });
+
+  it("rejects a fork while the source provider run is still in progress", async () => {
+    const baseReadModel = createReadModel();
+    const sourceThread = baseReadModel.threads[0];
+    if (!sourceThread) throw new Error("missing source thread");
+    const runningTurnId = TurnId.make("turn-running");
+    const readModel: OrchestrationReadModel = {
+      ...baseReadModel,
+      threads: [
+        {
+          ...sourceThread,
+          latestTurn: {
+            turnId: runningTurnId,
+            state: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+          session: {
+            threadId: sourceThreadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: runningTurnId,
+            lastError: null,
+            updatedAt: now,
+          },
+        },
+      ],
+    };
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.make("fork-command-running"),
+            sourceThreadId,
+            threadId: forkThreadId,
+            targetMessageId: MessageId.make("assistant-1"),
+            createdAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("running");
+  });
 });
