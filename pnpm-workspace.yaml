@@ -78,7 +78,7 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.79
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
-  - "@expo/cli@58.0.9 || 58.1.1"
+  - "@expo/cli@58.1.1"
   - "@expo/env@2.5.1"
   - "@expo/fingerprint@0.21.2"
   - "@expo/metro-config@58.0.6"
@@ -88,14 +88,14 @@ minimumReleaseAgeExclude:
   - expo@58.0.2
   - expo-widgets@58.0.11
   - "@expo/config-plugins@58.0.4"
-  - "@expo/log-box@58.0.7 || 58.0.8"
+  - "@expo/log-box@58.0.8"
   - "@expo/metro-file-map@58.0.3"
   - "@expo/metro-runtime@58.0.10"
   - "@expo/metro@58.0.0-rc.0"
-  - "@expo/prebuild-config@58.0.6 || 58.0.7"
-  - "@expo/router-server@58.0.4 || 58.0.6"
+  - "@expo/prebuild-config@58.0.7"
+  - "@expo/router-server@58.0.6"
   - "@expo/ui@58.0.11"
-  - babel-preset-expo@58.0.6 || 58.0.8
+  - babel-preset-expo@58.0.8
   - expo-asset@58.0.10
   - expo-build-properties@58.0.9
   - expo-dev-client@58.0.10
@@ -107,7 +107,7 @@ minimumReleaseAgeExclude:
   - expo-linking@58.0.10
   - expo-modules-autolinking@58.0.7
   - expo-modules-core@58.0.11
-  - expo-modules-jsi@58.0.6 || 58.0.7
+  - expo-modules-jsi@58.0.7
   - expo-notifications@58.0.11
   - expo-sharing@58.0.13
   - expo-sqlite@58.0.8
