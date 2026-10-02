@@ -61,6 +61,23 @@ export function canAutoArchiveThreadNow(
   return !subtreeHasRunningTurn(readModel, threadId);
 }
 
+// Admission guard registered on the AutomaticArchiveGuardRegistry. Unsettled
+// threads are checked exactly as `canAutoArchiveThreadNow`; settled threads
+// are abstained on (approved) because the settled auto-archiver owns them: the
+// merge sweep never dispatches a settled thread (`activeReviewRoots` excludes
+// them, and the plan re-reads the model after provider reads), while the
+// settled guard re-checks candidacy and due-ness at admission. Returning false
+// here would veto every settled auto-archive under the registry's
+// every-guard-must-approve rule.
+export function canAdmitAutomaticArchiveNow(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+): boolean {
+  const thread = readModel.threads.find((entry) => entry.id === threadId);
+  if (thread !== undefined && (thread.settledOverride ?? null) === "settled") return true;
+  return canAutoArchiveThreadNow(readModel, threadId);
+}
+
 function isArchiveCandidate(thread: OrchestrationThread): boolean {
   if (thread.deletedAt !== null || thread.archivedAt !== null) return false;
   // Settling is a deliberate signal from the user; archiving would overwrite it.

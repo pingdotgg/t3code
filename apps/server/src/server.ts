@@ -40,6 +40,7 @@ import { GitManagerLive } from "./git/Layers/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
 import { ServerRuntimeStartup, ServerRuntimeStartupLive } from "./serverRuntimeStartup.ts";
 import { layer as automaticArchiveGuardRegistryLayer } from "./orchestration/Services/AutomaticArchiveGuardRegistry.ts";
+import { layer as settledAutoArchiveReactorLayer } from "./orchestration/Layers/SettledAutoArchiveReactor.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { TurnLifecycleRuntimeLayerLive } from "./orchestration/Layers/TurnLifecycleRuntime.ts";
@@ -229,6 +230,12 @@ const ValidationLifecycleWiredLive = ValidationLifecycleLive.pipe(
 const ValidationCoordinatorWiredLive = ValidationCoordinatorReactorLive.pipe(
   Layer.provide(ValidationLifecycleWiredLive),
 );
+// Same guard-registry instance the engine reads (Effect layer memoization
+// shares it with reviewThreadMergeArchiveLayerLive below), so the settled
+// admission guard and the merge admission guard are consulted together.
+const settledAutoArchiveLayerLive = settledAutoArchiveReactorLayer.pipe(
+  Layer.provide(automaticArchiveGuardRegistryLayer),
+);
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(TurnLifecycleRuntimeLayerLive),
@@ -241,6 +248,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
   Layer.provideMerge(createdPullRequestReviewReactorLayer),
+  Layer.provideMerge(settledAutoArchiveLayerLive),
 );
 
 const CheckpointingLayerLive = Layer.empty.pipe(

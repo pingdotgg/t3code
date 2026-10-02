@@ -166,6 +166,8 @@ describe("related screen lifecycle parity", () => {
     );
     expect(titles(1)).toEqual(["Archive", "Delete"]);
     expect(harness.rows.every((row) => row.related === undefined)).toBe(true);
+    // Active roots render full-strength; only shelf (settled/snoozed) rows fade.
+    expect(harness.rows.every((row) => row.muted !== true)).toBe(true);
     expect(harness.rows.map((row) => row.depth)).toEqual([0, 1]);
     harness.swipes[0]?.primaryAction?.onPress();
     expect(harness.actions.settleThread).toHaveBeenCalledWith(parent);
@@ -195,6 +197,9 @@ describe("related screen lifecycle parity", () => {
     harness.threads = [root, child];
     render();
     expect(titles()).toContain(title);
+    // Shelf roots render faded like the inbox slim rows; the child row stays full.
+    expect(harness.rows[0]?.muted).toBe(true);
+    expect(harness.rows[1]?.muted).not.toBe(true);
     harness.swipes[0]?.primaryAction?.onPress();
     expect(harness.actions[action]).toHaveBeenCalledWith(root);
   });

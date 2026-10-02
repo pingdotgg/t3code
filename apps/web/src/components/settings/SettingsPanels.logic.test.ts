@@ -1,5 +1,6 @@
 import {
   type CollaborativeAcceptancePolicy,
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
@@ -17,6 +18,8 @@ import {
   buildProviderInstanceUpdatePatch,
   filterArchivedThreadGroups,
   mergeCollaborativeAcceptancePolicy,
+  parseAutoArchiveSettledAfterDays,
+  resolveAutoArchiveSettledAfterDays,
   runSequentiallySettled,
 } from "./SettingsPanels.logic";
 
@@ -126,6 +129,43 @@ describe("runSequentiallySettled", () => {
 
     expect(visited).toEqual([1, 2, 3]);
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+  });
+});
+
+describe("parseAutoArchiveSettledAfterDays", () => {
+  it("accepts whole days within 1-90 and trims surrounding whitespace", () => {
+    expect(parseAutoArchiveSettledAfterDays("1")).toBe(1);
+    expect(parseAutoArchiveSettledAfterDays("90")).toBe(90);
+    expect(parseAutoArchiveSettledAfterDays(" 7 ")).toBe(7);
+  });
+
+  it("rejects decimals, trailing text, and empty input instead of truncating", () => {
+    expect(parseAutoArchiveSettledAfterDays("3.5")).toBeNull();
+    expect(parseAutoArchiveSettledAfterDays("3days")).toBeNull();
+    expect(parseAutoArchiveSettledAfterDays("")).toBeNull();
+    expect(parseAutoArchiveSettledAfterDays("   ")).toBeNull();
+    expect(parseAutoArchiveSettledAfterDays("-3")).toBeNull();
+  });
+
+  it("rejects values outside 1-90", () => {
+    expect(parseAutoArchiveSettledAfterDays("0")).toBeNull();
+    expect(parseAutoArchiveSettledAfterDays("91")).toBeNull();
+  });
+});
+
+describe("resolveAutoArchiveSettledAfterDays", () => {
+  it("falls back to the default while the contracts schema has no value", () => {
+    expect(resolveAutoArchiveSettledAfterDays(undefined)).toBe(
+      DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+    );
+  });
+
+  it("preserves an explicit never-archive choice", () => {
+    expect(resolveAutoArchiveSettledAfterDays(null)).toBeNull();
+  });
+
+  it("passes stored values through", () => {
+    expect(resolveAutoArchiveSettledAfterDays(5)).toBe(5);
   });
 });
 

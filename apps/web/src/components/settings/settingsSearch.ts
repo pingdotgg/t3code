@@ -54,6 +54,7 @@ const settingsByPage: ReadonlyArray<{
       "Transfer active chats",
       "Chat export details",
       "Archive review chats on merge",
+      "Auto-archive settled threads",
       "Archive confirmation",
       "Delete confirmation",
       "Keybindings",
@@ -168,6 +169,7 @@ const relatedTerms: Readonly<Record<string, string>> = {
   "UI density": "spacing compact comfortable spacious",
   "Archived threads": "archive restore delete",
   "Archive review chats on merge": "review pull request merged cleanup",
+  "Auto-archive settled threads": "settled archive cleanup days",
 };
 
 export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
