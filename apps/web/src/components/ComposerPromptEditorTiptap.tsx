@@ -316,8 +316,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
         <div className="space-y-3 p-2 text-sm">
           <p className="font-medium">{skillLabel}</p>
           <p>
-            {skill?.description ??
-              skillDescription ??
+            {(skill ? skill.description : skillDescription) ??
               "No description is available for this skill."}
           </p>
           {skill?.path ? (
@@ -601,11 +600,33 @@ const ComposerMarkersExtension = Extension.create({
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+  const { onChange: onPromptChange } = props;
+  const [selection, setSelection] = useState<{
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+  } | null>(null);
+  const onChange = useCallback<ComposerPromptEditorProps["onChange"]>(
+    (value, cursor, expandedCursor, ...rest) => {
+      setSelection({ value, cursor, expandedCursor });
+      onPromptChange(value, cursor, expandedCursor, ...rest);
+    },
+    [onPromptChange],
+  );
   // Extensions are creation-time: flipping the setting remounts the editor.
-  // Both halves initialize from the controlled Markdown value, so the draft
-  // survives the flip.
+  // Keep the exact Markdown caret across that remount: the collapsed cursor
+  // cannot represent positions inside an unknown `$name` rendered as text.
   return (
-    <ComposerPromptEditorTiptapInner key={props.richTextEnabled ? "rich" : "plain"} {...props} />
+    <ComposerPromptEditorTiptapInner
+      key={props.richTextEnabled ? "rich" : "plain"}
+      {...props}
+      initialExpandedCursor={
+        selection?.value === props.value && selection.cursor === props.cursor
+          ? selection.expandedCursor
+          : expandCollapsedComposerCursor(props.value, props.cursor)
+      }
+      onChange={onChange}
+    />
   );
 }
 
@@ -629,7 +650,9 @@ const ComposerUndoGroupingExtension = Extension.create<
   },
 });
 
-function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
+function ComposerPromptEditorTiptapInner(
+  props: ComposerPromptEditorProps & { initialExpandedCursor: number },
+) {
   const {
     value,
     cursor,
@@ -696,7 +719,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   );
 
   const initialCursor = clampCollapsedComposerCursor(value, cursor);
-  const initialExpandedCursor = expandCollapsedComposerCursor(value, initialCursor);
+  const initialExpandedCursor = Math.max(0, Math.min(value.length, props.initialExpandedCursor));
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
@@ -1144,7 +1167,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     ) {
       return;
     }
-    const normalizedExpandedCursor = expandCollapsedComposerCursor(value, normalizedCursor);
+    const normalizedExpandedCursor = initialSelection
+      ? initialExpandedCursor
+      : expandCollapsedComposerCursor(value, normalizedCursor);
     snapshotRef.current = {
       value,
       cursor: normalizedCursor,
@@ -1195,7 +1220,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, richText, skillLabelFor, value]);
+  }, [cursor, editor, initialExpandedCursor, richText, skillLabelFor, value]);
 
   // Skill chips follow the provider's skill list. Only the affected nodes are
   // replaced, outside undo history, so undo cannot bring back a stale chip and
