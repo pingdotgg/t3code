@@ -252,6 +252,7 @@ export function DeviceStreamView(props: {
   return (
     <div
       ref={hostRef}
+      data-device-stream="true"
       className="relative flex size-full items-center justify-center overflow-hidden bg-black/90 outline-none"
       tabIndex={0}
       role="application"
