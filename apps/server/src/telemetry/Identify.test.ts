@@ -57,7 +57,24 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
     ),
   );
 
-  it.effect("falls back quietly when Codex authenticates with an API key", () => {
+  it.effect.each([
+    {
+      login: "an API key",
+      secret: "sk-private-openai-api-key",
+      authJson: (secret: string) => `{"auth_mode":"apikey","OPENAI_API_KEY":"${secret}"}`,
+    },
+    {
+      login: "an agent identity",
+      secret: "private-agent-identity-jwt",
+      authJson: (secret: string) =>
+        `{"auth_mode":"agentIdentity","OPENAI_API_KEY":null,"agent_identity":"${secret}"}`,
+    },
+    {
+      login: "a personal access token",
+      secret: "private-personal-access-token",
+      authJson: (secret: string) => `{"OPENAI_API_KEY":null,"personal_access_token":"${secret}"}`,
+    },
+  ])("falls back quietly when Codex authenticates with $login", ({ secret, authJson }) => {
     const logs: CapturedLog[] = [];
     const logger = makeCaptureLogger(logs);
 
@@ -67,14 +84,10 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
       const path = yield* Path.Path;
       const homeDirectory = path.join(config.baseDir, "home");
       const codexAuthPath = path.join(homeDirectory, ".codex", "auth.json");
-      const anonymousId = "api-key-fallback-anonymous-id";
-      const privateApiKey = "sk-private-openai-api-key";
+      const anonymousId = "tokenless-codex-anonymous-id";
 
       yield* fileSystem.makeDirectory(path.dirname(codexAuthPath), { recursive: true });
-      yield* fileSystem.writeFileString(
-        codexAuthPath,
-        `{"auth_mode":"apikey","OPENAI_API_KEY":"${privateApiKey}"}`,
-      );
+      yield* fileSystem.writeFileString(codexAuthPath, authJson(secret));
       yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
 
       const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
@@ -87,12 +100,12 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
           [String(log.message), ...Object.values(log.annotations).map(String)].join("\n"),
         )
         .join("\n");
-      assert.notInclude(allLogs, privateApiKey);
+      assert.notInclude(allLogs, secret);
     }).pipe(
       Effect.provide(
         Layer.merge(
           ServerConfig.layerTest(process.cwd(), {
-            prefix: "t3-telemetry-identify-apikey-",
+            prefix: "t3-telemetry-identify-tokenless-",
           }),
           Logger.layer([logger], { mergeWithExisting: false }),
         ),

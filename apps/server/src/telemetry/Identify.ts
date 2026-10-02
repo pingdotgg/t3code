@@ -11,12 +11,12 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 
 /**
- * Codex omits `tokens` entirely when the install authenticates with an API key
- * rather than a ChatGPT account, so an absent `tokens` is a supported install
- * and not a malformed file.
+ * Codex writes `tokens` only for ChatGPT logins and omits the key for API-key,
+ * agent-identity, and personal-access-token logins, so its absence is a
+ * supported install and not a malformed file.
  */
 const CodexAuthJsonSchema = Schema.Struct({
-  tokens: Schema.optional(
+  tokens: Schema.optionalKey(
     Schema.Struct({
       account_id: Schema.String,
     }),
