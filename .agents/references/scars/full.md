@@ -155,6 +155,8 @@
 
 ## PR reviews and checkpoint provenance
 
+- `pullRequest: null` and an absent `pullRequest` are different things. `null` is an explicit "no association" that short-circuits `resolveInitialThreadPullRequest` before snapshot recovery, so a review worker created with it keeps no link at all and any sweep reading only links cannot see it. Suppressing `CreatedPullRequestReviewReactor` is the job of the `isReviewWorkflowThread` guards, not of dropping the association; when a consumer needs the PR, fall back to `pullRequestFromReviewSnapshot` as migrations 067/068 do.
+- Fixtures for review-thread selection must be built from what `reviewChangesWorkflow` actually emits, including its worker id suffix and `pullRequests: []`. A helper that hardcodes a populated link keeps a dead feature green, because the suite then tests a thread shape production stopped creating.
 - The assistant's PR creation report can be recovered without its association tool, but generic `recovered` links are not review candidates. After verifying the exact reported URL against the checkout, mark a creation report as `agent` and upgrade older recovered links with the same evidence; never automatically review manually associated PRs.
 - Creation-report detection must recognize common completion wording such as "opened PR", not only lines beginning with "Created"; otherwise verified agent-created PRs remain `recovered` and never enter automatic review.
 - Automatic PR review must launch the canonical `review-changes` workflow in a child worker thread. A self-addressed blocking collaboration request deadlocks its own queued turn and leaves the creator thread permanently waiting.
