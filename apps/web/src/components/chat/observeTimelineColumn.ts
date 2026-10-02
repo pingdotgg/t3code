@@ -18,9 +18,29 @@ export function observeTimelineColumn(
   };
   const observer = new ResizeObserver(measure);
   observer.observe(viewport);
-  const frame = requestAnimationFrame(measure);
+  let frame = requestAnimationFrame(measure);
+  const rowObserver = new MutationObserver((records) => {
+    const rowAdded = records.some((record) => {
+      if (record.target instanceof Element && record.target.closest("[data-timeline-root]")) {
+        return false;
+      }
+      return Array.from(record.addedNodes).some(
+        (node) =>
+          node instanceof Element &&
+          (node.matches("[data-timeline-root]") || node.querySelector("[data-timeline-root]")),
+      );
+    });
+    // Row insertion/removal can leave viewport geometry unchanged. Coalesce it
+    // into one measurement; ordinary streamed text does not change the column.
+    if (!observedColumn?.isConnected || rowAdded) {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    }
+  });
+  rowObserver.observe(viewport, { childList: true, subtree: true });
   return () => {
     cancelAnimationFrame(frame);
     observer.disconnect();
+    rowObserver.disconnect();
   };
 }
