@@ -33,7 +33,9 @@ const invocation: McpInvocationScope = {
 const last = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
   stream.pipe(Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption));
 const snapshot = Schema.decodeUnknownSync(TerminalSessionSnapshot);
-const summaries = Schema.decodeUnknownSync(Schema.Array(TerminalSummary));
+const summaries = Schema.decodeUnknownSync(
+  Schema.Struct({ terminals: Schema.Array(TerminalSummary) }),
+);
 
 it.live(
   "keeps a real server alive after tool completion, isolates ownership, and stops it explicitly",
@@ -125,7 +127,7 @@ it.live(
         const retained = yield* toolkit.handle("terminal_list", {}).pipe(Stream.unwrap, last);
         assert.isFalse(retained.isFailure);
         assert.deepStrictEqual(
-          summaries(retained.result).map((terminal) => terminal.terminalId),
+          summaries(retained.result).terminals.map((terminal) => terminal.terminalId),
           [terminalId],
         );
 
@@ -171,7 +173,7 @@ it.live(
 
         const listed = yield* toolkit.handle("terminal_list", {}).pipe(Stream.unwrap, last);
         assert.isFalse(listed.isFailure);
-        if (!listed.isFailure) assert.deepStrictEqual(listed.result, []);
+        if (!listed.isFailure) assert.deepStrictEqual(listed.result, { terminals: [] });
 
         const finite = yield* toolkit
           .handle("terminal_start", { command: "exit 0" })
