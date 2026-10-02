@@ -14,7 +14,11 @@ import { ProviderRegistryLive } from "./Layers/ProviderRegistry.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
-import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
+import {
+  createProviderVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+} from "./providerMaintenance.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as Schema from "effect/Schema";
 import {
@@ -50,6 +54,89 @@ const provider: ServerProvider = {
   skills: [],
   slashCommands: [],
 };
+
+describe("Homebrew compatibility recovery", () => {
+  const recoveryPolicy: ProviderCompatibilityPolicy = {
+    driver,
+    t3CodeRange: ">=0.0.42 <0.1.0",
+    recommendedRange: ">=0.156.0",
+    ranges: [
+      { range: "<0.149.0", status: "broken" },
+      { range: ">=0.149.0 <0.156.0", status: "unsupported" },
+      { range: ">=0.156.0", status: "supported" },
+    ],
+  };
+  const snapshot = (
+    currentVersion: string,
+    latestVersion: string | null,
+    updateCommand = "brew upgrade --cask codex",
+  ): ServerProvider => ({
+    ...provider,
+    version: currentVersion,
+    versionAdvisory: createProviderVersionAdvisory({
+      driver,
+      currentVersion,
+      latestVersion,
+      maintenanceCapabilities: makeProviderMaintenanceCapabilities({
+        provider: driver,
+        packageName: "@openai/codex",
+        updateExecutable: "/opt/homebrew/bin/brew",
+        updateArgs: ["upgrade", "--cask", "codex"],
+        updateLockKey: "homebrew",
+        updateCommand,
+      }),
+    }),
+  });
+
+  it.each(["brew upgrade --cask codex", "brew upgrade codex"])(
+    "explains how to refresh stale metadata for %s and clears guidance after refresh",
+    (command) => {
+      const stale = snapshot("0.155.1", "0.155.1", command);
+      const result = applyProviderCompatibility(stale, [recoveryPolicy], []);
+      assert.strictEqual(result.versionAdvisory?.status, "current");
+      assert.strictEqual(result.compatibilityAdvisory?.latestVersionStatus, "unsupported");
+      assert.include(result.compatibilityAdvisory?.message ?? "", "Use >=0.156.0.");
+      assert.include(result.compatibilityAdvisory?.message ?? "", "brew update");
+      assert.include(result.compatibilityAdvisory?.message ?? "", "this environment's host");
+      assert.include(result.compatibilityAdvisory?.message ?? "", "refresh provider status");
+      assert.strictEqual(result.message, stale.message);
+      assert.deepStrictEqual(result.versionAdvisory, stale.versionAdvisory);
+
+      const refreshed = applyProviderCompatibility(
+        { ...result, versionAdvisory: snapshot("0.155.1", "0.157.1", command).versionAdvisory! },
+        [recoveryPolicy],
+        [],
+      );
+      assert.strictEqual(refreshed.compatibilityAdvisory?.latestVersionStatus, "supported");
+      assert.notInclude(refreshed.compatibilityAdvisory?.message ?? "", "brew update");
+    },
+  );
+
+  it.each([
+    ["0.148.0", "0.148.0"],
+    ["0.155.0", "0.155.1"],
+  ])("offers metadata recovery for incompatible %s with latest %s", (current, latest) => {
+    const result = applyProviderCompatibility(snapshot(current, latest), [recoveryPolicy], []);
+    assert.include(result.compatibilityAdvisory?.message ?? "", "brew update");
+  });
+
+  it.each([
+    ["0.156.0", "0.157.1", "brew upgrade --cask codex"],
+    ["0.155.1", "0.157.1", "brew upgrade --cask codex"],
+    ["0.155.1", null, "brew upgrade --cask codex"],
+    ["0.155.1", "0.155.1", "npm install -g @openai/codex@latest"],
+  ] as const)(
+    "does not add irrelevant recovery guidance for %s, %s, %s",
+    (current, latest, command) => {
+      const result = applyProviderCompatibility(
+        snapshot(current, latest, command),
+        [recoveryPolicy],
+        [],
+      );
+      assert.notInclude(result.compatibilityAdvisory?.message ?? "", "brew update");
+    },
+  );
+});
 
 describe("provider compatibility", () => {
   it("bundles a compatibility policy for every built-in harness", () => {

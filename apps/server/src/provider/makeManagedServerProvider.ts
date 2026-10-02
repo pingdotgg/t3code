@@ -286,7 +286,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    // Explicit refreshes must observe installer changes such as `brew update` immediately.
+    // The interval loop keeps using refreshSnapshot directly so background probes stay cached.
+    refresh: Effect.gen(function* () {
+      yield* input.resolveMaintenance({ fresh: true });
+      return yield* refreshSnapshot();
+    }).pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
