@@ -154,11 +154,13 @@ export const OpenInPicker = memo(function OpenInPicker({
   availableEditors,
   openInCwd,
   updatePreferredOnSelect = true,
+  enableShortcut = true,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
   updatePreferredOnSelect?: boolean;
+  enableShortcut?: boolean;
 }) {
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
@@ -187,6 +189,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   );
 
   useEffect(() => {
+    if (!enableShortcut) return;
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readLocalApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
@@ -198,10 +201,10 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [enableShortcut, preferredEditor, keybindings, openInCwd]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <Group aria-label="Open in editor">
       <Button
         size="xs"
         variant="outline"
@@ -218,7 +221,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuTrigger
           render={
             <Button
-              aria-label="Copy options"
+              aria-label="Editor options"
               className="size-6 border-transparent shadow-none hover:border-input hover:shadow-xs/5"
               size="icon-xs"
               variant="outline"
@@ -233,7 +236,7 @@ export const OpenInPicker = memo(function OpenInPicker({
             <MenuItem key={value} onClick={() => openInEditor(value)}>
               <Icon aria-hidden="true" className="text-muted-foreground" />
               {label}
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
+              {enableShortcut && value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>

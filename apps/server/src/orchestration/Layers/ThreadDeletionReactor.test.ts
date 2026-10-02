@@ -1,13 +1,18 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
+  EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   GitManagerError,
+  type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import {
@@ -18,6 +23,7 @@ import {
   Layer,
   ManagedRuntime,
   Option,
+  Queue,
   Scope,
   Stream,
 } from "effect";
@@ -32,6 +38,7 @@ import { runProcess } from "../../processRunner.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { WorktreeCleanupJobRepository } from "../../persistence/Services/WorktreeCleanupJobs.ts";
 import { WorkspaceOwnershipRepository } from "../../persistence/Services/WorkspaceOwnership.ts";
+import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -40,6 +47,7 @@ import {
   groupOpenPullRequestAssociationRefreshes,
   resolvePullRequestFromCwds,
   ThreadDeletionReactorLive,
+  worktreeTrashDirectory,
 } from "./ThreadDeletionReactor.ts";
 import { findCanonicalActiveWorktreeOwner } from "../worktreeOwnership.ts";
 import {
@@ -90,6 +98,200 @@ function makeThread(
     checkpoints: [],
     session: null,
   };
+}
+
+type FixtureThread = OrchestrationReadModel["threads"][number];
+
+interface CleanupFixture {
+  readonly repositoryRoot: string;
+  readonly worktreePath: string;
+  readonly setupScriptRuns: Array<string>;
+  readonly dispatched: Array<OrchestrationCommand>;
+  readonly runGit: (cwd: string, args: ReadonlyArray<string>) => Promise<string>;
+  readonly registeredWorktrees: () => Promise<string>;
+  readonly jobStatus: () => Promise<string | undefined>;
+  /** Starts the reactor (startup archive sweep) and waits for cleanup to settle. */
+  readonly start: () => Promise<void>;
+  /** Unarchives the thread through a domain event and waits for the reactor. */
+  readonly unarchive: () => Promise<void>;
+}
+
+/**
+ * Runs the production cleanup reactor against a disposable Git repository with
+ * one archived chat that owns a `feature` worktree. Only orchestration, provider,
+ * terminal, and PR-resolution boundaries are stubbed; Git and SQLite are real.
+ */
+async function withCleanupFixture(
+  options: { readonly pullRequest: NonNullable<FixtureThread["pullRequest"]> | null },
+  body: (fixture: CleanupFixture) => Promise<void>,
+): Promise<void> {
+  const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t3-cleanup-reactor-"));
+  const repositoryRoot = path.join(fixtureRoot, "repo");
+  const worktreePath = path.join(fixtureRoot, "feature");
+  await mkdir(repositoryRoot);
+  const runGit = async (cwd: string, args: ReadonlyArray<string>) => {
+    const result = await runProcess("git", args, {
+      cwd,
+      timeoutMs: 15_000,
+      maxBufferBytes: 128 * 1024,
+      allowNonZeroExit: true,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "Cleanup Test",
+        GIT_AUTHOR_EMAIL: "cleanup@example.test",
+        GIT_COMMITTER_NAME: "Cleanup Test",
+        GIT_COMMITTER_EMAIL: "cleanup@example.test",
+      },
+    });
+    if (result.code !== 0) {
+      throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+    }
+    return result.stdout;
+  };
+
+  await runGit(repositoryRoot, ["init", "-b", "main"]);
+  await writeFile(path.join(repositoryRoot, "README.md"), "fixture\n");
+  await runGit(repositoryRoot, ["add", "README.md"]);
+  await runGit(repositoryRoot, ["commit", "-m", "fixture"]);
+  await runGit(repositoryRoot, ["worktree", "add", "-b", "feature", worktreePath, "HEAD"]);
+
+  const timestamp = new Date().toISOString();
+  const project = {
+    id: ProjectId.make("project-1"),
+    title: "Cleanup fixture",
+    workspaceRoot: repositoryRoot,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+  } satisfies OrchestrationReadModel["projects"][number];
+  let thread: FixtureThread = {
+    ...makeThread("thread-cleanup-fixture", worktreePath),
+    projectId: project.id,
+    branch: "feature",
+    archivedAt: timestamp,
+    pullRequest: options.pullRequest,
+  };
+  const readModel = () => ({ ...makeReadModel([thread]), projects: [project] });
+  const resolvedPullRequest =
+    options.pullRequest === null ? null : { ...options.pullRequest, state: "merged" as const };
+  const setupScriptRuns: Array<string> = [];
+  const dispatched: Array<OrchestrationCommand> = [];
+  const domainEvents = await Effect.runPromise(Queue.unbounded<OrchestrationEvent>());
+
+  const engineLayer = Layer.succeed(OrchestrationEngineService, {
+    getReadModel: () => Effect.sync(readModel),
+    readEvents: () => Stream.empty,
+    dispatch: (command) =>
+      Effect.sync(() => {
+        dispatched.push(command);
+        return { sequence: 1 };
+      }),
+    withWorktreeLock: (effect) => effect,
+    streamDomainEvents: Stream.fromQueue(domainEvents),
+    acquireDomainEventSubscription: Effect.die("unused in cleanup fixture"),
+  });
+  const configLayer = ServerConfig.layerTest(process.cwd(), {
+    prefix: "t3-cleanup-reactor-test-",
+  });
+  const runtime = ManagedRuntime.make(
+    ThreadDeletionReactorLive.pipe(
+      Layer.provide(engineLayer),
+      Layer.provide(Layer.mock(ProviderService)({ stopSession: () => Effect.void })),
+      Layer.provide(Layer.mock(TerminalManager)({ close: () => Effect.void })),
+      Layer.provide(
+        Layer.mock(WorkspaceOwnershipRepository)({
+          getByThreadId: () => Effect.succeed([]),
+          release: () => Effect.void,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitManager)({
+          resolvePullRequest: () =>
+            resolvedPullRequest === null
+              ? Effect.die("archive cleanup must not require a pull request")
+              : Effect.succeed({ pullRequest: resolvedPullRequest }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProjectSetupScriptRunner)({
+          runForThread: (input) =>
+            Effect.sync(() => {
+              setupScriptRuns.push(input.worktreePath);
+              return { status: "no-script" as const };
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitStatusBroadcaster)({
+          refreshStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasOriginRemote: false,
+              isDefaultBranch: false,
+              branch: null,
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+              hasUpstream: false,
+              aheadCount: 0,
+              behindCount: 0,
+              pr: null,
+            }),
+        }),
+      ),
+      Layer.provide(GitCoreLive),
+      Layer.provide(SqlitePersistenceMemory),
+      Layer.provide(configLayer),
+      Layer.provide(NodeServices.layer),
+    ),
+  );
+
+  const scope = await runtime.runPromise(Scope.make("sequential"));
+  try {
+    const reactor = await runtime.runPromise(Effect.service(ThreadDeletionReactor));
+    const jobs = await runtime.runPromise(Effect.service(WorktreeCleanupJobRepository));
+    await body({
+      repositoryRoot,
+      worktreePath,
+      setupScriptRuns,
+      dispatched,
+      runGit,
+      registeredWorktrees: () => runGit(repositoryRoot, ["worktree", "list", "--porcelain"]),
+      jobStatus: async () =>
+        Option.getOrUndefined(await runtime.runPromise(jobs.getByThreadId(thread.id)))?.status,
+      start: async () => {
+        await runtime.runPromise(reactor.start().pipe(Scope.provide(scope)));
+        await runtime.runPromise(reactor.drain);
+      },
+      unarchive: async () => {
+        const updatedAt = new Date().toISOString();
+        thread = { ...thread, archivedAt: null, updatedAt };
+        await Effect.runPromise(
+          Queue.offer(domainEvents, {
+            sequence: 2,
+            eventId: EventId.make("event-unarchive"),
+            type: "thread.unarchived",
+            aggregateKind: "thread",
+            aggregateId: thread.id,
+            occurredAt: updatedAt,
+            commandId: CommandId.make("command-unarchive"),
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: { threadId: thread.id, updatedAt },
+          } as OrchestrationEvent),
+        );
+        // Let the domain-event fiber hand the event to the worker before draining.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await runtime.runPromise(reactor.drain);
+      },
+    });
+  } finally {
+    await runtime.runPromise(Scope.close(scope, Exit.succeed(undefined)));
+    await runtime.dispose();
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
 }
 
 describe("logCleanupCauseUnlessInterrupted", () => {
@@ -290,156 +492,81 @@ describe("logCleanupCauseUnlessInterrupted", () => {
     });
 
     it("removes a clean archived merged-PR worktree from a disposable Git repository", async () => {
-      const fixtureRoot = await mkdtemp(path.join(tmpdir(), "t3-cleanup-reactor-"));
-      const repositoryRoot = path.join(fixtureRoot, "repo");
-      const worktreePath = path.join(fixtureRoot, "feature");
-      await mkdir(repositoryRoot);
-      const runGit = async (cwd: string, args: ReadonlyArray<string>) => {
-        const result = await runProcess("git", args, {
-          cwd,
-          timeoutMs: 15_000,
-          maxBufferBytes: 128 * 1024,
-          allowNonZeroExit: true,
-          env: {
-            ...process.env,
-            GIT_AUTHOR_NAME: "Cleanup Test",
-            GIT_AUTHOR_EMAIL: "cleanup@example.test",
-            GIT_COMMITTER_NAME: "Cleanup Test",
-            GIT_COMMITTER_EMAIL: "cleanup@example.test",
+      await withCleanupFixture(
+        {
+          pullRequest: {
+            number: 1,
+            title: "Fixture",
+            url: "https://github.com/example/repo/pull/1",
+            baseBranch: "main",
+            headBranch: "feature",
+            state: "open",
           },
-        });
-        if (result.code !== 0) {
-          throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
-        }
-        return result.stdout;
-      };
-
-      await runGit(repositoryRoot, ["init", "-b", "main"]);
-      await writeFile(path.join(repositoryRoot, "README.md"), "fixture\n");
-      await runGit(repositoryRoot, ["add", "README.md"]);
-      await runGit(repositoryRoot, ["commit", "-m", "fixture"]);
-      await runGit(repositoryRoot, ["worktree", "add", "-b", "feature", worktreePath, "HEAD"]);
-
-      const timestamp = new Date().toISOString();
-      const project = {
-        id: ProjectId.make("project-1"),
-        title: "Cleanup fixture",
-        workspaceRoot: repositoryRoot,
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        deletedAt: null,
-      } satisfies OrchestrationReadModel["projects"][number];
-      const thread = {
-        ...makeThread("thread-cleanup-fixture", worktreePath),
-        projectId: project.id,
-        branch: "feature",
-        archivedAt: timestamp,
-        pullRequest: {
-          number: 1,
-          title: "Fixture",
-          url: "https://github.com/example/repo/pull/1",
-          baseBranch: "main",
-          headBranch: "feature",
-          state: "open" as const,
         },
-      } satisfies OrchestrationReadModel["threads"][number];
-      const readModel = {
-        ...makeReadModel([thread]),
-        projects: [project],
-      };
-      const resolvedPullRequest = {
-        number: 1,
-        title: "Fixture",
-        url: "https://github.com/example/repo/pull/1",
-        baseBranch: "main",
-        headBranch: "feature",
-        state: "merged" as const,
-      };
-      const engineLayer = Layer.succeed(OrchestrationEngineService, {
-        getReadModel: () => Effect.succeed(readModel),
-        readEvents: () => Stream.empty,
-        dispatch: () => Effect.succeed({ sequence: 1 }),
-        withWorktreeLock: (effect) => effect,
-        streamDomainEvents: Stream.empty,
-        acquireDomainEventSubscription: Effect.die("unused in cleanup fixture"),
-      });
-      const configLayer = ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-cleanup-reactor-test-",
-      });
-      const runtime = ManagedRuntime.make(
-        ThreadDeletionReactorLive.pipe(
-          Layer.provide(engineLayer),
-          Layer.provide(
-            Layer.mock(ProviderService)({
-              stopSession: () => Effect.void,
-            }),
-          ),
-          Layer.provide(
-            Layer.mock(TerminalManager)({
-              close: () => Effect.void,
-            }),
-          ),
-          Layer.provide(
-            Layer.mock(WorkspaceOwnershipRepository)({
-              getByThreadId: () => Effect.succeed([]),
-              release: () => Effect.void,
-            }),
-          ),
-          Layer.provide(
-            Layer.mock(GitManager)({
-              resolvePullRequest: () => Effect.succeed({ pullRequest: resolvedPullRequest }),
-            }),
-          ),
-          Layer.provide(
-            Layer.mock(GitStatusBroadcaster)({
-              refreshStatus: () =>
-                Effect.succeed({
-                  isRepo: true,
-                  hasOriginRemote: false,
-                  isDefaultBranch: false,
-                  branch: null,
-                  hasWorkingTreeChanges: false,
-                  workingTree: {
-                    files: [],
-                    insertions: 0,
-                    deletions: 0,
-                  },
-                  hasUpstream: false,
-                  aheadCount: 0,
-                  behindCount: 0,
-                  pr: null,
-                }),
-            }),
-          ),
-          Layer.provide(GitCoreLive),
-          Layer.provide(SqlitePersistenceMemory),
-          Layer.provide(configLayer),
-          Layer.provide(NodeServices.layer),
-        ),
+        async (fixture) => {
+          await fixture.start();
+
+          expect(await fixture.jobStatus()).toBe("completed");
+          expect(await fixture.registeredWorktrees()).not.toContain(fixture.worktreePath);
+        },
       );
+    });
 
-      try {
-        const reactor = await runtime.runPromise(Effect.service(ThreadDeletionReactor));
-        const jobs = await runtime.runPromise(Effect.service(WorktreeCleanupJobRepository));
-        const scope = await runtime.runPromise(Scope.make("sequential"));
-        try {
-          await runtime.runPromise(reactor.start().pipe(Scope.provide(scope)));
-          await runtime.runPromise(reactor.drain);
+    it("removes a clean archived worktree without a pull request and keeps its branch commits", async () => {
+      await withCleanupFixture({ pullRequest: null }, async (fixture) => {
+        await writeFile(path.join(fixture.worktreePath, "work.txt"), "unmerged work\n");
+        await fixture.runGit(fixture.worktreePath, ["add", "work.txt"]);
+        await fixture.runGit(fixture.worktreePath, ["commit", "-m", "unmerged work"]);
+        const featureHead = (
+          await fixture.runGit(fixture.repositoryRoot, ["rev-parse", "feature"])
+        ).trim();
 
-          const cleanup = await runtime.runPromise(jobs.getByThreadId(thread.id));
-          expect(Option.getOrThrow(cleanup).status).toBe("completed");
-          expect(await runGit(repositoryRoot, ["worktree", "list", "--porcelain"])).not.toContain(
-            worktreePath,
-          );
-        } finally {
-          await runtime.runPromise(Scope.close(scope, Exit.succeed(undefined)));
-        }
-      } finally {
-        await runtime.dispose();
-        await rm(fixtureRoot, { recursive: true, force: true });
-      }
+        await fixture.start();
+
+        expect(await fixture.jobStatus()).toBe("completed");
+        expect(await fixture.registeredWorktrees()).not.toContain(fixture.worktreePath);
+        expect(existsSync(fixture.worktreePath)).toBe(false);
+        expect(await readdir(worktreeTrashDirectory(fixture.worktreePath))).toEqual([]);
+        expect(
+          (await fixture.runGit(fixture.repositoryRoot, ["rev-parse", "feature"])).trim(),
+        ).toBe(featureHead);
+      });
+    });
+
+    it("keeps an archived worktree with uncommitted work", async () => {
+      await withCleanupFixture({ pullRequest: null }, async (fixture) => {
+        const draftPath = path.join(fixture.worktreePath, "draft.txt");
+        await writeFile(draftPath, "uncommitted\n");
+
+        await fixture.start();
+
+        expect(await fixture.jobStatus()).toBe("waiting");
+        expect(await fixture.registeredWorktrees()).toContain(fixture.worktreePath);
+        expect(await readFile(draftPath, "utf8")).toBe("uncommitted\n");
+      });
+    });
+
+    it("restores a removed worktree on its branch and reruns setup when the chat is unarchived", async () => {
+      await withCleanupFixture({ pullRequest: null }, async (fixture) => {
+        await writeFile(path.join(fixture.worktreePath, "work.txt"), "unmerged work\n");
+        await fixture.runGit(fixture.worktreePath, ["add", "work.txt"]);
+        await fixture.runGit(fixture.worktreePath, ["commit", "-m", "unmerged work"]);
+
+        await fixture.start();
+        expect(await fixture.registeredWorktrees()).not.toContain(fixture.worktreePath);
+
+        await fixture.unarchive();
+
+        expect(await fixture.registeredWorktrees()).toContain(fixture.worktreePath);
+        expect(
+          (await fixture.runGit(fixture.worktreePath, ["branch", "--show-current"])).trim(),
+        ).toBe("feature");
+        expect(await readFile(path.join(fixture.worktreePath, "work.txt"), "utf8")).toBe(
+          "unmerged work\n",
+        );
+        expect(fixture.setupScriptRuns).toEqual([fixture.worktreePath]);
+        expect(fixture.dispatched).toEqual([]);
+      });
     });
   });
 

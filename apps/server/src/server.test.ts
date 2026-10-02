@@ -4969,6 +4969,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isTrue(response.entries.some((entry) => entry.path === "src"));
       assert.isTrue(response.entries.some((entry) => entry.path === "src/listed-file.ts"));
       assert.equal(response.truncated, false);
+
+      const root = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir, directoryPath: "" }),
+        ),
+      );
+      assert.deepEqual(
+        root.entries.map((entry) => entry.path),
+        ["src"],
+      );
+      const children = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir, directoryPath: "src" }),
+        ),
+      );
+      assert.deepEqual(
+        children.entries.map((entry) => entry.path),
+        ["src/listed-file.ts"],
+      );
+      const outside = yield* Effect.exit(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir, directoryPath: ".." }),
+          ),
+        ),
+      );
+      assert.equal(outside._tag, "Failure");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

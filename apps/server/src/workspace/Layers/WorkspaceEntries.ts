@@ -517,10 +517,89 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     },
   );
 
+  const listDirectory: WorkspaceEntriesShape["listDirectory"] = Effect.fn(
+    "WorkspaceEntries.listDirectory",
+  )(function* (input) {
+    const toError = (cause: unknown) =>
+      new WorkspaceEntriesError({
+        cwd: input.cwd,
+        operation: "workspaceEntries.listDirectory",
+        detail: cause instanceof Error ? cause.message : "Unable to list directory.",
+        cause,
+      });
+    const cwd = yield* workspacePaths
+      .normalizeWorkspaceRoot(input.cwd)
+      .pipe(Effect.mapError(toError));
+    const target =
+      input.directoryPath === ""
+        ? { absolutePath: cwd, relativePath: "" }
+        : yield* workspacePaths
+            .resolveRelativePathWithinRoot({
+              workspaceRoot: cwd,
+              relativePath: input.directoryPath,
+            })
+            .pipe(Effect.mapError(toError));
+    const entries = yield* Effect.tryPromise({
+      try: async () => {
+        const root = await fsPromises.realpath(cwd);
+        const directory = await fsPromises.realpath(target.absolutePath);
+        const relative = path.relative(root, directory);
+        if (
+          relative === ".." ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative) ||
+          relative.split(path.sep).includes(".git") ||
+          target.relativePath.split("/").includes(".git")
+        ) {
+          throw new Error("Directory must be inside the workspace and outside .git.");
+        }
+        const children = await fsPromises.readdir(directory, { withFileTypes: true });
+        return children.flatMap((child): ProjectEntry[] =>
+          child.name === ".git" || (!child.isFile() && !child.isDirectory())
+            ? []
+            : [
+                {
+                  path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
+                  kind: child.isDirectory() ? "directory" : "file",
+                },
+              ],
+        );
+      },
+      catch: toError,
+    });
+    const entryPaths = entries.map((entry) => entry.path);
+    const visiblePaths =
+      Option.isSome(gitOption) && (yield* isInsideGitWorkTree(cwd))
+        ? yield* gitOption.value.filterIgnoredPaths(cwd, entryPaths).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Unable to classify ignored workspace entries", {
+                cwd,
+                cause,
+              }).pipe(Effect.as(entryPaths)),
+            ),
+          )
+        : entryPaths;
+    const visible = new Set(visiblePaths);
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    return {
+      entries: entries
+        .map((entry) => (visible.has(entry.path) ? entry : { ...entry, ignored: true }))
+        .toSorted((left, right) =>
+          left.kind === right.kind
+            ? collator.compare(left.path, right.path)
+            : left.kind === "directory"
+              ? -1
+              : 1,
+        ),
+      truncated: false,
+    };
+  });
+
   return {
     browse,
     invalidate,
     search,
+    listDirectory,
   } satisfies WorkspaceEntriesShape;
 });
 

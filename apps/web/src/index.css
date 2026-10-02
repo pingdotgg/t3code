@@ -178,6 +178,9 @@
   --app-sidebar-legacy-row-padding-x: calc(var(--app-sidebar-font-size) * 0.545455);
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
+  /* Workspace/branch/PR line under the message composer. Its own setting so
+     it can stay visibly quieter than the composer's controls at any size. */
+  --app-composer-meta-font-size: 11px;
   --pr-body-font-size: 14px;
   --sidebar-translucency-alpha: 100%;
   --sidebar-backdrop-blur: 0px;
@@ -1041,12 +1044,12 @@ label:has(> select#reasoning-effort) select {
   flex-shrink: 0;
   align-items: center;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  background: color-mix(in srgb, var(--muted) 20%, var(--background));
+  background: var(--chat-background);
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
-  background: color-mix(in srgb, var(--background) 94%, var(--card));
+  background: var(--chat-background);
 }
 
 .diff-render-file {

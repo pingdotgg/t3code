@@ -142,8 +142,9 @@ Tear down when the user explicitly asks, confirms the iteration is finished, or 
 When teardown is appropriate:
 
 1. Stop the exact managed terminal with `terminal_stop({terminalId})`. For a legacy provider-attached server, use its original shell stop/interrupt tool instead. Do not stop another chat's server or unrelated processes.
-2. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
-3. Otherwise remove only a path created for this test after resolving and verifying the exact target.
+2. If the server was started with an isolated `--home-dir`, also reap it with `pnpm dev:stop --home-dir <absolute-base-dir>` from the repository root (refuses pidfiles that do not belong to a dev server, and clears stale ones). Stale isolated servers otherwise linger and shift ports for later runs.
+3. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
+4. Otherwise remove only a path created for this test after resolving and verifying the exact target.
 
 If completion is uncertain, keep the environment alive and mention that it is retained for further iteration. A fresh isolated base directory remains the safest reset when authentication, migrations, or fixture state becomes ambiguous.
 

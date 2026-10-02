@@ -32,7 +32,7 @@ const CHECKPOINT_DIFF_CACHE_CAPACITY = 128;
 const CHECKPOINT_DIFF_CACHE_MAX_STRING_BYTES = 32 * 1024 * 1024;
 const CHECKPOINT_DIFF_CACHE_MAX_ENTRY_STRING_BYTES =
   CHECKPOINT_DIFF_CACHE_MAX_STRING_BYTES / CHECKPOINT_DIFF_CACHE_CAPACITY;
-const CHECKPOINT_DIFF_CACHE_TTL = Duration.seconds(30);
+const CHECKPOINT_DIFF_CACHE_TTL = Duration.minutes(5);
 
 class CheckpointDiffCacheKey extends Data.Class<{
   readonly cwd: string;
@@ -42,6 +42,17 @@ class CheckpointDiffCacheKey extends Data.Class<{
   readonly paths: ReadonlyArray<string>;
 }> {}
 
+class CheckpointDiffFilesCacheKey extends Data.Class<{
+  readonly cwd: string;
+  readonly fromCommitOid: string;
+  readonly toCommitOid: string;
+  readonly paths: ReadonlyArray<string>;
+}> {}
+
+/** Bounded by entry count only: file-stat lists are small and keys are immutable projected OIDs. */
+const CHECKPOINT_DIFF_FILES_CACHE_CAPACITY = 128;
+const CHECKPOINT_DIFF_FILES_CACHE_TTL = Duration.minutes(5);
+
 /**
  * Bounds the history walk used to separate turn-authored commits from base
  * movement. Threads that move their base by more than this fall back to a
@@ -49,10 +60,11 @@ class CheckpointDiffCacheKey extends Data.Class<{
  */
 const BASE_MOVEMENT_MAX_COMMITS = 1000;
 const BASE_PROJECTION_CACHE_MAX_ENTRIES = 128;
+// Short TTL: the projection also reads mutable ref state outside the cache key.
 const BASE_PROJECTION_CACHE_TTL = Duration.seconds(5);
 
-/** Reflog subjects for operations that move a workspace onto history it did not author. */
-const BASE_MOVING_REFLOG_OPERATIONS = /^(rebase|merge|pull)\b/;
+/** Reflog subjects for operations that move a workspace onto history it did not author (branch switches and hard resets included; both degrade to a plain diff without a foreign base). */
+const BASE_MOVING_REFLOG_OPERATIONS = /^(rebase|merge|pull|checkout|reset)\b/;
 
 class BaseProjectionCacheKey extends Data.Class<{
   readonly cwd: string;
@@ -555,7 +567,10 @@ const makeCheckpointStore = Effect.gen(function* () {
         fastForwardCandidate = null;
         expectFromBaseAfterPull = false;
       }
-      if (BASE_MOVING_REFLOG_OPERATIONS.test(subject)) {
+      // A checkout/reset landing on the turn's end commit returns to the turn; only checkouts inside the window adopt a new base.
+      const isReturnToTurnEnd =
+        /^(checkout|reset)\b/.test(subject) && commit === input.toBaseCommit;
+      if (!isReturnToTurnEnd && BASE_MOVING_REFLOG_OPERATIONS.test(subject)) {
         baseMoved = true;
       }
       if (isPull) {
@@ -963,11 +978,70 @@ const makeCheckpointStore = Effect.gen(function* () {
     },
   );
 
+  const executeCheckpointDiffFiles = Effect.fn("executeCheckpointDiffFiles")((
+    key: CheckpointDiffFilesCacheKey,
+  ) => {
+    const pathArgs = key.paths.length > 0 ? ["--", ...key.paths] : [];
+    // Like the patch path, minus quadratic --find-copies-harder.
+    const similarityArgs = ["--find-renames", "--find-copies"];
+    return Effect.all(
+      [
+        git.execute({
+          operation: "CheckpointStore.diffCheckpointFiles",
+          cwd: key.cwd,
+          args: [
+            "diff",
+            "--numstat",
+            "-z",
+            ...similarityArgs,
+            key.fromCommitOid,
+            key.toCommitOid,
+            ...pathArgs,
+          ],
+          maxOutputBytes: CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES,
+        }),
+        git.execute({
+          operation: "CheckpointStore.diffCheckpointFiles",
+          cwd: key.cwd,
+          args: [
+            "diff",
+            "--name-status",
+            "-z",
+            ...similarityArgs,
+            key.fromCommitOid,
+            key.toCommitOid,
+            ...pathArgs,
+          ],
+          maxOutputBytes: CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES,
+        }),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(([numstatResult, nameStatusResult]) => {
+        const statsByPath = new Map(
+          parseTurnDiffFilesFromNumstat(numstatResult.stdout).map(
+            (file) => [file.path, file] as const,
+          ),
+        );
+        return parseTurnDiffFileStatusesFromNameStatus(nameStatusResult.stdout).map((file) => {
+          const stats = statsByPath.get(file.path);
+          return {
+            ...file,
+            additions: stats?.additions ?? 0,
+            deletions: stats?.deletions ?? 0,
+          };
+        });
+      }),
+    );
+  });
+  const checkpointDiffFilesCache = yield* Cache.makeWith(executeCheckpointDiffFiles, {
+    capacity: CHECKPOINT_DIFF_FILES_CACHE_CAPACITY,
+    timeToLive: (exit) => (Exit.isSuccess(exit) ? CHECKPOINT_DIFF_FILES_CACHE_TTL : Duration.zero),
+  });
+
   const diffCheckpointFiles: CheckpointStoreShape["diffCheckpointFiles"] = Effect.fn(
     "diffCheckpointFiles",
   )(function* (input) {
-    const operation = "CheckpointStore.diffCheckpointFiles";
-
     const resolvedCommits = yield* resolveDiffCommits(input);
     const paths = normalizeDiffPaths(input);
     if (input.paths !== undefined && (paths?.length ?? 0) === 0) {
@@ -978,56 +1052,15 @@ const makeCheckpointStore = Effect.gen(function* () {
       ...resolvedCommits,
     });
 
-    const pathArgs = paths !== undefined && paths.length > 0 ? ["--", ...paths] : [];
-    const [numstatResult, nameStatusResult] = yield* Effect.all(
-      [
-        git.execute({
-          operation,
-          cwd: input.cwd,
-          args: [
-            "diff",
-            "--numstat",
-            "-z",
-            "--find-renames",
-            "--find-copies",
-            "--find-copies-harder",
-            fromCommitOid,
-            toCommitOid,
-            ...pathArgs,
-          ],
-          maxOutputBytes: CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES,
-        }),
-        git.execute({
-          operation,
-          cwd: input.cwd,
-          args: [
-            "diff",
-            "--name-status",
-            "-z",
-            "--find-renames",
-            "--find-copies",
-            "--find-copies-harder",
-            fromCommitOid,
-            toCommitOid,
-            ...pathArgs,
-          ],
-          maxOutputBytes: CHECKPOINT_DIFF_NUMSTAT_MAX_OUTPUT_BYTES,
-        }),
-      ],
-      { concurrency: "unbounded" },
+    return yield* Cache.get(
+      checkpointDiffFilesCache,
+      new CheckpointDiffFilesCacheKey({
+        cwd: input.cwd,
+        fromCommitOid,
+        toCommitOid,
+        paths: paths ?? [],
+      }),
     );
-
-    const statsByPath = new Map(
-      parseTurnDiffFilesFromNumstat(numstatResult.stdout).map((file) => [file.path, file] as const),
-    );
-    return parseTurnDiffFileStatusesFromNameStatus(nameStatusResult.stdout).map((file) => {
-      const stats = statsByPath.get(file.path);
-      return {
-        ...file,
-        additions: stats?.additions ?? 0,
-        deletions: stats?.deletions ?? 0,
-      };
-    });
   });
 
   const deleteCheckpointRefs: CheckpointStoreShape["deleteCheckpointRefs"] = Effect.fn(

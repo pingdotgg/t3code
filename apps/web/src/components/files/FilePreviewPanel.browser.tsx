@@ -168,6 +168,40 @@ describe("FilePreviewPanel", () => {
     expect(writeFileMock).toHaveBeenCalledTimes(2);
   });
 
+  it("browses sibling files from breadcrumbs without mounting an explorer", async () => {
+    const onOpenFile = vi.fn();
+    listEntriesMock.mockResolvedValueOnce({
+      entries: [
+        { path: "src", kind: "directory" },
+        { path: "src/index.ts", kind: "file", parentPath: "src" },
+        { path: "src/other.ts", kind: "file", parentPath: "src" },
+      ],
+      truncated: false,
+    });
+    localStorage.setItem("t3code.fileExplorerOpen", "false");
+    const screen = await render(
+      <div className="flex h-96 w-96 flex-col">
+        <FilePreviewPanel
+          cwd="/repo/breadcrumb-siblings"
+          projectName="t3code"
+          relativePath="src/index.ts"
+          threadRef={threadRef}
+          onOpenFile={onOpenFile}
+        />
+      </div>,
+    );
+    try {
+      await expect.element(page.getByText("export const covered = true;")).toBeInTheDocument();
+      expect(document.querySelector("[data-file-browser-panel]")).toBeNull();
+      await page.getByRole("button", { name: "Browse src", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "other.ts", exact: true }).click();
+      expect(onOpenFile).toHaveBeenCalledWith("src/other.ts");
+      expect(document.querySelector("[data-file-browser-panel]")).toBeNull();
+    } finally {
+      await screen.unmount();
+      localStorage.removeItem("t3code.fileExplorerOpen");
+    }
+  });
   it("constrains long file scrolling to the retained panel height", async () => {
     readFileMock.mockResolvedValueOnce({
       relativePath: "long.ts",
@@ -342,6 +376,7 @@ describe("FilePreviewPanel", () => {
       await vi.waitFor(() => {
         expect(listEntriesMock).toHaveBeenCalledWith({
           cwd: "/caller/cannot-control-this",
+          directoryPath: "",
         });
         expect(document.querySelector("[data-file-browser-panel]")).not.toBeNull();
       });
