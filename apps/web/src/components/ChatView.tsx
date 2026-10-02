@@ -367,7 +367,10 @@ function isTypeToFocusGuardElement(element: Element | null): boolean {
   return (
     element.closest(TYPE_TO_FOCUS_EDITABLE_SELECTOR) !== null ||
     element.closest(TYPE_TO_FOCUS_INTERACTIVE_SELECTOR) !== null ||
-    element.closest("[data-file-browser-search]") !== null
+    element.closest("[data-file-browser-search]") !== null ||
+    // Device panel owns the keyboard while focused (sends HID keys to the
+    // simulator/emulator); never steal those keystrokes for the composer.
+    element.closest("[data-device-stream]") !== null
   );
 }
 
