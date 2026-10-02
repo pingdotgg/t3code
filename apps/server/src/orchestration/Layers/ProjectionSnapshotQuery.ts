@@ -65,7 +65,11 @@ import { ProjectionWorkflowRepository } from "../../persistence/Services/Project
 import { ProjectionWorkflowRepositoryLive } from "../../persistence/Layers/ProjectionWorkflows.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
-import { MAX_THREAD_ACTIVITIES, MAX_THREAD_MESSAGES } from "../projection/ProjectionPolicy.ts";
+import {
+  MAX_THREAD_ACTIVITIES,
+  MAX_THREAD_MESSAGES,
+  reconcileLatestTurnWithSession,
+} from "../projection/ProjectionPolicy.ts";
 // Per-thread cap for background-agent runs in shell snapshots.
 const MAX_BACKGROUND_AGENT_RUNS_PER_THREAD = 100;
 import {
@@ -467,33 +471,6 @@ function mapQueuedTurnRow(
     updatedAt: row.updatedAt,
     failedAt: row.failedAt,
     failureMessage: row.failureMessage,
-  };
-}
-
-function reconcileLatestTurnWithSession(
-  latestTurn: OrchestrationLatestTurn | null,
-  session: OrchestrationSession | null,
-): OrchestrationLatestTurn | null {
-  if (session?.status !== "running" || session.activeTurnId === null) {
-    return latestTurn;
-  }
-
-  if (latestTurn?.turnId === session.activeTurnId) {
-    return {
-      ...latestTurn,
-      state: "running",
-      startedAt: latestTurn.startedAt ?? session.updatedAt,
-      completedAt: null,
-    };
-  }
-
-  return {
-    turnId: session.activeTurnId,
-    state: "running",
-    requestedAt: session.updatedAt,
-    startedAt: session.updatedAt,
-    completedAt: null,
-    assistantMessageId: null,
   };
 }
 
@@ -904,6 +881,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     s.provider_thread_id AS "providerThreadId",
     s.runtime_mode AS "runtimeMode",
     s.active_turn_id AS "activeTurnId",
+    s.active_message_id AS "activeMessageId",
     COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
     s.last_error AS "lastError",
     s.updated_at AS "updatedAt"
@@ -1678,6 +1656,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           s.provider_instance_id AS "providerInstanceId",
           s.runtime_mode AS "runtimeMode",
           s.active_turn_id AS "activeTurnId",
+          s.active_message_id AS "activeMessageId",
           COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
           s.last_error AS "lastError",
           s.updated_at AS "updatedAt"
@@ -1986,19 +1965,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
-                sessionsByThread.set(row.threadId, {
-                  threadId: row.threadId,
-                  status: row.status,
-                  providerName: row.providerName,
-                  ...(row.providerInstanceId !== null
-                    ? { providerInstanceId: row.providerInstanceId }
-                    : {}),
-                  runtimeMode: row.runtimeMode,
-                  activeTurnId: row.activeTurnId,
-                  ...(row.resumeCursor !== null ? { resumeCursor: row.resumeCursor } : {}),
-                  lastError: row.lastError,
-                  updatedAt: row.updatedAt,
-                });
+                // Shared mapper: inlining this dropped `activeMessageId`, which
+                // every other read path preserves.
+                sessionsByThread.set(row.threadId, mapSessionRow(row));
               }
 
               const repositoryIdentities = new Map(

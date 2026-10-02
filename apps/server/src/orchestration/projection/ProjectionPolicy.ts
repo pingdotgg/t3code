@@ -1,5 +1,7 @@
 import type {
   GitPullRequestAssociation,
+  OrchestrationLatestTurn,
+  OrchestrationSession,
   ReviewSnapshot,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -63,6 +65,57 @@ export function isNonAuthoritativeCheckpointStatus(status: string | undefined): 
 
 export function terminalTurnStateForSessionStatus(status: string): "error" | "interrupted" {
   return status === "error" ? "error" : "interrupted";
+}
+
+/**
+ * Session-to-turn mapping: how a thread's latest turn is reconciled against its
+ * provider session.
+ *
+ * Both projections must answer this identically, because the decider reads the
+ * in-memory result while clients read the SQL one — if they disagree about
+ * whether a turn is still running, a dispatch the server would admit is refused
+ * in the UI, or the reverse.
+ *
+ * - A running session with an active turn is authoritative: it either keeps the
+ *   existing turn's timestamps and assistant message, or starts a fresh record
+ *   for the newly active turn.
+ * - A turn still marked running under a session that is no longer running has
+ *   been orphaned by the session ending, so it is terminalised rather than
+ *   reported as live forever.
+ */
+export function reconcileLatestTurnWithSession(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): OrchestrationLatestTurn | null {
+  if (session === null) {
+    return latestTurn;
+  }
+  if (session.status === "running" && session.activeTurnId !== null) {
+    if (latestTurn?.turnId === session.activeTurnId) {
+      return {
+        ...latestTurn,
+        state: "running",
+        startedAt: latestTurn.startedAt ?? session.updatedAt,
+        completedAt: null,
+      };
+    }
+    return {
+      turnId: session.activeTurnId,
+      state: "running",
+      requestedAt: session.updatedAt,
+      startedAt: session.updatedAt,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+  }
+  if (latestTurn?.state === "running") {
+    return {
+      ...latestTurn,
+      state: terminalTurnStateForSessionStatus(session.status),
+      completedAt: session.updatedAt,
+    };
+  }
+  return latestTurn;
 }
 
 /**

@@ -2,7 +2,10 @@ import { MessageId, QueuedTurnId, ThreadId, TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 import {
   childReportDedupeKey,
+  childReportIdentity,
   classifyChildReport,
+  classifyExecutionProvenance,
+  legacyChildReportKey,
   mintDispatch,
   mintDispatchRecord,
   transitionDelegationExecution,
@@ -300,5 +303,139 @@ describe("dispatchAuthority", () => {
     });
     expect(replacement.delegation.dispatchId).not.toBe("d1");
     expect(replacement.retiredPendingResponseQueuedTurnId).toBe("answer-a");
+  });
+});
+
+describe("classifyExecutionProvenance", () => {
+  const turnA = TurnId.make("turn-a");
+
+  it("reports no fence for delegations with no generation to prove against", () => {
+    expect(classifyExecutionProvenance({ delegation: undefined })).toBe("unfenced");
+    expect(classifyExecutionProvenance({ delegation: null })).toBe("unfenced");
+    // Pre-fence delegation.
+    expect(classifyExecutionProvenance({ delegation: delegation({}) })).toBe("unfenced");
+    // Settled delegation: nothing live left to fence, terminality is the
+    // caller's rule.
+    expect(
+      classifyExecutionProvenance({
+        delegation: delegation({ completedAt: "2026-01-01T00:00:00Z" }),
+      }),
+    ).toBe("unfenced");
+  });
+
+  it("rejects a claim that names a generation the delegation never minted", () => {
+    expect(
+      classifyExecutionProvenance({
+        delegation: delegation({}),
+        claimedDispatchId: "dX",
+      }),
+    ).toBe("superseded");
+  });
+
+  it("cannot prove a generation until a turn is bound", () => {
+    const minted = delegation({ dispatchId: "d1", dispatchSequence: 1 });
+    expect(classifyExecutionProvenance({ delegation: minted })).toBe("unproven");
+    expect(classifyExecutionProvenance({ delegation: minted, claimedDispatchId: "d1" })).toBe(
+      "unproven",
+    );
+    expect(classifyExecutionProvenance({ delegation: minted, claimedDispatchId: "d2" })).toBe(
+      "superseded",
+    );
+  });
+
+  it("separates a proven active turn from a retired one", () => {
+    const bound = delegation({ dispatchId: "d1", dispatchSequence: 1, dispatchTurnId: turnA });
+    expect(classifyExecutionProvenance({ delegation: bound, claimedTurnId: turnA })).toBe(
+      "authorized",
+    );
+    expect(
+      classifyExecutionProvenance({
+        delegation: bound,
+        claimedDispatchId: "d1",
+        claimedTurnId: turnA,
+      }),
+    ).toBe("authorized");
+    expect(classifyExecutionProvenance({ delegation: bound })).toBe("unproven");
+    expect(
+      classifyExecutionProvenance({ delegation: bound, claimedTurnId: TurnId.make("turn-b") }),
+    ).toBe("superseded");
+    // A proven turn still fails if it echoes the wrong generation.
+    expect(
+      classifyExecutionProvenance({
+        delegation: bound,
+        claimedDispatchId: "d2",
+        claimedTurnId: turnA,
+      }),
+    ).toBe("superseded");
+  });
+});
+
+describe("childReportIdentity", () => {
+  it("inherits the assignment and generation the report left implicit", () => {
+    const live = delegation({ dispatchId: "d1", dispatchSequence: 1 });
+    const identity = childReportIdentity({
+      childThreadId: "child",
+      delegation: live,
+      originTurnId: TurnId.make("turn-a"),
+      reportId: "r1",
+    });
+    expect(identity).not.toBeNull();
+    expect(identity?.assignmentId).toBe(assignmentId);
+    // The generation is inherited, so the key matches the one the decider emits
+    // for the report and the one the engine persists in its receipt.
+    expect(identity?.dispatchId).toBe("d1");
+    expect(identity?.reportKey).toBe(
+      childReportDedupeKey({
+        childThreadId: "child",
+        dispatchId: "d1",
+        originTurnId: TurnId.make("turn-a"),
+        assignmentId,
+        reportId: "r1",
+      }),
+    );
+  });
+
+  it("prefers what the report actually claimed", () => {
+    const identity = childReportIdentity({
+      childThreadId: "child",
+      delegation: delegation({ dispatchId: "d1", dispatchSequence: 1 }),
+      claimedAssignmentId: MessageId.make("other"),
+      claimedDispatchId: "d2",
+      reportId: "r1",
+    });
+    expect(identity?.assignmentId).toBe(MessageId.make("other"));
+    expect(identity?.dispatchId).toBe("d2");
+  });
+
+  it("has no identity without an assignment to inherit or claim", () => {
+    expect(childReportIdentity({ childThreadId: "child", delegation: null, reportId: "r1" })).toBe(
+      null,
+    );
+  });
+
+  it("offers a legacy key only when the two derivations actually differ", () => {
+    const base = {
+      childThreadId: "child",
+      originTurnId: TurnId.make("turn-a"),
+      assignmentId,
+      reportId: "r1",
+    };
+    // Claim and inherited generation agree: no legacy form exists.
+    expect(
+      legacyChildReportKey({ ...base, claimedDispatchId: "d1", resolvedDispatchId: "d1" }),
+    ).toBeNull();
+    // Report omitted its dispatch and inherited one: pre-unification receipts
+    // were keyed without it, so the old form must stay reachable.
+    expect(
+      legacyChildReportKey({ ...base, claimedDispatchId: undefined, resolvedDispatchId: "d1" }),
+    ).toBe(
+      childReportDedupeKey({
+        childThreadId: "child",
+        dispatchId: undefined,
+        originTurnId: TurnId.make("turn-a"),
+        assignmentId,
+        reportId: "r1",
+      }),
+    );
   });
 });
