@@ -75,6 +75,10 @@ function harness(input?: {
   readonly cleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
   readonly legacyCleanupMode?: RelayConfiguration.ManagedEndpointCleanupMode;
   readonly legacyTunnelGraceMinutes?: number;
+  /** Simulated time each release takes, advanced on the test clock. */
+  readonly releaseDelayMs?: number;
+  /** Simulated time each Cloudflare list request takes. */
+  readonly listDelayMs?: number;
 }) {
   const listRequests: ManagedEndpointProvider.ManagedEndpointTunnelListRequest[] = [];
   const deleted: string[] = [];
@@ -119,7 +123,10 @@ function harness(input?: {
         return Effect.succeed(found);
       }),
     list: (request) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
+        if (input?.listDelayMs !== undefined) {
+          yield* TestClock.adjust(input.listDelayMs);
+        }
         listRequests.push(request);
         const matching = remaining.filter((entry) => entry.status === request.status);
         const start = ((request.page ?? 1) - 1) * (request.perPage ?? 100);
@@ -190,6 +197,9 @@ function harness(input?: {
     release: (request) =>
       Effect.gen(function* () {
         releases.push(request);
+        if (input?.releaseDelayMs !== undefined) {
+          yield* TestClock.adjust(input.releaseDelayMs);
+        }
         if (request.expectedTunnelId === input?.skipTunnelId) {
           return false;
         }
@@ -686,6 +696,96 @@ describe("ManagedEndpointReaper", () => {
       });
       expect(state.deleted).toEqual([]);
     }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("starts no new deletion after a rate limit, even with deletions in flight", () => {
+    // Enough candidates to fill every concurrent slot several times over.
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      tunnel({
+        id: index === 0 ? "limited" : `ok-${index}`,
+        suffix: index.toString(16).padStart(16, "0"),
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+    );
+    const state = harness({
+      tunnels: entries,
+      allocations: recoverableOwners(entries),
+      rateLimitedTunnelId: "limited",
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      const result = yield* reaper.sweep;
+      expect(result.truncated).toBe(true);
+      expect(result.failed).toBe(1);
+      // Releases already running may finish, but none start afterwards.
+      expect(result.attempted).toBeLessThanOrEqual(
+        ManagedEndpointReaper.MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY,
+      );
+      expect(state.releases.length).toBe(result.attempted);
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("stops starting deletions when the sweep's time budget runs out", () => {
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      tunnel({
+        id: `slow-${index}`,
+        suffix: index.toString(16).padStart(16, "0"),
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+    );
+    const state = harness({
+      tunnels: entries,
+      allocations: recoverableOwners(entries),
+      // Ten seconds each: the 90-second budget allows about 9 rounds.
+      releaseDelayMs: 10_000,
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      const result = yield* reaper.sweep;
+      expect(result.truncated).toBe(true);
+      expect(result.attempted).toBeGreaterThan(0);
+      expect(result.attempted).toBeLessThan(entries.length);
+      expect(result.deleted).toBe(result.attempted);
+    }).pipe(Effect.provide(state.layer));
+  });
+
+  it.effect("counts listing time against the deletion budget", () => {
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      tunnel({
+        id: `slow-${index}`,
+        suffix: index.toString(16).padStart(16, "0"),
+        status: "down",
+        timestamp: "2026-08-25T11:00:00.000Z",
+      }),
+    );
+    const sweepWith = (listDelayMs: number) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MILLIS);
+        const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+        return (yield* reaper.sweep).attempted;
+      }).pipe(
+        Effect.provide(
+          harness({
+            tunnels: entries,
+            allocations: recoverableOwners(entries),
+            releaseDelayMs: 10_000,
+            listDelayMs,
+          }).layer,
+        ),
+      );
+
+    return Effect.gen(function* () {
+      const fastListing = yield* sweepWith(0);
+      // Two list requests of 20 seconds each use 40 of the 90-second budget.
+      const slowListing = yield* sweepWith(20_000);
+      expect(slowListing).toBeLessThan(fastListing);
+    });
   });
 
   it.effect("continues past a page of older hosts to find recoverable tunnels", () => {

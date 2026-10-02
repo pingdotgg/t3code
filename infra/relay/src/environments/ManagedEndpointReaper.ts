@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,16 @@ export const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
 // a returning host has almost certainly updated by then, and the update
 // recovers the tunnel at the same hostname.
 export const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 30;
+// Deletions run a few at a time: each one is a row-locked database
+// transaction plus two Cloudflare calls, so one at a time cannot finish a
+// full attempt budget inside the cron's timeout. Each holds a Hyperdrive
+// connection while it runs; keep this well under the 20-connection origin
+// limit that request handlers share.
+export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
+// Stop starting deletions this long after the sweep starts, leaving room under
+// the cron's two-minute timeout to finish in-flight ones and record the
+// counters. Counted from sweep start so slow listing eats into it.
+export const MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS = 90_000;
 
 export interface ManagedEndpointSweepResult {
   readonly mode: ManagedEndpointCleanupMode;
@@ -181,6 +192,7 @@ export const make = Effect.gen(function* () {
     if ((mode === "off" && legacyMode === "off") || !namespace) {
       return emptyResult(mode, legacyMode);
     }
+    const sweepStartedAtMillis = yield* Clock.currentTimeMillis;
     // The override exists for the disposable canary stage; prod always
     // waits the full grace period.
     const legacyGraceMinutes =
@@ -276,6 +288,16 @@ export const make = Effect.gen(function* () {
     let attempted = 0;
     let deleted = 0;
     let wouldDelete = 0;
+    const candidates: Array<{
+      readonly owner: ManagedEndpointAllocations.ManagedEndpointTunnelAllocation;
+      readonly tunnel: ManagedEndpointProvider.ManagedEndpointTunnel & {
+        readonly id: string;
+        readonly name: string;
+      };
+      readonly status: "down" | "inactive";
+      readonly legacy: boolean;
+      readonly inactiveBefore: string;
+    }> = [];
     let wouldDeleteLegacy = 0;
     let deletedLegacy = 0;
     let skippedLegacy = 0;
@@ -331,45 +353,67 @@ export const make = Effect.gen(function* () {
         wouldDelete += 1;
         if (mode === "dry-run") continue;
       }
-      if (attempted >= MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) {
+      if (candidates.length >= MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) {
         truncated = true;
         break;
       }
-      attempted += 1;
-      // The release re-reads the tunnel and deletes only if it is still in
-      // this status and inactive since before this tunnel's cutoff.
-      const result = yield* provider
-        .release({
-          userId: owner.userId,
-          environmentId: owner.environmentId,
-          expectedTunnelId: tunnel.id,
-          expectedInactiveBefore: DateTime.formatIso(legacy ? legacyCutoff : cutoff),
-          expectedStatus: status,
-        })
-        .pipe(Effect.result);
-      if (result._tag === "Failure") {
-        failed += 1;
-        yield* Effect.logWarning("Failed to delete an inactive managed tunnel", {
-          tunnelId: tunnel.id,
-          tunnelName: tunnel.name,
-          legacy,
-          cause: result.failure,
-        });
-        if (isRateLimited(result.failure)) {
-          truncated = true;
-          break;
-        }
-      } else if (result.success) {
-        deleted += 1;
-        if (legacy) deletedLegacy += 1;
-        yield* Effect.logInfo("Deleted an inactive managed tunnel", {
-          tunnelId: tunnel.id,
-          tunnelName: tunnel.name,
-          status,
-          legacy,
-        });
-      }
+      candidates.push({
+        owner,
+        tunnel,
+        status,
+        legacy,
+        // The release re-reads the tunnel and deletes only if it is still in
+        // this status and inactive since before this cutoff.
+        inactiveBefore: DateTime.formatIso(legacy ? legacyCutoff : cutoff),
+      });
     }
+
+    const deleteDeadline = sweepStartedAtMillis + MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS;
+    let stopDeleting = false;
+    yield* Effect.forEach(
+      candidates,
+      (candidate) =>
+        Effect.gen(function* () {
+          if (stopDeleting || (yield* Clock.currentTimeMillis) >= deleteDeadline) {
+            stopDeleting = true;
+            truncated = true;
+            return;
+          }
+          attempted += 1;
+          const result = yield* provider
+            .release({
+              userId: candidate.owner.userId,
+              environmentId: candidate.owner.environmentId,
+              expectedTunnelId: candidate.tunnel.id,
+              expectedInactiveBefore: candidate.inactiveBefore,
+              expectedStatus: candidate.status,
+            })
+            .pipe(Effect.result);
+          if (result._tag === "Failure") {
+            failed += 1;
+            yield* Effect.logWarning("Failed to delete an inactive managed tunnel", {
+              tunnelId: candidate.tunnel.id,
+              tunnelName: candidate.tunnel.name,
+              legacy: candidate.legacy,
+              cause: result.failure,
+            });
+            if (isRateLimited(result.failure)) {
+              stopDeleting = true;
+              truncated = true;
+            }
+          } else if (result.success) {
+            deleted += 1;
+            if (candidate.legacy) deletedLegacy += 1;
+            yield* Effect.logInfo("Deleted an inactive managed tunnel", {
+              tunnelId: candidate.tunnel.id,
+              tunnelName: candidate.tunnel.name,
+              status: candidate.status,
+              legacy: candidate.legacy,
+            });
+          }
+        }),
+      { concurrency: MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY, discard: true },
+    );
 
     return {
       mode,
