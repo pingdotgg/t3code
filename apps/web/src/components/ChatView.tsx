@@ -10539,7 +10539,8 @@ export default function ChatView(props: ChatViewProps) {
         modelSelection: nextThreadModelSelection,
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
+        // The new thread runs in the same checkout, so it starts on its live branch.
+        branch: checkoutBranchMismatch?.currentBranch ?? activeThreadBranch,
         worktreePath: activeThread.worktreePath,
         createdAt,
       },
@@ -10627,6 +10628,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
+    checkoutBranchMismatch,
     createThread,
     deleteThread,
     isConnecting,
