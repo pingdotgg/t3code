@@ -1,6 +1,9 @@
 import "../../index.css";
 
 import {
+  CollaborationRequestId,
+  CollaborationResponseId,
+  CollaborativeAcceptanceExchangeId,
   EnvironmentId,
   MessageId,
   ThreadId,
@@ -306,6 +309,8 @@ describe("MessagesTimeline", () => {
 
   it("visibly distinguishes messages sent from another thread", async () => {
     const text = "Please address these review findings.";
+    const collaborationRequestText = "A parent thread sent a review request.";
+    const collaborationResponseText = "A child thread sent its review findings.";
     const ownMessageText = "I’ll take care of the fixes here.";
     const screen = await render(
       <AppAtomRegistryProvider>
@@ -327,6 +332,41 @@ describe("MessagesTimeline", () => {
                   sourceThreadTitle: "Review thread",
                 },
                 createdAt: "2026-04-13T12:00:00.000Z",
+                streaming: false,
+              },
+            },
+            {
+              id: "collaboration-request-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:30.000Z",
+              message: {
+                id: MessageId.make("collaboration-request-message"),
+                role: "user",
+                text: collaborationRequestText,
+                origin: {
+                  kind: "collaboration-request",
+                  requestId: CollaborationRequestId.make("request-1"),
+                  exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+                },
+                createdAt: "2026-04-13T12:00:30.000Z",
+                streaming: false,
+              },
+            },
+            {
+              id: "collaboration-response-message",
+              kind: "message",
+              createdAt: "2026-04-13T12:00:45.000Z",
+              message: {
+                id: MessageId.make("collaboration-response-message"),
+                role: "user",
+                text: collaborationResponseText,
+                origin: {
+                  kind: "collaboration-response",
+                  requestId: CollaborationRequestId.make("request-1"),
+                  responseId: CollaborationResponseId.make("response-1"),
+                  exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+                },
+                createdAt: "2026-04-13T12:00:45.000Z",
                 streaming: false,
               },
             },
@@ -354,6 +394,15 @@ describe("MessagesTimeline", () => {
       expect(message!.classList.contains("border-violet-400/55")).toBe(true);
       expect(getComputedStyle(message!).backgroundColor).toContain("/ 0.2)");
       await expect.element(page.getByText("Review thread", { exact: true })).toBeVisible();
+      for (const collaborationText of [collaborationRequestText, collaborationResponseText]) {
+        const collaborationMessage = page
+          .getByText(collaborationText, { exact: true })
+          .element()
+          .closest(".group");
+        expect(collaborationMessage?.classList.contains("bg-violet-500/20")).toBe(true);
+        expect(getComputedStyle(collaborationMessage!).backgroundColor).toContain("/ 0.2)");
+      }
+      expect(page.getByText("From another thread", { exact: true }).elements()).toHaveLength(2);
       const ownMessage = page
         .getByText(ownMessageText, { exact: true })
         .element()

@@ -737,13 +737,15 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
             <div className="flex flex-col items-end">
               {row.message.origin?.kind === "cross-thread" ? (
                 <CrossThreadProvenance origin={row.message.origin} />
+              ) : isCollaborationMessageOrigin(row.message.origin) ? (
+                <CollaborationProvenance origin={row.message.origin} />
               ) : row.message.origin?.kind === "pull-request-monitor" ? (
                 <PullRequestMonitorProvenance origin={row.message.origin} />
               ) : null}
               <div
                 className={cn(
                   "group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
-                  row.message.origin?.kind === "cross-thread" &&
+                  isInterThreadMessageOrigin(row.message.origin) &&
                     "border-violet-400/55 bg-violet-500/20",
                   row.message.origin?.kind === "pull-request-monitor" &&
                     "border-sky-400/30 bg-gradient-to-br from-sky-500/[0.07] via-sky-500/[0.02] to-transparent",
@@ -1100,6 +1102,40 @@ function CrossThreadProvenance({
         {sourceTitle}
       </span>
     </button>
+  );
+}
+
+type CollaborationMessageOrigin = Extract<
+  NonNullable<TimelineMessage["origin"]>,
+  { kind: "collaboration-request" | "collaboration-response" }
+>;
+
+function isCollaborationMessageOrigin(
+  origin: TimelineMessage["origin"],
+): origin is CollaborationMessageOrigin {
+  return origin?.kind === "collaboration-request" || origin?.kind === "collaboration-response";
+}
+
+function isInterThreadMessageOrigin(origin: TimelineMessage["origin"]): boolean {
+  return origin?.kind === "cross-thread" || isCollaborationMessageOrigin(origin);
+}
+
+function CollaborationProvenance({ origin }: { origin: CollaborationMessageOrigin }) {
+  return (
+    <span
+      className="mb-1 mr-2 inline-flex max-w-[80%] items-center gap-1 text-[length:var(--app-status-line-font-size)] text-violet-700 dark:text-violet-300"
+      title={
+        origin.kind === "collaboration-request"
+          ? "Collaboration request from another thread"
+          : "Collaboration response from another thread"
+      }
+    >
+      <CornerDownRightIcon
+        className="size-2.5 shrink-0 text-violet-600 dark:text-violet-300"
+        aria-hidden="true"
+      />
+      <span>From another thread</span>
+    </span>
   );
 }
 
