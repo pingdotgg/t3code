@@ -435,6 +435,60 @@ describe("ManagedEndpointReaper", () => {
     }).pipe(Effect.provide(state.layer));
   });
 
+  it.effect("measures legacy age, uncounted skips, and Cloudflare totals", () => {
+    const down = (id: string, suffix: string, timestamp: string) =>
+      tunnel({ id, suffix, status: "down", timestamp });
+    const tunnels = [
+      // Legacy owners, down for 1, 10, 40, and 100 days, plus one just past
+      // seven days, which must already count as over seven.
+      down("legacy-1d", "1111111111111111", "2026-08-24T11:00:00.000Z"),
+      down("legacy-7d1h", "7777777777777777", "2026-08-18T11:00:00.000Z"),
+      down("legacy-10d", "2222222222222222", "2026-08-15T11:00:00.000Z"),
+      down("legacy-40d", "3333333333333333", "2026-07-16T11:00:00.000Z"),
+      down("legacy-100d", "4444444444444444", "2026-05-17T11:00:00.000Z"),
+      // The allocation now records a different tunnel under this name.
+      down("stale", "5555555555555555", "2026-08-25T11:00:00.000Z"),
+      // The allocation has not recorded a tunnel yet.
+      down("pending", "6666666666666666", "2026-08-25T11:00:00.000Z"),
+    ];
+    const state = harness({
+      tunnels,
+      allocations: [
+        allocation({ tunnelId: "legacy-1d", recoveryEnabled: false }),
+        allocation({ tunnelId: "legacy-7d1h", recoveryEnabled: false }),
+        allocation({ tunnelId: "legacy-10d", recoveryEnabled: false }),
+        allocation({ tunnelId: "legacy-40d", recoveryEnabled: false }),
+        allocation({ tunnelId: "legacy-100d", recoveryEnabled: false }),
+        {
+          ...allocation({ tunnelId: "current", recoveryEnabled: true }),
+          tunnelName: `${PREFIX}5555555555555555`,
+        },
+        {
+          ...allocation({ tunnelId: null, recoveryEnabled: false }),
+          tunnelName: `${PREFIX}6666666666666666`,
+        },
+      ],
+      cleanupMode: "dry-run",
+    });
+
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MILLIS);
+      const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
+      expect(yield* reaper.sweep).toMatchObject({
+        scanned: 7,
+        skippedLegacy: 5,
+        legacyOver7Days: 4,
+        legacyOver30Days: 2,
+        legacyOver90Days: 1,
+        skippedReplaced: 1,
+        skippedUnrecorded: 1,
+        totalDown: 7,
+        totalInactive: 0,
+        wouldDelete: 0,
+      });
+    }).pipe(Effect.provide(state.layer));
+  });
+
   it.effect("does not count a tunnel that was replaced before its release", () => {
     const state = harness({
       tunnels: [
@@ -648,7 +702,14 @@ describe("ManagedEndpointReaper", () => {
         deleted: 0,
         wouldDelete: 0,
         skippedLegacy: 0,
+        legacyOver7Days: 0,
+        legacyOver30Days: 0,
+        legacyOver90Days: 0,
         skippedOrphan: 0,
+        skippedReplaced: 0,
+        skippedUnrecorded: 0,
+        totalDown: null,
+        totalInactive: null,
         failed: 0,
         truncated: false,
       });
