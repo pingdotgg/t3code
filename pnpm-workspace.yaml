@@ -142,7 +142,7 @@ minimumReleaseAgeExclude:
   - "react@19.3.0"
   - "react-dom@19.3.0"
   - "react-native@0.88.0-rc.3"
-  - "react-native-keyboard-controller@1.22.4"
+  - "react-native-keyboard-controller@1.22.6"
   - "react-native-worklets@0.13.0"
   - "react-native-reanimated@4.7.0"
   - "react-native-screens@4.28.0"
@@ -253,7 +253,7 @@ patchedDependencies:
   # Link http(s) URLs with a port or a single-label host. md4c otherwise requires a dotted host and stops at ':'.
   react-native-nitro-markdown@0.5.8: patches/react-native-nitro-markdown@0.5.8.patch
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
-  react-native-keyboard-controller@1.22.4: patches/react-native-keyboard-controller@1.22.4.patch
+  react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
