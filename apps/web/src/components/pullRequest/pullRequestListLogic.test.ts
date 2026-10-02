@@ -79,8 +79,22 @@ describe("pullRequestListLogic", () => {
     expect(hasSearchQualifier("label:bug")).toBe(true);
     expect(hasSearchQualifier("author:octocat fix")).toBe(true);
     expect(hasSearchQualifier("is:open review")).toBe(true);
+    expect(hasSearchQualifier("LABEL:BUG")).toBe(true);
     expect(hasSearchQualifier("fix login")).toBe(false);
     expect(hasSearchQualifier("")).toBe(false);
+  });
+
+  it("treats ordinary titles with colons as plain text, not operators", () => {
+    expect(hasSearchQualifier("fix: login redirect")).toBe(false);
+    expect(hasSearchQualifier("chore: bump deps")).toBe(false);
+    const entries = [
+      row({ number: 1, title: "Fix login redirect" }),
+      row({ number: 2, title: "Update docs" }),
+    ];
+
+    // Narrows immediately instead of flashing the full unfiltered list
+    // while the debounced server query is on its way.
+    expect(narrowEntriesLocally(entries, "fix: login")).not.toBe(entries);
   });
 
   it("narrows plain text locally but leaves qualifier searches to the server", () => {

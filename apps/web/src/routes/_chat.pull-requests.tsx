@@ -244,7 +244,11 @@ function PullRequestsRoute() {
     return loadedEntries;
   }, [loadedEntries, sort]);
   const statsRefs = useMemo(() => {
+    // The environment travels on the ref so targets group without
+    // rescanning every loaded row per render; it is stripped before the
+    // request, which names project, repository, and number only.
     const toRef = (entry: PullRequestListRowEntry) => ({
+      environmentId: entry.environmentId,
       projectId: entry.projectId,
       repository: entry.repository,
       number: entry.number,
@@ -263,21 +267,15 @@ function PullRequestsRoute() {
   const statsTargets = useMemo(
     () =>
       environmentTargets.flatMap(({ environmentId }) => {
-        const refs = statsRefs.filter((ref) =>
-          loadedEntries.some(
-            (entry) =>
-              entry.environmentId === environmentId &&
-              entry.projectId === ref.projectId &&
-              entry.repository === ref.repository &&
-              entry.number === ref.number,
-          ),
-        );
+        const refs = statsRefs
+          .filter((ref) => ref.environmentId === environmentId)
+          .map(({ projectId, repository, number }) => ({ projectId, repository, number }));
         return Array.from({ length: Math.ceil(refs.length / STATS_BATCH_SIZE) }, (_, index) => ({
           environmentId,
           refs: refs.slice(index * STATS_BATCH_SIZE, (index + 1) * STATS_BATCH_SIZE),
         }));
       }),
-    [loadedEntries, environmentTargets, statsRefs],
+    [environmentTargets, statsRefs],
   );
   const statsQueries = useQueries({
     queries: statsTargets.map(({ environmentId, refs }) =>
@@ -289,19 +287,26 @@ function PullRequestsRoute() {
     ),
   });
   const entriesWithStats = useMemo(() => {
+    // Row identity is case-insensitive on the repository, so both sides of
+    // the join lowercase it: a stats answer that differs only in
+    // `owner/Repo` casing still attaches instead of leaving the row at 0/0.
+    // Only the counts are taken from the stat, never its identity fields,
+    // so a differently-cased answer cannot fork the row's casing downstream.
     const stats = new Map(
       statsQueries.flatMap((query, index) =>
         (query.data?.stats ?? []).map((stat) => [
-          `${statsTargets[index]?.environmentId}:${stat.projectId}:${stat.repository}#${stat.number}`,
+          `${statsTargets[index]?.environmentId}:${stat.projectId}:${stat.repository.toLowerCase()}#${stat.number}`,
           stat,
         ]),
       ),
     );
     return loadedEntries.map((entry) => {
       const stat = stats.get(
-        `${entry.environmentId}:${entry.projectId}:${entry.repository}#${entry.number}`,
+        `${entry.environmentId}:${entry.projectId}:${entry.repository.toLowerCase()}#${entry.number}`,
       );
-      return stat && entry.additions === 0 && entry.deletions === 0 ? { ...entry, ...stat } : entry;
+      return stat && entry.additions === 0 && entry.deletions === 0
+        ? { ...entry, additions: stat.additions, deletions: stat.deletions }
+        : entry;
     });
   }, [loadedEntries, statsQueries, statsTargets]);
   const sizeStatsIncomplete = useMemo(() => {
@@ -309,13 +314,13 @@ function PullRequestsRoute() {
     const stats = new Set(
       statsQueries
         .flatMap((query) => query.data?.stats ?? [])
-        .map((stat) => `${stat.projectId}:${stat.repository}#${stat.number}`),
+        .map((stat) => `${stat.projectId}:${stat.repository.toLowerCase()}#${stat.number}`),
     );
     const missing = entriesWithStats.filter(
       (entry) =>
         entry.additions === 0 &&
         entry.deletions === 0 &&
-        !stats.has(`${entry.projectId}:${entry.repository}#${entry.number}`),
+        !stats.has(`${entry.projectId}:${entry.repository.toLowerCase()}#${entry.number}`),
     ).length;
     const pending = statsQueries.some((query) => query.isPending || query.isFetching);
     return missing > 0 || pending ? missing : null;

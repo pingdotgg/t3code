@@ -60,12 +60,50 @@ export function mergePullRequestPages<
 }
 
 /**
- * GitHub search expressions (`label:bug`, `author:octocat`, `is:open`) are not
- * ordinary title substrings. When one is present, provisional local narrowing
- * must stand aside and let the authoritative server answer.
+ * GitHub search operators (`label:bug`, `author:octocat`, `is:open`). Only
+ * these stand aside for the authoritative server answer — an ordinary title
+ * such as `fix: login redirect` is plain text and keeps narrowing locally,
+ * or the list would flash unfiltered on every keystroke until the debounced
+ * server query lands.
  */
+const SEARCH_QUALIFIERS: ReadonlySet<string> = new Set([
+  "assignee",
+  "author",
+  "base",
+  "closed",
+  "comments",
+  "created",
+  "draft",
+  "head",
+  "in",
+  "involves",
+  "is",
+  "label",
+  "language",
+  "linked",
+  "mentions",
+  "merged",
+  "merged-by",
+  "milestone",
+  "no",
+  "org",
+  "project",
+  "repo",
+  "review",
+  "reviewed-by",
+  "reviewer",
+  "sort",
+  "state",
+  "status",
+  "team",
+  "type",
+  "updated",
+  "user",
+]);
+
 export function hasSearchQualifier(query: string): boolean {
-  return /\b[a-z][a-z0-9_-]*:/iu.test(query.trim());
+  const match = /\b([a-z][a-z0-9_-]*):/iu.exec(query.trim());
+  return match !== null && SEARCH_QUALIFIERS.has(match[1]!.toLowerCase());
 }
 
 /**
