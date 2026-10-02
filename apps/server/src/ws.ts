@@ -948,16 +948,35 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     const enrichmentRefreshes = Stream.fromSubscription(enrichmentChanges).pipe(
       Stream.filter((change) => change.repositoryIdentityResolved),
       Stream.groupedWithin(64, Duration.millis(25)),
+      // Build the refresh from the identities the changes carry. Re-enriching
+      // every project here re-requested each expired root, whose resolution
+      // published again, so one expiry kept every subscriber reloading every
+      // project's metadata once a minute.
       Stream.mapEffect((changes) =>
-        applicationEvents.latestApplicationSequence.pipe(
-          Effect.flatMap(loadProjectMetadataSnapshot),
-          Effect.map(({ snapshot }) =>
-            shellStreamItemFromEnrichmentRefresh({
-              snapshot,
-              changes: Array.from(changes),
-            }),
-          ),
-        ),
+        Effect.gen(function* () {
+          const identities = new Map(
+            Array.from(changes, (change) => [
+              change.workspaceRoot,
+              change.enrichment.repositoryIdentity,
+            ]),
+          );
+          const snapshotSequence = yield* applicationEvents.latestApplicationSequence;
+          const changedProjects = (yield* projects.listShells()).flatMap((project) =>
+            identities.has(project.workspaceRoot)
+              ? [{ ...project, repositoryIdentity: identities.get(project.workspaceRoot) ?? null }]
+              : [],
+          );
+          return shellStreamItemFromEnrichmentRefresh({
+            snapshot: {
+              schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+              snapshotSequence,
+              projects: changedProjects,
+              threads: [],
+              archivedThreads: [],
+            } as OrchestrationV2ShellSnapshot,
+            changes: Array.from(changes),
+          });
+        }),
       ),
     );
 
