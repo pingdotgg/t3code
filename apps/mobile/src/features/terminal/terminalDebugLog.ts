@@ -12,10 +12,6 @@ const logger = createDebugLogger("terminal", {
   legacyGlobalFlag: "__T3_TERMINAL_DEBUG__",
 });
 
-export function isTerminalDebugEnabled(): boolean {
-  return logger.isEnabled();
-}
-
 export function terminalDebugLog(message: string, data?: Record<string, unknown>): void {
   logger.log(message, data);
 }
