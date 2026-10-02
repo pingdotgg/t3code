@@ -425,22 +425,16 @@ describe("shouldShowEnvironmentIndicator", () => {
 });
 
 describe("shouldShowComposerContextStrip", () => {
-  it.each([false, true])(
-    "honors the active-thread preference with resting controls %s",
-    (hostsRestingComposerControls) => {
-      const input = {
-        isDraftHeroState: false,
-        hasActiveProject: true,
-        isGitRepo: true,
-        showEnvironmentIndicator: true,
-        hostsRestingComposerControls,
-      };
-      expect(shouldShowComposerContextStrip({ ...input, persistInActiveThreads: false })).toBe(
-        false,
-      );
-      expect(shouldShowComposerContextStrip({ ...input, persistInActiveThreads: true })).toBe(true);
-    },
-  );
+  it("honors the active-thread preference", () => {
+    const input = {
+      isDraftHeroState: false,
+      hasActiveProject: true,
+      isGitRepo: true,
+      showEnvironmentIndicator: true,
+    };
+    expect(shouldShowComposerContextStrip({ ...input, persistInActiveThreads: false })).toBe(false);
+    expect(shouldShowComposerContextStrip({ ...input, persistInActiveThreads: true })).toBe(true);
+  });
 
   it("keeps the environment indicator visible for a non-Git project", () => {
     expect(
@@ -450,7 +444,6 @@ describe("shouldShowComposerContextStrip", () => {
         hasActiveProject: true,
         isGitRepo: false,
         showEnvironmentIndicator: true,
-        hostsRestingComposerControls: false,
       }),
     ).toBe(true);
   });
@@ -463,22 +456,8 @@ describe("shouldShowComposerContextStrip", () => {
         hasActiveProject: true,
         isGitRepo: false,
         showEnvironmentIndicator: false,
-        hostsRestingComposerControls: false,
       }),
     ).toBe(false);
-  });
-
-  it("keeps the strip for visible resting composer controls in a non-Git thread", () => {
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: true,
-        persistInActiveThreads: false,
-        hasActiveProject: true,
-        isGitRepo: false,
-        showEnvironmentIndicator: false,
-        hostsRestingComposerControls: true,
-      }),
-    ).toBe(true);
   });
 
   it("shows Git controls without requiring an environment indicator", () => {
@@ -489,7 +468,6 @@ describe("shouldShowComposerContextStrip", () => {
         hasActiveProject: true,
         isGitRepo: true,
         showEnvironmentIndicator: false,
-        hostsRestingComposerControls: false,
       }),
     ).toBe(true);
   });

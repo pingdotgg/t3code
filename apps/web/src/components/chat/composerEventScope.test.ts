@@ -7,6 +7,7 @@ import {
   isInsideCollapsedComposerControls,
   isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
+  shouldBypassComposerDrag,
   useComposerMenuProps,
 } from "./composerEventScope";
 
@@ -97,6 +98,17 @@ describe("composer event scopes", () => {
     const target = new FakeElement('[data-slot="popover-popup"]');
     expect(isInsideComposerFloatingLayer(target as unknown as EventTarget)).toBe(false);
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(false);
+  });
+
+  it("lets mention drags land on the inline resting controls but not the strip", () => {
+    vi.stubGlobal("Element", FakeElement);
+
+    const controls = new FakeElement('[data-chat-composer-resting-controls="true"]');
+    const strip = new FakeElement("[data-composer-context-control]");
+    const menu = new FakeElement('[data-chat-composer-floating-layer="true"]');
+    expect(shouldBypassComposerDrag(controls as unknown as EventTarget)).toBe(false);
+    expect(shouldBypassComposerDrag(strip as unknown as EventTarget)).toBe(true);
+    expect(shouldBypassComposerDrag(menu as unknown as EventTarget)).toBe(true);
   });
 
   it("leaves ordinary composer targets outside the portaled control scope", () => {

@@ -72,13 +72,10 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
 /**
  * Read the natural widths of the resting composer controls from the DOM.
  *
- * Both the composer (deciding which blocks move into overflow) and the
- * context strip (deciding whether its labels may expand) read the same
- * numbers, so neither decision depends on what the other one hid last render.
- *
  * Hidden blocks and the unused overflow trigger stay mounted out of flow at
- * full size. The picker is the one flexible item: its intended width is
- * recovered from the truncated label.
+ * full size, so every pass measures the same natural numbers regardless of
+ * what the previous pass hid. The picker is the one flexible item: its
+ * intended width is recovered from the truncated label.
  */
 export function measureRestingComposerControls(
   controls: HTMLElement,
@@ -88,23 +85,41 @@ export function measureRestingComposerControls(
   const leadingControl =
     picker ?? controls.querySelector<HTMLElement>('[data-chat-provider-unavailable="true"]');
   if (!leadingControl) return null;
-  // Separators are display:none on phone widths; a hidden one takes no gap.
-  const separator = controls.querySelector<HTMLElement>("[data-resting-controls-separator]");
-  const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
-  const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);
   return {
     gap,
-    naturalFixedWidth:
-      (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
-    minimumFixedWidth:
-      (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+    naturalFixedWidth: picker
+      ? providerModelPickerNaturalWidth(picker)
+      : elementOuterWidth(leadingControl),
+    minimumFixedWidth: picker
+      ? providerModelPickerMinimumWidth(picker)
+      : elementOuterWidth(leadingControl),
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
   };
+}
+
+/**
+ * The room a host leaves for the resting controls: its content box minus
+ * the prompt's reservation (the pixel value its reserved element carries)
+ * and the rendered width of any image previews, each with the row gap.
+ * Reading a constant for the prompt instead of its rendered width keeps the
+ * answer independent of how much room the controls took last render.
+ */
+export function measureRestingComposerControlsHostWidth(host: HTMLElement): number {
+  const style = getComputedStyle(host);
+  const contentWidth =
+    host.clientWidth -
+    (Number.parseFloat(style.paddingLeft) || 0) -
+    (Number.parseFloat(style.paddingRight) || 0);
+  const reserved = host.querySelector<HTMLElement>("[data-resting-controls-reserved]");
+  if (!reserved) return contentWidth;
+  const gap = Number.parseFloat(style.columnGap) || 0;
+  const promptWidth = Number.parseFloat(reserved.dataset.restingControlsReserved ?? "") || 0;
+  const previews = host.querySelector<HTMLElement>('[data-chat-composer-resting-images="true"]');
+  const previewsWidth = previews ? elementOuterWidth(previews) : 0;
+  return contentWidth - promptWidth - gap - (previewsWidth > 0 ? previewsWidth + gap : 0);
 }

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { resolveRestingComposerControlsLayout } from "../composerFooterLayout";
 import {
-  resolveRestingComposerControlsLayout,
-  resolveRestingComposerControlsNaturalWidth,
-} from "../composerFooterLayout";
-import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
+  measureRestingComposerControls,
+  measureRestingComposerControlsHostWidth,
+} from "./restingComposerControlsMeasurement";
 
 function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?: string }) {
   const label = { clientWidth: input.clientWidth, scrollWidth: 160 };
@@ -38,12 +38,49 @@ function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("measureRestingComposerControlsHostWidth", () => {
+  function hostWith(input: { promptWidth: number; previewsWidth?: number }) {
+    const previews =
+      input.previewsWidth === undefined
+        ? null
+        : { getBoundingClientRect: () => ({ width: input.previewsWidth }) };
+    const reserved = { dataset: { restingControlsReserved: String(input.promptWidth) } };
+    const host = {
+      clientWidth: 600,
+      querySelector: (selector: string) =>
+        selector === "[data-resting-controls-reserved]" ? reserved : previews,
+    };
+    vi.stubGlobal("getComputedStyle", (target: unknown) => {
+      if (target === host) return { paddingLeft: "16px", paddingRight: "80px", columnGap: "4px" };
+      return { marginInlineStart: "0px", marginInlineEnd: "0px" };
+    });
+    return host as unknown as HTMLElement;
+  }
+
+  it("subtracts the host padding and the prompt's reservation", () => {
+    expect(measureRestingComposerControlsHostWidth(hostWith({ promptWidth: 160 }))).toBe(
+      600 - 16 - 80 - 160 - 4,
+    );
+  });
+
+  it("also reserves the rendered width of image previews beside the prompt", () => {
+    expect(
+      measureRestingComposerControlsHostWidth(hostWith({ promptWidth: 160, previewsWidth: 132 })),
+    ).toBe(600 - 16 - 80 - (160 + 4 + 132) - 4);
+  });
+
+  it("uses the whole content box without a reserved group", () => {
+    const host = { clientWidth: 300, querySelector: () => null };
+    vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "0px", paddingRight: "0px" }));
+    expect(measureRestingComposerControlsHostWidth(host as unknown as HTMLElement)).toBe(300);
+  });
+});
+
 describe("measureRestingComposerControls", () => {
   it("keeps controls inline when the model label is deliberately collapsed", () => {
     const measurement = measurePicker({ clientWidth: 0, flexGrow: "0" });
 
     expect(measurement.naturalFixedWidth).toBe(52);
-    expect(resolveRestingComposerControlsNaturalWidth(measurement)).toBe(196);
     expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 200 })).toEqual({
       hiddenCount: 0,
       iconOnlyCount: 0,

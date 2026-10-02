@@ -41,6 +41,17 @@ export function isInsideCollapsedComposerControls(target: EventTarget | null): b
   );
 }
 
+// Drags over the branch strip below the input or over a floating menu are
+// not drops into the prompt. The inline resting controls and image previews
+// sit inside the input, so a mention dragged onto them still lands.
+export function shouldBypassComposerDrag(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    (target.closest("[data-composer-context-control]") !== null ||
+      isInsideComposerFloatingLayer(target))
+  );
+}
+
 export function isInsideRestingComposerControlScope(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
