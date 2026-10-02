@@ -129,6 +129,11 @@ existing review settings. Neither triage nor a Macroscope review authorizes merg
 
 ## Closure and reconsideration
 
+Automated triage leaves a PR open for maintainer decision if someone in the trusted
+[TRIAGE_EXEMPTIONS.td](.github/TRIAGE_EXEMPTIONS.td) list has commented or submitted a review,
+including on an earlier head, or if `triage:keep-open` is present. This protection does not imply
+eligibility or review approval.
+
 PRs that violate these requirements can be closed before deeper review. Multiple independent fixes
 require splitting. Missing approval requires maintainer discussion or issue triage, as applicable.
 Missing evidence requires establishing the problem and showing how the change was checked.

@@ -109,6 +109,11 @@ trusted policy and reassess changed submission evidence; neither example grants 
 
 ## Apply the outcome
 
+Do not automatically close a PR if a maintainer in the trusted `TRIAGE_EXEMPTIONS.td` list has
+commented or submitted a review, including on earlier heads, or if `triage:keep-open` is present.
+Leave protected PRs open for maintainer decision. This does not grant an author exemption,
+eligibility, or review approval.
+
 In enforcement mode, execute the applicable outcome within the established scope, using the state and
 retry safeguards below. In a dry run or without the required authority, prepare the same action and
 comment text but do not write to GitHub. Keep the eligibility finding separate from action completion.
