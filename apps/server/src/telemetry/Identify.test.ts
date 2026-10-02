@@ -57,6 +57,49 @@ it.layer(NodeServices.layer)("telemetry identity", (it) => {
     ),
   );
 
+  it.effect("falls back quietly when Codex authenticates with an API key", () => {
+    const logs: CapturedLog[] = [];
+    const logger = makeCaptureLogger(logs);
+
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDirectory = path.join(config.baseDir, "home");
+      const codexAuthPath = path.join(homeDirectory, ".codex", "auth.json");
+      const anonymousId = "api-key-fallback-anonymous-id";
+      const privateApiKey = "sk-private-openai-api-key";
+
+      yield* fileSystem.makeDirectory(path.dirname(codexAuthPath), { recursive: true });
+      yield* fileSystem.writeFileString(
+        codexAuthPath,
+        `{"auth_mode":"apikey","OPENAI_API_KEY":"${privateApiKey}"}`,
+      );
+      yield* fileSystem.writeFileString(config.anonymousIdPath, anonymousId);
+
+      const identifier = yield* Identify.getTelemetryIdentifierForHome(homeDirectory);
+
+      assert.equal(identifier, sha256(anonymousId));
+      assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityDecodeError"));
+      assert.isUndefined(findIdentityLog(logs, "codex", "TelemetryIdentityReadError"));
+      const allLogs = logs
+        .map((log) =>
+          [String(log.message), ...Object.values(log.annotations).map(String)].join("\n"),
+        )
+        .join("\n");
+      assert.notInclude(allLogs, privateApiKey);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-telemetry-identify-apikey-",
+          }),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
+
   it.effect("logs structured decode context and falls back from malformed Codex auth", () => {
     const logs: CapturedLog[] = [];
     const logger = makeCaptureLogger(logs);
