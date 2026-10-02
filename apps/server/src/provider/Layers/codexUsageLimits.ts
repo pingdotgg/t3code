@@ -234,11 +234,10 @@ export function codexUsageLimitMessage(
 }
 
 /** All exhausted windows must reset before a continuation can run. */
-export function codexUsageLimitResetAt(
-  snapshot: CodexRateLimitSnapshot | undefined,
+function exhaustedWindowsResetAt(
+  allWindows: ReadonlyArray<ServerProviderUsageWindow>,
 ): string | null {
-  if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const windows = allWindows.filter((window) => window.usedPercent >= 100);
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>
@@ -247,4 +246,23 @@ export function codexUsageLimitResetAt(
         : latest,
     null,
   );
+}
+
+export function codexUsageLimitResetAt(
+  snapshot: CodexRateLimitSnapshot | undefined,
+): string | null {
+  return snapshot ? exhaustedWindowsResetAt(codexRateLimitsToWindows(snapshot)) : null;
+}
+
+/**
+ * The same reset read from the instance's published limits, which the status
+ * probe fills even when the session never saw a rate-limit notification. A
+ * reset already past at `nowMs` comes from a stale probe and is ignored.
+ */
+export function codexPublishedUsageLimitResetAt(
+  limits: ServerProviderUsageLimits | undefined,
+  nowMs: number,
+): string | null {
+  const resetAt = limits ? exhaustedWindowsResetAt(limits.windows) : null;
+  return resetAt !== null && Date.parse(resetAt) > nowMs ? resetAt : null;
 }

@@ -1620,6 +1620,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    getUsageLimits?: CodexAdapterV2.CodexAdapterV2Options["getUsageLimits"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1671,6 +1672,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }),
         },
+        ...(getUsageLimits ? { getUsageLimits } : {}),
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -5557,6 +5559,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     { name: "retry", code: "usageLimitExceeded", notification: true, expectedClass: "usage_limit" },
+    {
+      name: "published-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "expired-session-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
   ] as const) {
     it.effect(`classifies Codex terminal failures from ${scenario.name} evidence`, () =>
       Effect.scoped(
@@ -5584,6 +5598,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
               ...(scenario.name === "known-reset" || scenario.name === "deferred-reset"
                 ? [snapshot]
+                : []),
+              // An earlier turn's session window, already reset by the time this turn stops.
+              ...(scenario.name === "expired-session-reset"
+                ? [
+                    {
+                      ...snapshot,
+                      frame: {
+                        method: "account/rateLimits/updated",
+                        params: {
+                          rateLimits: {
+                            limitId: "codex",
+                            primary: {
+                              usedPercent: 100,
+                              resetsAt: 2000000000,
+                              windowDurationMins: 300,
+                            },
+                          },
+                        },
+                      },
+                    },
+                  ]
                 : []),
               ...(scenario.name === "deferred-reset"
                 ? [
@@ -5701,13 +5736,34 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 : []),
             ],
           });
+          if (scenario.name === "expired-session-reset")
+            yield* TestClock.setTime(Date.parse("2033-05-19T03:00:00.000Z"));
           const resetReceipt = yield* Deferred.make<void>();
-          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "error" &&
-            event.turnItem.failure.resetAt === resetAt
-              ? Deferred.succeed(resetReceipt, undefined)
-              : Effect.void,
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.failure.resetAt === resetAt
+                ? Deferred.succeed(resetReceipt, undefined)
+                : Effect.void,
+            undefined,
+            undefined,
+            scenario.name === "published-reset" || scenario.name === "expired-session-reset"
+              ? Effect.succeed({
+                  checkedAt: "2033-05-19T03:00:00.000Z",
+                  windows: [
+                    {
+                      id: "primary",
+                      kind: "session",
+                      label: "Session",
+                      usedPercent: 100,
+                      resetsAt: resetAt,
+                    },
+                    { id: "secondary", kind: "weekly", label: "Weekly", usedPercent: 40 },
+                  ],
+                })
+              : undefined,
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -5724,7 +5780,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           if (terminal?.status !== "failed") return;
           assert.equal(terminal.failure.class, scenario.expectedClass);
           assert.equal(terminal.threadDisposition, "reusable");
-          if (scenario.name === "known-reset" || scenario.name === "deferred-reset")
+          if (
+            scenario.name === "known-reset" ||
+            scenario.name === "deferred-reset" ||
+            scenario.name === "published-reset" ||
+            scenario.name === "expired-session-reset"
+          )
             assert.equal(terminal.failure.resetAt, resetAt);
           if (scenario.name === "matching-details")
             assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");

@@ -18,6 +18,7 @@ import { buildCodexInitializeParams } from "../../provider/Layers/CodexProvider.
 import {
   codexRateLimitsToUpdate,
   mergeCodexRateLimits,
+  codexPublishedUsageLimitResetAt,
   codexUsageLimitResetAt,
   type CodexRateLimitSnapshot,
 } from "../../provider/Layers/codexUsageLimits.ts";
@@ -27,6 +28,7 @@ import {
   isOrchestrationV2WorkActive,
   ProviderDriverKind,
   type ProviderSetupError,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -1443,7 +1445,7 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
+  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "getUsageLimits" | "resolveRuntime"> = {},
 ) =>
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
@@ -1526,6 +1528,8 @@ export interface CodexAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /** The instance's published limits, which back a usage-limit stop's reset. */
+  readonly getUsageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
   /**
    * Resolves launch settings when each session opens, replacing `settings` and
    * `environment`. Managed ChatGPT sign-in uses it to launch the T3-installed
@@ -4919,6 +4923,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }).pipe(Effect.orDie),
         );
 
+        const usageLimitResetAt = Effect.fnUntraced(function* () {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+          // The session snapshot outlives the turn that filled it, so its reset may have passed.
+          if (resetAt !== null && Date.parse(resetAt) > nowMs) return resetAt;
+          if (adapterOptions.getUsageLimits === undefined) return null;
+          // The session snapshot fills only from rate-limit notifications, which a
+          // turn refused at its first request may never get.
+          return codexPublishedUsageLimitResetAt(yield* adapterOptions.getUsageLimits, nowMs);
+        });
+
         const makeRootTerminalEvent = Effect.fn("CodexAdapterV2.makeRootTerminalEvent")(
           function* (input: {
             readonly context: ActiveCodexTurnContext;
@@ -4961,7 +4976,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: yield* usageLimitResetAt(),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -4996,9 +5011,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ...event,
                   failure: {
                     ...event.failure,
-                    resetAt:
-                      event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                    resetAt: event.failure.resetAt ?? (yield* usageLimitResetAt()),
                   },
                 }
               : event;
