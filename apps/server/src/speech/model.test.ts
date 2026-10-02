@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises sparse native model files without downloading a model.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,7 +12,15 @@ import {
   SPEECH_MODELS,
 } from "./model.ts";
 
-afterEach(() => vi.unstubAllGlobals());
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFS>();
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) };
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("speech model catalog", () => {
   it("contains unique ids and filenames", () => {
@@ -100,7 +109,10 @@ it("resumes a model download after the response ends early", async () => {
     const path = await downloadSpeechModel(directory, model);
     expect(await NodeFSP.readFile(path)).toEqual(bytes);
     expect(fetchModel).toHaveBeenCalledTimes(2);
-    expect(await NodeFSP.readdir(directory)).toEqual([model.filename]);
+    expect(await NodeFSP.readdir(directory)).toEqual([
+      model.filename,
+      `${model.filename}.verified`,
+    ]);
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }
@@ -125,6 +137,37 @@ it("retries a terminated model connection", async () => {
   try {
     expect(await NodeFSP.readFile(await downloadSpeechModel(directory, model))).toEqual(bytes);
     expect(fetchModel).toHaveBeenCalledTimes(2);
+  } finally {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("reuses verification only while the model file and expected digest are unchanged", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "speech-verified-"));
+  const bytes = Buffer.from("verified model");
+  const model = {
+    ...SPEECH_MODELS[0]!,
+    filename: "cached.gguf",
+    size: bytes.length,
+    sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+  };
+  const fetchModel = vi.fn(async () => new Response(bytes));
+  vi.stubGlobal("fetch", fetchModel);
+  const read = vi.spyOn(NodeFS, "createReadStream");
+  try {
+    const path = await downloadSpeechModel(directory, model);
+    expect(read).toHaveBeenCalledTimes(1);
+    await downloadSpeechModel(directory, model);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(fetchModel).toHaveBeenCalledTimes(1);
+    await NodeFSP.writeFile(path, Buffer.alloc(bytes.length));
+    await NodeFSP.utimes(path, new Date(0), new Date(0));
+    expect(await NodeFSP.readFile(await downloadSpeechModel(directory, model))).toEqual(bytes);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(fetchModel).toHaveBeenCalledTimes(2);
+    await expect(
+      downloadSpeechModel(directory, { ...model, sha256: "0".repeat(64) }),
+    ).rejects.toThrow("verification failed");
   } finally {
     await NodeFSP.rm(directory, { recursive: true, force: true });
   }

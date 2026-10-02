@@ -810,9 +810,8 @@ it.effect(
         yield* Effect.promise(() => started.promise);
         yield* speech.cancelDownload("test-model");
         const result = yield* Effect.result(Fiber.join(request));
-        expect(Result.isFailure(result) && result.failure).toMatchObject({
-          _tag: "SpeechDownloadCancelledError",
-          modelId: "test-model",
+        expect(Result.isSuccess(result) && result.success).toMatchObject({
+          models: expect.any(Array),
         });
       }).pipe(Effect.provide(layer));
     }),
@@ -837,24 +836,24 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
 it.effect("selects another installed model after removing the active model", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;
-    const status = yield* speech.removeModel("test-model");
+    const models = yield* speech.removeModel("test-model");
+    const status = yield* speech.status;
     expect(status).toMatchObject({
       supported: true,
       state: "ready",
       modelId: "fallback-model",
     });
-    expect(
-      (yield* speech.models).models.find((model) => model.id === "fallback-model")?.active,
-    ).toBe(true);
+    expect(models.models.find((model) => model.id === "fallback-model")?.active).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
 it.effect("does not mark a deleted model active when no models remain installed", () =>
   Effect.gen(function* () {
     readyModels.delete("fallback-model");
     const speech = yield* SpeechService.SpeechService;
-    const status = yield* speech.removeModel("test-model");
+    const models = yield* speech.removeModel("test-model");
+    const status = yield* speech.status;
     expect(status).toMatchObject({ supported: true, state: "missing-model" });
-    expect((yield* speech.models).models.every((model) => !model.active)).toBe(true);
+    expect(models.models.every((model) => !model.active)).toBe(true);
   }).pipe(Effect.provide(layer)),
 );
 it.live("frees a cancelled batch transcription and preempts it on retry", () =>

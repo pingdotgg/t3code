@@ -9,7 +9,11 @@ import {
   type VoiceInputControllerDependencies,
   type VoiceRecorder,
 } from "./controller.ts";
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import {
+  VoiceTranscriptionError,
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+} from "./transcription.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -667,5 +671,51 @@ describe("VoiceInputController", () => {
 
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("background");
+  });
+});
+
+describe("voice preparation errors", () => {
+  beforeEach(resetVoiceInputGlobalsForTests);
+  it.each([
+    [
+      new VoiceTranscriptionError(
+        "preparation-failed",
+        "Reconnect the project environment to load its dictionary.",
+      ),
+      "Reconnect the project environment to load its dictionary.",
+    ],
+    [
+      new VoiceTranscriptionError("unavailable", "Download a transcription model."),
+      "Download a transcription model.",
+    ],
+    [
+      new VoiceTranscriptionError("unsupported-locale", "internal detail"),
+      "Voice transcription is not available for this language.",
+    ],
+    [
+      new VoiceTranscriptionError("preparation-failed", " "),
+      "Could not prepare voice transcription.",
+    ],
+    [new Error("internal detail"), "Could not prepare voice transcription."],
+    [
+      new Error("voice-operation-busy"),
+      "Voice transcription is still finishing. Try again shortly.",
+    ],
+  ])("reports the actionable preparation message for %s", async (error, expected) => {
+    const onStateChange = vi.fn();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () => {
+          throw error;
+        },
+      }),
+      onStateChange,
+    });
+    await harness.controller.start();
+    expect(onStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ phase: "error", error: expected }),
+    );
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+    expect(harness.commits).toEqual([]);
   });
 });

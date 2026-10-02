@@ -258,11 +258,25 @@ const speechModelPath = (directory: string, model: SpeechModel): string =>
 
 async function hasExpectedFile(path: string, model: SpeechModel): Promise<boolean> {
   const stat = await NodeFSP.stat(path).catch(() => null);
-  if (stat?.size !== model.size) return false;
+  if (!stat?.isFile() || stat.size !== model.size) return false;
+  const marker = [model.sha256, stat.size, stat.mtimeMs, stat.ctimeMs, stat.dev, stat.ino].join(
+    ":",
+  );
+  if ((await NodeFSP.readFile(`${path}.verified`, "utf8").catch(() => null)) === marker)
+    return true;
   const digest = NodeCrypto.createHash("sha256");
   try {
     for await (const chunk of NodeFS.createReadStream(path)) digest.update(chunk);
-    return digest.digest("hex") === model.sha256;
+    if (digest.digest("hex") !== model.sha256) return false;
+    const current = await NodeFSP.stat(path);
+    if (
+      current.size !== stat.size ||
+      current.mtimeMs !== stat.mtimeMs ||
+      current.ctimeMs !== stat.ctimeMs
+    )
+      return false;
+    await NodeFSP.writeFile(`${path}.verified`, marker, { mode: 0o600 }).catch(() => undefined);
+    return true;
   } catch {
     return false;
   }
@@ -354,12 +368,24 @@ export async function downloadSpeechModel(
       throw new Error("speech model verification failed");
     await NodeFSP.rm(finalPath, { force: true });
     await NodeFSP.rename(partialPath, finalPath);
+    // Rename changes file metadata, so record the verified file's final identity.
+    const stat = await NodeFSP.stat(finalPath);
+    await NodeFSP.writeFile(
+      `${finalPath}.verified`,
+      [model.sha256, stat.size, stat.mtimeMs, stat.ctimeMs, stat.dev, stat.ino].join(":"),
+      { mode: 0o600 },
+    ).catch(() => undefined);
     return finalPath;
   } catch (error) {
     await NodeFSP.rm(partialPath, { force: true }).catch(() => undefined);
     throw error;
+  } finally {
+    await NodeFSP.rm(`${partialPath}.verified`, { force: true }).catch(() => undefined);
   }
 }
 
-export const removeSpeechModel = (directory: string, model: SpeechModel): Promise<void> =>
-  NodeFSP.rm(speechModelPath(directory, model), { force: true });
+export async function removeSpeechModel(directory: string, model: SpeechModel): Promise<void> {
+  const path = speechModelPath(directory, model);
+  await NodeFSP.rm(path, { force: true });
+  await NodeFSP.rm(`${path}.verified`, { force: true });
+}

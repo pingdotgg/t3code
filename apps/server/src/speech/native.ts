@@ -97,6 +97,10 @@ export async function listNativeSpeechGpuDevices(
     },
   );
   return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Speech device discovery timed out."));
+    }, 10_000);
     child.on("message", (devices: unknown) => {
       if (
         Array.isArray(devices) &&
@@ -109,11 +113,21 @@ export async function listNativeSpeechGpuDevices(
             "name" in device &&
             typeof device.name === "string",
         )
-      )
+      ) {
+        clearTimeout(timer);
         resolve(devices);
+        child.kill();
+      }
     });
-    child.once("error", reject);
-    child.once("exit", (code) => reject(new Error(`Speech device discovery exited (${code}).`)));
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      child.kill();
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Speech device discovery exited (${code}).`));
+    });
   });
 }
 

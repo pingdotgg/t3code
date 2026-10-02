@@ -1,6 +1,12 @@
 import * as NodeModule from "node:module";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import * as NodeChildProcess from "node:child_process";
 import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeChildProcess>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 it("ignores unrelated device probe messages and returns GPU devices", async () => {
   const moduleUrl = `data:text/javascript,${encodeURIComponent(`
@@ -194,3 +200,44 @@ it("kills a hung streaming feed without waiting for native cleanup", async () =>
   await model.dispose();
   await rejected;
 }, 5000);
+
+it("terminates a GPU probe after returning its devices", async () => {
+  const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
+  let exited: Promise<void> | undefined;
+  const probe = vi.spyOn(NodeChildProcess, "spawn").mockImplementation((...args) => {
+    const child = spawn(...args);
+    exited = new Promise((resolve) => child.once("exit", () => resolve()));
+    return child;
+  });
+  try {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent("export const getAvailableBackends = () => [];")}`;
+    await expect(listNativeSpeechGpuDevices(moduleUrl)).resolves.toEqual([]);
+    await exited;
+  } finally {
+    probe.mockRestore();
+  }
+});
+
+it("times out and terminates a GPU probe that never replies", async () => {
+  const { spawn } = await vi.importActual<typeof NodeChildProcess>("node:child_process");
+  let exited: Promise<void> | undefined;
+  const probe = vi.spyOn(NodeChildProcess, "spawn").mockImplementation((...args) => {
+    const child = spawn(...args);
+    exited = new Promise((resolve) => child.once("exit", () => resolve()));
+    return child;
+  });
+  vi.useFakeTimers();
+  try {
+    const moduleUrl = `data:text/javascript,${encodeURIComponent("await new Promise(() => {}); export const getAvailableBackends = () => [];")}`;
+    const rejected = expect(listNativeSpeechGpuDevices(moduleUrl)).rejects.toThrow(
+      "Speech device discovery timed out.",
+    );
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejected;
+    expect(vi.getTimerCount()).toBe(0);
+    await exited;
+  } finally {
+    vi.useRealTimers();
+    probe.mockRestore();
+  }
+});

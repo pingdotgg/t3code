@@ -498,14 +498,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "transcription-environment",
     title: "Transcription environment",
     to: "/settings/voice",
-    desktopOnly: true,
     searchTerms: ["speech voice stt server machine device"],
   },
   {
     id: "local-voice-input",
     title: "Transcription models",
     to: "/settings/voice",
-    desktopOnly: true,
     searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
   },
   {
@@ -524,14 +522,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "dictionary",
     title: "Dictionary",
     to: "/settings/voice",
-    desktopOnly: true,
     searchTerms: ["speech voice transcription vocabulary names glossary"],
   },
   {
     id: "remove-filler-words",
     title: "Remove filler words",
     to: "/settings/voice",
-    desktopOnly: true,
     searchTerms: ["voice speech transcription hesitation um uh cleanup"],
   },
   {
@@ -797,28 +793,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Voice post-processing",
     to: "/settings/voice",
     searchTerms: ["speech transcription polish clean provider"],
-    desktopOnly: true,
   },
   {
     id: "speech-post-processing-model",
     title: "Voice post-processing model",
     to: "/settings/voice",
     searchTerms: ["speech transcription provider model"],
-    desktopOnly: true,
   },
   {
     id: "speech-correction-word",
     title: "Explicit correction cue",
     to: "/settings/voice",
     searchTerms: ["speech voice self correction revise err"],
-    desktopOnly: true,
   },
   {
     id: "speech-post-processing-prompt",
     title: "Voice post-processing prompt",
     to: "/settings/voice",
     searchTerms: ["speech transcription instructions cleanup"],
-    desktopOnly: true,
   },
   {
     id: "diagnostics",

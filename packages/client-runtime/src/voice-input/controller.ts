@@ -1,6 +1,7 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
 import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import { VoiceTranscriptionError } from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -188,6 +189,13 @@ function preparationErrorMessage(error: unknown): string {
   }
   if (errorCode(error) === "unsupported-locale") {
     return "Voice transcription is not available for this language.";
+  }
+  if (
+    error instanceof VoiceTranscriptionError &&
+    (error.code === "preparation-failed" || error.code === "unavailable") &&
+    error.message.trim()
+  ) {
+    return error.message;
   }
   return "Could not prepare voice transcription.";
 }

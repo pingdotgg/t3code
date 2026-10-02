@@ -153,11 +153,13 @@ export class SpeechService extends Context.Service<
     >;
     readonly downloadModel: (
       modelId: string,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
-    readonly selectModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    ) => Effect.Effect<{ readonly models: ReadonlyArray<EnvironmentSpeechModel> }, SpeechError>;
+    readonly selectModel: (
+      modelId: string,
+    ) => Effect.Effect<{ readonly models: ReadonlyArray<EnvironmentSpeechModel> }, SpeechError>;
     readonly cancelDownload: (
       modelId: string,
-    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    ) => Effect.Effect<{ readonly models: ReadonlyArray<EnvironmentSpeechModel> }, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
       options: SpeechTranscriptionOptions,
@@ -172,7 +174,9 @@ export class SpeechService extends Context.Service<
     readonly startStream: (
       options: SpeechTranscriptionOptions,
     ) => Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
-    readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly removeModel: (
+      modelId: string,
+    ) => Effect.Effect<{ readonly models: ReadonlyArray<EnvironmentSpeechModel> }, SpeechError>;
   }
 >()("t3/speech/SpeechService") {}
 
@@ -792,7 +796,10 @@ export const make = Effect.gen(function* () {
       exclusive("model download", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
-      }).pipe(Effect.andThen(freshStatus("model download"))),
+      }).pipe(
+        Effect.catchTag("SpeechDownloadCancelledError", () => Effect.void),
+        Effect.andThen(modelsEffect),
+      ),
     selectModel: (modelId) =>
       exclusive("model selection", async () => {
         if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
@@ -803,12 +810,12 @@ export const make = Effect.gen(function* () {
         loading = undefined;
       }).pipe(
         Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
-        Effect.andThen(freshStatus("model selection")),
+        Effect.andThen(modelsEffect),
       ),
     cancelDownload: (modelId) =>
       Effect.sync(() => {
         if (downloading?.modelId === modelId) downloading.controller.abort();
-      }).pipe(Effect.andThen(freshStatus("model download cancellation"))),
+      }).pipe(Effect.andThen(modelsEffect)),
     updateAcceleration: (acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
@@ -995,9 +1002,9 @@ export const make = Effect.gen(function* () {
             Effect.flatMap((replacementId) =>
               replacementId
                 ? writeSettings("model removal", { speechModelId: replacementId }).pipe(
-                    Effect.andThen(freshStatus("model removal")),
+                    Effect.andThen(modelsEffect),
                   )
-                : freshStatus("model removal"),
+                : modelsEffect,
             ),
           ),
         ),

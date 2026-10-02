@@ -85,28 +85,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.downloadModel")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          yield* speech.downloadModel(args.payload.modelId).pipe(
-            Effect.catchTags({
-              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
-              SpeechUnsupportedPlatformError: () =>
-                failEnvironmentInvalidRequest("speech_unavailable"),
-              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
-              SpeechDownloadCancelledError: () => Effect.void,
-              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
-              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
-            }),
-          );
-          return yield* speech.models.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
-          );
-        }),
-      )
-      .handle(
-        "selectModel",
-        Effect.fn("environment.voice.selectModel")(function* (args) {
-          yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          yield* speech.selectModel(args.payload.modelId).pipe(
+          return yield* speech.downloadModel(args.payload.modelId).pipe(
             Effect.catchTags({
               SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
               SpeechUnsupportedPlatformError: () =>
@@ -117,8 +96,23 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );
-          return yield* speech.models.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+        }),
+      )
+      .handle(
+        "selectModel",
+        Effect.fn("environment.voice.selectModel")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech.selectModel(args.payload.modelId).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
           );
         }),
       )
@@ -127,12 +121,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.cancelModelDownload")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          yield* speech
+          return yield* speech
             .cancelDownload(args.payload.modelId)
             .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
-          return yield* speech.models.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
-          );
         }),
       )
       .handle(
@@ -205,7 +196,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.removeModel")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          yield* speech.removeModel(args.payload.modelId).pipe(
+          return yield* speech.removeModel(args.payload.modelId).pipe(
             Effect.catchTags({
               SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
               SpeechUnsupportedPlatformError: () =>
@@ -215,9 +206,6 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
-          );
-          return yield* speech.models.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
           );
         }),
       );
