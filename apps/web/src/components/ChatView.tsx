@@ -2067,6 +2067,10 @@ export default function ChatView(props: ChatViewProps) {
       ? run.id
       : null;
   }, [isServerThread, serverProjection, serverRuntime?.lastErrorClass]);
+  // The server keeps a usage-limited thread's queue closed until the limited run
+  // is continued, so only the composer's Resume can move it.
+  const queueBlockedByUsageLimit =
+    resumableRunId !== null && serverRuntime?.lastErrorClass === "usage_limit";
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -7970,10 +7974,15 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  const onResume = async () => {
+  // The composer continues an interrupted or limited run first; the queue's own
+  // Resume sends its next message instead.
+  const onResume = async (target: "thread" | "queue" = "thread") => {
+    const continueRunId = target === "queue" ? null : resumableRunId;
     if (
       !activeThread ||
-      (resumableRunId === null && !hasHeldQueuedRuns) ||
+      // Resuming mid-edit would send the saved text, not the draft being edited.
+      (target === "queue" && (editingQueuedRun !== null || queueBlockedByUsageLimit)) ||
+      (continueRunId === null && !hasHeldQueuedRuns) ||
       isSendBusy ||
       isResuming ||
       isConnecting ||
@@ -7990,7 +7999,7 @@ export default function ChatView(props: ChatViewProps) {
     setThreadError(threadId, null);
     try {
       const resume = async () => {
-        if (resumableRunId === null) {
+        if (continueRunId === null) {
           return resumeThreadQueue({ environmentId, input: { threadId } });
         }
         const createdAt = new Date().toISOString();
@@ -8008,7 +8017,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId,
           input: {
             threadId,
-            manualContinuationOfRunId: resumableRunId,
+            manualContinuationOfRunId: continueRunId,
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -10868,6 +10877,20 @@ export default function ChatView(props: ChatViewProps) {
                                     editingRunId={editingQueuedRun?.runId ?? null}
                                     onEditQueuedRun={beginEditingQueuedRun}
                                     onCancelEdit={cancelEditingQueuedRun}
+                                    onResumeQueue={() => void onResume("queue")}
+                                    resumeBlockedReason={
+                                      queueBlockedByUsageLimit
+                                        ? "Resume the limited thread first; its queue follows"
+                                        : null
+                                    }
+                                    resumeDisabled={
+                                      isSendBusy ||
+                                      isResuming ||
+                                      isConnecting ||
+                                      isRevertingCheckpoint ||
+                                      threadDetailLoading ||
+                                      activeEnvironmentUnavailable
+                                    }
                                   />
                                 ) : null
                               }
@@ -10942,7 +10965,7 @@ export default function ChatView(props: ChatViewProps) {
                               onPageScrollRelease={onComposerPageScrollRelease}
                               onCompactContext={onCompactContext}
                               onSend={onSend}
-                              onResume={onResume}
+                              onResume={() => void onResume()}
                               onInterrupt={onInterrupt}
                               onImplementPlanInNewThread={onImplementPlanInNewThread}
                               onRespondToApproval={onRespondToApproval}

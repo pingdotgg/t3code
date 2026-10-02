@@ -14,6 +14,7 @@ import {
   GripVerticalIcon,
   ListOrderedIcon,
   PencilIcon,
+  PlayIcon,
 } from "lucide-react";
 import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 
@@ -63,6 +64,11 @@ export function QueuedRunsControl({
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  /** Starts a held queue from its next message. */
+  readonly onResumeQueue: () => void;
+  readonly resumeDisabled: boolean;
+  /** Why the queue cannot resume on its own, shown on the disabled action. */
+  readonly resumeBlockedReason: string | null;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -263,12 +269,48 @@ export function QueuedRunsControl({
           <ComposerBanner.Icon>
             <ListOrderedIcon />
           </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
+          <ComposerBanner.Content className="text-muted-foreground">
+            {workflow?.isHeld ? "Queue paused" : "Queued"}
+          </ComposerBanner.Content>
           <ComposerBanner.Actions>
             <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
             <ComposerBanner.ToggleIcon expanded={expanded} />
           </ComposerBanner.Actions>
         </ComposerBanner.Row>
+        {workflow?.isHeld && queued.length > 0 ? (
+          <ComposerBanner.Row>
+            <ComposerBanner.Content className="text-muted-foreground">
+              Nothing is sent until you resume.
+            </ComposerBanner.Content>
+            <ComposerBanner.Actions>
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0" />}>
+                  {/* Resuming mid-edit would send the saved text, not the draft being edited. */}
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={
+                      props.resumeDisabled ||
+                      props.resumeBlockedReason !== null ||
+                      busyRunId !== null ||
+                      props.editingRunId !== null
+                    }
+                    onClick={props.onResumeQueue}
+                  >
+                    <PlayIcon />
+                    Resume queue
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {props.resumeBlockedReason ??
+                    (props.editingRunId !== null
+                      ? "Save or cancel the queued message edit first"
+                      : "Send the next queued message")}
+                </TooltipPopup>
+              </Tooltip>
+            </ComposerBanner.Actions>
+          </ComposerBanner.Row>
+        ) : null}
         <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
           <ComposerBanner.Children render={<ol />} id={queueListId}>
             {items.map((item) => {
