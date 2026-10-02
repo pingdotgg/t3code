@@ -9,6 +9,7 @@ export interface ShortcutEventLike {
   type?: string;
   code?: string;
   key: string;
+  repeat?: boolean;
   metaKey: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;

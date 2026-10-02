@@ -48,7 +48,6 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   EnvironmentSpeechModelRequest,
   EnvironmentSpeechModels,

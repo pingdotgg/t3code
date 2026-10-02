@@ -159,6 +159,7 @@ export function resolveSpeechPostProcessingModelSelection(
 ): ModelSelection {
   const canUse = (selection: ModelSelection) => {
     if (!isModelSelectionProviderEnabled(settings, selection)) return false;
+    if (settings.providerInstances[selection.instanceId]?.driver === "acpRegistry") return false;
     if (providers === undefined) return true;
     const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
     return (

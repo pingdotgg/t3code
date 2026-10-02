@@ -139,6 +139,23 @@ describe("serverSettings helpers", () => {
     }
   });
 
+  it("falls back from ACP Registry before provider snapshots are available", () => {
+    const settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      speechPostProcessingModelSelection: createModelSelection(
+        ProviderInstanceId.make("registry"),
+        "registry-model",
+      ),
+      providerInstances: {
+        registry: { driver: ProviderDriverKind.make("acpRegistry"), enabled: true, config: {} },
+        codex: { driver: ProviderDriverKind.make("codex"), enabled: true, config: {} },
+      },
+    };
+    expect(resolveSpeechPostProcessingModelSelection(settings)).toEqual(
+      DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection,
+    );
+  });
+
   it("preserves an enabled custom voice selection independently of text generation", () => {
     const selection = createModelSelection(ProviderInstanceId.make("voice"), "custom-model", [
       { id: "variant", value: "high" },

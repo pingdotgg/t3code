@@ -1,7 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderReplayEntry } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -12,6 +13,10 @@ import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCod
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as OpenCode2TextGeneration from "@t3tools/provider-opencode/server/v2/textGeneration";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
+
+const decodeReplayEntries = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Array(ProviderReplayEntry)),
+);
 
 const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -37,6 +42,38 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         },
       });
       assert.equal(title.title, "Fix OAuth Login Redirect Loop");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("cleans a transcript through a temporary session and removes it", () =>
+    Effect.gen(function* () {
+      const entries = decodeReplayEntries(
+        JSON.stringify(OPENCODE2_TITLE_GENERATION)
+          .replaceAll("generateThreadTitle", "generateTranscriptionPostProcessing")
+          .replaceAll(
+            '\\"title\\": \\"Fix OAuth Login Redirect Loop\\"',
+            '\\"transcription\\": \\"Fix the OAuth redirect.\\"',
+          ),
+      );
+      const server = yield* OpenCode2AdapterV2Testkit.replayServer({
+        provider: "opencode",
+        protocol: OpenCode2AdapterV2Testkit.OPENCODE2_HTTP_PROTOCOL,
+        version: "2.0.18",
+        scenario: "opencode2_transcription_cleanup",
+        entries: [...entries, { type: "runtime_exit", status: "success" }],
+      });
+      const generation = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, server),
+      );
+      const result = yield* generation.generateTranscriptionPostProcessing({
+        cwd: process.cwd(),
+        prompt: "Clean this transcript: fix the oauth redirect",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "opencode/big-pickle",
+        },
+      });
+      assert.equal(result.transcription, "Fix the OAuth redirect.");
     }).pipe(Effect.scoped),
   );
 
