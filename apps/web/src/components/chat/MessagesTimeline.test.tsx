@@ -616,7 +616,6 @@ describe("MessagesTimeline", () => {
   it("treats only the strict list end as the live edge", async () => {
     const {
       resolveTimelineIsAtEnd,
-      resolveTimelineMinimapHasPersistentGutter,
       resolveTimelineMinimapCurrentIndex,
       resolveTimelineMinimapHeightStyle,
       resolveTimelineMinimapHitStripWidth,
@@ -707,15 +706,6 @@ describe("MessagesTimeline", () => {
         itemBounds: [{ top: 80, height: 20 }],
       }),
     ).toBeNull();
-    // Comfortable width: the column is capped at 768px.
-    expect(resolveTimelineMinimapHasPersistentGutter(832, 768)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(863, 768)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(864, 768)).toBe(true);
-    // Wider Chat width settings consume the gutter the minimap relies on.
-    expect(resolveTimelineMinimapHasPersistentGutter(1400, 1152)).toBe(true);
-    expect(resolveTimelineMinimapHasPersistentGutter(1200, 1152)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(2560, 2560)).toBe(false);
-
     // No usable gutter (zoomed in / narrow pane): the strip must go inert
     // instead of overlaying the centered content column.
     expect(resolveTimelineMinimapHitStripWidth(768, 768)).toBe(0);
