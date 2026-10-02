@@ -46,10 +46,12 @@ running half-upgraded. See `packages/client-runtime/src/connection/compatibility
 `effect_sql_migrations` records `migration_id` and `name`, but the migrator compares ids only:
 rows at or below the recorded maximum are skipped without checking names. A database that ran a
 local or fork migration under an id this build later assigns to a different migration therefore
-never receives this build's migration at that id. `runMigrations` logs each recorded id whose name
-differs from the manifest so the skipped schema change is diagnosable. There is no safe id range
-for a fork inside this ledger: any id at or below a future upstream id masks it forever, so fork
-schema changes belong in a separate migration table or outside the migrator entirely.
+never receives this build's migration at that id. For ids 55 and up, which hold V2's own schema,
+`runMigrations` refuses to start before migrating, because V2 cannot run without them. Below 55 it
+only logs each recorded id whose name differs from the manifest, since real databases carry
+site-local migrations there and still work. There is no safe id range for a fork inside this
+ledger: any id at or below a future upstream id masks it forever, so fork schema changes belong in
+a separate migration table or outside the migrator entirely.
 
 ## Recovery
 
