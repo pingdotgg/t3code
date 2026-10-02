@@ -80,6 +80,17 @@ it("keeps the stored available editor for an authorized launch", async () => {
   expect(state.setPreference).not.toHaveBeenCalled();
 });
 
+it("does not default to Android Studio when another editor is available", async () => {
+  state.allowed.add(secondary);
+  const open = useOpenInPreferredEditor(secondary, ["android-studio", "webstorm"]);
+  expect(await open("/work")).toMatchObject({ _tag: "Success", value: "webstorm" });
+  expect(state.setPreference).toHaveBeenCalledExactlyOnceWith(
+    "t3code:last-editor",
+    "webstorm",
+    expect.anything(),
+  );
+});
+
 it("returns the existing failures for a missing environment or editor", async () => {
   state.allowed.add(secondary);
   expect((await useOpenInPreferredEditor(null, ["vscode"])("/work"))._tag).toBe("Failure");

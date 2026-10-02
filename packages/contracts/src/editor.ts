@@ -157,6 +157,12 @@ export const EDITORS = [
     launchStyle: "line-column",
     jetbrainsProductCode: "WS",
   },
+  {
+    id: "android-studio",
+    label: "Android Studio",
+    commands: ["studio", "android-studio"],
+    launchStyle: "line-column",
+  },
   { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 

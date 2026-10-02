@@ -952,6 +952,12 @@ for (const { platform, installPath, editor, args } of [
   },
   {
     platform: "darwin",
+    installPath: "Applications/Android Studio.app/Contents/MacOS/studio",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "darwin",
     installPath: "Applications/WebStorm.app/Contents/MacOS/webstorm",
     editor: "webstorm",
     args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
@@ -997,6 +1003,42 @@ for (const { platform, installPath, editor, args } of [
     installPath: ".local/share/JetBrains/Toolbox/scripts/idea",
     editor: "idea",
     args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "linux",
+    installPath: ".local/bin/android-studio",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "linux",
+    installPath: ".local/share/JetBrains/Toolbox/scripts/studio",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "darwin",
+    installPath: "Library/Application Support/JetBrains/Toolbox/scripts/studio",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "win32",
+    installPath: "Programs/Android Studio/bin/studio64.exe",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "win32",
+    installPath: "Programs/Android/Android Studio/bin/studio64.exe",
+    editor: "android-studio",
+    args: ["--line", "12", "--column", "4", "/workspace with spaces/file.ts"],
+  },
+  {
+    platform: "win32",
+    installPath: "JetBrains/Toolbox/scripts/studio.cmd",
+    editor: "android-studio",
+    args: ['^"--line^"', '^"12^"', '^"--column^"', '^"4^"', '^"/workspace^ with^ spaces/file.ts^"'],
   },
   {
     platform: "linux",

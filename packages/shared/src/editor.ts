@@ -87,7 +87,8 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       if (env.LOCALAPPDATA) {
         candidates.push(path.join(env.LOCALAPPDATA, "JetBrains/Toolbox/scripts", `${command}.cmd`));
       }
-      for (const directory of roots.flatMap((root) => [root, path.join(root, "JetBrains")])) {
+      const vendor = editor.id === "android-studio" ? "Android" : "JetBrains";
+      for (const directory of roots.flatMap((root) => [root, path.join(root, vendor)])) {
         const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
         for (const entry of entries) {
           if (names.some((name) => entry === name || entry.startsWith(`${name} `))) {
