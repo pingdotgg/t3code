@@ -1,11 +1,10 @@
+import { areFontAdvancesMonospace, cssFontFamilies } from "@t3tools/shared/monospaceFonts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  areFontAdvancesMonospace,
   clampCodeFontSize,
   clampInterfaceFontSize,
   clampPromptFontSize,
-  cssFontFamilies,
   resolveDefaultFamilyLabel,
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,

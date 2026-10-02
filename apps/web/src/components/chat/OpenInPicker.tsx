@@ -1,3 +1,4 @@
+import { isMacPlatform } from "@t3tools/shared/platform";
 import {
   buildRemoteOpenUrl,
   EditorId,
@@ -56,7 +57,7 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
-import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
+import { cn, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 

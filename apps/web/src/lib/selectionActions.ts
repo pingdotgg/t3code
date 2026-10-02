@@ -1,6 +1,6 @@
-export type SelectionActionPoint = { x: number; y: number };
+const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
-export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
+export type SelectionActionPoint = { x: number; y: number };
 
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };

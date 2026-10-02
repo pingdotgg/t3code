@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
+import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core.ts";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -30,14 +30,10 @@ import {
   terminalWheelDeltaRows,
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
-} from "./surface";
+} from "./surface.ts";
 
-vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
-  default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
-}));
-vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
-  default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
-}));
+import { type GhosttyRuntime, loadGhosttyRuntime } from "./runtime.ts";
+import { testRuntime, testWasmSources } from "./testing/wasmSources.ts";
 
 describe("GhosttyTerminalSurface visibility", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
@@ -135,7 +131,9 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal(
       "ResizeObserver",
       class {
-        constructor(private readonly callback: () => void) {
+        private readonly callback: () => void;
+        constructor(callback: () => void) {
+          this.callback = callback;
           resizeCallbacks.add(callback);
         }
         observe() {}
@@ -181,6 +179,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       },
       async create(options: Partial<GhosttyTerminalSurfaceOptions> = {}) {
         const surface = await GhosttyTerminalSurface.create(mount as unknown as HTMLElement, {
+          runtime: testRuntime,
           theme: {
             foreground: { r: 255, g: 255, b: 255 },
             background: { r: 0, g: 0, b: 0 },
@@ -303,6 +302,48 @@ describe("GhosttyTerminalSurface visibility", () => {
     surface.clearSelection();
     harness.pointer("pointerdown", 5, 4, false, 1);
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("paints the mount before a pending runtime resolves and rethrows its failure", async () => {
+    const harness = createHarness();
+    let resolveRuntime: (runtime: GhosttyRuntime) => void = () => {};
+    const created = harness.create({
+      runtime: new Promise<GhosttyRuntime>((resolve) => {
+        resolveRuntime = resolve;
+      }),
+    });
+    expect(harness.paint).toHaveBeenCalledWith("fillRect", [0, 0, 300, 150]);
+    resolveRuntime(await loadGhosttyRuntime(testWasmSources));
+    const surface = await created;
+    surface.write("\x1b[5n");
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+
+    await expect(
+      harness.create({ runtime: Promise.reject(new Error("libghostty-vt unavailable")) }),
+    ).rejects.toThrow("libghostty-vt unavailable");
+  });
+
+  it("registers the symbols font once per URL across surfaces", async () => {
+    const harness = createHarness();
+    const sources: string[] = [];
+    vi.stubGlobal(
+      "FontFace",
+      class {
+        constructor(_family: string, source: string) {
+          sources.push(source);
+        }
+        load() {
+          return Promise.resolve(this);
+        }
+      },
+    );
+    // A host without the font must not stop a later host from registering it.
+    await harness.create();
+    expect(sources).toEqual([]);
+    await harness.create({ symbolsFontUrl: "/assets/symbols.woff2" });
+    await harness.create({ symbolsFontUrl: "/assets/other.woff2" });
+    await harness.create({ symbolsFontUrl: "/assets/symbols.woff2" });
+    expect(sources).toEqual(["url(/assets/symbols.woff2)", "url(/assets/other.woff2)"]);
   });
 
   it("starts a selection when dragging from a link", async () => {

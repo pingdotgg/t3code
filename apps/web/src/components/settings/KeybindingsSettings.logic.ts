@@ -1,3 +1,4 @@
+import { isMacPlatform } from "@t3tools/shared/platform";
 import {
   STATIC_KEYBINDING_COMMANDS,
   type KeybindingCommand,
@@ -12,7 +13,7 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { shortcutKeyFromEvent } from "../../keybindings";
-import { isMacPlatform } from "../../lib/utils";
+
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
 const usageCommandOrder = new Map<KeybindingCommand, number>(

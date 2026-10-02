@@ -25,6 +25,12 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { isTerminalUrl } from "@t3tools/ghostty-terminal/terminal-links";
+import {
+  GhosttyTerminalSurface,
+  type GhosttyTerminalSurfaceOptions,
+} from "@t3tools/ghostty-terminal/surface";
+import { type GhosttyColor, type GhosttyTheme } from "@t3tools/ghostty-terminal/core";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
@@ -51,13 +57,9 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
-import {
-  GhosttyTerminalSurface,
-  type GhosttyTerminalSurfaceOptions,
-} from "~/terminal/ghostty/surface";
-import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
+import { GHOSTTY_SYMBOLS_FONT_URL, loadWebGhosttyRuntime } from "~/terminal/ghosttyAssets";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalUrl, resolvePathLinkTarget } from "../terminal-links";
+import { resolvePathLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -491,6 +493,8 @@ export function TerminalViewport({
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
+        runtime: loadWebGhosttyRuntime(),
+        symbolsFontUrl: GHOSTTY_SYMBOLS_FONT_URL,
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         get visible() {

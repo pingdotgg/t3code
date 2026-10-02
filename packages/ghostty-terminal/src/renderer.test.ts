@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { GHOSTTY_CELL_WIDE, type GhosttyCell, type GhosttySnapshot } from "./core";
+import { GHOSTTY_CELL_WIDE, type GhosttyCell, type GhosttySnapshot } from "./core.ts";
 import {
   ghosttyTextRunEnd,
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
-} from "./renderer";
+} from "./renderer.ts";
 
 const cell = (text: string, wide = 0): GhosttyCell => ({
   text,

@@ -358,6 +358,14 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./platform": {
+      "types": "./src/platform.ts",
+      "import": "./src/platform.ts"
+    },
+    "./monospaceFonts": {
+      "types": "./src/monospaceFonts.ts",
+      "import": "./src/monospaceFonts.ts"
     }
   },
   "scripts": {

@@ -1,0 +1,149 @@
+export type TerminalLinkKind = "url" | "path";
+
+export interface TerminalLinkMatch {
+  kind: TerminalLinkKind;
+  text: string;
+  start: number;
+  end: number;
+}
+
+export interface TerminalBufferLineLike {
+  readonly isWrapped?: boolean;
+  translateToString(trimRight?: boolean): string;
+}
+
+export interface WrappedTerminalLinkLineSegment {
+  bufferLineNumber: number;
+  text: string;
+  startIndex: number;
+  endIndex: number;
+}
+
+export interface WrappedTerminalLinkLine {
+  text: string;
+  segments: ReadonlyArray<WrappedTerminalLinkLineSegment>;
+}
+
+const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
+const FILE_PATH_PATTERN =
+  /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
+// Paths also drop a trailing colon: compilers end `file:line:col:` with one.
+const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
+
+function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
+  let output = value.replace(
+    kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
+    "",
+  );
+  if (output.length === 0) return output;
+
+  const trimUnbalanced = (open: string, close: string) => {
+    while (output.endsWith(close)) {
+      const opens = output.split(open).length - 1;
+      const closes = output.split(close).length - 1;
+      if (opens >= closes) return;
+      output = output.slice(0, -1);
+    }
+  };
+
+  trimUnbalanced("(", ")");
+  trimUnbalanced("[", "]");
+  trimUnbalanced("{", "}");
+  return output;
+}
+
+function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+function collectMatches(
+  line: string,
+  kind: TerminalLinkKind,
+  pattern: RegExp,
+  existing: TerminalLinkMatch[],
+): TerminalLinkMatch[] {
+  const matches: TerminalLinkMatch[] = [];
+  pattern.lastIndex = 0;
+
+  for (const rawMatch of line.matchAll(pattern)) {
+    const raw = rawMatch[0];
+    const start = rawMatch.index ?? -1;
+    if (start < 0 || raw.length === 0) continue;
+
+    const trimmed = trimClosingDelimiters(raw, kind);
+    if (trimmed.length === 0) continue;
+    if (kind === "path" && isTerminalUrl(trimmed)) continue;
+
+    const candidate: TerminalLinkMatch = {
+      kind,
+      text: trimmed,
+      start,
+      end: start + trimmed.length,
+    };
+
+    const collides = [...existing, ...matches].some((other) => overlaps(candidate, other));
+    if (collides) continue;
+
+    matches.push(candidate);
+  }
+
+  return matches;
+}
+
+export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
+  const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
+  const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
+  return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+}
+
+export function isTerminalUrl(value: string): boolean {
+  return /^https?:\/\//iu.test(value);
+}
+
+export function collectWrappedTerminalLinkLine(
+  bufferLineNumber: number,
+  getLine: (bufferLineIndex: number) => TerminalBufferLineLike | null | undefined,
+): WrappedTerminalLinkLine | null {
+  const anchorLine = getLine(bufferLineNumber - 1);
+  if (!anchorLine) return null;
+
+  let startBufferLineNumber = bufferLineNumber;
+  let startLine = anchorLine;
+
+  while (startBufferLineNumber > 1 && startLine.isWrapped) {
+    const previousLine = getLine(startBufferLineNumber - 2);
+    if (!previousLine) return null;
+    startBufferLineNumber -= 1;
+    startLine = previousLine;
+  }
+
+  const segments: WrappedTerminalLinkLineSegment[] = [];
+  let nextStartIndex = 0;
+  let currentBufferLineNumber = startBufferLineNumber;
+
+  while (true) {
+    const currentLine = getLine(currentBufferLineNumber - 1);
+    if (!currentLine) break;
+
+    const nextLine = getLine(currentBufferLineNumber);
+    const hasWrappedContinuation = nextLine?.isWrapped === true;
+    const text = currentLine.translateToString(!hasWrappedContinuation);
+
+    segments.push({
+      bufferLineNumber: currentBufferLineNumber,
+      text,
+      startIndex: nextStartIndex,
+      endIndex: nextStartIndex + text.length,
+    });
+    nextStartIndex += text.length;
+
+    if (!hasWrappedContinuation) break;
+    currentBufferLineNumber += 1;
+  }
+
+  return {
+    text: segments.map((segment) => segment.text).join(""),
+    segments,
+  };
+}

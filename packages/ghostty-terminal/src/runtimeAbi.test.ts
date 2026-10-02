@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import wasmDataUrl from "./vendor/ghostty-vt.wasm?inline";
-import writePtyWasmDataUrl from "./vendor/ghostty-write-pty.wasm?inline";
-import pinnedVersion from "../../../../../native/libghostty-vt/VERSION?raw";
-import { ghosttyKeyForCode } from "./keyCodes";
+import wasmDataUrl from "../assets/ghostty-vt.wasm?inline";
+import writePtyWasmDataUrl from "../assets/ghostty-write-pty.wasm?inline";
+import pinnedVersion from "../../../native/libghostty-vt/VERSION?raw";
+import { ghosttyKeyForCode } from "./keyCodes.ts";
 
 type WasmFunction = (...args: number[]) => number;
 
@@ -20,7 +20,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
 
     // The artifact carries its own provenance: the build embeds the pinned
     // revision as semver build metadata, so the repository's canonical VERSION
-    // file is the single source of truth and drift is caught here without a copy.
+    // file is the single source of truth; compare the embedded revision directly.
     const result = await WebAssembly.instantiate(wasm.buffer as ArrayBuffer, {
       env: { log: () => {} },
     });

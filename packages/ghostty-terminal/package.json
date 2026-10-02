@@ -1,0 +1,35 @@
+{
+  "name": "@t3tools/ghostty-terminal",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./core": {
+      "types": "./src/core.ts",
+      "import": "./src/core.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime.ts",
+      "import": "./src/runtime.ts"
+    },
+    "./surface": {
+      "types": "./src/surface.ts",
+      "import": "./src/surface.ts"
+    },
+    "./terminal-links": {
+      "types": "./src/terminal-links.ts",
+      "import": "./src/terminal-links.ts"
+    },
+    "./assets/*": "./assets/*"
+  },
+  "scripts": {
+    "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@t3tools/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}

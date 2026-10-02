@@ -1,3 +1,4 @@
+import { isMacPlatform } from "@t3tools/shared/platform";
 import {
   isModifierPairShortcut,
   snapShotModifierPairLabel,
@@ -9,7 +10,7 @@ import {
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 
 import { formatShortcutKeyLabel, formatShortcutLabel, shortcutConflictKey } from "../keybindings";
-import { isMacPlatform, isWindowsPlatform } from "./utils";
+import { isWindowsPlatform } from "./utils";
 
 const DESKTOP_KEY_ALIASES: Readonly<Record<string, string>> = {
   return: "enter",

@@ -1,21 +1,21 @@
-import { isMacPlatform } from "../../lib/utils";
-import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
-import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
+import { isMacPlatform } from "@t3tools/shared/platform";
+import { isMonospaceFamily } from "@t3tools/shared/monospaceFonts";
+
+import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "./terminal-links.ts";
 import {
   GhosttyTerminalCore,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
-} from "./core";
+} from "./core.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
   type GhosttyCellRange,
   type GhosttyCellMetrics,
-} from "./renderer";
-import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
-import { isMonospaceFamily } from "../../appearanceFonts";
+} from "./renderer.ts";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -33,6 +33,7 @@ const TERMINAL_GLYPH_FALLBACKS =
 // reject the whole string.
 export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
+const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
@@ -51,17 +52,19 @@ export interface GhosttyTerminalFont {
   readonly size?: number;
 }
 
-let symbolsFontLoad: Promise<void> | null = null;
+const symbolsFontLoads = new Map<string, Promise<void>>();
 
 /**
- * Register the bundled symbols-only Nerd Font once per page. It loads lazily
+ * Register each symbols-only Nerd Font URL once per page. It loads lazily
  * with the first terminal, and because it carries no regular text glyphs it
  * composes with any text face without changing metrics — prompt symbols and
  * devicons render even on machines without a locally installed Nerd Font.
  */
-function ensureTerminalSymbolsFont(): Promise<void> {
-  if (symbolsFontLoad !== null) return symbolsFontLoad;
-  symbolsFontLoad = (async () => {
+function ensureTerminalSymbolsFont(symbolsFontUrl: string | undefined): Promise<void> {
+  if (symbolsFontUrl === undefined) return Promise.resolve();
+  const existing = symbolsFontLoads.get(symbolsFontUrl);
+  if (existing) return existing;
+  const symbolsFontLoad = (async () => {
     try {
       const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
       document.fonts.add(await face.load());
@@ -69,6 +72,7 @@ function ensureTerminalSymbolsFont(): Promise<void> {
       // Locally installed fallback faces still apply.
     }
   })();
+  symbolsFontLoads.set(symbolsFontUrl, symbolsFontLoad);
   return symbolsFontLoad;
 }
 
@@ -538,6 +542,14 @@ export interface GhosttySelectionPosition {
 }
 
 export interface GhosttyTerminalSurfaceOptions {
+  /**
+   * The shared libghostty-vt instance; the surface allocates its terminal
+   * inside it. A pending load is awaited after the mount paints its
+   * background, so the canvas never waits on the WASM fetch.
+   */
+  readonly runtime: GhosttyRuntime | Promise<GhosttyRuntime>;
+  /** URL of the bundled symbols-only Nerd Font (`assets/`); skipped when absent. */
+  readonly symbolsFontUrl?: string;
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
   /** Read after font and WASM loading. Hosts can supply a getter for the latest value. */
@@ -677,6 +689,10 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
+    // Observe a pending runtime load now: a failure while the fonts load must
+    // not surface as an unhandled rejection. It rethrows at the await below.
+    const runtime = Promise.resolve(options.runtime);
+    runtime.catch(() => {});
     const canvas = document.createElement("canvas");
     canvas.className = "block size-full cursor-text";
     canvas.setAttribute("aria-hidden", "true");
@@ -715,7 +731,7 @@ export class GhosttyTerminalSurface {
     try {
       // Cell metrics must come from the faces that will render; measuring before
       // the bundled webfonts load would size the grid from a fallback font.
-      await ensureTerminalSymbolsFont();
+      await ensureTerminalSymbolsFont(options.symbolsFontUrl);
     } catch {
       // Metrics fall back to whichever faces are already available.
     }
@@ -723,6 +739,7 @@ export class GhosttyTerminalSurface {
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
     const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
     const core = await GhosttyTerminalCore.create(
+      await runtime,
       grid.cols,
       grid.rows,
       metrics.width,

@@ -4,8 +4,8 @@ import {
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
-} from "./keyCodes";
-import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
+} from "./keyCodes.ts";
+import { type GhosttyRuntime } from "./runtime.ts";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
@@ -223,6 +223,7 @@ export class GhosttyTerminalCore {
   }
 
   static async create(
+    runtime: GhosttyRuntime,
     cols: number,
     rows: number,
     cellWidth: number,
@@ -230,7 +231,7 @@ export class GhosttyTerminalCore {
     theme: GhosttyTheme,
     onPtyData: (data: string) => void,
   ): Promise<GhosttyTerminalCore> {
-    const core = new GhosttyTerminalCore(await loadGhosttyRuntime());
+    const core = new GhosttyTerminalCore(runtime);
     try {
       core.initialize(cols, rows, cellWidth, cellHeight, theme, onPtyData);
       return core;

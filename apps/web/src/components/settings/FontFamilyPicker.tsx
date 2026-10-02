@@ -1,7 +1,8 @@
+import { isMonospaceFamily } from "@t3tools/shared/monospaceFonts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import { queryInstalledFontFamilies } from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
