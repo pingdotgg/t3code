@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -589,6 +590,91 @@ it.effect("reads nothing from a host with no implementation, but reports it", ()
         { kind: "gitlab", configured: false, projectCount: 1 },
       ],
     );
+  }),
+);
+
+it.effect(
+  "reports a self-hosted Bitbucket as unimplemented instead of asking Bitbucket Cloud",
+  () =>
+    Effect.gen(function* () {
+      const listed: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "cloud",
+            workspaceRoot: "/a",
+            repository: "workspace/cloud",
+            provider: "bitbucket",
+            host: "bitbucket.org",
+          }),
+          project({
+            id: "p2",
+            title: "data center",
+            workspaceRoot: "/b",
+            repository: "proj/repo",
+            provider: "bitbucket",
+            host: "bitbucket.example.com",
+          }),
+        ],
+        providers: [
+          fakeProvider("bitbucket", {
+            listChangeRequests: (input) => {
+              listed.push(input.repository);
+              return Effect.succeed({ items: [], truncated: false, continues: true });
+            },
+          }),
+        ],
+      });
+
+      const result = yield* service.list({ state: "open" });
+
+      assert.deepStrictEqual(listed, ["workspace/cloud"]);
+      assert.deepStrictEqual(
+        result.providers.map((summary) => ({ host: summary.host, configured: summary.configured })),
+        [
+          { host: "bitbucket.org", configured: true },
+          { host: "bitbucket.example.com", configured: false },
+        ],
+      );
+    }),
+);
+
+it.effect("reads a self-hosted Bitbucket through a Cloud root that was set on purpose", () =>
+  Effect.gen(function* () {
+    const listed: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "data center",
+          workspaceRoot: "/b",
+          repository: "proj/repo",
+          provider: "bitbucket",
+          host: "bitbucket.example.com",
+        }),
+      ],
+      providers: [
+        fakeProvider("bitbucket", {
+          listChangeRequests: (input) => {
+            listed.push(input.repository);
+            return Effect.succeed({ items: [], truncated: false, continues: true });
+          },
+        }),
+      ],
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_BITBUCKET_API_BASE_URL: "https://bitbucket-proxy.example.com/2.0" },
+          }),
+        ),
+      ),
+    );
+
+    yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(listed, ["proj/repo"]);
   }),
 );
 

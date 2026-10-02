@@ -72,6 +72,7 @@ import {
 } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
+import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import { AllowGitHubReserve } from "../sourceControl/GitHubCli.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
@@ -626,6 +627,7 @@ export const make = Effect.gen(function* () {
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
   const readCache = yield* PullRequestReadCache.PullRequestReadCache;
+  const bitbucketApiBaseUrlConfigured = yield* BitbucketApi.BitbucketApiBaseUrlConfigured;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -758,7 +760,13 @@ export const make = Effect.gen(function* () {
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
-          const api = registry.get(kind);
+          // The Bitbucket provider speaks only Bitbucket Cloud's API. Unless a Cloud root was set
+          // on purpose, a Server or Data Center host has no implementation here, rather than one
+          // that asks bitbucket.org about it.
+          const api =
+            kind === "bitbucket" && host !== "bitbucket.org" && !bitbucketApiBaseUrlConfigured
+              ? null
+              : registry.get(kind);
           // Recorded before the de-duplication below, so the viewer lookup keeps the alternates
           // the listing is about to drop.
           if (api !== null) {
