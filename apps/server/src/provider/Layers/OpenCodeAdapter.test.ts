@@ -451,22 +451,24 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
           runtimeMode: "full-access",
         });
 
-        assert.equal(runtimeMock.state.mcpAddCalls.length, 1);
-        const call = runtimeMock.state.mcpAddCalls[0];
-        assert.equal(call?.directory, directory);
-        assert.equal(call?.name, "t3-code");
-        const config = call?.config as
-          | {
-              type?: unknown;
-              url?: unknown;
-              headers?: { Authorization?: unknown };
-              oauth?: unknown;
-            }
-          | undefined;
-        assert.equal(config?.type, "remote");
-        assert.match(String(config?.url), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-        assert.match(String(config?.headers?.Authorization), /^Bearer \S+$/);
-        assert.equal(config?.oauth, false);
+        assert.equal(runtimeMock.state.mcpAddCalls.length, 2);
+        const names = runtimeMock.state.mcpAddCalls.map((call) => call?.name).sort();
+        assert.deepEqual(names, ["t3-code", "t3-tools"]);
+        for (const call of runtimeMock.state.mcpAddCalls) {
+          assert.equal(call?.directory, directory);
+          const config = call?.config as
+            | {
+                type?: unknown;
+                url?: unknown;
+                headers?: { Authorization?: unknown };
+                oauth?: unknown;
+              }
+            | undefined;
+          assert.equal(config?.type, "remote");
+          assert.match(String(config?.url), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+          assert.match(String(config?.headers?.Authorization), /^Bearer \S+$/);
+          assert.equal(config?.oauth, false);
+        }
       }),
     );
   },

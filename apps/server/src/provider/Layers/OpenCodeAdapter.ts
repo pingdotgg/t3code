@@ -19,6 +19,7 @@ import {
   Exit,
   FileSystem,
   Fiber,
+  Option,
   Path,
   Queue,
   Ref,
@@ -32,6 +33,8 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import { startMcpHttpServer } from "../../mcpServer.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -41,6 +44,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { appendT3ExecutionContext } from "../executionContext.ts";
+import { buildOpenCodeDelegationMcpOptions } from "../openCodeDelegationMcp.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   buildOpenCodePermissionRules,
@@ -1705,6 +1709,65 @@ export function makeOpenCodeAdapter(
                     }),
                   );
                 }
+              }
+              if (!server.external) {
+                // Delegation lives on the per-thread `t3-tools` MCP server, not
+                // on `t3-code`. Without this, OpenCode models see the
+                // self-orchestration skill but have no `delegate_work` tool.
+                const settingsServiceOption = yield* Effect.serviceOption(ServerSettingsService);
+                let delegatedDefaultModelSelection = undefined;
+                if (Option.isSome(settingsServiceOption)) {
+                  const settingsResult = yield* settingsServiceOption.value.getSettings.pipe(
+                    Effect.result,
+                  );
+                  if (settingsResult._tag === "Success") {
+                    delegatedDefaultModelSelection =
+                      settingsResult.success.delegatedThreadModelSelection;
+                  }
+                }
+                const t3ToolsServer = yield* Effect.acquireRelease(
+                  Effect.tryPromise({
+                    try: () =>
+                      startMcpHttpServer(
+                        buildOpenCodeDelegationMcpOptions({
+                          cwd: directory,
+                          threadId: input.threadId,
+                          providerInstanceId: boundInstanceId,
+                          runtimeMode: input.runtimeMode,
+                          cliBaseDir: serverConfig.baseDir,
+                          ...(delegatedDefaultModelSelection
+                            ? { delegatedDefaultModelSelection }
+                            : {}),
+                        }),
+                      ),
+                    catch: (cause) =>
+                      new OpenCodeRuntimeError({
+                        operation: "mcp.t3-tools.start",
+                        detail: `Failed to start T3 delegation MCP server: ${openCodeRuntimeErrorDetail(cause)}`,
+                        cause,
+                      }),
+                  }),
+                  (t3Server) => Effect.promise(() => t3Server.close()).pipe(Effect.orDie),
+                );
+                yield* runOpenCodeSdk("mcp.add", () =>
+                  client.mcp.add({
+                    directory,
+                    name: "t3-tools",
+                    config: {
+                      type: "remote",
+                      url: t3ToolsServer.url,
+                      headers: {
+                        Authorization: t3ToolsServer.authorization,
+                      },
+                      oauth: false,
+                    },
+                  }),
+                );
+              } else {
+                yield* Effect.logWarning(
+                  "OpenCode delegation is unavailable on external servers: per-thread t3-tools MCP cannot be installed safely.",
+                  { threadId: input.threadId },
+                );
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only
