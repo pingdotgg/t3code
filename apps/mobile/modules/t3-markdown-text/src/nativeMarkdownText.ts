@@ -1,6 +1,7 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { imageMimeType } from "@t3tools/shared/image";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { videoMimeType } from "@t3tools/shared/video";
 /**
  * Every accent shares a lightness so no kind reads heavier than another; only hue carries
@@ -18,6 +19,7 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   "review-comment": { accent: "#8a70dd", symbol: "text.bubble" },
   "pull-request": { accent: "#7079e4", symbol: "git-pull-request" },
   skill: { accent: "#b261be", symbol: "cube" },
+  thread: { accent: "#009c96", symbol: "text.bubble" },
 } as const;
 
 /**
@@ -516,6 +518,35 @@ export function nativeMarkdownWithPreservedSoftBreaks(node: MarkdownNode): Markd
     ...(node.type === "soft_break" ? { type: "line_break" as const } : {}),
     ...(children ? { children } : {}),
   };
+}
+
+const WINDOWS_DESTINATION_PATTERN = /\](?:\(|:)\s*<?((?:[A-Za-z]:|\\\\)(?:\\.|[^\s()<>\\])*)/g;
+const MARKDOWN_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
+
+/**
+ * md4c reads the `\.` in `C:\me\.t3\shot.png` as an escape, even in a link destination.
+ * Every backslash in a Windows path is a separator, so link and image paths go back to
+ * the destination as written in `markdown`. A parsed path that more than one written
+ * destination could have produced stays as parsed.
+ */
+export function nativeMarkdownWithAuthoredWindowsPaths(
+  node: MarkdownNode,
+  markdown: string,
+): MarkdownNode {
+  const authoredByParsed = new Map<string, string | null>();
+  for (const [, authored = ""] of markdown.matchAll(WINDOWS_DESTINATION_PATTERN)) {
+    if (!isWindowsAbsolutePath(authored)) continue;
+    const parsed = authored.replace(MARKDOWN_ESCAPE_PATTERN, "$1");
+    const known = authoredByParsed.get(parsed);
+    authoredByParsed.set(parsed, known === undefined || known === authored ? authored : null);
+  }
+  if (authoredByParsed.size === 0) return node;
+  const restore = (current: MarkdownNode): MarkdownNode => {
+    const href = current.href && authoredByParsed.get(current.href);
+    const children = current.children?.map(restore);
+    return { ...current, ...(href ? { href } : {}), ...(children ? { children } : {}) };
+  };
+  return restore(node);
 }
 
 function appendBlockTerminator(

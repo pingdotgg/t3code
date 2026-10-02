@@ -51,7 +51,6 @@ const completeIconResolver = createFileTreeIconResolver(T3_PIERRE_ICONS);
 const LANGUAGE_EXTENSION_ALIASES: Record<string, string> = {
   bash: "sh",
   csharp: "cs",
-  dockerfile: "dockerfile",
   javascript: "js",
   jsx: "jsx",
   markdown: "md",
@@ -79,9 +78,17 @@ export function inferEntryKindFromPath(pathValue: string): "file" | "directory" 
   return base.includes(".") ? "file" : "directory";
 }
 
+/** Languages whose files are recognised by name rather than by extension. */
+const LANGUAGE_FILE_NAMES: Record<string, string> = {
+  dockerfile: "Dockerfile",
+};
+
 export function syntheticFileNameForLanguageId(languageId: string): string {
   const normalized = languageId.toLowerCase();
-  return `file.${LANGUAGE_EXTENSION_ALIASES[normalized] ?? normalized}`;
+  return (
+    LANGUAGE_FILE_NAMES[normalized] ??
+    `file.${LANGUAGE_EXTENSION_ALIASES[normalized] ?? normalized}`
+  );
 }
 
 export function resolvePierreIconForEntry(

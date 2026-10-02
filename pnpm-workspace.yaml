@@ -15,6 +15,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  msgpackr-extract: true
   msw: false
   node-pty: true
   sharp: true
@@ -49,11 +50,14 @@ catalog:
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
   typescript: 7.0.2
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.3
-  vite-plus: 0.3.3
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vite-plus: 1.0.0
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
+  - expo-glass-effect@58.0.3
+  - expo-blur@58.0.3
+  - expo-audio@58.0.4
   - "@clerk/backend@3.18.1"
   - "@clerk/clerk-js@6.32.1"
   - "@clerk/electron@0.0.44"
@@ -75,15 +79,40 @@ minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.79
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
-  - "@expo/cli@57.0.20"
-  - "@expo/env@2.4.3"
-  - "@expo/fingerprint@0.20.11"
-  - "@expo/metro-config@57.0.12"
-  - expo-constants@57.0.16
-  - expo-font@57.0.2
-  - expo-updates@57.0.19
-  - expo@57.0.18
-  - expo-widgets@57.0.15
+  - "@expo/cli@58.1.1"
+  - "@expo/env@2.5.1"
+  - "@expo/fingerprint@0.21.2"
+  - "@expo/metro-config@58.0.6"
+  - expo-constants@58.0.9
+  - expo-font@58.0.5
+  - expo-updates@58.0.13
+  - expo@58.0.2
+  - expo-widgets@58.0.11
+  - "@expo/config-plugins@58.0.4"
+  - "@expo/log-box@58.0.8"
+  - "@expo/metro-file-map@58.0.3"
+  - "@expo/metro-runtime@58.0.10"
+  - "@expo/metro@58.0.0-rc.0"
+  - "@expo/prebuild-config@58.0.7"
+  - "@expo/router-server@58.0.6"
+  - "@expo/ui@58.0.11"
+  - babel-preset-expo@58.0.8
+  - expo-asset@58.0.10
+  - expo-build-properties@58.0.9
+  - expo-dev-client@58.0.10
+  - expo-dev-launcher@58.0.10
+  - expo-dev-menu@58.0.10
+  - expo-image-manipulator@58.0.11
+  - expo-image-picker@58.0.10
+  - expo-image@58.0.10
+  - expo-linking@58.0.10
+  - expo-modules-autolinking@58.0.7
+  - expo-modules-core@58.0.11
+  - expo-modules-jsi@58.0.7
+  - expo-notifications@58.0.11
+  - expo-sharing@58.0.13
+  - expo-sqlite@58.0.8
+  - expo-symbols@58.0.3
   - electron@44.4.2
   - "@anthropic-ai/claude-agent-sdk@0.3.276"
   - "@alchemy.run/cloudflare-runtime@2.0.0-beta.79"
@@ -96,6 +125,32 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/stripe@1.0.0-rc.12"
   - "@shadcn/lint@0.1.5"
   - cn@0.3.2
+  - "@expo/dom-webview@58.0.2"
+  - "expo-auth-session@58.0.7"
+  - "expo-camera@58.0.7"
+  - "expo-clipboard@58.0.3"
+  - "expo-crypto@58.0.4"
+  - "expo-device@58.0.5"
+  - "expo-document-picker@58.0.4"
+  - "expo-file-system@58.0.5"
+  - "expo-haptics@58.0.4"
+  - "expo-keep-awake@58.0.3"
+  - "expo-network@58.0.3"
+  - "expo-secure-store@58.0.2"
+  - "expo-splash-screen@58.0.4"
+  - "expo-video@58.0.6"
+  - "expo-web-browser@58.0.4"
+  - "react@19.3.0"
+  - "react-dom@19.3.0"
+  - "react-native@0.88.0-rc.3"
+  - "react-native-keyboard-controller@1.22.4"
+  - "react-native-worklets@0.13.0"
+  - "react-native-reanimated@4.7.0"
+  - "react-native-screens@4.28.0"
+  - "@expo/config-types@58.0.2"
+  - expo-application@58.0.3
+  - expo-eas-client@58.0.2
+  - expo-image-loader@58.0.3
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
@@ -143,11 +198,12 @@ overrides:
   "@effect/sql-pg": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
-  "@expo/dom-webview": 57.0.1
-  "@expo/metro-config": 57.0.12
-  expo-constants: 57.0.16
-  # Keep fresh resolution on the version carrying the permissions registry fix.
-  expo-modules-core: 57.0.14
+  "@expo/dom-webview": 58.0.2
+  "@expo/metro-config": 58.0.6
+  expo-constants: 58.0.9
+  expo-router: 58.0.10
+  "expo-sharing>@expo/config-plugins": 58.0.4
+  "expo-sharing>@expo/config-types": 58.0.2
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
@@ -156,9 +212,12 @@ overrides:
   "@tailwindcss/vite": "catalog:"
   "@types/node": "catalog:"
   effect: "catalog:"
-  expo-router: 57.0.17
-  "expo-sharing>@expo/config-plugins": 57.0.9
-  "expo-sharing>@expo/config-types": 57.0.2
+  # OpenCode 2's protocol and schema packages hard-pin an older Effect rc as a
+  # dependency, and their schemas fail to decode under a second Effect copy.
+  # The `effect` override above already collapses them; these name the edge so it
+  # stays pinned on its own. OpenCode2Client.live.test.ts re-proves it on bumps.
+  "@opencode/protocol>effect": "catalog:"
+  "@opencode/schema>effect": "catalog:"
   node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
@@ -168,7 +227,7 @@ overrides:
 packageExtensions:
   "@clerk/expo@*":
     dependencies:
-      "@expo/config-plugins": 57.0.9
+      "@expo/config-plugins": 58.0.4
   "@effect/vitest@*":
     dependencies:
       vite-plus: "catalog:"
@@ -180,9 +239,15 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
+  alchemy@2.0.0-beta.79: patches/alchemy@2.0.0-beta.79.patch
+  expo-glass-effect@58.0.3: patches/expo-glass-effect@58.0.3.patch
+  expo-blur@58.0.3: patches/expo-blur@58.0.3.patch
+  expo-audio@58.0.4: patches/expo-audio@58.0.4.patch
   "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.115": patches/@effect__vitest@4.0.0-rc.115.patch
-  "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
+  "@expo/metro-config@58.0.6": patches/@expo__metro-config@58.0.6.patch
+  expo-sharing@58.0.13: patches/expo-sharing@58.0.13.patch
+  expo-widgets@58.0.11: patches/expo-widgets@58.0.11.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
   "@pierre/diffs@1.3.0-beta.10": patches/@pierre%2Fdiffs@1.3.0-beta.10.patch
@@ -191,20 +256,13 @@ patchedDependencies:
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
-  expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
-  expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
-  expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
-  expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
-  expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
-  react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
-  react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
-  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   # Link http(s) URLs with a port or a single-label host. md4c otherwise requires a dotted host and stops at ':'.
   react-native-nitro-markdown@0.5.8: patches/react-native-nitro-markdown@0.5.8.patch
-  # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
-  react-native-reanimated@4.5.5: patches/react-native-reanimated@4.5.5.patch
-  react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
+  react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
+  react-native-keyboard-controller@1.22.4: patches/react-native-keyboard-controller@1.22.4.patch
+  react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
+  react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
 
 peerDependencyRules:
@@ -212,6 +270,12 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+
+# @cursor/sdk finds its platform package (sandbox helper, rg, tree-sitter) by
+# walking up from the entry script for node_modules/@cursor/sdk-<platform>-<arch>.
+# pnpm keeps optional deps inside the virtual store, so hoist it to the root.
+publicHoistPattern:
+  - "@cursor/sdk-*"
 
 supportedArchitectures:
   cpu: [current, x64]

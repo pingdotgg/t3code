@@ -10,9 +10,15 @@ In **Settings → General → Send shortcut**, choose whether Enter sends, requi
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
 **Follow-up behavior** chooses Queue or Steer while the agent runs. Use
-`mod+Enter` to do the opposite for one message. When sending requires `mod+Enter`,
-use `mod+Shift+Enter` for the opposite action. In a new thread, `mod+Enter` keeps
-starting the thread in the background.
+`mod+Enter` to do the opposite for one message, even when the send shortcut
+requires a modifier. In a new thread, `mod+Alt+Enter` starts the thread in the
+background and opens a fresh composer. Change either shortcut in
+**Settings → Keybindings** under **Composer: Opposite Queue or Steer Action** or
+**Composer: Start in Background**. These bindings take priority over the send
+shortcut. Click the send button to use the configured follow-up behavior.
+
+When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
+steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
@@ -84,7 +90,8 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `composerDraft`,
+`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
@@ -122,7 +129,8 @@ through the pages you have visited, like a browser's back and forward buttons.
 
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
-[new-thread defaults](./thread-sidebar.md#start-a-thread).
+[new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`
+(`mod+alt+n`) starts a thread [without a project](./thread-sidebar.md#start-without-a-project).
 
 ## Reserved shortcuts
 

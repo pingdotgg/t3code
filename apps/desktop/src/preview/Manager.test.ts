@@ -186,6 +186,7 @@ const {
   fromId,
   getFocusedWebContents,
   mkdir,
+  previewSession,
   showItemInFolder,
   webviewSend,
   writeFile,
@@ -200,6 +201,7 @@ const {
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
+  previewSession: { on: vi.fn() },
   showItemInFolder: vi.fn(),
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
@@ -236,7 +238,7 @@ const browserSessionLayer = Layer.succeed(
   BrowserSession.BrowserSession.of({
     getPartition: () => Effect.succeed("persist:t3code-preview-test"),
     isPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
-    getSession: () => Effect.die("unexpected getSession"),
+    getSession: () => Effect.succeed(previewSession as unknown as Electron.Session),
     clearCookies: () => Effect.void,
     clearCache: () => Effect.void,
   }),
@@ -547,6 +549,7 @@ describe("PreviewManager", () => {
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
     mkdir.mockClear();
+    previewSession.on.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
     clipboardItemConstructor.mockClear();
@@ -1598,7 +1601,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
+  effectIt.effect("re-applies opaque base and color scheme across webview swaps", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const makeWebContents = (id: number) => {
@@ -1647,6 +1650,16 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_scheme", 42);
         yield* Effect.yieldNow;
 
+        // Guests start with a transparent base; dark-scheme pages need an opaque
+        // one or Chromium skips their dark canvas.
+        const opaqueBase = {
+          color: { r: 255, g: 255, b: 255, a: 1 },
+        };
+        expect(first.sendCommand).toHaveBeenCalledWith(
+          "Emulation.setDefaultBackgroundColorOverride",
+          opaqueBase,
+        );
+
         yield* manager.setColorScheme("tab_scheme", "dark");
 
         expect(first.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
@@ -1659,6 +1672,10 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_scheme", 43);
         yield* Effect.yieldNow;
 
+        expect(replacement.sendCommand).toHaveBeenCalledWith(
+          "Emulation.setDefaultBackgroundColorOverride",
+          opaqueBase,
+        );
         expect(replacement.sendCommand).toHaveBeenCalledWith("Emulation.setEmulatedMedia", {
           features: [{ name: "prefers-color-scheme", value: "dark" }],
         });
@@ -4533,6 +4550,121 @@ describe("PreviewManager", () => {
           detailLength: text.length,
           cause: exceptionDetails,
         });
+      }),
+    ),
+  );
+  effectIt.effect("saves downloads from agent-driven pages without a Save dialog", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((event: unknown, signal?: unknown) => void) | undefined;
+        const wc = makeTestPreviewWebContents(vi.fn());
+        Object.assign(wc, {
+          isDevToolsOpened: () => false,
+          loadURL: vi.fn(async () => undefined),
+          reload: vi.fn(),
+        });
+        Object.assign(wc.ipc, {
+          on: vi.fn((channel: string, listener: typeof humanInput) => {
+            if (channel === "preview:human-input") humanInput = listener;
+          }),
+        });
+        let holdEvaluate = false;
+        let releaseEvaluate: (() => void) | undefined;
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: { expression?: string }) => {
+            if (method !== "Runtime.evaluate") return undefined;
+            if (params?.expression?.includes("matched"))
+              return { result: { value: { matched: true } } };
+            if (holdEvaluate) {
+              holdEvaluate = false;
+              await new Promise<void>((resolve) => {
+                releaseEvaluate = resolve;
+              });
+            }
+            return { result: { value: 42 } };
+          }),
+        });
+        fromId.mockReturnValue(wc);
+        const takeovers = [yield* Deferred.make<void>(), yield* Deferred.make<void>()];
+        let takeoverCount = 0;
+        let controller = "none";
+        yield* manager.subscribeStateChanges((_tabId, state) => {
+          const takeover =
+            controller !== "human" && state.controller === "human"
+              ? takeovers[takeoverCount++]
+              : undefined;
+          controller = state.controller;
+          return takeover ? Deferred.succeed(takeover, undefined).pipe(Effect.asVoid) : Effect.void;
+        });
+        yield* manager.getBrowserSession();
+        yield* manager.getBrowserSession();
+        const installs = previewSession.on.mock.calls.filter(
+          ([event]) => event === "will-download",
+        );
+        expect(installs).toHaveLength(1);
+        const willDownload = installs[0]![1] as (
+          event: unknown,
+          item: {
+            getFilename: () => string;
+            getStartTime: () => number;
+            setSavePath: (path: string) => void;
+          },
+          source: Electron.WebContents,
+        ) => void;
+        const download = () => {
+          const setSavePath = vi.fn();
+          willDownload(
+            {},
+            { getFilename: () => "chart.png", getStartTime: () => 1_790_844_530.5, setSavePath },
+            wc,
+          );
+          return setSavePath;
+        };
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        expect(download()).not.toHaveBeenCalled();
+
+        yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        const startedAt = (1_790_844_530_500).toString(36);
+        expect(download()).toHaveBeenCalledWith(
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-0-chart.png`,
+        );
+        // Same name, same millisecond: still a separate file.
+        expect(download()).toHaveBeenCalledWith(
+          `/tmp/t3/dev/browser-artifacts/browser-download-${startedAt}-1-chart.png`,
+        );
+
+        humanInput?.({}, { kind: "pointer", x: 10, y: 10, button: 0 });
+        yield* Deferred.await(takeovers[0]!);
+        expect(download()).not.toHaveBeenCalled();
+
+        // An action still waiting for the page when the human takes over must
+        // not mark it as agent-driven again.
+        holdEvaluate = true;
+        const running = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* settle(() => releaseEvaluate !== undefined);
+        const queued = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        humanInput?.({}, { kind: "pointer", x: 20, y: 20, button: 0 });
+        yield* Deferred.await(takeovers[1]!);
+        releaseEvaluate?.();
+        yield* Fiber.await(running);
+        expect(Exit.isFailure(yield* Fiber.await(queued))).toBe(true);
+        expect(download()).not.toHaveBeenCalled();
+
+        // URL-bar navigation hands the page back to the human.
+        yield* manager.automationEvaluate("tab_1", { expression: "42" });
+        expect(download()).toHaveBeenCalled();
+        yield* manager.navigate("tab_1", "https://example.com/report.csv");
+        expect(download()).not.toHaveBeenCalled();
+
+        // Reading the page does not make it agent-driven.
+        yield* manager.automationWaitFor("tab_1", { text: "Example" });
+        expect(download()).not.toHaveBeenCalled();
       }),
     ),
   );
