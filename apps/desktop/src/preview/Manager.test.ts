@@ -2357,6 +2357,40 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("preserves both screenshots of the same site in the same millisecond", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstPng = Buffer.from("first-preview-png");
+        const secondPng = Buffer.from("second-preview-png");
+        const pngImage = (png: Buffer) => ({
+          toPNG: () => png,
+          toJPEG: () => png,
+          getSize: () => ({ width: 1280, height: 720 }),
+        });
+        const capturePage = vi
+          .fn<() => Promise<ReturnType<typeof pngImage>>>()
+          .mockResolvedValueOnce(pngImage(firstPng))
+          .mockResolvedValueOnce(pngImage(secondPng));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        // it.effect keeps TestClock fixed until explicitly advanced.
+        const first = yield* manager.captureScreenshot("tab_1");
+        const second = yield* manager.captureScreenshot("tab_1");
+
+        expect(first.createdAt).toBe(second.createdAt);
+        expect(first.id).not.toBe(second.id);
+        expect(first.path).not.toBe(second.path);
+        expect(first.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(second.id).toMatch(/^browser-screenshot-example-com-[a-z0-9]+-[0-9a-f]{8}$/);
+        expect(writeFile.mock.calls).toEqual([
+          [first.path, firstPng],
+          [second.path, secondPng],
+        ]);
+      }),
+    ),
+  );
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {
