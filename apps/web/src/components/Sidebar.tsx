@@ -171,7 +171,7 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
-  isSettledSidebarThread,
+  isCollapsedSettledRow,
   resolveFilteredSidebarProjects,
   resolveProjectExpanded,
   resolveSidebarThreadRowStatus,
@@ -1836,7 +1836,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             rolledUpStatus: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
           } satisfies SidebarThreadRowView,
         ],
-        settledThreadRowKeys: isSettledSidebarThread(pinnedCollapsedThread, {
+        settledThreadRowKeys: isCollapsedSettledRow({
+          status: threadStatusByKey.get(pinnedCollapsedThreadKey) ?? null,
+          thread: pinnedCollapsedThread,
           now: new Date().toISOString(),
         })
           ? new Set([pinnedCollapsedThreadKey])

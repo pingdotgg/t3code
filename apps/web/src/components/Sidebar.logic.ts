@@ -828,6 +828,22 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
 }
 
 /**
+ * Collapsed-project single-row counterpart to `partitionSettledSidebarRows`:
+ * the active route renders alone while its project is collapsed, so the same
+ * root-status rule applies — a pill (failed turn, unseen completion) keeps
+ * the row full-strength even when the settled override survives.
+ */
+export function isCollapsedSettledRow(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: Parameters<typeof isSettledSidebarThread>[0];
+  readonly now: string;
+}): boolean {
+  return (
+    !isActiveThreadStatus(input.status) && isSettledSidebarThread(input.thread, { now: input.now })
+  );
+}
+
+/**
  * Sinks settled roots to the bottom of their own project list. The whole
  * subtree follows its root, mirroring `classifySidebarV2Shelves`: a block
  * stays active while any row in it — root or descendant — carries a status

@@ -11,6 +11,7 @@ import {
   hasUnseenChildNotification,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isCollapsedSettledRow,
   isSettledSidebarThread,
   orderItemsByPreferredIds,
   partitionSettledSidebarRows,
@@ -1655,6 +1656,42 @@ describe("isSettledSidebarThread", () => {
 
   it("treats threads without the override as active", () => {
     expect(isSettledSidebarThread(makeSummary(), { now: SETTLED_NOW })).toBe(false);
+  });
+});
+
+describe("isCollapsedSettledRow", () => {
+  it("fades a quiet settled thread", () => {
+    expect(
+      isCollapsedSettledRow({
+        status: null,
+        thread: makeSummary({ settledOverride: "settled" }),
+        now: SETTLED_NOW,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a settled thread with a failed pill full-strength", () => {
+    const status = resolveThreadStatusPill({
+      thread: makeSummary({
+        settledOverride: "settled",
+        latestTurn: { ...makeLatestTurn(), state: "error" },
+      }),
+      lastVisitedAt: null,
+    });
+    expect(status).not.toBeNull();
+    expect(
+      isCollapsedSettledRow({
+        status,
+        thread: makeSummary({ settledOverride: "settled" }),
+        now: SETTLED_NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps an unsettled thread full-strength", () => {
+    expect(isCollapsedSettledRow({ status: null, thread: makeSummary(), now: SETTLED_NOW })).toBe(
+      false,
+    );
   });
 });
 
