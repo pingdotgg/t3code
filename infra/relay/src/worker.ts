@@ -192,12 +192,18 @@ export const ApiLive = Api.make(
     const loadSettings = Effect.gen(function* () {
       // Read the cleanup mode from the declared `env` binding, never from a
       // Config value captured in Init: only the binding is updated on deploy.
+      const workerEnv = yield* Cloudflare.Workers.WorkerEnvironment;
       const managedEndpointCleanupMode =
         yield* RelayConfiguration.decodeManagedEndpointCleanupModeEnv(
-          (yield* Cloudflare.Workers.WorkerEnvironment)[
-            RelayConfiguration.RELAY_TUNNEL_CLEANUP_MODE
-          ],
+          workerEnv[RelayConfiguration.RELAY_TUNNEL_CLEANUP_MODE],
         );
+      const legacyManagedEndpointCleanupMode =
+        yield* RelayConfiguration.decodeManagedEndpointCleanupModeEnv(
+          workerEnv[RelayConfiguration.RELAY_LEGACY_TUNNEL_CLEANUP_MODE],
+        );
+      const legacyTunnelGraceMinutes = RelayConfiguration.decodeLegacyTunnelGraceMinutesEnv(
+        workerEnv[RelayConfiguration.RELAY_LEGACY_TUNNEL_GRACE_MINUTES],
+      );
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
         ...(fcmServiceAccount ? { fcmServiceAccount } : {}),
@@ -211,6 +217,8 @@ export const ApiLive = Api.make(
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
         managedEndpointCleanupMode,
+        legacyManagedEndpointCleanupMode,
+        ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),
       });
     });
 

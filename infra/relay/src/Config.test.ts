@@ -56,16 +56,50 @@ it.effect("rejects an invalid cleanup mode binding", () =>
   }),
 );
 
-it.effect("declares the cleanup mode as a plain env binding", () =>
+it.effect("declares both cleanup modes as plain env bindings", () =>
   Effect.gen(function* () {
     const env = yield* managedEndpointCleanupModeEnv.pipe(
       Effect.provideService(
         ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv({ env: { RELAY_TUNNEL_CLEANUP_MODE: "dry-run" } }),
+        ConfigProvider.fromEnv({
+          env: {
+            RELAY_TUNNEL_CLEANUP_MODE: "dry-run",
+            RELAY_LEGACY_TUNNEL_CLEANUP_MODE: "enabled",
+          },
+        }),
       ),
     );
     // A plain string is what Alchemy lowers into a `plain_text` binding that
     // its Worker diff compares; a Redacted or Config value would not change it.
-    expect(env).toEqual({ RELAY_TUNNEL_CLEANUP_MODE: "dry-run" });
+    expect(env).toEqual({
+      RELAY_TUNNEL_CLEANUP_MODE: "dry-run",
+      RELAY_LEGACY_TUNNEL_CLEANUP_MODE: "enabled",
+    });
+  }),
+);
+
+it.effect.each([
+  { name: "missing", env: {}, expected: undefined },
+  { name: "positive", env: { RELAY_LEGACY_TUNNEL_GRACE_MINUTES: "10" }, expected: "10" },
+] as const)("publishes a $name legacy grace override", ({ env, expected }) =>
+  Effect.gen(function* () {
+    const bindings = yield* managedEndpointCleanupModeEnv.pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env })),
+    );
+    expect(bindings.RELAY_LEGACY_TUNNEL_GRACE_MINUTES).toBe(expected);
+  }),
+);
+
+it.effect.each(["0", "-10"])("rejects a grace override of %s minutes", (value) =>
+  Effect.gen(function* () {
+    const error = yield* Effect.flip(
+      managedEndpointCleanupModeEnv.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnv({ env: { RELAY_LEGACY_TUNNEL_GRACE_MINUTES: value } }),
+        ),
+      ),
+    );
+    expect(error._tag).toBe("ConfigError");
   }),
 );
