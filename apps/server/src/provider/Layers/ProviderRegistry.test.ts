@@ -151,6 +151,8 @@ function booleanDescriptor(id: string, label: string) {
 
 type TestClaudeCapabilities = {
   readonly email: string | undefined;
+  readonly organization: string | undefined;
+  readonly accountId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
@@ -161,6 +163,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
     Effect.succeed({
       email: undefined,
+      organization: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
       apiProvider: undefined,
@@ -2828,6 +2831,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               () =>
                 Effect.succeed({
                   email: undefined,
+                  organization: undefined,
                   subscriptionType: undefined,
                   tokenSource: undefined,
                   apiProvider: undefined,
@@ -2900,14 +2904,20 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         ),
       );
 
-      it.effect("returns claude auth email from initialization result", () =>
+      it.effect("returns claude auth email and organization from initialization result", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
-            claudeCapabilities({ email: "claude@example.com" }),
+            claudeCapabilities({
+              email: "claude@example.com",
+              organization: "Acme",
+              accountId: "org-1",
+            }),
           );
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.email, "claude@example.com");
+          assert.strictEqual(status.auth.organization, "Acme");
+          assert.strictEqual(status.auth.accountId, "org-1");
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

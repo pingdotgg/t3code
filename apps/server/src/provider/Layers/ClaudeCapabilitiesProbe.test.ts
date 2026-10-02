@@ -115,7 +115,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           '      output_style: "default",',
           '      available_output_styles: ["default"],',
           "      models: [],",
-          '      account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+          '      account: { email: "dev@example.com", organization: "Acme", subscriptionType: "pro", tokenSource: "oauth" },',
           "    });",
           "  }",
           "  // The probe follows initialize with get_usage on the same process.",
@@ -147,6 +147,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
 
       assert.deepEqual(capabilities, {
         email: "dev@example.com",
+        organization: "Acme",
         subscriptionType: "pro",
         tokenSource: "oauth",
         apiProvider: undefined,

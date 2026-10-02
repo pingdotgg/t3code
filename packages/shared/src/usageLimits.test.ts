@@ -520,6 +520,124 @@ describe("pools", () => {
     ]);
   });
 
+  it("keeps one email signed in to two orgs as two accounts", () => {
+    const personal = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com", organization: "Personal" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 36 }] },
+    });
+    const work = {
+      ...personal,
+      instanceId: ProviderInstanceId.make("work"),
+      auth: { status: "authenticated" as const, email: "same@example.com", organization: "Acme" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 2 }] },
+    };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [personal, work] } }],
+    ]);
+    expect(
+      collectLimitAccounts(input).map((account) => [
+        account.key,
+        account.limits.windows[0]?.usedPercent,
+      ]),
+    ).toEqual([
+      ["env-a:claude", 36],
+      ["env-a:work", 2],
+    ]);
+  });
+
+  it("tells orgs apart by their id, not their display name", () => {
+    const first = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        organization: "Acme",
+        accountId: "org-1",
+      },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const withOrg = (instanceId: string, organization: string, accountId: string) => ({
+      ...first,
+      instanceId: ProviderInstanceId.make(instanceId),
+      auth: { ...first.auth, organization, accountId },
+    });
+    const keysFor = (providers: ServerProvider[]) =>
+      collectLimitAccounts(
+        new Map([[EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers } }]]),
+      ).map((account) => account.key);
+    expect(keysFor([first, withOrg("namesake", "Acme", "org-2")])).toEqual([
+      "env-a:claude",
+      "env-a:namesake",
+    ]);
+    expect(keysFor([first, withOrg("renamed", "Acme Inc", "org-1")])).toEqual(["env-a:claude"]);
+  });
+
+  it("joins a hub account to the native org only when one org uses the email", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com", organization: "Acme" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "claude-same@example.com.json",
+          driver: claude,
+          email: "same@example.com",
+          usageLimits: { checkedAt, windows: [window] },
+        },
+      ],
+    };
+    const accountsFor = (providers: ServerProvider[]) =>
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            { ...laptop, serverConfig: { providers, usageLimitSources: [hub] } },
+          ],
+        ]),
+      );
+    expect(accountsFor([native])).toHaveLength(1);
+    // With two orgs the hub cannot say which it read, so it stays its own row.
+    const otherOrg = {
+      ...native,
+      instanceId: ProviderInstanceId.make("work"),
+      auth: { ...native.auth, organization: "Personal" },
+    };
+    expect(accountsFor([native, otherOrg])).toHaveLength(3);
+    // A failed read still signs in a second org, so the hub stays ambiguous.
+    const failedOrg = {
+      ...otherOrg,
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" as const } },
+    };
+    expect(accountsFor([native, failedOrg]).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "hub:claude-same@example.com.json",
+    ]);
+    const unreadOrg = provider({
+      driver: claude,
+      instanceId: otherOrg.instanceId,
+      auth: otherOrg.auth,
+    });
+    expect(accountsFor([native, unreadOrg]).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "hub:claude-same@example.com.json",
+    ]);
+    // A login that names no org keys on the bare email, which the hub must not take.
+    const { organization: _, ...noOrgAuth } = otherOrg.auth;
+    const noOrg = { ...otherOrg, auth: noOrgAuth };
+    expect(accountsFor([native, noOrg]).map((account) => account.key)).toEqual([
+      "env-a:claude",
+      "env-a:work",
+      "hub:claude-same@example.com.json",
+    ]);
+  });
+
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
     const seat = {
       id: "claude-team-seat.json",
@@ -951,6 +1069,54 @@ describe("/usage-limits", () => {
     });
     // The fresher native balance is still the one shown.
     expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
+  });
+
+  it("keeps a hub credit off both orgs when one email is signed in to two", () => {
+    const personal = provider({
+      usageLimits: limits,
+      auth: { status: "authenticated", email: "same@example.com", organization: "Personal" },
+    });
+    const work = {
+      ...personal,
+      instanceId: ProviderInstanceId.make("work"),
+      auth: { ...personal.auth, organization: "Acme" },
+    };
+    const hub = [
+      {
+        ...sources[0]!,
+        accounts: [
+          {
+            id: "duplicate",
+            driver: personal.driver,
+            email: "same@example.com",
+            usageLimits: {
+              ...limits,
+              resetCredits: { availableCount: 1, nextCreditId: "hub-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(personal.instanceId, [personal, work], hub, now);
+    // The hub cannot say which org it read, so redeeming its credit from
+    // either native row could spend the other org's reset.
+    expect(report?.accounts.map((account) => [account.id, account.resetCreditInput])).toEqual([
+      [personal.instanceId, { instanceId: personal.instanceId }],
+      ["work", { instanceId: "work" }],
+      ["hub:duplicate", { sourceId: "hub", accountId: "duplicate", creditId: "hub-credit" }],
+    ]);
+    // An org whose limits were never read is still signed in with that email.
+    const unread = provider({ instanceId: work.instanceId, driver: work.driver, auth: work.auth });
+    const withUnread = collectProviderUsageLimits(
+      personal.instanceId,
+      [personal, unread],
+      hub,
+      now,
+    );
+    expect(withUnread?.accounts.map((account) => [account.id, account.resetCreditInput])).toEqual([
+      [personal.instanceId, { instanceId: personal.instanceId }],
+      ["hub:duplicate", { sourceId: "hub", accountId: "duplicate", creditId: "hub-credit" }],
+    ]);
   });
 
   it("keeps accounts and custom instances separate, filtering by driver", () => {

@@ -195,6 +195,16 @@ export const claudeAccountConfigPath = (configDir: string | undefined) =>
     configDir ? path.join(configDir, ".claude.json") : path.join(NodeOS.homedir(), ".claude.json"),
   );
 
+/**
+ * The org the login in `accountConfigPath` draws its quota from, or undefined
+ * when the account record is missing or unreadable.
+ */
+export const readClaudeOrganizationId = (accountConfigPath: string) =>
+  readJson(Config, accountConfigPath).pipe(
+    Effect.map((config) => config.oauthAccount?.organizationUuid?.trim() || undefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 const CLAIM_OUTCOMES = {
   reset: "reset",
   not_limited: "nothingToReset",

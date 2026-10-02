@@ -257,3 +257,19 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     }),
   );
 });
+
+effectIt.layer(NodeServices.layer)("readClaudeOrganizationId", (it) => {
+  it.effect("reads the login's org id, and nothing from a missing or garbled account", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { configDir, accountConfigPath } = yield* writeLogin;
+      const signedIn = yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath);
+      const missing = yield* ClaudeResetCredits.readClaudeOrganizationId(
+        `${configDir}/absent.json`,
+      );
+      yield* fs.writeFileString(accountConfigPath, "{not json");
+      const garbled = yield* ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath);
+      expect([signedIn, missing, garbled]).toEqual(["org-1", undefined, undefined]);
+    }),
+  );
+});
