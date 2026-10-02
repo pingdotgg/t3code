@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nicobailon/visual-explainer/quick/schema.json",
+  "title": "Visual Explainer quick specification",
+  "type": "object",
+  "required": ["title", "sections"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "subtitle": { "type": "string" },
+    "summary": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/section" }
+    }
+  },
+  "$defs": {
+    "tone": {
+      "type": "string",
+      "enum": ["neutral", "accent", "positive", "warning", "danger", "info"]
+    },
+    "card": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "meta": { "type": "array", "items": { "type": "string" } },
+        "tone": { "$ref": "#/$defs/tone" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "required": ["columns", "rows"],
+      "additionalProperties": false,
+      "properties": {
+        "caption": { "type": "string" },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["title", "body", "severity"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] }
+      }
+    },
+    "file": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["added", "modified", "deleted", "reviewed", "planned"]
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "status": { "type": "string", "enum": ["done", "current", "next", "blocked"] }
+      }
+    },
+    "flowNode": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" },
+        "tone": { "$ref": "#/$defs/tone" }
+      }
+    },
+    "flowEdge": {
+      "type": "object",
+      "required": ["from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/flowNode" }
+        },
+        "edges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/flowEdge" }
+        }
+      }
+    },
+    "callout": {
+      "type": "object",
+      "required": ["body"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "tone": { "$ref": "#/$defs/tone" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["label", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "label": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "section": {
+      "type": "object",
+      "required": ["title"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "subtitle": { "type": "string" },
+        "summary": { "type": "string" },
+        "tone": { "$ref": "#/$defs/tone" },
+        "cards": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/card" } },
+        "table": { "$ref": "#/$defs/table" },
+        "risks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/risk" } },
+        "files": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/file" } },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } },
+        "flow": { "$ref": "#/$defs/flow" },
+        "callouts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/callout" } },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } }
+      }
+    }
+  }
+}
