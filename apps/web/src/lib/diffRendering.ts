@@ -78,6 +78,7 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-virtualizer-buffer] {
   --diffs-header-font-family: var(--font-sans) !important;
   --diffs-font-family: var(--font-mono) !important;
+  --diffs-line-height: var(--app-file-preview-line-height) !important;
   --diffs-bg: var(--code-background) !important;
   --diffs-light-bg: var(--code-background) !important;
   --diffs-dark-bg: var(--code-background) !important;
@@ -132,5 +133,11 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 
   background-color: var(--diffs-bg) !important;
   color: var(--code-foreground) !important;
+}
+
+pre,
+[data-code],
+[data-line] {
+  line-height: var(--app-file-preview-line-height) !important;
 }
 `;

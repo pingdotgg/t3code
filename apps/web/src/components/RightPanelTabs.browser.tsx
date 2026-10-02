@@ -159,8 +159,10 @@ describe("RightPanelTabs", () => {
       const fileTab = await page.getByTitle("src/index.ts").element();
 
       expect(closeButton.parentElement).toBe(tabBar);
-      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("12px");
-      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("12px");
+      expect(getComputedStyle(browserTab.parentElement!).fontSize).toBe("13px");
+      expect(getComputedStyle(fileTab.parentElement!).fontSize).toBe("13px");
+      expect(fileTab.parentElement!.getBoundingClientRect().height).toBe(28);
+      expect(getComputedStyle(fileTab.parentElement!.parentElement!).columnGap).toBe("4px");
       const closeFile = await page.getByLabelText("Close index.ts").element();
       expect(closeFile.getBoundingClientRect().right).toBeLessThanOrEqual(
         fileTab.getBoundingClientRect().left,
@@ -263,6 +265,17 @@ describe("RightPanelTabs", () => {
       await vi.waitFor(() => {
         expect(panel.getBoundingClientRect().width).toBeCloseTo(startWidth + 120, 0);
       });
+
+      const resizedHandle = handle.getBoundingClientRect();
+      const resizedStartX = resizedHandle.left + resizedHandle.width / 2;
+      dispatch("pointerdown", resizedStartX);
+      dispatch("pointermove", resizedStartX + 1_000);
+      dispatch("pointerup", resizedStartX + 1_000);
+
+      await vi.waitFor(() => {
+        expect(panel.getBoundingClientRect().width).toBe(280);
+      });
+      expect(localStorage.getItem("t3code:preview-panel-width")).toBe("280");
     } finally {
       await screen.unmount();
     }

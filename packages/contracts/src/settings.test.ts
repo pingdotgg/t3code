@@ -144,6 +144,17 @@ describe("ClientSettings.codeFont", () => {
   });
 });
 
+describe("ClientSettings.filePreviewLineSpacing", () => {
+  it("defaults to upstream-like spacing and accepts only supported values", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.filePreviewLineSpacing).toBe(1.5);
+    expect(decodeClientSettings({}).filePreviewLineSpacing).toBe(1.5);
+    expect(decodeClientSettingsPatch({ filePreviewLineSpacing: 1.65 })).toEqual({
+      filePreviewLineSpacing: 1.65,
+    });
+    expect(() => decodeClientSettingsPatch({ filePreviewLineSpacing: 2 })).toThrow();
+  });
+});
+
 describe("ClientSettings.uiFont", () => {
   it("defaults to DM Sans", () => {
     expect(DEFAULT_CLIENT_SETTINGS.uiFont).toBe("dm-sans");

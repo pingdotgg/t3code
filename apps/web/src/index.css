@@ -151,6 +151,7 @@
   --app-font-mono-stack:
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   --app-code-font-size: 13px;
+  --app-file-preview-line-height: 1.5;
   --app-chat-font-size: 14px;
   --app-sidebar-font-size: 11px;
   /* The thread title is the row's anchor, so it scales just above the sidebar
@@ -230,6 +231,7 @@
     color-scheme: dark;
     --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
     --chat-background: var(--color-neutral-950);
+    --code-background: var(--chat-background);
     --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
