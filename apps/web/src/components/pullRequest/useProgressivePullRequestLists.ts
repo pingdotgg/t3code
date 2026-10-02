@@ -64,13 +64,20 @@ function requestKeyOf(request: ProgressiveListRequest): string {
  * the rest. One slice per environment at a time keeps request fanout bounded
  * to the environment count.
  *
- * Two generation invariants keep rapid filter/search changes from mixing
- * result sets: every `queryFn` closes over the same render's `request` value
- * its `queryKey` was built from (never a mutable ref, so delayed executions,
- * retries, and refetches cannot fetch one query into another key's cache
- * entry), and every continuation binds its cursors to the request generation
- * that issued them, discarding the page if the request moved on while it was
- * in flight.
+ * Generation invariants keep rapid filter/search changes — and base
+ * refreshes — from mixing result sets: every `queryFn` closes over the same
+ * render's `request` value its `queryKey` was built from (never a mutable
+ * ref, so delayed executions, retries, and refetches cannot fetch one query
+ * into another key's cache entry); every continuation binds its cursors to a
+ * monotonic generation that bumps on request changes and base refreshes,
+ * discarding the page if its generation moved on while it was in flight;
+ * and each in-flight continuation holds a token so a settling request can
+ * only clear its own fetching flag. A refreshed base (a new first page under
+ * the same request) drops appended pages and rebuilds progressively, since
+ * they belong to the old generation. A failed continuation suspends
+ * automatic pagination until an explicit retry or a base refresh — never an
+ * unbounded same-cursor loop — and repository errors from any page aggregate
+ * into the shared error list.
  */
 export function useProgressivePullRequestLists(
   environmentIds: readonly EnvironmentId[],
@@ -94,14 +101,57 @@ export function useProgressivePullRequestLists(
   const [extraPages, setExtraPages] = useState<ReadonlyMap<string, PullRequestListResult[]>>(
     () => new Map(),
   );
-  const [fetchingMore, setFetchingMore] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  // One token per in-flight continuation, so a settling request can prove
+  // ownership of the flag it clears instead of deleting a newer request's
+  // flag for the same environment unconditionally.
+  const [fetchingMore, setFetchingMore] = useState<ReadonlyMap<string, object>>(() => new Map());
   const [pageErrors, setPageErrors] = useState<ReadonlyMap<string, unknown>>(() => new Map());
   const lastRequestKeyRef = useRef(requestKey);
+  // Monotonic generation: bumped on every request change and every base
+  // refresh, so late continuations can tell their pages are stale.
+  const generationRef = useRef(0);
+  // Last base first-page per environment. React Query shares structure for
+  // deep-equal payloads, so a changed reference means the base generation
+  // actually moved — not just that a background refetch ran.
+  const baseDataRefs = useRef(new Map<string, PullRequestListResult | undefined>());
   if (lastRequestKeyRef.current !== requestKey) {
     lastRequestKeyRef.current = requestKey;
+    baseDataRefs.current = new Map(
+      environmentIds.map((environmentId, index) => [
+        environmentId as string,
+        baseQueries[index]?.data,
+      ]),
+    );
+    generationRef.current += 1;
     setExtraPages(new Map());
     setFetchingMore(new Map());
     setPageErrors(new Map());
+  } else {
+    let baseRefreshed = false;
+    environmentIds.forEach((environmentId, index) => {
+      const key = environmentId as string;
+      const data = baseQueries[index]?.data;
+      if (!baseDataRefs.current.has(key)) {
+        baseDataRefs.current.set(key, data);
+        return;
+      }
+      if (baseDataRefs.current.get(key) !== data) {
+        baseDataRefs.current.set(key, data);
+        baseRefreshed = true;
+      }
+    });
+    if (baseRefreshed) {
+      // The base generation moved under the same request (window-focus or
+      // mutation refresh with actually new rows): appended pages belong to
+      // the old generation, so drop them instead of merging stale rows and
+      // shifted boundaries into the new first page. Progressive pagination
+      // rebuilds from the fresh base; the failure flags clear too, which
+      // permits one bounded retry — a fresh failure re-suspends automation.
+      generationRef.current += 1;
+      setExtraPages(new Map());
+      setFetchingMore(new Map());
+      setPageErrors(new Map());
+    }
   }
 
   const baseByEnv = useMemo(() => {
@@ -124,22 +174,24 @@ export function useProgressivePullRequestLists(
   const fetchMoreFor = useCallback(
     async (environmentId: EnvironmentId) => {
       const key = environmentId as string;
-      if (fetchingMore.get(key)) return;
+      if (fetchingMore.has(key)) return;
       const last = lastPageOf(environmentId);
       const cursors = last?.nextCursors;
       if (!cursors || Object.keys(cursors).length === 0) return;
-      // Bind the continuation to the request generation that issued these
-      // cursors. If the filter/search moves on while the slice is in flight,
-      // the page is discarded on landing instead of mixing two queries' rows.
+      // Bind the continuation to the generation that issued these cursors.
+      // If the filter/search moves on — or the base refreshes — while the
+      // slice is in flight, the page is discarded on landing instead of
+      // mixing two generations' rows.
       const requestAtCall = request;
-      const requestKeyAtCall = requestKey;
-      setFetchingMore((previous) => new Map(previous).set(key, true));
+      const generationAtCall = generationRef.current;
+      const token = {};
+      setFetchingMore((previous) => new Map(previous).set(key, token));
       try {
         const page = await ensureEnvironmentApi(environmentId).pullRequests.list({
           ...requestAtCall,
           cursors,
         });
-        if (lastRequestKeyRef.current !== requestKeyAtCall) return;
+        if (generationRef.current !== generationAtCall) return;
         setExtraPages((previous) => {
           const next = new Map(previous);
           next.set(key, [...(next.get(key) ?? []), page]);
@@ -152,25 +204,30 @@ export function useProgressivePullRequestLists(
           return next;
         });
       } catch (error) {
-        if (lastRequestKeyRef.current !== requestKeyAtCall) return;
+        if (generationRef.current !== generationAtCall) return;
         setPageErrors((previous) => new Map(previous).set(key, error));
       } finally {
         setFetchingMore((previous) => {
-          if (!previous.has(key)) return previous;
+          if (previous.get(key) !== token) return previous;
           const next = new Map(previous);
           next.delete(key);
           return next;
         });
       }
     },
-    [extraPages, fetchingMore, lastPageOf, request, requestKey],
+    [fetchingMore, lastPageOf, request],
   );
 
   const autoFetch = useCallback(() => {
     for (const environmentId of environmentIds) {
       const key = environmentId as string;
       const base = baseByEnv.get(key);
-      if (!base || fetchingMore.get(key)) continue;
+      if (!base || fetchingMore.has(key)) continue;
+      // A failed continuation suspends automatic pagination: without this
+      // the loop would re-request the same cursor on every state change
+      // with no backoff and no budget. An explicit fetchMore retry — or a
+      // base refresh, which clears the flag for one bounded retry — resumes.
+      if (pageErrors.has(key)) continue;
       const extras = extraPages.get(key) ?? [];
       const pageCount = 1 + extras.length;
       const last = extras.length > 0 ? extras[extras.length - 1] : base;
@@ -179,7 +236,7 @@ export function useProgressivePullRequestLists(
         void fetchMoreFor(environmentId);
       }
     }
-  }, [baseByEnv, environmentIds, extraPages, fetchingMore, fetchMoreFor]);
+  }, [baseByEnv, environmentIds, extraPages, fetchingMore, fetchMoreFor, pageErrors]);
 
   useEffect(() => {
     autoFetch();
@@ -199,9 +256,17 @@ export function useProgressivePullRequestLists(
     return merged;
   }, [baseQueries, environmentIds, extraPages]);
 
+  // Repository failures that land on later pages resolve successfully with
+  // a populated `errors` array, so they must be aggregated like first-page
+  // ones — otherwise pagination reads as successfully finished while rows
+  // are silently missing.
+  const continuationErrors = useMemo(
+    () => [...extraPages.values()].flatMap((pages) => pages.flatMap((page) => page.errors)),
+    [extraPages],
+  );
   const errors = useMemo(
-    () => baseQueries.flatMap((query) => query.data?.errors ?? []),
-    [baseQueries],
+    () => [...baseQueries.flatMap((query) => query.data?.errors ?? []), ...continuationErrors],
+    [baseQueries, continuationErrors],
   );
 
   const envStates: ProgressiveEnvState[] = useMemo(
@@ -217,7 +282,7 @@ export function useProgressivePullRequestLists(
           environmentId,
           isPending: query?.isPending ?? true,
           isFetching: query?.isFetching ?? false,
-          isFetchingMore: fetchingMore.get(environmentId as string) === true,
+          isFetchingMore: fetchingMore.has(environmentId as string),
           error: query?.error ?? pageErrors.get(environmentId as string) ?? null,
           pageCount,
           hasMore,
@@ -236,7 +301,12 @@ export function useProgressivePullRequestLists(
   const failedEnvs = envStates.filter(
     (state) => state.error !== null && state.error !== undefined,
   ).length;
-  const hasPartialFailure = failedEnvs > 0 && (succeededEnvs > 0 || entries.length > 0);
+  // A late repository failure arrives silently in the background (unlike a
+  // first-page one seen during initial load), so it earns the partial
+  // banner whenever rows are still shown.
+  const hasPartialFailure =
+    (failedEnvs > 0 && (succeededEnvs > 0 || entries.length > 0)) ||
+    (continuationErrors.length > 0 && entries.length > 0);
   const hasMore = envStates.some((state) => state.hasMore);
 
   const fetchMore = useCallback(() => {

@@ -219,7 +219,9 @@ function PullRequestsRoute() {
   );
   const noteRendered = useCallback((key: string) => {
     const rendered = renderedKeysRef.current;
-    if (rendered.has(key)) return;
+    // Re-renders refresh recency so the stats window favors the rows on
+    // screen now, not the rows scrolled past long ago.
+    if (rendered.has(key)) rendered.delete(key);
     rendered.add(key);
     if (rendered.size > VISIBLE_STATS_LIMIT * 2) {
       const oldest = rendered.values().next().value;
@@ -807,6 +809,16 @@ function PullRequestsRoute() {
                       ) : undefined
                     }
                   />
+                  {errors.length > 0 ? (
+                    <ul className="space-y-1 p-3 text-xs text-muted-foreground">
+                      {errors.map((error) => (
+                        <li key={error.projectId} className="break-words">
+                          <span className="font-medium text-foreground">{error.projectTitle}:</span>{" "}
+                          {error.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </WorkspacePageContainer>
               ) : null}
               {!listIsPending && !listError && entriesWithStats.length > 0 ? (

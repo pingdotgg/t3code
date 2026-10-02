@@ -133,9 +133,12 @@ export function isProvisionalSearch(immediate: string, debounced: string): boole
 
 /**
  * Rows diff stats are wanted for under ordinary sorting: the visible render
- * window plus bounded overscan — never every loaded row. Before the
- * virtualizer reports back, the leading rows stand in so the first paint
- * still carries sizes.
+ * window plus bounded overscan — never every loaded row. `renderedKeys`
+ * iterate oldest-rendered first (re-renders refresh position), so the tail
+ * is the currently visible window and the cap is taken from the recent end:
+ * scrolled-past rows must not saturate the request while on-screen rows go
+ * without sizes. Before the virtualizer reports back, the leading rows stand
+ * in so the first paint still carries sizes.
  */
 export function selectVisibleStatsEntries<T extends PullRequestListRowEntry>(
   ordered: readonly T[],
@@ -144,7 +147,8 @@ export function selectVisibleStatsEntries<T extends PullRequestListRowEntry>(
   fallbackRows: number,
 ): readonly T[] {
   if (renderedKeys.size === 0) return ordered.slice(0, fallbackRows);
-  const visible = ordered.filter((entry) => renderedKeys.has(pullRequestEntryKey(entry)));
+  const recent = new Set([...renderedKeys].slice(-limit));
+  const visible = ordered.filter((entry) => recent.has(pullRequestEntryKey(entry)));
   return (visible.length > 0 ? visible : ordered.slice(0, fallbackRows)).slice(0, limit);
 }
 

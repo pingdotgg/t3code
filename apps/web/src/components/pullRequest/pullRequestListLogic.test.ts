@@ -135,6 +135,19 @@ describe("pullRequestListLogic", () => {
     ).toHaveLength(1);
   });
 
+  it("prioritizes recently rendered rows in the stats window", () => {
+    const entries = [row({ number: 1 }), row({ number: 2 }), row({ number: 3 })];
+    const keys = entries.map((item) => pullRequestEntryKey(item));
+
+    // Insertion order is oldest-rendered first; the tail is the visible
+    // window, so a cap of 1 takes the last rendered row.
+    expect(selectVisibleStatsEntries(entries, new Set(keys), 1, 50)).toEqual([entries[2]]);
+    // Row 1 re-rendered most recently jumps ahead of row 3 in priority,
+    // while the result keeps list order.
+    const refreshed: ReadonlySet<string> = new Set([keys[1]!, keys[2]!, keys[0]!]);
+    expect(selectVisibleStatsEntries(entries, refreshed, 2, 50)).toEqual([entries[0], entries[2]]);
+  });
+
   it("builds a flat virtualized list preserving section headers and stable keys", () => {
     const awaiting = row({ number: 1, viewerReviewRequested: true });
     const other = row({ number: 2 });

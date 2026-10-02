@@ -16,11 +16,12 @@ const { ensureEnvironmentApiMock, listMock, pendingCalls } = vi.hoisted(() => {
   const pendingCalls: Array<{
     readonly input: { readonly query?: string; readonly cursors?: Record<string, string> };
     readonly resolve: (value: PullRequestListResult) => void;
+    readonly reject: (error: unknown) => void;
   }> = [];
   const listMock = vi.fn(
     (input: { readonly query?: string; readonly cursors?: Record<string, string> }) =>
-      new Promise<PullRequestListResult>((resolve) => {
-        pendingCalls.push({ input, resolve });
+      new Promise<PullRequestListResult>((resolve, reject) => {
+        pendingCalls.push({ input, resolve, reject });
       }),
   );
   return {
@@ -67,18 +68,37 @@ function entry(number: number): PullRequestListResult["entries"][number] {
 function page(
   numbers: readonly number[],
   nextCursors: Record<string, string> = {},
+  errors: PullRequestListResult["errors"] = [],
 ): PullRequestListResult {
   return {
     viewers: {},
     providers: [],
     entries: numbers.map((number) => entry(number)),
-    errors: [],
+    errors,
     truncated: Object.keys(nextCursors).length > 0,
     nextCursors,
   };
 }
 
 const CURSORS_A = { "github.com owner/repo": "cursor-a1" };
+const CURSORS_A2 = { "github.com owner/repo": "cursor-a2" };
+const CURSORS_B = { "github.com owner/repo": "cursor-b1" };
+
+type HookResult = ReturnType<typeof useProgressivePullRequestLists>;
+
+function captureResult() {
+  const ref: { current: HookResult | null } = { current: null };
+  return {
+    ref,
+    onResult: (result: HookResult) => {
+      ref.current = result;
+    },
+  };
+}
+
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
 
 function Harness({
   initialRequest,
@@ -236,5 +256,178 @@ describe("useProgressivePullRequestLists generations", () => {
     expect(entriesText()).toBe("9");
     expect(pendingCalls).toHaveLength(3);
     expect(latestRef.current?.entries.map((item) => item.number)).toEqual([9]);
+  });
+
+  it("suspends automatic pagination after a continuation failure until explicit retry", async () => {
+    pendingCalls.length = 0;
+    listMock.mockClear();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const captured = captureResult();
+    await render(
+      <Harness
+        initialRequest={{ ...REQUEST_A }}
+        queryClient={queryClient}
+        onResult={captured.onResult}
+      />,
+    );
+
+    await waitForCalls(1);
+    pendingCalls[0]?.resolve(page([1], CURSORS_A));
+    await waitForEntries("1");
+    await waitForCalls(2);
+    pendingCalls[1]?.reject(new Error("disconnected"));
+
+    // Automatic pagination must not loop on the same cursor: no new calls
+    // settle, and the environment reports the failure.
+    await settle();
+    expect(pendingCalls).toHaveLength(2);
+    await vi.waitFor(() => {
+      if (captured.ref.current?.envStates[0]?.error == null) {
+        throw new Error("Expected the environment to report the continuation failure");
+      }
+    });
+
+    // An explicit retry resumes exactly once and lands its page.
+    captured.ref.current?.fetchMore();
+    await waitForCalls(3);
+    expect(pendingCalls[2]?.input.cursors).toEqual(CURSORS_A);
+    pendingCalls[2]?.resolve(page([2]));
+    await waitForEntries("1,2");
+    await settle();
+    expect(pendingCalls).toHaveLength(3);
+  });
+
+  it("aggregates repository errors from continuation pages", async () => {
+    pendingCalls.length = 0;
+    listMock.mockClear();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const captured = captureResult();
+    await render(
+      <Harness
+        initialRequest={{ ...REQUEST_A }}
+        queryClient={queryClient}
+        onResult={captured.onResult}
+      />,
+    );
+
+    await waitForCalls(1);
+    pendingCalls[0]?.resolve(page([1], CURSORS_A));
+    await waitForEntries("1");
+    await waitForCalls(2);
+    pendingCalls[1]?.resolve(
+      page([2], {}, [
+        {
+          projectId: ProjectId.make("project-1"),
+          projectTitle: "T3 Code",
+          message: "t3tools/t3code could not be read.",
+        },
+      ]),
+    );
+    await waitForEntries("1,2");
+
+    // The later failure is surfaced like a first-page one instead of
+    // reading as a successfully finished pagination.
+    await vi.waitFor(() => {
+      const errors = captured.ref.current?.errors ?? [];
+      if (!errors.some((error) => error.message === "t3tools/t3code could not be read.")) {
+        throw new Error("Expected the continuation-page error to be aggregated");
+      }
+    });
+    expect(captured.ref.current?.hasPartialFailure).toBe(true);
+  });
+
+  it("rebuilds appended pages when the base query refreshes with new rows", async () => {
+    pendingCalls.length = 0;
+    listMock.mockClear();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const captured = captureResult();
+    await render(
+      <Harness
+        initialRequest={{ ...REQUEST_A }}
+        queryClient={queryClient}
+        onResult={captured.onResult}
+      />,
+    );
+
+    await waitForCalls(1);
+    pendingCalls[0]?.resolve(page([1], CURSORS_A));
+    await waitForEntries("1");
+    await waitForCalls(2);
+    pendingCalls[1]?.resolve(page([2]));
+    await waitForEntries("1,2");
+
+    // The base refresh carries changed rows: appended pages drop so the
+    // stale #2 cannot linger, and pagination rebuilds from the new base.
+    // (Not awaited: the refetch only settles once the mock below resolves.)
+    void queryClient.refetchQueries({
+      queryKey: pullRequestQueryKeys.list(ENVIRONMENT_A, { ...REQUEST_A }),
+      exact: true,
+    });
+    await waitForCalls(3);
+    pendingCalls[2]?.resolve(page([1, 7], CURSORS_A2));
+    await waitForEntries("1,7");
+    await waitForCalls(4);
+    expect(pendingCalls[3]?.input.cursors).toEqual(CURSORS_A2);
+    pendingCalls[3]?.resolve(page([8]));
+    await waitForEntries("1,7,8");
+
+    // An identical base payload shares structure with the cached one, so a
+    // refresh that changed nothing rebuilds nothing.
+    void queryClient.refetchQueries({
+      queryKey: pullRequestQueryKeys.list(ENVIRONMENT_A, { ...REQUEST_A }),
+      exact: true,
+    });
+    await waitForCalls(5);
+    pendingCalls[4]?.resolve(page([1, 7], CURSORS_A2));
+    await waitForEntries("1,7,8");
+    await settle();
+    expect(pendingCalls).toHaveLength(5);
+    expect(captured.ref.current?.entries.map((item) => item.number)).toEqual([1, 7, 8]);
+  });
+
+  it("keeps a newer continuation's fetching flag when an older one settles", async () => {
+    pendingCalls.length = 0;
+    listMock.mockClear();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const captured = captureResult();
+    await render(
+      <Harness
+        initialRequest={{ ...REQUEST_A }}
+        queryClient={queryClient}
+        onResult={captured.onResult}
+      />,
+    );
+
+    await waitForCalls(1);
+    pendingCalls[0]?.resolve(page([1], CURSORS_A));
+    await waitForEntries("1");
+    await waitForCalls(2);
+    // Move to B while A's continuation is in flight; B's own continuation
+    // starts for the same environment once B's first page lands.
+    setRequest({ ...REQUEST_B });
+    await waitForCalls(3);
+    pendingCalls[2]?.resolve(page([9], CURSORS_B));
+    await waitForEntries("9");
+    await waitForCalls(4);
+    expect(pendingCalls[3]?.input.query).toBe("fix");
+
+    // The stale A continuation settles into a discarded generation. Its
+    // cleanup must not clear B's in-flight flag, or the auto-fetch loop
+    // would start an overlapping duplicate request for B's cursor.
+    pendingCalls[1]?.resolve(page([2]));
+    await settle();
+    expect(pendingCalls).toHaveLength(4);
+    expect(entriesText()).toBe("9");
+    pendingCalls[3]?.resolve(page([10]));
+    await waitForEntries("9,10");
+    expect(captured.ref.current?.entries.map((item) => item.number)).toEqual([9, 10]);
   });
 });
