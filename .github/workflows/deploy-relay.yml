@@ -4,15 +4,16 @@ on:
   push:
     branches:
       - main
-  # Alchemy does not redeploy the Worker when only a Config value read in its
-  # Init changes (alchemy-run/alchemy#1831), so a changed repository variable
-  # needs a forced deploy to reach production.
+  # Redeploys main after a variable or secret change. Tunnel cleanup modes are
+  # Worker env bindings, so a normal run applies them. Other values the Worker
+  # reads in Init only apply with force (alchemy-run/alchemy#1831), which also
+  # replaces the Postgres runtime role (alchemy-run/alchemy#1832).
   workflow_dispatch:
     inputs:
       force:
-        description: Redeploy every resource, including ones with no detected changes
+        description: Redeploy every resource. Needed only for values the Worker reads at startup (see docs/operations/release.md). Replaces the Postgres runtime role.
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
