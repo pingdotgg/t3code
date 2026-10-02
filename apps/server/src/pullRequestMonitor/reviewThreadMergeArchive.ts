@@ -40,13 +40,10 @@ export function reviewThreadPullRequests(
   const linked = (thread.pullRequests ?? []).map((link) => link.pullRequest);
   const legacy = thread.pullRequest;
   const associated = legacy === null || legacy === undefined ? linked : [...linked, legacy];
-  const snapshot = pullRequestFromReviewSnapshot(thread.reviewSnapshot);
-  if (snapshot === undefined) return associated;
-  const snapshotKey = threadPullRequestKey(snapshot);
-  if (associated.some((pullRequest) => threadPullRequestKey(pullRequest) === snapshotKey)) {
-    return associated;
-  }
-  return [...associated, snapshot];
+  // Safe to append unconditionally: `liveReviewThreadPullRequests` keys by pull
+  // request ref and dedupes keys, so a link naming the same PR costs nothing.
+  const fromSnapshot = pullRequestFromReviewSnapshot(thread.reviewSnapshot);
+  return fromSnapshot === undefined ? associated : [...associated, fromSnapshot];
 }
 
 // Shared by the sweep's plan and the admission guard so the two cannot drift.
