@@ -40,7 +40,9 @@ function nextRestrictedIntervalRun(
     schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
   const windowStart = schedule.window ? minutesOfDay(schedule.window.start) : null;
   const windowEnd = schedule.window ? minutesOfDay(schedule.window.end) : null;
-  let candidate = DateTime.add(from, { milliseconds: everyMs });
+  // Elapsed-time arithmetic: a calendar add would re-resolve a repeated
+  // fall-back hour to its first occurrence and step backwards.
+  let candidate = DateTime.addDuration(from, everyMs);
   for (let hop = 0; hop < 16; hop += 1) {
     if (weekdays !== null && !weekdays.has(DateTime.toParts(candidate).weekDay)) {
       candidate = startOfNextDay(candidate);
@@ -55,12 +57,22 @@ function nextRestrictedIntervalRun(
       continue;
     }
     if (local >= windowStart) return candidate;
-    const opensAt = DateTime.setParts(atMidnight(candidate), {
+    const wallClockOpening = DateTime.setParts(atMidnight(candidate), {
       hour: Math.floor(windowStart / 60),
       minute: windowStart % 60,
       second: 0,
       millisecond: 0,
     });
+    // In a fall-back overlap the wall-clock opening resolves to its earlier
+    // occurrence, which can precede the candidate; step forward on the
+    // candidate's own offset to the repeated opening instead.
+    const { second, millisecond } = DateTime.toParts(candidate);
+    const opensAt = DateTime.isGreaterThan(wallClockOpening, candidate)
+      ? wallClockOpening
+      : DateTime.addDuration(
+          candidate,
+          (windowStart - local) * MINUTE_MS - second * 1000 - millisecond,
+        );
     // A window opening inside a spring-forward gap does not exist that day.
     if (localMinutes(opensAt) === windowStart) return opensAt;
     candidate = startOfNextDay(candidate);

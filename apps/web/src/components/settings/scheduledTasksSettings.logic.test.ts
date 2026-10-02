@@ -196,6 +196,17 @@ describe("interval restrictions round-trip through the draft", () => {
     expect(scheduleFromDraft(draft)).toEqual(restrictedTask.schedule);
   });
 
+  it("pads a single-digit window hour so the time inputs can show it", () => {
+    // The contract accepts "9:00" (for example from an MCP client), but a
+    // native time input only displays zero-padded HH:mm values.
+    const draft = taskToDraft({
+      ...restrictedTask,
+      schedule: { type: "interval", everyMs: 1_800_000, window: { start: "9:00", end: "17:00" } },
+    });
+    expect(draft.windowStart).toBe("09:00");
+    expect(draft.windowEnd).toBe("17:00");
+  });
+
   it("reads an unrestricted interval as windowless with no cap", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.intervalWeekdays.size).toBe(0);

@@ -150,6 +150,14 @@ export function runCapReached(task: ScheduledTask): boolean {
   return task.schedule.maxRuns !== undefined && task.runCount >= task.schedule.maxRuns;
 }
 
+/** "9:00" -> "09:00": native time inputs only display zero-padded HH:mm. */
+function paddedTime(value: string): string {
+  const [hours, minutes] = value.trim().split(":");
+  return hours !== undefined && minutes !== undefined
+    ? `${hours.padStart(2, "0")}:${minutes}`
+    : value;
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const weekdays =
@@ -167,8 +175,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     intervalWeekdays: new Set(schedule.type === "interval" ? (schedule.weekdays ?? []) : []),
     windowEnabled: schedule.type === "interval" && schedule.window !== undefined,
-    windowStart: schedule.type === "interval" && schedule.window ? schedule.window.start : "09:00",
-    windowEnd: schedule.type === "interval" && schedule.window ? schedule.window.end : "17:00",
+    windowStart:
+      schedule.type === "interval" && schedule.window ? paddedTime(schedule.window.start) : "09:00",
+    windowEnd:
+      schedule.type === "interval" && schedule.window ? paddedTime(schedule.window.end) : "17:00",
     maxRuns: schedule.maxRuns === undefined ? "" : String(schedule.maxRuns),
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     weekdays,

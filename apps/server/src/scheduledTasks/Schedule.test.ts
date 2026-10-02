@@ -284,6 +284,21 @@ describe("interval restrictions at dispatch and across DST", () => {
     expect(next && DateTime.toParts(next)).toMatchObject({ day: 9, hour: 2, minute: 10 });
   });
 
+  it("opens a window at the later 01:30 when a fall-back hour repeats", () => {
+    // 2026-11-01 01:00-02:00 occurs twice in New York; 06:05Z is the
+    // repeated 01:05 (EST), after the first 01:30 (EDT) has passed.
+    const from = DateTime.makeZonedUnsafe("2026-11-01T06:05:00Z", {
+      timeZone: "America/New_York",
+    });
+    expect(DateTime.toParts(from)).toMatchObject({ hour: 1, minute: 5 });
+    const next = nextScheduledRunAt(
+      { type: "interval", everyMs: 15 * 60_000, window: { start: "01:30", end: "03:00" } },
+      from,
+    );
+    expect(next).not.toBeNull();
+    expect(next && DateTime.toEpochMillis(next)).toBe(DateTime.toEpochMillis(from) + 25 * 60_000);
+  });
+
   it("finds the next Sunday window even when it opens inside a spring-forward gap", () => {
     const from = zoned("America/New_York", { year: 2026, month: 3, day: 1, hour: 5, minute: 0 });
     const next = nextScheduledRunAt(
