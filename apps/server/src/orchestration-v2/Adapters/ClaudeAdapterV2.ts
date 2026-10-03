@@ -1798,7 +1798,10 @@ interface ClaudeBackgroundTaskOrigin {
 }
 
 interface ClaudeBackgroundCalls {
-  readonly calls: ReadonlyMap<string, Omit<ClaudeBackgroundTaskOrigin, "startedAt">>;
+  readonly calls: ReadonlyMap<
+    string,
+    Omit<ClaudeBackgroundTaskOrigin, "startedAt"> & { readonly nativeThreadId: string }
+  >;
   readonly tasks: ReadonlyMap<
     string,
     ClaudeBackgroundTaskOrigin & { readonly toolUseId: string; readonly nativeThreadId: string }
@@ -3220,28 +3223,32 @@ export function makeClaudeAdapterV2(
         const lastKnownOpaqueTasks = yield* Ref.make(
           new Map<string, OrchestrationV2PendingBackgroundTask>(),
         );
-        // Live Claude background commands and monitors. A Bash or Monitor call
-        // waits in `calls` until its task_started links it to a task, or its
-        // tool_result ends the call without one. A task stays in `tasks` until
+        // Live Claude background commands and monitors. A Monitor or background
+        // Bash call waits in `calls` until its task_started links it to a task,
+        // its tool_result ends the call without one, or its process goes away. A task stays in `tasks` until
         // it leaves its native thread's roster or its task_notification
         // arrives, so its origin is never forgotten while it runs.
         const claudeBackgroundCalls = yield* Ref.make<ClaudeBackgroundCalls>({
           calls: new Map(),
           tasks: new Map(),
         });
-        const trackClaudeBackgroundCalls = (message: SDKMessage) => {
+        const trackClaudeBackgroundCalls = (message: SDKMessage, nativeThreadId: string) => {
           const started = claudeToolUseBlocksFromAssistantMessage(message).flatMap((toolUse) => {
-            if (toolUse.name !== "Monitor" && toolUse.name !== "Bash") return [];
-            const command =
-              toolUse.input !== null && typeof toolUse.input === "object"
-                ? Reflect.get(toolUse.input, "command")
-                : undefined;
+            const input =
+              toolUse.input !== null && typeof toolUse.input === "object" ? toolUse.input : {};
+            // A foreground Bash call never becomes background work here, so it is not tracked.
+            const tracked =
+              toolUse.name === "Monitor" ||
+              (toolUse.name === "Bash" && Reflect.get(input, "run_in_background") === true);
+            if (!tracked) return [];
+            const command = Reflect.get(input, "command");
             return [
               [
                 toolUse.id,
                 {
                   monitor: toolUse.name === "Monitor",
                   command: typeof command === "string" ? backgroundWorkCommand(command) : undefined,
+                  nativeThreadId,
                 },
               ] as const,
             ];
@@ -3288,7 +3295,7 @@ export function makeClaudeAdapterV2(
               }
               const calls = new Map(current.calls);
               calls.delete(input.toolUseId);
-              const origin = { ...call, startedAt: now };
+              const origin = { monitor: call.monitor, command: call.command, startedAt: now };
               const tasks = new Map(current.tasks).set(input.taskId, {
                 ...origin,
                 toolUseId: input.toolUseId,
@@ -3693,10 +3700,17 @@ export function makeClaudeAdapterV2(
               updated.delete(nativeThreadId);
               return updated;
             });
-            // The thread's process died or its turn failed; those monitors never notify.
+            // The thread's process died or its turn failed; those monitors never
+            // notify, and its calls never link.
             yield* endClaudeBackgroundTasks(
               (_taskId, task) => task.nativeThreadId === nativeThreadId,
             );
+            yield* Ref.update(claudeBackgroundCalls, (current) => {
+              const calls = new Map(
+                [...current.calls].filter(([, call]) => call.nativeThreadId !== nativeThreadId),
+              );
+              return calls.size === current.calls.size ? current : { ...current, calls };
+            });
           });
 
         // Drop idle wake traffic for a dead native process so it cannot pin
@@ -5598,7 +5612,7 @@ export function makeClaudeAdapterV2(
           const message = input.message;
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
-          yield* trackClaudeBackgroundCalls(message);
+          yield* trackClaudeBackgroundCalls(message, liveQuery.nativeThreadId);
           // Before routing too: the wake gate reads it while the root is idle.
           if (
             message.type === "system" &&
