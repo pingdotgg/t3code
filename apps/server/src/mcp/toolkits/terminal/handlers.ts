@@ -84,17 +84,16 @@ export const TerminalToolkitHandlersLive = TerminalToolkit.toLayer({
     Effect.gen(function* () {
       const { threadId } = yield* requireTerminalAccess;
       const terminals = yield* TerminalManager;
-      const result = yield* Deferred.make<ReadonlyArray<TerminalSummary>>();
+      const result = yield* Deferred.make<{ readonly terminals: ReadonlyArray<TerminalSummary> }>();
       return yield* Effect.acquireUseRelease(
         terminals.subscribeMetadata((event) =>
           event.type === "snapshot"
-            ? Deferred.succeed(
-                result,
-                event.terminals.filter(
+            ? Deferred.succeed(result, {
+                terminals: event.terminals.filter(
                   (terminal) =>
                     terminal.threadId === threadId && terminal.terminalId.startsWith("agent-"),
                 ),
-              ).pipe(Effect.asVoid)
+              }).pipe(Effect.asVoid)
             : Effect.void,
         ),
         () => Deferred.await(result),
