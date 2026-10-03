@@ -1016,6 +1016,120 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
       });
 
+      it("drops stale Grok models missing from a successful refresh", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-30T00:00:00.000Z",
+          version: "1.0.44",
+          models: [
+            {
+              slug: "grok-4.7",
+              name: "Grok 4.7",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "codexhub-removed-model",
+              name: "Removed gateway model",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-09-30T00:01:00.000Z",
+          models: [
+            {
+              slug: "grok-4.7",
+              name: "Grok 4.7",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...refreshedProvider.models,
+        ]);
+      });
+
+      it("retains stale Grok models when a refresh fails", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-30T00:00:00.000Z",
+          version: "1.0.44",
+          models: [
+            {
+              slug: "grok-4.7",
+              name: "Grok 4.7",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          status: "error",
+          auth: { status: "unknown" },
+          checkedAt: "2026-09-30T00:01:00.000Z",
+          models: [],
+          message: "Failed to refresh Grok models.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
+      it("retains stale Grok models when ACP discovery fails with a warning", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("grok"),
+          driver: ProviderDriverKind.make("grok"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-30T00:00:00.000Z",
+          version: "1.0.44",
+          models: [
+            {
+              slug: "grok-4.7",
+              name: "Grok 4.7",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          status: "warning",
+          checkedAt: "2026-09-30T00:01:00.000Z",
+          models: [],
+          message: "Grok CLI is installed but ACP initialize failed.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
       describe("Codex model inventories", () => {
         const cachedProvider = {
           instanceId: ProviderInstanceId.make("codex-personal"),

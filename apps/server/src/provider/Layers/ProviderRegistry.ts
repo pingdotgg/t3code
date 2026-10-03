@@ -127,7 +127,13 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  const isGrok = provider.driver === ProviderDriverKind.make("grok");
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    !isGrok &&
+    provider.driver !== ProviderDriverKind.make("opencode")
+  ) {
     return true;
   }
 
@@ -145,8 +151,16 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
   const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
+  // Grok reports installed warning states while discovery is incomplete: the
+  // initial availability snapshot and ACP initialize failures both carry
+  // partial inventories that must not erase the cached models.
+  const didInstalledGrokProbeRemainIncomplete =
+    isGrok && provider.installed && provider.status === "warning";
   return (
-    isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
+    isPendingAntigravityAuthentication ||
+    isPendingInitialProbe ||
+    didInstalledProviderProbeFail ||
+    didInstalledGrokProbeRemainIncomplete
   );
 };
 
