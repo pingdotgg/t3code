@@ -24,6 +24,11 @@ import { useShallow } from "zustand/react/shallow";
 
 import ChatView from "./ChatView";
 import { threadHasStarted } from "./ChatView.logic";
+import {
+  resolveChatPaneRenderMode,
+  resolveChatSplitDropPlacement,
+  shouldSyncFocusedLeafToRoute,
+} from "./ChatSplitArea.logic";
 import { Button } from "./ui/button";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import { DraftId, useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
@@ -41,7 +46,6 @@ import {
   type ChatSplitOrientation,
   clampSplitRatio,
   countLeafNodes,
-  diffRouteStatesEqual,
   isLeafNode,
 } from "../chatSplitLayout";
 import {
@@ -128,61 +132,6 @@ function ChatPaneActions(props: ChatPaneActionsProps) {
 interface ChatSplitAreaProps {
   routeTarget: ThreadRouteTarget;
   routeDiffSearch?: DiffRouteSearch;
-}
-
-export function resolveChatPaneRenderMode(params: {
-  isFocused: boolean;
-  target: ThreadRouteTarget;
-}): "live" | "empty" {
-  // Both server threads and (client-only) draft threads render a live chat
-  // surface; drafts promote to server threads in place on first send.
-  if (params.target.kind !== "server" && params.target.kind !== "draft") {
-    return "empty";
-  }
-  return "live";
-}
-
-export function shouldSyncFocusedLeafToRoute(params: {
-  focusedLeafTarget: ThreadRouteTarget | null;
-  focusedLeafDiff: DiffRouteSearch | null;
-  routeTarget: ThreadRouteTarget;
-  routeDiffSearch?: DiffRouteSearch;
-}): boolean {
-  const { focusedLeafTarget, focusedLeafDiff, routeTarget, routeDiffSearch } = params;
-  if (!focusedLeafTarget) {
-    return false;
-  }
-  if (!threadRouteTargetsEqual(focusedLeafTarget, routeTarget)) {
-    return true;
-  }
-  if (focusedLeafTarget.kind !== "server" || routeTarget.kind !== "server") {
-    return false;
-  }
-  return !diffRouteStatesEqual(focusedLeafDiff, routeDiffSearch);
-}
-
-interface ChatSplitDropRect {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
-
-export function resolveChatSplitDropPlacement(params: {
-  rect: ChatSplitDropRect;
-  clientX: number;
-  clientY: number;
-}): ChatSplitDropPlacement {
-  const { rect, clientX, clientY } = params;
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
-  const distances = [
-    { placement: "left" as const, distance: x },
-    { placement: "right" as const, distance: rect.width - x },
-    { placement: "top" as const, distance: y },
-    { placement: "bottom" as const, distance: rect.height - y },
-  ];
-  return distances.reduce((best, next) => (next.distance < best.distance ? next : best)).placement;
 }
 
 function hasChatSplitThreadDragPayload(dataTransfer: DataTransfer): boolean {

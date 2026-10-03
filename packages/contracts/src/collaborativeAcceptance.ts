@@ -504,6 +504,7 @@ export const CollaborativeAcceptanceStatus = Schema.Struct({
 export type CollaborativeAcceptanceStatus = typeof CollaborativeAcceptanceStatus.Type;
 
 export const CollaborativeAcceptanceCaseLookupInput = Schema.Struct({
+  /** Authenticated PR-associated thread used to authorize lookup, not the case selector. */
   threadId: ThreadId,
   pullRequest: PullRequestRef,
 });

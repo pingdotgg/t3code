@@ -6,7 +6,7 @@ import {
   isScrollMetricsAtEnd,
   shouldClosePreviewMiniPlayer,
   shouldRenderPreviewMiniPlayer,
-} from "./ChatView";
+} from "./ChatView.logic";
 import type { Thread } from "../types";
 
 const COPILOT_SESSION_ID = "a7f0c803-7cce-4554-9ad6-dfd9df539e33";

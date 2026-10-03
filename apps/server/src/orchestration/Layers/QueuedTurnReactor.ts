@@ -7,6 +7,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { Cause, Duration, Effect, Layer, Option, PubSub, Result, Schema, Stream } from "effect";
 
@@ -18,6 +19,10 @@ import {
   reconcileFeedbackItem,
 } from "../../pullRequestMonitor/feedbackReconciliation.ts";
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
+import {
+  PullRequestMonitorService,
+  type PullRequestMonitorAutomationDeliveryState,
+} from "../../pullRequestMonitor/PullRequestMonitorService.ts";
 import { computeReadiness } from "../../pullRequestMonitor/readiness.ts";
 import { buildWakePrompt } from "../../pullRequestMonitor/wakePrompt.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -169,6 +174,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const pullRequests = yield* PullRequestService;
   const monitorFeedback = yield* PullRequestMonitorFeedbackService;
+  const pullRequestMonitors = yield* PullRequestMonitorService;
   const serverSettings = yield* ServerSettingsService;
   const wakeScope = yield* Effect.scope;
   const drainingThreadIds = new Set<ThreadId>();
@@ -250,20 +256,104 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         const rightUser = right.origin === undefined ? 0 : 1;
         return leftUser - rightUser || left.createdAt.localeCompare(right.createdAt);
       });
-      let nextQueuedTurn = eligibleTurns[0];
-      if (eligibleTurns.some((turn) => turn.origin?.kind === "pull-request-monitor")) {
-        const settings = yield* serverSettings.getSettings;
-        nextQueuedTurn = eligibleTurns.find(
-          (turn) =>
-            turn.failedAt !== null ||
-            turn.origin?.kind !== "pull-request-monitor" ||
-            automaticPrFeedbackBlockReason(
-              settings,
-              turn.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
-              thread.session,
-            ) === null,
-        );
+      const dispatchableTurns = [];
+      const deliveryStates = new Map<string, PullRequestMonitorAutomationDeliveryState>();
+      const requeuedDeliveryIds = new Set<string>();
+      let settings: ServerSettings | undefined;
+      for (const turn of eligibleTurns) {
+        const origin = turn.origin;
+        if (origin?.kind !== "pull-request-monitor") {
+          dispatchableTurns.push(turn);
+          continue;
+        }
+
+        const referenceKey = `${origin.repository}\u0000${origin.number}`;
+        let deliveryState = deliveryStates.get(referenceKey);
+        if (deliveryState === undefined) {
+          const stateResult = yield* Effect.result(
+            pullRequestMonitors.automationDeliveryState({
+              reference: {
+                projectId: thread.projectId,
+                repository: origin.repository,
+                number: origin.number,
+              },
+              threadId,
+            }),
+          );
+          if (Result.isFailure(stateResult)) {
+            yield* Effect.logWarning("could not verify queued PR monitor delivery state", {
+              threadId,
+              queuedTurnId: turn.id,
+              repository: origin.repository,
+              pullRequestNumber: origin.number,
+              cause: stateResult.failure,
+            });
+            deliveryState = "blocked";
+          } else {
+            deliveryState = stateResult.success;
+          }
+          deliveryStates.set(referenceKey, deliveryState);
+        }
+
+        if (deliveryState === "terminal") {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.queued-turn.delete",
+            commandId: serverCommandId("queued-turn.delete-stale-monitor"),
+            threadId,
+            queuedTurnId: turn.id,
+            deletedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+        if (deliveryState === "owner-changed") {
+          if (origin.deliveryId === undefined) {
+            yield* Effect.logWarning("queued PR monitor turn has no durable delivery to requeue", {
+              threadId,
+              queuedTurnId: turn.id,
+              repository: origin.repository,
+              pullRequestNumber: origin.number,
+            });
+            continue;
+          }
+          if (!requeuedDeliveryIds.has(origin.deliveryId)) {
+            yield* monitorFeedback.retryQueuedDelivery({
+              deliveryId: PullRequestMonitorFeedbackDeliveryId.make(origin.deliveryId),
+              reason: "Queued PR feedback owner changed before dispatch.",
+            });
+            requeuedDeliveryIds.add(origin.deliveryId);
+          }
+          yield* orchestrationEngine.dispatch({
+            type: "thread.queued-turn.delete",
+            commandId: serverCommandId("queued-turn.delete-owner-changed-monitor"),
+            threadId,
+            queuedTurnId: turn.id,
+            deletedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+        // Parent pause covers automatic PR remediation as well as child nudges;
+        // keep the durable feedback queued without letting it start a turn.
+        if (thread.nudging?.paused) continue;
+        if (turn.failedAt !== null) {
+          dispatchableTurns.push(turn);
+          continue;
+        }
+        if (deliveryState !== "eligible") continue;
+
+        settings ??= yield* serverSettings.getSettings;
+        if (
+          automaticPrFeedbackBlockReason(
+            settings,
+            turn.modelSelection?.instanceId ?? thread.modelSelection.instanceId,
+            thread.session,
+          ) !== null
+        ) {
+          continue;
+        }
+        dispatchableTurns.push(turn);
       }
+
+      let nextQueuedTurn = dispatchableTurns[0];
       if (!nextQueuedTurn || nextQueuedTurn.failedAt !== null) return;
 
       // While a child decision is pending, only its correlated decision
@@ -278,7 +368,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         thread.nudging?.delegation?.completedAt === null ? thread.nudging.delegation : undefined;
       const pendingResponseId = activeDelegation?.pendingResponse?.queuedTurnId ?? null;
       if (pendingResponseId !== null) {
-        const responseTurn = eligibleTurns.find(
+        const responseTurn = dispatchableTurns.find(
           (turn) => turn.id === pendingResponseId && turn.failedAt === null,
         );
         if (!responseTurn) return;

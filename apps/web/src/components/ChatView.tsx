@@ -86,7 +86,7 @@ import {
   isThreadActivelyWorking,
   isLatestTurnSettled,
 } from "../session-logic";
-import { type LegendListRef, type LegendListState } from "@legendapp/list/react";
+import { type LegendListRef } from "@legendapp/list/react";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -147,13 +147,11 @@ import {
   previewMiniPlayerSourceKey,
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
-  type PreviewMiniPlayerSource,
 } from "~/previewMiniPlayerStore";
 import {
   setThreadPlanSidebarOpen,
   useBrowserPanelState,
   useRightPanelStore,
-  type RightPanelSurface,
 } from "~/rightPanelStore";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { ThreadPullRequestsPanel } from "./ThreadPullRequestsPanel";
@@ -244,6 +242,8 @@ import {
   deriveComposerSendState,
   deriveTimelineWorkState,
   getActivityHistoryKey,
+  getCopilotResumeCommand,
+  isScrollMetricsAtEnd,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   mergeActivityWindows,
@@ -255,6 +255,9 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveInterruptTurnId,
   resolveSendEnvMode,
+  SCROLL_TO_BOTTOM_THRESHOLD_PX,
+  shouldClosePreviewMiniPlayer,
+  shouldRenderPreviewMiniPlayer,
   shouldWriteThreadErrorToCurrentServerThread,
   type ThreadPlanCatalogEntry,
   waitForRoutableServerThread,
@@ -272,35 +275,6 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { InsightsPanel } from "./InsightsPanel";
 import { ChatPanelToggles, type ChatPanelTogglesState } from "./chat/ChatPanelToggles";
 import { isInsightActivity } from "../insights";
-
-export function shouldClosePreviewMiniPlayer(input: {
-  readonly hasAuthoritativeServerState: boolean;
-  readonly sameTabOpenInPanel: boolean;
-  readonly tabExists: boolean;
-}): boolean {
-  return input.hasAuthoritativeServerState && !input.tabExists;
-}
-
-export function shouldRenderPreviewMiniPlayer(input: {
-  readonly source: PreviewMiniPlayerSource | null;
-  readonly panelOpen: boolean;
-  readonly panelSurface: RightPanelSurface | null;
-}): boolean {
-  if (input.source === null) return false;
-  if (input.source.kind === "browser") {
-    return !(
-      input.panelOpen &&
-      input.panelSurface?.kind === "preview" &&
-      input.panelSurface.resourceId === input.source.tabId
-    );
-  }
-  return !(
-    input.panelOpen &&
-    input.panelSurface?.kind === "device" &&
-    input.panelSurface.target?.hostId === input.source.hostId &&
-    input.panelSurface.target.deviceId === input.source.deviceId
-  );
-}
 
 async function ensureRoutableServerThread(threadRef: ScopedThreadRef): Promise<void> {
   if (await waitForRoutableServerThread(threadRef)) {
@@ -403,35 +377,6 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   return true;
 }
 
-export function getCopilotResumeCommand(
-  thread: Pick<Thread, "modelSelection" | "session"> | null,
-): string | null {
-  if (!thread) {
-    return null;
-  }
-  const session = thread.session;
-  if (!session) {
-    return null;
-  }
-  const isCopilotSession =
-    session.provider === "copilot" ||
-    session.providerInstanceId === "copilot" ||
-    thread.modelSelection.instanceId === "copilot";
-  if (!isCopilotSession) return null;
-
-  const resumeCursor = session.resumeCursor;
-  if (
-    typeof resumeCursor !== "object" ||
-    resumeCursor === null ||
-    !("sessionId" in resumeCursor) ||
-    typeof resumeCursor.sessionId !== "string"
-  ) {
-    return null;
-  }
-  const sessionId = resumeCursor.sessionId.trim();
-  return sessionId.length > 0 ? `copilot --resume=${sessionId}` : null;
-}
-
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
   return useStore(useMemo(() => createThreadPlanCatalogSelector(threadIds), [threadIds]));
 }
@@ -449,24 +394,6 @@ function formatOutgoingPrompt(params: {
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
-const SCROLL_TO_BOTTOM_THRESHOLD_PX = 8;
-
-type ScrollAtEndMetrics = Pick<
-  LegendListState,
-  "contentLength" | "isAtEnd" | "scroll" | "scrollLength"
->;
-
-export function isScrollMetricsAtEnd(
-  metrics: ScrollAtEndMetrics,
-  thresholdPx = SCROLL_TO_BOTTOM_THRESHOLD_PX,
-) {
-  if (metrics.isAtEnd) {
-    return true;
-  }
-
-  const remainingDistance = metrics.contentLength - metrics.scroll - metrics.scrollLength;
-  return Number.isFinite(remainingDistance) && remainingDistance <= thresholdPx;
-}
 
 function isElementScrolledToEnd(
   element: HTMLElement | null | undefined,

@@ -222,6 +222,32 @@ repositoryLayer("Collaborative acceptance repository", (it) => {
     }),
   );
 
+  it.effect("lists cases by exact project and pull-request identity across parent threads", () =>
+    Effect.gen(function* () {
+      const repository = yield* CollaborativeAcceptanceRepository;
+      const matching = record("pr-lookup-match");
+      const samePrOtherParent = {
+        ...record("pr-lookup-other-parent"),
+        case: {
+          ...record("pr-lookup-other-parent").case,
+          pullRequest: matching.case.pullRequest,
+        },
+      };
+      const otherPr = record("pr-lookup-other-pr");
+
+      yield* repository.save({ record: matching, expectedRevision: null });
+      yield* repository.save({ record: samePrOtherParent, expectedRevision: null });
+      yield* repository.save({ record: otherPr, expectedRevision: null });
+
+      const result = yield* repository.listByPullRequest(matching.case.pullRequest);
+
+      assert.deepStrictEqual(
+        result.map(({ case: acceptanceCase }) => acceptanceCase.caseId),
+        [matching.case.caseId, samePrOtherParent.case.caseId],
+      );
+    }),
+  );
+
   it.effect("lists all immutable case records for PR lookup", () =>
     Effect.gen(function* () {
       const repository = yield* CollaborativeAcceptanceRepository;
