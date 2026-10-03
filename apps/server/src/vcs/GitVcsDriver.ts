@@ -1,5 +1,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeBuffer from "node:buffer";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem has no lstat
+import * as NodeFSP from "node:fs/promises";
 
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -412,6 +414,9 @@ export class GitVcsDriver extends Context.Service<
 >()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+// Checkpoints never capture untracked files over this size, and restore never cleans them away.
+// Hashing one into the object store can outlast the Git timeout and orphan a tmp_pack every turn.
+const CHECKPOINT_MAX_UNTRACKED_FILE_BYTES = 100 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
@@ -528,7 +533,11 @@ const gitCommand = (
       : {}),
   });
 
-export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
+export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (options?: {
+  readonly checkpointMaxUntrackedFileBytes?: number;
+}) {
+  const checkpointMaxUntrackedFileBytes =
+    options?.checkpointMaxUntrackedFileBytes ?? CHECKPOINT_MAX_UNTRACKED_FILE_BYTES;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
@@ -797,6 +806,39 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "core.fsyncMethod=fsync",
   ] as const;
 
+  // Lists files over the checkpoint cap that are untracked in the real index, as git status
+  // shows them, relative to cwd. Returns undefined when the listing is incomplete: Git failed
+  // (an unreadable index), output was truncated, or a path is not valid UTF-8 and so cannot be
+  // named back to Git or lstat.
+  const listOversizedUntrackedFiles = Effect.fn(
+    "GitVcsDriver.checkpoints.listOversizedUntrackedFiles",
+  )(function* (operation: string, cwd: string) {
+    const untracked = yield* execute({
+      operation,
+      cwd,
+      args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
+      allowNonZeroExit: true,
+      maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+    });
+    if (
+      untracked.exitCode !== 0 ||
+      untracked.stdoutTruncated ||
+      untracked.stdoutInvalidUtf8 === true
+    ) {
+      return undefined;
+    }
+    return yield* Effect.filter(
+      splitNullSeparatedGitStdoutPaths(untracked).filter((entry) => !entry.endsWith("/")),
+      // lstat: Git stores a symlink, never its target, so a link is never oversized.
+      (entry) =>
+        Effect.tryPromise(() => NodeFSP.lstat(path.join(cwd, entry))).pipe(
+          Effect.map((stats) => stats.isFile() && stats.size > checkpointMaxUntrackedFileBytes),
+          Effect.orElseSucceed(() => false),
+        ),
+      { concurrency: 16 },
+    );
+  });
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
@@ -953,6 +995,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
+        // An incomplete listing stages everything, as capture did before the size cap.
+        const oversizedExclusions = (
+          (yield* listOversizedUntrackedFiles(operation, input.cwd)) ?? []
+        ).map((entry) => `:(exclude,literal)${entry}`);
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
             operation,
@@ -970,7 +1016,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ],
             env: commitEnv,
           });
-        yield* stageFiles([]).pipe(
+        yield* stageFiles(oversizedExclusions).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1012,7 +1058,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   }
                 }
                 if (exclusions.length === 0) return yield* error;
-                return yield* stageFiles(exclusions);
+                return yield* stageFiles([...oversizedExclusions, ...exclusions]);
               }).pipe(
                 // One budget covers discovery, queued Git admission, probes, and the staging retry.
                 Effect.timeoutOrElse({
@@ -1084,6 +1130,35 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      // Clean would delete files capture skipped. Exclude patterns, unlike pathspecs, also keep
+      // them inside an untracked directory; they are anchored at the top level. Listing before
+      // the restore covers everything clean can see afterwards.
+      const oversized = yield* listOversizedUntrackedFiles(operation, input.cwd);
+      if (oversized === undefined) {
+        return yield* new VcsProcessExitError({
+          operation,
+          command: "git ls-files",
+          cwd: input.cwd,
+          exitCode: 0,
+          detail: "Could not list every untracked file, so restore could delete large files.",
+        });
+      }
+      const keepOversized: Array<string> = [];
+      if (oversized.length > 0) {
+        const prefix = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--show-prefix"],
+        });
+        for (const entry of oversized) {
+          const literal = `${prefix.stdout.replace(/\n$/, "")}${entry}`.replace(
+            /[\\*?[ ]/g,
+            "\\$&",
+          );
+          keepOversized.push("-e", `/${literal}`);
+        }
+      }
+
       const tracked = yield* execute({
         operation,
         cwd: input.cwd,
@@ -1113,7 +1188,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const cleaned = yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
+        args: ["clean", "-fd", ...keepOversized, "--", "."],
         allowNonZeroExit: true,
       });
       if (cleaned.exitCode !== 0) {
