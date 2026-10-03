@@ -281,6 +281,26 @@ describe("tailscale", () => {
     });
   });
 
+  it.effect("omits exit diagnostics for empty and whitespace stderr", () =>
+    Effect.gen(function* () {
+      for (const stderr of ["", " \t\r\n"]) {
+        const layer = mockSpawnerLayer(() => ({ code: 1, stderr }));
+        const statusError = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
+        const serveError = yield* ensureTailscaleServe({ localPort: 13773 }).pipe(
+          Effect.flip,
+          Effect.provide(layer),
+        );
+
+        for (const error of [statusError, serveError]) {
+          assert.instanceOf(error, TailscaleCommandExitError);
+          assert.equal(error.exitCode, 1);
+          assert.equal(error.stderrLength, stderr.length);
+          assert.notProperty(error, "stderrDiagnostic");
+        }
+      }
+    }),
+  );
+
   it.effect("classifies unrecognized stderr without quoting it", () => {
     const layer = mockSpawnerLayer(() => ({
       code: 3,
