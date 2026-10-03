@@ -2307,10 +2307,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
-      timeoutMs: 30_000,
-      fallbackErrorDetail: "git pull failed",
-    });
+    const pullArgs = ["pull", "--ff-only"];
+    const pull = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.pullCurrentBranch.pull",
+      cwd,
+      pullArgs,
+      { timeoutMs: 30_000, allowNonZeroExit: true },
+    );
+    if (pull.exitCode !== 0) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.pullCurrentBranch.pull",
+          cwd,
+          args: pullArgs,
+        }),
+        detail: fetchFailureDetail(pull.stderr) ?? "git pull failed",
+        ...(pull.exitCode === null ? {} : { exitCode: pull.exitCode }),
+        stdoutLength: pull.stdout.length,
+        stderrLength: pull.stderr.length,
+      });
+    }
     const afterSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.afterSha",
       cwd,

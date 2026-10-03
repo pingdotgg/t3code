@@ -3009,6 +3009,75 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("explains a real pull failure when the upstream remote is gone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const missingRemote = `${cwd}/private-missing-remote`;
+        yield* git(cwd, ["remote", "set-url", "origin", missingRemote]);
+
+        const error = yield* driver.pullCurrentBranch(cwd).pipe(Effect.flip);
+
+        assert.include(error.detail, "could not access the remote repository");
+        assert.equal(error.exitCode, 1);
+        assert.notInclude(error.detail, missingRemote);
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("explains a pull that the remote rejects for a missing SSH key", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const secret = "secret-pull-token";
+        // Stands in for ssh: prints what OpenSSH prints when no key is accepted.
+        yield* writeTextFile(
+          cwd,
+          ".git/fake-ssh.cjs",
+          `console.error("git@example.com: Permission denied (publickey).\\n${secret}"); process.exit(255);`,
+        );
+        yield* git(cwd, ["config", "core.sshCommand", "node .git/fake-ssh.cjs"]);
+        yield* git(cwd, ["remote", "add", "origin", "git@example.com:owner/repo.git"]);
+        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+        yield* git(cwd, ["branch", `--set-upstream-to=origin/${initialBranch}`]);
+
+        const error = yield* driver.pullCurrentBranch(cwd).pipe(Effect.flip);
+
+        assert.include(error.detail, "could not authenticate");
+        assert.notInclude(error.message, secret);
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("keeps the generic pull failure when the branch cannot fast-forward", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* writeTextFile(cwd, "remote.txt", "pushed\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "pushed commit"]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["reset", "--hard", "HEAD~1"]);
+        yield* writeTextFile(cwd, "local.txt", "diverged\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "diverged commit"]);
+
+        const error = yield* driver.pullCurrentBranch(cwd).pipe(Effect.flip);
+
+        assert.equal(error.detail, "git pull failed");
+      }),
+    );
+
     it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
