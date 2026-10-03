@@ -161,6 +161,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
   const ownedDataClears = yield* Ref.make<ReadonlyArray<EnvironmentId>>([]);
   const sessions = yield* Ref.make<ReadonlyArray<SessionControl>>([]);
   const releasedSessions = yield* Ref.make(0);
+  const prepareError = yield* Ref.make(options?.prepareError);
+  const prepareAttempts = yield* Ref.make(0);
   const storedProfiles = yield* Ref.make(
     new Map(initialProfiles.map((profile) => [profile.connectionId, profile])),
   );
@@ -374,7 +376,9 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           target,
         };
         yield* reportProgress({ stage: "preparing" });
-        if (options?.prepareError) return yield* options.prepareError;
+        yield* Ref.update(prepareAttempts, (count) => count + 1);
+        const error = yield* Ref.get(prepareError);
+        if (error !== undefined) return yield* error;
         yield* reportProgress({ stage: "opening", prepared });
         yield* options?.beforeSessionConnect?.(target.environmentId) ?? Effect.void;
         const closed = yield* Deferred.make<never, ConnectionTransientError>();
@@ -427,6 +431,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ownedDataClears,
     sessions,
     releasedSessions,
+    prepareError,
+    prepareAttempts,
     storedProfiles,
     profileReadCount,
     storedCredentials,
@@ -968,6 +974,73 @@ describe("EnvironmentRegistry", () => {
             ?.unsupportedReason,
         ).toBe(error.message);
         expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect.each([
+    { outcome: "connects after the server becomes compatible", compatible: true },
+    { outcome: "blocks again while the server is incompatible", compatible: false },
+  ])("retrying an unsupported saved URL $outcome", ({ compatible }) =>
+    Effect.gen(function* () {
+      const error = new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "Update the server to use this client.",
+        serverUpdateRequired: true,
+      });
+      const harness = yield* makeHarness(
+        [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        { prepareError: error },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const awaitDisabled = SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) => entries.get(BEARER_TARGET.environmentId)?.enabled === false),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* awaitDisabled;
+        expect((yield* Ref.get(harness.storedDisabled)).has(BEARER_TARGET.environmentId)).toBe(
+          true,
+        );
+        const previousAttempts = yield* Ref.get(harness.prepareAttempts);
+        if (compatible) yield* Ref.set(harness.prepareError, undefined);
+
+        yield* registry.setEnabled(BEARER_TARGET.environmentId, true);
+        if (compatible) {
+          yield* awaitConnectionState(
+            registry,
+            BEARER_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          const entry = (yield* SubscriptionRef.get(registry.entries)).get(
+            BEARER_TARGET.environmentId,
+          );
+          expect(entry?.enabled).toBe(true);
+          expect(entry?.unsupportedReason).toBeUndefined();
+          expect(entry?.serverUpdateRequired).toBeUndefined();
+          expect((yield* Ref.get(harness.storedDisabled)).has(BEARER_TARGET.environmentId)).toBe(
+            false,
+          );
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        } else {
+          yield* awaitDisabled;
+          expect(
+            (yield* SubscriptionRef.get(registry.entries)).get(BEARER_TARGET.environmentId),
+          ).toMatchObject({
+            enabled: false,
+            unsupportedReason: error.message,
+            serverUpdateRequired: true,
+          });
+          expect((yield* Ref.get(harness.storedDisabled)).has(BEARER_TARGET.environmentId)).toBe(
+            true,
+          );
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+        }
+        expect(yield* Ref.get(harness.prepareAttempts)).toBe(previousAttempts + 1);
       }).pipe(Effect.provide(harness.layer));
     }),
   );

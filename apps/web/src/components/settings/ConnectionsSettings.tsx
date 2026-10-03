@@ -1485,6 +1485,8 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
+  const retryUnsupported =
+    unsupported && environment.entry.target._tag === "BearerConnectionTarget";
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
   const isRemoving = removingEnvironmentId === environmentId;
@@ -1629,14 +1631,20 @@ function SavedBackendListRow({
             <Switch
               size="sm"
               checked={enabled}
-              disabled={isRemoving || unsupported}
+              disabled={isRemoving || (unsupported && !retryUnsupported)}
               aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
               onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
             />
           }
         />
         <TooltipPopup side="top">
-          {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
+          {retryUnsupported
+            ? "Retry connection"
+            : unsupported
+              ? "Client not supported"
+              : enabled
+                ? "Switch off"
+                : "Switch on"}
         </TooltipPopup>
       </Tooltip>
       <Menu>
