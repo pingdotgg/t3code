@@ -2840,13 +2840,10 @@ export function claudeUserInputQuestions(
           const optionRecord = option as Record<string, unknown>;
           const label = typeof optionRecord.label === "string" ? optionRecord.label.trim() : "";
           if (label.length === 0) return [];
-          return [
-            {
-              label,
-              description:
-                typeof optionRecord.description === "string" ? optionRecord.description.trim() : "",
-            },
-          ];
+          const description =
+            typeof optionRecord.description === "string" ? optionRecord.description.trim() : "";
+          // The question contract requires a description; Claude may send it blank.
+          return [{ label, description: description.length > 0 ? description : label }];
         })
       : [];
     return [
