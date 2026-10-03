@@ -82,6 +82,9 @@ import {
 } from "./assets.ts";
 import {
   GitActionProgressEvent,
+  GitActivityLogError,
+  GitActivityLogInput,
+  GitActivityLogEntry,
   GitCheckoutInput,
   GitCheckoutResult,
   GitCommandError,
@@ -364,6 +367,7 @@ export const WS_METHODS = {
 
   // Git methods
   gitPull: "git.pull",
+  gitLog: "git.log",
   gitRefreshStatus: "git.refreshStatus",
   gitLocalStatus: "git.localStatus",
   gitRunStackedAction: "git.runStackedAction",
@@ -963,6 +967,12 @@ export const WsGitPullRpc = Rpc.make(WS_METHODS.gitPull, {
   payload: GitPullInput,
   success: GitPullResult,
   error: GitCommandError,
+});
+
+export const WsGitActivityLogRpc = Rpc.make(WS_METHODS.gitLog, {
+  payload: GitActivityLogInput,
+  success: Schema.Array(GitActivityLogEntry),
+  error: GitActivityLogError,
 });
 
 export const WsGitRefreshStatusRpc = Rpc.make(WS_METHODS.gitRefreshStatus, {
@@ -1581,6 +1591,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeDeviceStateRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
+  WsGitActivityLogRpc,
   WsGitRefreshStatusRpc,
   WsGitLocalStatusRpc,
   WsGitRunStackedActionRpc,

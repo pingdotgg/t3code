@@ -130,6 +130,32 @@ export const GitPullRequestAssociation = Schema.Struct({
 });
 export type GitPullRequestAssociation = typeof GitPullRequestAssociation.Type;
 
+export const GitActivityLogEntry = Schema.Struct({
+  id: NonNegativeInt,
+  timestamp: IsoDateTime,
+  operation: Schema.String,
+  args: Schema.Array(Schema.String),
+  exitCode: Schema.NullOr(Schema.Int),
+  durationMs: NonNegativeInt,
+  cwd: Schema.String,
+  threadId: Schema.NullOr(ThreadId),
+  pullRequests: Schema.Array(GitPullRequestAssociation),
+});
+export type GitActivityLogEntry = typeof GitActivityLogEntry.Type;
+
+export const GitActivityLogInput = Schema.Struct({
+  all: Schema.Boolean,
+  limit: PositiveInt,
+  threadId: Schema.optionalKey(ThreadId),
+  pullRequestNumber: Schema.optionalKey(PositiveInt),
+});
+export type GitActivityLogInput = typeof GitActivityLogInput.Type;
+
+export class GitActivityLogError extends Schema.TaggedErrorClass<GitActivityLogError>()(
+  "GitActivityLogError",
+  { message: TrimmedNonEmptyString },
+) {}
+
 // RPC Inputs
 
 export const GitStatusInput = Schema.Struct({

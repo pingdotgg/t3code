@@ -26,7 +26,7 @@ it.effect("backfills indexed pull-request identity for existing acceptance cases
       )
     `;
 
-    yield* runMigrations({ toMigrationInclusive: 115 });
+    yield* runMigrations({ toMigrationInclusive: 116 });
 
     const rows = yield* sql<{
       readonly pull_request_project_id: string | null;
