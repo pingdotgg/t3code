@@ -12,6 +12,7 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { suggestionFencesAsDiff } from "./pullRequestSuggestion.logic";
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
@@ -73,7 +74,7 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const segments = splitPullRequestBody(text);
+  const segments = splitPullRequestBody(suggestionFencesAsDiff(text));
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;

@@ -918,6 +918,7 @@ function PullRequestCodeTab({
         key={`${reference.projectId}#${reference.number}:${thread.id}`}
         thread={thread}
         workspaceRoot={detail.workspaceRoot}
+        headBranch={detail.headBranch}
         canReply={review.reply}
         canResolve={review.resolve}
         canReact={detail.capabilities.reactions === true}

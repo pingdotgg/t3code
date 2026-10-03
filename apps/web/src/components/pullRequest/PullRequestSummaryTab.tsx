@@ -53,6 +53,7 @@ import {
   canEditPullRequestComment,
 } from "./pullRequestEditing.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestSuggestionScope } from "./PullRequestApplySuggestion";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -701,7 +702,16 @@ export function PullRequestSummaryTab({
                           Kept where this reader may rewrite the remark: the pencil lives in here,
                           and hiding the block would take away the only way back to it. */}
         {body === null && !commentEditing.canEdit(comment) ? null : (
-          <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
+          <PullRequestSuggestionScope
+            environmentId={environmentId}
+            reference={reference}
+            thread={thread}
+            body={comment.body}
+            headBranch={detail.headBranch}
+            workspaceRoot={detail.workspaceRoot}
+          >
+            <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
+          </PullRequestSuggestionScope>
         )}
       </article>
     );

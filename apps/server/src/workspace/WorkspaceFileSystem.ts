@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -95,13 +96,79 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspaceFileLinesChangedError extends Schema.TaggedError<WorkspaceFileLinesChangedError>()(
+  "WorkspaceFileLinesChangedError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    startLine: Schema.Number,
+    endLine: Schema.Number,
+    /** The range already reads as the replacement, so the edit was most likely made before. */
+    alreadyReplaced: Schema.Boolean,
+  },
+) {
+  override get message(): string {
+    if (this.alreadyReplaced) {
+      return `Lines from ${this.startLine} of '${this.relativePath}' already read as the edit.`;
+    }
+    return `Lines ${this.startLine}-${this.endLine} of '${this.relativePath}' no longer match what the edit was written against.`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspaceFileLinesChangedError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
+
+const splitLines = (text: string) => text.replace(/\r\n/g, "\n").split("\n");
+
+/** Whether the file's lines from `startLine` (1-based) read exactly as `expected`. */
+const linesRead = (lines: ReadonlyArray<string>, startLine: number, expected: string) => {
+  const wanted = splitLines(expected);
+  const lineCount = lines.at(-1) === "" ? lines.length - 1 : lines.length;
+  return (
+    startLine - 1 + wanted.length <= lineCount &&
+    wanted.every((line, i) => lines[startLine - 1 + i] === line)
+  );
+};
+
+/**
+ * Swap lines `startLine`..`endLine` (1-based, inclusive) of `contents` for `replacement`.
+ * Compared and rejoined in the file's own line ending, so a CRLF file stays CRLF whatever the
+ * replacement was written with. When those lines are not `expected`, says whether they already
+ * read as `replacement` instead, which is an edit somebody made before.
+ */
+export function replaceFileLines(
+  contents: string,
+  range: { readonly startLine: number; readonly endLine: number; readonly expected: string },
+  replacement: string,
+): { readonly contents: string } | { readonly alreadyReplaced: boolean } {
+  const eol = contents.includes("\r\n") ? "\r\n" : "\n";
+  const lines = contents.split(eol);
+  const { startLine, endLine } = range;
+  const matches =
+    endLine >= startLine &&
+    splitLines(range.expected).length === endLine - startLine + 1 &&
+    linesRead(lines, startLine, range.expected);
+  if (!matches) {
+    // A deletion leaves nothing behind to recognize. When the line after the replacement is still
+    // one of the replaced lines, the edit may be partial, so it is not reported as done.
+    const following = lines[startLine - 1 + splitLines(replacement).length];
+    const leftover = following !== undefined && splitLines(range.expected).includes(following);
+    return {
+      alreadyReplaced:
+        replacement.length > 0 && linesRead(lines, startLine, replacement) && !leftover,
+    };
+  }
+  const next = replacement.length === 0 ? [] : splitLines(replacement);
+  return {
+    contents: [...lines.slice(0, startLine - 1), ...next, ...lines.slice(endLine)].join(eol),
+  };
+}
 
 /** Service tag for workspace file operations. */
 export class WorkspaceFileSystem extends Context.Service<
@@ -121,7 +188,10 @@ export class WorkspaceFileSystem extends Context.Service<
      * Write a file relative to the workspace root.
      *
      * Creates parent directories as needed and rejects paths that escape the
-     * workspace root.
+     * workspace root. With `replaceLines`, rewrites only that range of an existing
+     * file and fails with `WorkspaceFileLinesChangedError` if it moved. That check
+     * holds against other writes through this service only, not against processes
+     * writing the file directly.
      */
     readonly writeFile: (
       input: ProjectWriteFileInput,
@@ -138,6 +208,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const writeLock = yield* Semaphore.make(1);
 
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
@@ -323,19 +394,51 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* fileSystem.writeFileString(target.absolutePath, input.contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
+    // Serialized so a `replaceLines` check still holds when its write lands: two clients
+    // applying to one file would otherwise both pass the check and the later write would
+    // drop the earlier edit.
+    yield* Effect.gen(function* () {
+      let contents = input.contents;
+      if (input.replaceLines !== undefined) {
+        const current = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: target.absolutePath,
+                operationPath: target.absolutePath,
+                operation: "read",
+                cause,
+              }),
+          ),
+        );
+        const replaced = replaceFileLines(current, input.replaceLines, input.contents);
+        if (!("contents" in replaced)) {
+          return yield* new WorkspaceFileLinesChangedError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
-      ),
-    );
+            startLine: input.replaceLines.startLine,
+            endLine: input.replaceLines.endLine,
+            alreadyReplaced: replaced.alreadyReplaced,
+          });
+        }
+        contents = replaced.contents;
+      }
+      yield* fileSystem.writeFileString(target.absolutePath, contents).pipe(
+        Effect.mapError(
+          (cause) =>
+            new WorkspaceFileSystemOperationError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: target.absolutePath,
+              operationPath: target.absolutePath,
+              operation: "write-file",
+              cause,
+            }),
+        ),
+      );
+    }).pipe(writeLock.withPermit);
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });
