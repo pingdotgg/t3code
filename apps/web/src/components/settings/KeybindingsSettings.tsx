@@ -1328,7 +1328,11 @@ export function KeybindingsSettingsPanel() {
   // The representative environment supplies the displayed bindings; edits
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs T3 Code on.
-  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
+  const {
+    environment: primaryEnvironment,
+    environments,
+    connectedEnvironments,
+  } = useSettingsScope();
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
   const keybindings = useMemo(
     () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
@@ -1366,6 +1370,8 @@ export function KeybindingsSettingsPanel() {
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
 
   useEffect(() => {
+    if (connectedEnvironments.length === 0) return;
+
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       const isMod = event.metaKey || event.ctrlKey;
       if (!isMod || event.altKey || event.key.toLowerCase() !== "f") return;
@@ -1388,7 +1394,7 @@ export function KeybindingsSettingsPanel() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [connectedEnvironments.length]);
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -1508,6 +1514,18 @@ export function KeybindingsSettingsPanel() {
     onReset: resetKeybinding,
     onRemove: removeKeybinding,
   };
+
+  if (connectedEnvironments.length === 0) {
+    return (
+      <SettingsPageContainer>
+        <p role="status" className="text-sm text-muted-foreground">
+          {environments.some((environment) => environment.connection.phase === "connected")
+            ? "Loading keybindings…"
+            : "Connect an environment to change keybindings."}
+        </p>
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer>
