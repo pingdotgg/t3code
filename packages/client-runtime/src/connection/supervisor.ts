@@ -481,15 +481,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       yield* Ref.set(probeUnanswered, true);
       const probe = yield* Effect.forkChild(lease.session.probe);
-      let deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(probeTimeout);
+      // Monotonic nanoseconds, so a wall-clock correction cannot move the deadline.
+      let deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
       for (;;) {
-        const remainingMs = Math.max(0, deadline - (yield* Clock.currentTimeMillis));
+        const remaining = deadline - (yield* Clock.monotonicTimeNanos);
         const probeEvent = yield* Effect.raceAllFirst([
           Fiber.await(probe).pipe(
             Effect.map((exit) => ({ _tag: "ProbeCompleted" as const, exit })),
           ),
           takeSignal.pipe(Effect.map((signal) => ({ _tag: "Signal" as const, signal }))),
-          Effect.sleep(remainingMs).pipe(Effect.as({ _tag: "TimedOut" as const })),
+          Effect.sleep(Duration.nanos(remaining > 0n ? remaining : 0n)).pipe(
+            Effect.as({ _tag: "TimedOut" as const }),
+          ),
         ]);
         if (probeEvent._tag === "TimedOut") {
           yield* Fiber.interrupt(probe);
@@ -514,10 +517,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         // its quicker answer, so it shortens the running probe.
         const signalTimeout = probeTimeoutFor(probeEvent.signal);
         if (signalTimeout !== undefined) {
-          deadline = Math.min(
-            deadline,
-            (yield* Clock.currentTimeMillis) + Duration.toMillis(signalTimeout),
-          );
+          const signalDeadline =
+            (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
+          if (signalDeadline < deadline) deadline = signalDeadline;
         }
       }
     }
