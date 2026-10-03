@@ -170,8 +170,9 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
-  for (const selectedModel of ["gpt-5.6-luna", "openai.gpt-5.6-luna"]) {
-    it.effect(`dispatches the qualified live model for ${selectedModel}`, () =>
+  it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
+    "dispatches the qualified live model for %s",
+    (selectedModel) =>
       withFakeCodexEnv(
         {
           output: JSON.stringify({ title: "Bedrock title" }),
@@ -189,8 +190,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
             expect(result.title).toBe("Bedrock title");
           }),
       ),
-    );
-  }
+  );
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {
@@ -406,7 +406,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  for (const example of [
+  it.effect.each([
     {
       mode: "static",
       output: "Add Search",
@@ -425,30 +425,28 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       expected: "Julius/ABC-123.v2",
       instruction: "Preserve the issue ID and capitalization.",
     },
-  ] as const) {
-    it.effect(`generates a branch using ${example.mode} naming`, () =>
-      withFakeCodexEnv(
-        {
-          output: JSON.stringify({ branch: example.output }),
-          stdinMustContain: example.instruction,
-        },
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const generated = yield* textGeneration.generateBranchName({
-              cwd: process.cwd(),
-              message: "Add search",
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-              naming: {
-                mode: example.mode,
-                prefix: "team/",
-                instructions: "Preserve the issue ID and capitalization.",
-              },
-            });
-            expect(generated.branch).toBe(example.expected);
-          }),
-      ),
-    );
-  }
+  ] as const)("generates a branch using $mode naming", (example) =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ branch: example.output }),
+        stdinMustContain: example.instruction,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Add search",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            naming: {
+              mode: example.mode,
+              prefix: "team/",
+              instructions: "Preserve the issue ID and capitalization.",
+            },
+          });
+          expect(generated.branch).toBe(example.expected);
+        }),
+    ),
+  );
 
   it.effect("generates branch names even when the ambient scope is already closed", () =>
     withFakeCodexEnv(

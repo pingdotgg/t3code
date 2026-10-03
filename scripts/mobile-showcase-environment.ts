@@ -427,7 +427,11 @@ function insertThread(
     .run(input.id, isWorking ? "running" : "ready", isWorking ? turnId : null, updatedAt);
 }
 
-const SEEDED_PROJECTION_TABLES = [
+// V1 tables this seed owns. `projection_projects` is not listed: V2 still
+// stores projects there, so the seed upserts its own rows instead. V2 clients
+// do not read the V1 thread rows; moving the seed to V2 is tracked in
+// https://github.com/pingdotgg/t3code/issues/15013.
+const SEEDED_V1_TABLES = [
   "projection_pending_approvals",
   "projection_thread_proposed_plans",
   "projection_thread_activities",
@@ -435,9 +439,10 @@ const SEEDED_PROJECTION_TABLES = [
   "projection_thread_sessions",
   "projection_turns",
   "projection_threads",
-  "projection_projects",
   "projection_state",
 ] as const;
+
+const SEEDED_PROJECTION_TABLES = [...SEEDED_V1_TABLES, "projection_projects"] as const;
 
 const SEEDED_THREAD_COLUMNS = ["snoozed_until", "snoozed_at"] as const;
 
@@ -491,11 +496,11 @@ function seedDatabase(
   const database = new NodeSqlite.DatabaseSync(dbPath, { timeout: 30_000 });
   try {
     database.exec("BEGIN IMMEDIATE");
-    for (const table of SEEDED_PROJECTION_TABLES) {
+    for (const table of SEEDED_V1_TABLES) {
       database.exec(`DELETE FROM ${table}`);
     }
     const insertProject = database.prepare(
-      `INSERT INTO projection_projects (
+      `INSERT OR REPLACE INTO projection_projects (
           project_id, title, workspace_root, default_model_selection_json, scripts_json,
           created_at, updated_at, deleted_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,

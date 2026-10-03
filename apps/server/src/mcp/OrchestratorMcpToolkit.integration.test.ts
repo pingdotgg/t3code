@@ -1652,6 +1652,14 @@ describe("orchestrator MCP toolkit", () => {
               status: "completed",
             });
             expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === delegated.taskId,
+              ),
+            ).toMatchObject({
+              result: delegatedResult,
+              completionDelivery: { state: "disposed" },
+            });
+            expect(
               (yield* orchestrator.getThreadProjection(delegated.childThreadId)).runs.find(
                 (run) => run.id === activeChildFollowup.runId,
               )?.status,

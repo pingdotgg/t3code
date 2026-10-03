@@ -92,8 +92,9 @@ const terminalState = (installation: CodexInstallation.CodexInstallation["Servic
     Effect.map(Option.getOrThrow),
   );
 
-for (const version of ["0.156.0", "0.156.1", "0.156.2", "0.157.0"]) {
-  it.effect(`reuses installed Codex ${version} without downloading or taking ownership of it`, () =>
+it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
+  "reuses installed Codex %s without downloading or taking ownership of it",
+  (version) =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ local: { version } });
       expect(yield* h.installation.start).toMatchObject({
@@ -120,9 +121,8 @@ for (const version of ["0.156.0", "0.156.1", "0.156.2", "0.157.0"]) {
       expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
       expect((yield* h.installation.state).source).toBe("local");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
-for (const local of [
+);
+it.effect.each([
   { version: "0.128.9" },
   { version: "0.145.0" },
   { version: "0.155.1" },
@@ -131,24 +131,20 @@ for (const local of [
   { version: "unknown" },
   { version: "0.156.1", appServerFails: true },
   { version: "0.156.1", versionFails: true },
-]) {
-  it.effect(
-    `downloads the pinned release when the local CLI is unsupported or broken: ${JSON.stringify(local)}`,
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness({ local });
-        expect((yield* h.installation.state).installedVersion).toBeNull();
-        yield* h.installation.start;
-        const installed = yield* terminalState(h.installation);
-        expect(installed.phase).toBe("succeeded");
-        const executable = yield* h.installation.resolve();
-        expect(executable.source).toBe("managed");
-        expect(installed.executablePath).toBe(executable.executablePath);
-        expect(h.downloads()).toBe(1);
-        expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-}
+])("downloads the pinned release when the local CLI is unsupported or broken: %j", (local) =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local });
+    expect((yield* h.installation.state).installedVersion).toBeNull();
+    yield* h.installation.start;
+    const installed = yield* terminalState(h.installation);
+    expect(installed.phase).toBe("succeeded");
+    const executable = yield* h.installation.resolve();
+    expect(executable.source).toBe("managed");
+    expect(installed.executablePath).toBe(executable.executablePath);
+    expect(h.downloads()).toBe(1);
+    expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 it.effect("falls back to a managed download when the reused local executable disappears", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness({ local: { version: "0.156.1" } });

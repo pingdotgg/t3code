@@ -438,8 +438,9 @@ describe("ThreadTitleRegenerationService", () => {
   );
 });
 
-for (const outcome of ["success", "exhausted", "stale", "interrupted"] as const) {
-  it.effect(`initial title retry: ${outcome}`, () =>
+it.effect.each(["success", "exhausted", "stale", "interrupted"] as const)(
+  "initial title retry: %s",
+  (outcome) =>
     Effect.gen(function* () {
       const attempted = yield* Deferred.make<void>();
       let attempts = 0;
@@ -502,5 +503,4 @@ for (const outcome of ["success", "exhausted", "stale", "interrupted"] as const)
         else assert.isNotOk(projection.thread.titleRegeneration);
       }).pipe(Effect.provide(harness.layer));
     }),
-  );
-}
+);

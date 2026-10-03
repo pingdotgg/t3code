@@ -344,7 +344,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
   }).pipe(Effect.provide(testLayer));
 });
 
-for (const scenario of [
+it.effect.each([
   { finalStatus: "completed" as const, timedOut: false },
   { finalStatus: "failed" as const, timedOut: false },
   { finalStatus: "cancelled" as const, timedOut: false },
@@ -352,72 +352,70 @@ for (const scenario of [
   { finalStatus: "rolled_back" as const, timedOut: false },
   { finalStatus: "running" as const, timedOut: true },
   { finalStatus: "missing" as const },
-]) {
-  it.effect(`waitForThread timeout final read when selected run is ${scenario.finalStatus}`, () =>
-    Effect.gen(function* () {
-      const projectId = ProjectId.make("project:thread-management:wait-timeout");
-      const threadId = ThreadId.make("thread:thread-management:wait-timeout");
-      const runId = RunId.make("run:thread-management:wait-timeout");
-      const loopRead = yield* Deferred.make<void>();
-      let reads = 0;
-      const projection = (status: OrchestrationV2Run["status"] | "missing") =>
-        ({
-          thread: { id: threadId, projectId, deletedAt: null },
-          runs: status === "missing" ? [] : [{ id: runId, status }],
-        }) as unknown as OrchestrationV2ThreadProjection;
-      const testLayer = ThreadManagementService.layer.pipe(
-        Layer.provide(
-          Layer.mock(Orchestrator.OrchestratorV2)({
-            getThreadRecords: () =>
-              Effect.gen(function* () {
-                reads += 1;
-                if (reads === 1) {
-                  return projection("running");
-                }
-                if (reads === 2) {
-                  // Park inside the wait loop so the timeout path runs while a
-                  // final projection read can still observe a terminal run.
-                  yield* Deferred.succeed(loopRead, undefined);
-                  return yield* Effect.never;
-                }
-                return projection(scenario.finalStatus);
-              }),
-          }),
-        ),
-      );
-      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-        Effect.provide(testLayer),
-      );
-      const fiber = yield* service
-        .waitForThread({
-          projectId,
-          threadId,
-          runId,
-          timeoutMs: 1,
-        })
-        .pipe(Effect.result, Effect.forkChild);
-      yield* Deferred.await(loopRead);
-      yield* TestClock.adjust(Duration.millis(1));
-      const result = yield* Fiber.join(fiber);
+])("waitForThread timeout final read when selected run is $finalStatus", (scenario) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-timeout");
+    const threadId = ThreadId.make("thread:thread-management:wait-timeout");
+    const runId = RunId.make("run:thread-management:wait-timeout");
+    const loopRead = yield* Deferred.make<void>();
+    let reads = 0;
+    const projection = (status: OrchestrationV2Run["status"] | "missing") =>
+      ({
+        thread: { id: threadId, projectId, deletedAt: null },
+        runs: status === "missing" ? [] : [{ id: runId, status }],
+      }) as unknown as OrchestrationV2ThreadProjection;
+    const testLayer = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.gen(function* () {
+              reads += 1;
+              if (reads === 1) {
+                return projection("running");
+              }
+              if (reads === 2) {
+                // Park inside the wait loop so the timeout path runs while a
+                // final projection read can still observe a terminal run.
+                yield* Deferred.succeed(loopRead, undefined);
+                return yield* Effect.never;
+              }
+              return projection(scenario.finalStatus);
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(testLayer),
+    );
+    const fiber = yield* service
+      .waitForThread({
+        projectId,
+        threadId,
+        runId,
+        timeoutMs: 1,
+      })
+      .pipe(Effect.result, Effect.forkChild);
+    yield* Deferred.await(loopRead);
+    yield* TestClock.adjust(Duration.millis(1));
+    const result = yield* Fiber.join(fiber);
 
-      if (scenario.finalStatus === "missing") {
-        expect(result._tag).toBe("Failure");
-        expect(result).toMatchObject({
-          failure: expect.any(ThreadManagementService.ThreadManagementRunNotFoundError),
-        });
-        expect(result).toMatchObject({
-          failure: { threadId, runId },
-        });
-      } else {
-        expect(result._tag).toBe("Success");
-        expect(result).toMatchObject({
-          success: {
-            threadId,
-            timedOut: scenario.timedOut,
-            run: { id: runId, status: scenario.finalStatus },
-          },
-        });
-      }
-    }),
-  );
-}
+    if (scenario.finalStatus === "missing") {
+      expect(result._tag).toBe("Failure");
+      expect(result).toMatchObject({
+        failure: expect.any(ThreadManagementService.ThreadManagementRunNotFoundError),
+      });
+      expect(result).toMatchObject({
+        failure: { threadId, runId },
+      });
+    } else {
+      expect(result._tag).toBe("Success");
+      expect(result).toMatchObject({
+        success: {
+          threadId,
+          timedOut: scenario.timedOut,
+          run: { id: runId, status: scenario.finalStatus },
+        },
+      });
+    }
+  }),
+);

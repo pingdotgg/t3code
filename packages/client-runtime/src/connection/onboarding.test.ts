@@ -32,7 +32,11 @@ const CLIENT_PRESENTATION_LAYER = Layer.succeed(
 
 function pairingHttpLayer(
   calls: Array<{ readonly url: string; readonly init: RequestInit }>,
-  options?: { readonly failDescriptor?: boolean; readonly protocolVersion?: number },
+  options?: {
+    readonly failDescriptor?: boolean;
+    readonly protocolVersion?: number;
+    readonly selfUpdate?: boolean;
+  },
 ) {
   const fetchFn = ((input, init = {}) => {
     const url = String(input);
@@ -56,6 +60,7 @@ function pairingHttpLayer(
           orchestrationProtocolVersion: options?.protocolVersion ?? ORCHESTRATION_PROTOCOL_VERSION,
           capabilities: {
             repositoryIdentity: true,
+            ...(options?.selfUpdate === true ? { serverSelfUpdate: "boot-service" } : {}),
           },
         }),
       );
@@ -139,6 +144,51 @@ describe("connection onboarding", () => {
         Effect.flip,
       );
       expect(error).toMatchObject({ reason: "unsupported" });
+      expect(calls.map((call) => call.url)).toEqual([
+        "https://remote.example.test/.well-known/t3/environment",
+      ]);
+    }),
+  );
+
+  it.effect("pairs an outdated server so it can be updated from this client", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, {
+              protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1,
+              selfUpdate: true,
+            }),
+          ),
+        ),
+      );
+      expect(registration.target.environmentId).toBe("environment-paired");
+      expect(calls.map((call) => call.url)).toContain("https://remote.example.test/oauth/token");
+    }),
+  );
+
+  it.effect("refuses an outdated server that cannot update itself", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const error = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
+          ),
+        ),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({ reason: "unsupported" });
+      expect(error).not.toHaveProperty("serverUpdateRequired");
       expect(calls.map((call) => call.url)).toEqual([
         "https://remote.example.test/.well-known/t3/environment",
       ]);

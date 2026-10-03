@@ -213,6 +213,8 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
+  /** The head commit, where the host's detail read reports it. */
+  readonly headSha?: string | null;
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;

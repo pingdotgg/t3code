@@ -1,7 +1,11 @@
 import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  dynamicToolTitle,
+  formatReadToolLabel,
+  formatSearchToolLabel,
+} from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
@@ -83,6 +87,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
@@ -322,6 +327,9 @@ export interface ClaudeAgentSdkQuerySession {
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  readonly setPermissionMode: (
+    mode: PermissionMode,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -337,6 +345,15 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAge
 ) {
   override get message(): string {
     return "Claude Agent SDK query failed.";
+  }
+}
+
+export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.TaggedError<ClaudeBackgroundWorkBlocksQueryReplacementError>()(
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+  {},
+) {
+  override get message(): string {
+    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
   }
 }
 
@@ -450,6 +467,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.set_model";
         readonly model: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.set_permission_mode";
+        readonly mode: PermissionMode;
       };
     }
   | {
@@ -652,6 +677,22 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
                   payload: {
                     type: "query.set_model",
                     model,
+                  },
+                }),
+              ),
+            ),
+          setPermissionMode: (mode) =>
+            Effect.tryPromise({
+              try: () => queryRuntime.setPermissionMode(mode),
+              catch: (cause) => queryRunnerError(cause, "setPermissionMode"),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: {
+                    type: "query.set_permission_mode",
+                    mode,
                   },
                 }),
               ),
@@ -1725,6 +1766,13 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   );
 }
 
+// Claude opens every turn it runs with a root `init` frame. Outside a T3 turn
+// that turn is a wake, and `init` comes 20-110 ms after the notification that
+// caused it but seconds before its first output (model thinking time).
+function isClaudeTurnStartMessage(message: SDKMessage): boolean {
+  return message.type === "system" && message.subtype === "init";
+}
+
 function claudePendingBackgroundTasksFromRoster(
   roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
@@ -2667,6 +2715,17 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
+  // The mode this process was opened in, and the mode the CLI last reported
+  // (init and status frames). Claude changes the latter itself through
+  // EnterPlanMode.
+  readonly openedPermissionMode: PermissionMode;
+  permissionMode: PermissionMode;
+  // Stop, rollback or fork is closing this process; its work is ending.
+  stopping: boolean;
+  // Registry entries still running when this process opened. Their process
+  // is gone and never reports their end; any later task_started replaces the
+  // entry, so an entry still in this set runs nowhere.
+  readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
 }
 
 interface ActiveClaudeToolCall {
@@ -3646,7 +3705,7 @@ export function makeClaudeAdapterV2(
           readonly output: ClaudeNativeToolOutput;
           readonly status: Extract<
             OrchestrationV2TurnItem["status"],
-            "running" | "completed" | "failed"
+            "running" | "completed" | "failed" | "interrupted" | "cancelled"
           >;
           readonly startedAt: DateTime.Utc;
           readonly updatedAt: DateTime.Utc;
@@ -3711,7 +3770,10 @@ export function makeClaudeAdapterV2(
             title:
               readPath !== undefined
                 ? formatReadToolLabel(readPath)
-                : (searchTitle ?? input.presentation?.title ?? null),
+                : (searchTitle ??
+                  dynamicToolTitle(input.toolName, nativeToolInput) ??
+                  input.presentation?.title ??
+                  null),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -4710,7 +4772,9 @@ export function makeClaudeAdapterV2(
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
               output: NO_CLAUDE_NATIVE_TOOL_OUTPUT,
-              status: "failed",
+              // A stopped turn cuts its open tools short; only a turn that
+              // ended on its own leaves them failed.
+              status: input.status === "completed" ? "failed" : input.status,
               startedAt: toolCall.startedAt,
               updatedAt: input.completedAt,
               presentation: toolCall.presentation,
@@ -5072,12 +5136,14 @@ export function makeClaudeAdapterV2(
           // replay them to the turn that was still starting when they
           // arrived; the offer gate below keeps them from requesting a
           // continuation on their own.
+          const isWakeTurnStart = isClaudeTurnStartMessage(message);
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
             isNestedSubagentNotification ||
             isKnownSubagentTaskStarted ||
             isNewSubagentTaskStarted ||
+            isWakeTurnStart ||
             message.type === "assistant" ||
             message.type === "user" ||
             message.type === "result" ||
@@ -5134,12 +5200,14 @@ export function makeClaudeAdapterV2(
           }
           // A terminal task notification can clear the Waiting roster without
           // Claude dequeuing it into a native model turn. Buffer it for replay,
-          // but do not open an opaque-task continuation until native user,
-          // assistant, or result output proves that Claude actually began the
-          // wake turn. Subagent notifications retain their existing immediate
-          // offer because their projected lifecycle owns the continuation.
-          // Only root output proves it: a background subagent keeps streaming
-          // its own frames while the root is idle.
+          // but do not open an opaque-task continuation until the turn's `init`,
+          // or native user, assistant, or result output, proves that Claude
+          // actually began the wake turn. `init` comes first, so the thread
+          // shows working while Claude thinks instead of looking finished.
+          // Subagent notifications retain their existing immediate offer
+          // because their projected lifecycle owns the continuation. Only
+          // root frames prove it: a background subagent keeps streaming its
+          // own frames while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
             buffered?.messages.some(
@@ -5152,6 +5220,7 @@ export function makeClaudeAdapterV2(
           if (
             !isPendingSubagentNotification &&
             !isNativeOpaqueWakeFrame &&
+            !isWakeTurnStart &&
             message.type !== "result"
           ) {
             return;
@@ -6753,6 +6822,37 @@ export function makeClaudeAdapterV2(
             }),
           );
 
+        // Work the live process still runs. A subagent whose completion is
+        // already buffered is done: the buffer outlives the process.
+        const liveProcessRunsBackgroundWork = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+        ) {
+          if (
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              live.nativeThreadId,
+            ).size > 0
+          ) {
+            return true;
+          }
+          const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              subagent.task.status === "running" &&
+              !live.subagentsFromEarlierProcesses.has(subagent) &&
+              !buffered.some(
+                (message) =>
+                  message.type === "system" &&
+                  message.subtype === "task_notification" &&
+                  message.task_id === taskId,
+              )
+            ) {
+              return true;
+            }
+          }
+          return false;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -6770,13 +6870,43 @@ export function makeClaudeAdapterV2(
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          // A continuation prompts nothing: it drains output the live process
+          // already produced, so it keeps that process whatever its selection.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            isClaudeProviderContinuationTurn(turnInput)
+          ) {
+            return existing;
+          }
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selectionKey === compiledSelection.queryIdentity
           ) {
+            // Claude can switch its own mode mid-session (EnterPlanMode), and
+            // a denied ExitPlanMode leaves it there. Put the live process back
+            // in the thread's mode before the next prompt.
+            if (existing.permissionMode !== existing.openedPermissionMode) {
+              yield* existing.query.setPermissionMode(existing.openedPermissionMode);
+              existing.permissionMode = existing.openedPermissionMode;
+            }
             return existing;
+          }
+
+          // Background agents and shells run inside the CLI process, so a
+          // new selection would kill them and lose their results. Refuse until
+          // they finish or the user presses Stop, which closes the process.
+          // Another native thread on this session is one the app thread has
+          // left (Claude sessions serve one app thread), so it is replaced.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            (yield* liveProcessRunsBackgroundWork(existing))
+          ) {
+            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
           // openQuery owns one live process. Closing it for another native
@@ -6804,31 +6934,32 @@ export function makeClaudeAdapterV2(
           const hasPersistedProviderTurn = turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const queryOptions = makeClaudeQueryOptions({
+            modelSelection: turnInput.modelSelection,
+            nativeThreadId,
+            resume: shouldResume,
+            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
+            cwd: turnInput.runtimePolicy.cwd,
+            attachmentsDir,
+            settings: adapterOptions.settings,
+            environment: adapterOptions.environment,
+            tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
+            ...mcpOverrides,
+            permissionMode: queryPolicy.permissionMode,
+            ...(queryPolicy.allowDangerouslySkipPermissions === undefined
+              ? {}
+              : {
+                  allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
+                }),
+            canUseTool,
+            onUserDialog,
+            supportedDialogKinds: ["resume_return"],
+          });
           const querySession = yield* queryRunner
             .open({
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
-              options: makeClaudeQueryOptions({
-                modelSelection: turnInput.modelSelection,
-                nativeThreadId,
-                resume: shouldResume,
-                ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
-                cwd: turnInput.runtimePolicy.cwd,
-                attachmentsDir,
-                settings: adapterOptions.settings,
-                environment: adapterOptions.environment,
-                tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
-                ...mcpOverrides,
-                permissionMode: queryPolicy.permissionMode,
-                ...(queryPolicy.allowDangerouslySkipPermissions === undefined
-                  ? {}
-                  : {
-                      allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
-                    }),
-                canUseTool,
-                onUserDialog,
-                supportedDialogKinds: ["resume_return"],
-              }),
+              options: queryOptions,
             })
             .pipe(
               Effect.tapError(() =>
@@ -6875,10 +7006,27 @@ export function makeClaudeAdapterV2(
             selectionKey: compiledSelection.queryIdentity,
             closed,
             promptEchoMode: "unknown",
+            openedPermissionMode: queryOptions.permissionMode,
+            permissionMode: queryOptions.permissionMode,
+            stopping: false,
+            subagentsFromEarlierProcesses: new Set(
+              [...(yield* Ref.get(sessionSubagentsByTaskId)).values()].filter(
+                (subagent) => subagent.task.status === "running",
+              ),
+            ),
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
-            Stream.runForEach((message) => handleSdkMessage({ query: querySession, message })),
+            Stream.runForEach((message) => {
+              if (
+                message.type === "system" &&
+                (message.subtype === "init" || message.subtype === "status") &&
+                message.permissionMode !== undefined
+              ) {
+                context.permissionMode = message.permissionMode;
+              }
+              return handleSdkMessage({ query: querySession, message });
+            }),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
@@ -7058,8 +7206,13 @@ export function makeClaudeAdapterV2(
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
+            // A drained `init` means Claude began the wake turn, so its output
+            // may still be on the way: stay open for it.
             const hasNativeWakeFrame = drained.some(
-              (entry) => entry.type === "user" || entry.type === "assistant",
+              (entry) =>
+                entry.type === "user" ||
+                entry.type === "assistant" ||
+                isClaudeTurnStartMessage(entry),
             );
             if (hasOpaqueTaskNotification && !hasNativeWakeFrame) {
               const completedAt = yield* DateTime.now;
@@ -7239,6 +7392,7 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          existing.stopping = true;
           yield* existing.query.close.pipe(Effect.ignore);
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),
@@ -7589,9 +7743,13 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
+    const binaryPath = yield* resolveClaudeSdkExecutablePath(
+      expandHomePath(config.binaryPath),
+      claudeEnvironment,
+    );
     return makeClaudeAdapterV2({
       instanceId,
-      settings: { ...config, enabled, binaryPath: expandHomePath(config.binaryPath) },
+      settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,

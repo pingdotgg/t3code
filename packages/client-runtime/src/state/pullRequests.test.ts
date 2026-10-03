@@ -236,8 +236,9 @@ for (const scenario of [
   );
 }
 
-for (const provider of ["github", "gitlab", "bitbucket", "azure-devops"] as const) {
-  it.effect(`routes ${provider} viewed marks to their storage environment`, () =>
+it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
+  "routes %s viewed marks to their storage environment",
+  (provider) =>
     Effect.scoped(
       Effect.gen(function* () {
         const reference = {
@@ -311,8 +312,7 @@ for (const provider of ["github", "gitlab", "bitbucket", "azure-devops"] as cons
         }
       }),
     ),
-  );
-}
+);
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -420,8 +420,9 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   return { runtime, atoms, registry, environmentRegistry, supervisor };
 });
 
-for (const permission of ["default", "origin-off", "destination-off", "read-only"] as const) {
-  it.effect(`does not probe another environment with ${permission} routing permission`, () =>
+it.effect.each(["default", "origin-off", "destination-off", "read-only"] as const)(
+  "does not probe another environment with %s routing permission",
+  (permission) =>
     Effect.scoped(
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -480,125 +481,128 @@ for (const permission of ["default", "origin-off", "destination-off", "read-only
         );
       }),
     ),
-  );
-}
+);
 
-for (const side of ["origin", "destination"] as const) {
-  for (const stored of ["matching", "changed", "missing", "unavailable", "failed"] as const) {
-    it.effect(`checks the current ${side} SSH profile before routing with ${stored} storage`, () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const calls: string[] = [];
-          const identity = {
-            host: "github.com",
-            provider: "github",
-            viewer: "maria",
-            accountId: "123",
-          };
-          const client = {
-            [WS_METHODS.pullRequestsRouting]: () =>
-              Effect.sync(() => {
-                calls.push("source-probe");
-                return identity;
-              }),
-            [WS_METHODS.pullRequestsRunAction]: (input: { expectedAccountId?: string }) =>
-              Effect.gen(function* () {
-                if (input.expectedAccountId !== undefined) {
-                  return yield* new PullRequestOperationError({
-                    operation: "routeIdentity",
-                    detail: "Source guard refused.",
-                  });
-                }
-                calls.push("source-write");
-              }),
-            [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
-          } as unknown as WsRpcProtocolClient;
-          const alternate = {
-            [WS_METHODS.pullRequestsRoutingIdentity]: () =>
-              Effect.sync(() => {
-                calls.push("alternate-probe");
-                return identity;
-              }),
-            [WS_METHODS.pullRequestsRunAction]: () =>
-              Effect.sync(() => {
-                calls.push("alternate-write");
-              }),
-            [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
-          } as unknown as WsRpcProtocolClient;
-          const { environmentRegistry, supervisor } = yield* makeTestRuntime(client, alternate);
-          const environmentId =
-            side === "origin" ? TARGET.environmentId : EnvironmentId.make("local-environment");
-          const profile = new SshConnectionProfile({
-            connectionId: "ssh-1",
+it.effect.each(
+  (["origin", "destination"] as const).flatMap((side) =>
+    (["matching", "changed", "missing", "unavailable", "failed"] as const).map((stored) => ({
+      side,
+      stored,
+    })),
+  ),
+)("checks the current $side SSH profile before routing with $stored storage", ({ side, stored }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const identity = {
+        host: "github.com",
+        provider: "github",
+        viewer: "maria",
+        accountId: "123",
+      };
+      const client = {
+        [WS_METHODS.pullRequestsRouting]: () =>
+          Effect.sync(() => {
+            calls.push("source-probe");
+            return identity;
+          }),
+        [WS_METHODS.pullRequestsRunAction]: (input: { expectedAccountId?: string }) =>
+          Effect.gen(function* () {
+            if (input.expectedAccountId !== undefined) {
+              return yield* new PullRequestOperationError({
+                operation: "routeIdentity",
+                detail: "Source guard refused.",
+              });
+            }
+            calls.push("source-write");
+          }),
+        [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
+      } as unknown as WsRpcProtocolClient;
+      const alternate = {
+        [WS_METHODS.pullRequestsRoutingIdentity]: () =>
+          Effect.sync(() => {
+            calls.push("alternate-probe");
+            return identity;
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            calls.push("alternate-write");
+          }),
+        [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
+      } as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(client, alternate);
+      const environmentId =
+        side === "origin" ? TARGET.environmentId : EnvironmentId.make("local-environment");
+      const profile = new SshConnectionProfile({
+        connectionId: "ssh-1",
+        environmentId,
+        label: "SSH",
+        target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
+      });
+      yield* SubscriptionRef.update(environmentRegistry.entries, (entries) =>
+        new Map(entries).set(environmentId, {
+          target: new SshConnectionTarget({
             environmentId,
+            connectionId: profile.connectionId,
             label: "SSH",
-            target: { alias: "work", hostname: "work.example.test", username: "maria", port: 22 },
-          });
-          yield* SubscriptionRef.update(environmentRegistry.entries, (entries) =>
-            new Map(entries).set(environmentId, {
-              target: new SshConnectionTarget({
-                environmentId,
-                connectionId: profile.connectionId,
-                label: "SSH",
+          }),
+          profile: Option.some(profile),
+          enabled: true,
+        }),
+      );
+      const read = Effect.suspend(() =>
+        stored === "failed"
+          ? Effect.fail(
+              new ConnectionTransientError({
+                reason: "remote-unavailable",
+                detail: "Profile storage unavailable.",
               }),
-              profile: Option.some(profile),
-              enabled: true,
+            )
+          : Effect.succeed(
+              stored === "missing"
+                ? Option.none()
+                : Option.some(
+                    stored === "changed"
+                      ? new SshConnectionProfile({
+                          ...profile,
+                          target: { ...profile.target, hostname: "replacement.example.test" },
+                        })
+                      : profile,
+                  ),
+            ),
+      );
+      const route = createPullRequestRouter()(WS_METHODS.pullRequestsRunAction, {
+        projectId: ProjectId.make("project-1"),
+        repository: "private/repo",
+        number: 7,
+        action: "merge",
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        // This also represents a user enabling the stale catalog entry after re-resolution.
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+      );
+      yield* stored === "unavailable"
+        ? route
+        : route.pipe(
+            Effect.provideService(ConnectionProfileStore.ConnectionProfileStore, {
+              get: () => read,
+              put: () => Effect.die("unused"),
+              remove: () => Effect.die("unused"),
             }),
           );
-          const read = Effect.suspend(() =>
-            stored === "failed"
-              ? Effect.fail(
-                  new ConnectionTransientError({
-                    reason: "remote-unavailable",
-                    detail: "Profile storage unavailable.",
-                  }),
-                )
-              : Effect.succeed(
-                  stored === "missing"
-                    ? Option.none()
-                    : Option.some(
-                        stored === "changed"
-                          ? new SshConnectionProfile({
-                              ...profile,
-                              target: { ...profile.target, hostname: "replacement.example.test" },
-                            })
-                          : profile,
-                      ),
-                ),
-          );
-          const route = createPullRequestRouter()(WS_METHODS.pullRequestsRunAction, {
-            projectId: ProjectId.make("project-1"),
-            repository: "private/repo",
-            number: 7,
-            action: "merge",
-          }).pipe(
-            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-            // This also represents a user enabling the stale catalog entry after re-resolution.
-            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-          );
-          yield* stored === "unavailable"
-            ? route
-            : route.pipe(
-                Effect.provideService(ConnectionProfileStore.ConnectionProfileStore, {
-                  get: () => read,
-                  put: () => Effect.die("unused"),
-                  remove: () => Effect.die("unused"),
-                }),
-              );
-          expect(calls).toEqual(
-            stored === "matching"
-              ? ["source-probe", "alternate-probe", "alternate-write"]
-              : ["source-write"],
-          );
-        }),
-      ),
-    );
-  }
-}
+      expect(calls).toEqual(
+        stored === "matching"
+          ? ["source-probe", "alternate-probe", "alternate-write"]
+          : ["source-write"],
+      );
+    }),
+  ),
+);
 
-for (const probe of ["origin", "alternate"] as const) {
-  it.live(`bounds a stalled ${probe} metadata probe without repeating a strict source read`, () =>
+it.live.each(["origin", "alternate"] as const)(
+  "bounds a stalled %s metadata probe without repeating a strict source read",
+  (probe) =>
     Effect.scoped(
       Effect.gen(function* () {
         let sourceReads = 0;
@@ -638,81 +642,81 @@ for (const probe of ["origin", "alternate"] as const) {
         expect(sourceReads).toBe(1);
       }),
     ),
-  );
-}
+);
 
-for (const source of ["pending", "pending-local", "failed-local", "failed", "offline"] as const) {
-  it.effect(
-    source === "offline"
-      ? "returns held source data only after both fresh paths fail"
-      : `uses one shared reader with a ${source} source`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const started = yield* Deferred.make<void>();
-          const calls: string[] = [];
-          const clientFor = (local: boolean) =>
-            ({
-              [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]:
-                () =>
-                  Effect.succeed({
-                    host: "github.com",
-                    provider: "github",
-                    viewer: "maria-rcks",
-                    accountId: "123",
-                  }),
-              [WS_METHODS.pullRequestsSummary]: (input: { allowStale?: boolean }) =>
-                Effect.gen(function* () {
-                  calls.push(local ? "local" : input.allowStale === false ? "origin" : "held");
-                  if (source === "offline" && !local && input.allowStale === undefined) {
-                    return { state: "open" };
-                  }
-                  expect(input.allowStale).toBe(false);
-                  if (local && source !== "offline") return null;
-                  if (source !== "pending" && source !== "pending-local")
-                    return yield* new PullRequestOperationError({
-                      operation: "summary",
-                      detail: "github unreachable",
-                    });
-                  yield* Deferred.succeed(started, undefined);
-                  return yield* Effect.never;
-                }),
-            }) as unknown as WsRpcProtocolClient;
-          const { environmentRegistry, supervisor } = yield* makeTestRuntime(
-            clientFor(false),
-            clientFor(true),
-            source === "failed-local" || source === "pending-local",
-          );
-          const request = createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
-            projectId: ProjectId.make("project-1"),
-            repository: "acme/web",
-            number: 7,
-          }).pipe(
-            Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-            Effect.provideService(GitHubRoutingPermissions, trustedRouting),
-            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          );
-          const fiber = yield* request.pipe(Effect.forkChild);
-          if (source === "pending-local") {
-            yield* Deferred.await(started);
-            yield* TestClock.adjust("30 seconds");
-          }
-          const result = yield* Fiber.join(fiber);
-          if (source === "offline") {
-            expect(result).toEqual({ state: "open" });
-            expect(calls).toEqual(["local", "origin", "held"]);
-          } else {
-            expect(result).toBeNull();
-            expect(calls).toEqual(
-              source === "failed-local" || source === "pending-local"
-                ? ["origin", "local"]
-                : ["local"],
-            );
-          }
-        }),
-      ),
-  );
-}
+it.effect.each(
+  (["pending", "pending-local", "failed-local", "failed", "offline"] as const).map(
+    (source) =>
+      [
+        source === "offline"
+          ? "returns held source data only after both fresh paths fail"
+          : `uses one shared reader with a ${source} source`,
+        source,
+      ] as const,
+  ),
+)("%s", ([, source]) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const calls: string[] = [];
+      const clientFor = (local: boolean) =>
+        ({
+          [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
+            Effect.succeed({
+              host: "github.com",
+              provider: "github",
+              viewer: "maria-rcks",
+              accountId: "123",
+            }),
+          [WS_METHODS.pullRequestsSummary]: (input: { allowStale?: boolean }) =>
+            Effect.gen(function* () {
+              calls.push(local ? "local" : input.allowStale === false ? "origin" : "held");
+              if (source === "offline" && !local && input.allowStale === undefined) {
+                return { state: "open" };
+              }
+              expect(input.allowStale).toBe(false);
+              if (local && source !== "offline") return null;
+              if (source !== "pending" && source !== "pending-local")
+                return yield* new PullRequestOperationError({
+                  operation: "summary",
+                  detail: "github unreachable",
+                });
+              yield* Deferred.succeed(started, undefined);
+              return yield* Effect.never;
+            }),
+        }) as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+        clientFor(false),
+        clientFor(true),
+        source === "failed-local" || source === "pending-local",
+      );
+      const request = createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 7,
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      const fiber = yield* request.pipe(Effect.forkChild);
+      if (source === "pending-local") {
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("30 seconds");
+      }
+      const result = yield* Fiber.join(fiber);
+      if (source === "offline") {
+        expect(result).toEqual({ state: "open" });
+        expect(calls).toEqual(["local", "origin", "held"]);
+      } else {
+        expect(result).toBeNull();
+        expect(calls).toEqual(
+          source === "failed-local" || source === "pending-local" ? ["origin", "local"] : ["local"],
+        );
+      }
+    }),
+  ),
+);
 
 it.live("keeps source workspace metadata when an alternate answers a detail read", () =>
   Effect.scoped(
@@ -1191,8 +1195,9 @@ it.effect("refreshes checks without refreshing full detail", () =>
   ),
 );
 
-for (const oldAlternate of [false, true]) {
-  it.effect(`routes checks through one reader with old alternate: ${oldAlternate}`, () =>
+it.effect.each([false, true])(
+  "routes checks through one reader with old alternate: %s",
+  (oldAlternate) =>
     Effect.scoped(
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -1236,8 +1241,7 @@ for (const oldAlternate of [false, true]) {
         expect(calls).toEqual(oldAlternate ? ["origin"] : ["local"]);
       }),
     ),
-  );
-}
+);
 
 it.effect("keeps live detail reads separate from reads that allow stale data", () =>
   Effect.scoped(
