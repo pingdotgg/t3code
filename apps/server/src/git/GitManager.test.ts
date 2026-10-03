@@ -34,6 +34,7 @@ import {
   ProviderInstanceId,
   TextGenerationError,
   ThreadId,
+  ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -61,6 +62,7 @@ import * as GitManager from "./GitManager.ts";
 
 const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeForgejoPullRequest = Schema.decodeEffect(ForgejoPullRequestSchema);
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -668,6 +670,7 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  providers?: ReadonlyArray<ServerProvider>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   /** Seeds the V2 stores the per-project settings lookup reads. */
@@ -731,7 +734,7 @@ function makeManager(input?: {
   const managerLayer = Layer.mergeAll(
     Layer.succeed(TextGeneration.TextGeneration, textGeneration),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
-      getProviders: Effect.succeed([]),
+      getProviders: Effect.succeed(input?.providers ?? []),
     }),
     Layer.succeed(
       ProjectSetupScriptRunner.ProjectSetupScriptRunner,
@@ -769,6 +772,114 @@ const GitManagerTestLayer = GitVcsDriver.layer.pipe(
 );
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
+  it.effect.each(["unset", "available", "unavailable", "disabled"] as const)(
+    "commit generation failures identify the attempted model when the writer is %s",
+    (writer) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "changed\n");
+        const instanceId = ProviderInstanceId.make("test_writer");
+        const writerSelection = { instanceId, model: "writer-model" };
+        const cause = new TextGenerationError({
+          operation: "generateCommitMessage",
+          detail: "Unsupported model",
+        });
+        const { manager } = yield* makeManager({
+          serverSettings: {
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("codex"),
+                config: {},
+                enabled: writer !== "disabled",
+              },
+            },
+            sourceControlWriterModelSelection: writer === "unset" ? null : writerSelection,
+          },
+          providers:
+            writer === "available" || writer === "disabled"
+              ? [
+                  decodeServerProvider({
+                    instanceId,
+                    driver: "codex",
+                    enabled: true,
+                    installed: true,
+                    version: null,
+                    status: "ready",
+                    auth: { status: "authenticated" },
+                    checkedAt: "2026-09-26T00:00:00.000Z",
+                    models: [],
+                  }),
+                ]
+              : [],
+          textGeneration: { generateCommitMessage: () => Effect.fail(cause) },
+        });
+        const error = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" }).pipe(
+          Effect.flip,
+        );
+        const selection =
+          writer === "available"
+            ? writerSelection
+            : DEFAULT_SERVER_SETTINGS.textGenerationModelSelection;
+        expect(error).toMatchObject({
+          _tag: "TextGenerationError",
+          operation: "generateCommitMessage",
+          detail: "fake text generation failed",
+          cause,
+          modelSelection: { instanceId: selection.instanceId, model: selection.model },
+          modelSetting:
+            writer === "available"
+              ? "sourceControlWriterModelSelection"
+              : "textGenerationModelSelection",
+        });
+        expect(error.message).toContain(selection.model);
+        expect(error.message).toContain(selection.instanceId);
+        expect((yield* runGit(repoDir, ["log", "-1", "--pretty=%s"])).stdout.trim()).toBe(
+          "Initial commit",
+        );
+      }),
+  );
+
+  it.effect("PR generation failures carry model context without creating a PR", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-generation-error"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-generation-error"]);
+      yield* runGit(repoDir, ["config", "branch.feature-generation-error.gh-merge-base", "main"]);
+      const { manager, ghCalls } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generatePrContent",
+                detail: "Model unavailable",
+              }),
+            ),
+        },
+        ghScenario: { prListSequence: ["[]"] },
+      });
+      const error = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" }).pipe(
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "TextGenerationError",
+        operation: "generatePrContent",
+        modelSelection: {
+          instanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
+        },
+        modelSetting: "textGenerationModelSelection",
+      });
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+    }),
+  );
+
   it.effect("status includes draft PR metadata when branch already has a draft PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
