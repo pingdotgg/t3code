@@ -626,13 +626,50 @@ function resolveColor(
   return undefined;
 }
 
+type Rgb = readonly [number, number, number];
+
+/** Reads the `#rrggbb` and `rgb(r,g,b)` colours this module produces. */
+function parseCssColor(color: string): Rgb | undefined {
+  if (color.startsWith("#") && color.length === 7) {
+    return [1, 3, 5].map((offset) =>
+      Number.parseInt(color.slice(offset, offset + 2), 16),
+    ) as unknown as Rgb;
+  }
+  const match = /^rgb\((\d+),(\d+),(\d+)\)$/u.exec(color);
+  return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function luminance([r, g, b]: Rgb): number {
+  const channel = (value: number) => {
+    const scaled = value / 255;
+    return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function contrastRatio(a: Rgb, b: Rgb): number {
+  const [first, second] = [luminance(a), luminance(b)];
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
 function spanStyle(pen: string, palette: ReadonlyArray<string>): TerminalSpanStyle | null {
   if (pen === "") return null;
   const attributes = parsePen(pen);
   let color = attributes.fg === "" ? undefined : resolveColor(attributes.fg, 30, palette);
   let backgroundColor = attributes.bg === "" ? undefined : resolveColor(attributes.bg, 40, palette);
   if (attributes.inverse) {
-    [color, backgroundColor] = [backgroundColor ?? "currentColor", color ?? palette[7]];
+    [color, backgroundColor] = [backgroundColor, color ?? palette[7]];
+  }
+  // Badges like "PASS" on green assume a terminal's own palette; keep their text readable.
+  if (backgroundColor !== undefined) {
+    const background = parseCssColor(backgroundColor);
+    const foreground = color === undefined ? undefined : parseCssColor(color);
+    if (
+      background !== undefined &&
+      (foreground === undefined || contrastRatio(foreground, background) < 3)
+    ) {
+      color = luminance(background) > 0.35 ? "#1f2328" : "#ffffff";
+    }
   }
   return {
     ...(color === undefined ? {} : { color }),

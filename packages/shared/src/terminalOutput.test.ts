@@ -149,6 +149,21 @@ describe("terminalOutputSpans", () => {
     ]);
   });
 
+  it("keeps text on a coloured background readable on either palette", () => {
+    // "PASS" badge: black on green; "FAIL" badge: grey-white on red.
+    const text = normalizeTerminalOutput(
+      "\u001b[30;42m PASS \u001b[0m\u001b[1;37;41m FAIL \u001b[0m",
+    ).text;
+    for (const palette of [TERMINAL_PALETTES.light, TERMINAL_PALETTES.dark]) {
+      for (const span of terminalOutputSpans(text, palette)) {
+        expect(span.style?.color === undefined).toBe(false);
+      }
+    }
+    const [pass, fail] = terminalOutputSpans(text, TERMINAL_PALETTES.light);
+    expect(pass?.style?.color).toBe("#ffffff");
+    expect(fail?.style?.color).toBe("#ffffff");
+  });
+
   it("collapses the rest into plain text past the span limit", () => {
     const text = normalizeTerminalOutput("\u001b[31mx\u001b[32my".repeat(50)).text;
     const spans = terminalOutputSpans(text, TERMINAL_PALETTES.light, 10);
