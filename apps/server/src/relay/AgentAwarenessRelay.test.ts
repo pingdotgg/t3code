@@ -659,7 +659,10 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("never publishes tombstones for subagent threads", () =>
+  it.effect.each([
+    { label: "live", archived: false },
+    { label: "archived", archived: true },
+  ])("never publishes tombstones for $label subagent threads", ({ archived }) =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
       yield* Ref.set(
@@ -670,6 +673,7 @@ describe("AgentAwarenessRelay", () => {
             parentThreadId: THREAD_ID,
             relationshipToParent: "subagent",
           },
+          ...(archived ? { archivedAt: yield* DateTime.now } : {}),
         }),
       );
       yield* relay.publishThread(THREAD_ID);
