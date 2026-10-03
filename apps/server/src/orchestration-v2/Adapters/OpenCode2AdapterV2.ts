@@ -78,7 +78,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
@@ -1385,6 +1385,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
+    const withReportedModel = (
+      providerThread: OrchestrationV2ProviderThread,
+      model: ModelRef | undefined,
+    ): OrchestrationV2ProviderThread => {
+      if (model === undefined) return providerThread;
+      const modelSelection: ModelSelection = {
+        instanceId,
+        model: `${model.providerID}/${model.id}`,
+        options: model.variant === undefined ? [] : [{ id: "variant", value: model.variant }],
+      };
+      if (
+        providerThread.nativeMetadata?.modelSelection !== undefined &&
+        modelSelectionsEqual(providerThread.nativeMetadata.modelSelection, modelSelection)
+      )
+        return providerThread;
+      return {
+        ...providerThread,
+        nativeMetadata: { ...providerThread.nativeMetadata, modelSelection },
+      };
+    };
+
     /**
      * Gives a subagent call its session once both are known: OpenCode names
      * the session on the call's progress, and announces it just before. The
@@ -1463,7 +1484,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const child =
         previous ?? newThreadState(childId, providerThread, call.state.directory, subagent);
       child.subagent = subagent;
-      child.providerThread = providerThread;
+      child.model = info?.model ?? child.model;
+      child.providerThread = withReportedModel(providerThread, child.model);
       child.directory = call.state.directory;
       child.agent = info?.agent ?? call.agent ?? child.agent;
       // OpenCode gives a new session its parent's rules, which are the thread's.
@@ -1472,7 +1494,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       childOwners.set(childId, rootOf(call.state));
       call.child = child;
       yield* emit({ type: "app_thread.created", driver, appThread });
-      yield* emit({ type: "provider_thread.updated", driver, providerThread });
+      yield* emit({
+        type: "provider_thread.updated",
+        driver,
+        providerThread: child.providerThread,
+      });
       yield* emitSubagent(call);
       // A session called again was not made now, so it may hold the rules of
       // a mode the thread has left. OpenCode applies a rules change to the
@@ -2520,6 +2546,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (sessionId === undefined) return;
       const state = threads.get(sessionId);
       if (state === undefined) return;
+      if (event.type === "session.model.selected" || event.type === "session.step.started") {
+        if (event.type === "session.model.selected") state.model = event.data.model;
+        const providerThread = withReportedModel(state.providerThread, event.data.model);
+        if (providerThread !== state.providerThread) {
+          state.providerThread = { ...providerThread, updatedAt: yield* DateTime.now };
+          yield* emit({
+            type: "provider_thread.updated",
+            driver,
+            providerThread: state.providerThread,
+          });
+        }
+      }
       if (
         event.type === "session.inbox.enqueued" &&
         state.subagent !== undefined &&
@@ -2962,6 +3000,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       },
       directory: string,
     ) => {
+      providerThread = withReportedModel(providerThread, native.model);
       const existing = threads.get(native.id);
       if (existing !== undefined) {
         existing.providerThread = providerThread;
@@ -3582,7 +3621,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             directory,
           );
           state.policy = policy;
-          return providerThread;
+          return state.providerThread;
         }).pipe(
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
@@ -3625,7 +3664,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               directory: AbsolutePath.make(cwd),
             });
           }
-          return providerThread;
+          return state.providerThread;
         }).pipe(
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
@@ -4183,7 +4222,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               directory: AbsolutePath.make(cwd),
             });
           }
-          return providerThread;
+          return state.providerThread;
         }).pipe(
           exclusive(forkInput.sourceProviderThread),
           Effect.mapError((cause) =>

@@ -3,6 +3,9 @@ import {
   NodeId,
   MessageId,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderSessionId,
+  ProviderDriverKind,
   RunId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
@@ -15,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  deriveReportedModelSelection,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
@@ -576,5 +580,74 @@ describe("presentPendingBackgroundWork", () => {
     expect(presentPendingBackgroundWork([{ taskId: "old", kind: "background_task" }])?.title).toBe(
       "Waiting on a background task",
     );
+  });
+});
+
+describe("provider-reported model selection", () => {
+  const selected = v2Projection.thread.modelSelection;
+  const reported = { ...selected, options: [{ id: "reasoningEffort", value: "default" }] };
+  const providerThread = {
+    id: ProviderThreadId.make("active"),
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: selected.instanceId,
+    providerSessionId: ProviderSessionId.make("session"),
+    appThreadId: v2Projection.thread.id,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle" as const,
+    firstRunOrdinal: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    nativeMetadata: { modelSelection: reported },
+  };
+  const projection = {
+    ...v2Projection,
+    thread: { ...v2Projection.thread, activeProviderThreadId: providerThread.id },
+    providerThreads: [providerThread],
+  };
+
+  it("reads only the active provider thread's reported selection", () => {
+    expect(deriveReportedModelSelection(projection)).toBe(reported);
+    expect(
+      deriveReportedModelSelection({
+        ...projection,
+        thread: { ...projection.thread, activeProviderThreadId: null },
+      }),
+    ).toBeNull();
+    expect(
+      deriveReportedModelSelection({
+        ...projection,
+        providerThreads: [
+          { ...providerThread, providerInstanceId: ProviderInstanceId.make("other") },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("shows the reported default in a subagent's effort label", () => {
+    const models = [
+      {
+        slug: selected.model,
+        name: selected.model,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "variant",
+              label: "Reasoning",
+              type: "select" as const,
+              options: [{ id: "high", label: "High" }],
+            },
+          ],
+        },
+      },
+    ];
+    const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
+    expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
+    expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
   });
 });

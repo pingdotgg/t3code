@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ProviderDriverKind,
+  type ProviderOptionDescriptor,
+} from "@t3tools/contracts";
 import { buildTraitsTriggerDisplay, buildUnavailableModelOptionDescriptors } from "./TraitsPicker";
 
 function selectDescriptor(
@@ -231,4 +235,35 @@ describe("buildUnavailableModelOptionDescriptors", () => {
       },
     ]);
   });
+});
+
+it("shows Unknown until a matching provider report provides Default", () => {
+  const selection = {
+    instanceId: ProviderInstanceId.make("opencode"),
+    model: "ling",
+    options: [],
+  };
+  const input = {
+    provider: ProviderDriverKind.make("opencode"),
+    descriptors: [
+      selectDescriptor(
+        "variant",
+        [
+          { id: "none", label: "None" },
+          { id: "thinking", label: "Thinking" },
+        ],
+        "",
+      ),
+    ],
+    primarySelectDescriptorId: "variant",
+    ultrathinkPromptControlled: false,
+    modelSelection: selection,
+  };
+  expect(buildTraitsTriggerDisplay(input).label).toBe("Unknown");
+  expect(
+    buildTraitsTriggerDisplay({
+      ...input,
+      reportedModelSelection: { ...selection, options: [{ id: "variant", value: "default" }] },
+    }).label,
+  ).toBe("Default");
 });

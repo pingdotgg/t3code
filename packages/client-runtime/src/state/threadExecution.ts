@@ -142,6 +142,18 @@ export function deriveProviderSubagentStatus(
   };
 }
 
+/** The observed selection belongs to the active provider thread, never a previous handoff. */
+export function deriveReportedModelSelection(
+  projection: OrchestrationV2ThreadProjection,
+): ModelSelection | null {
+  const providerThread = projection.providerThreads.find(
+    (candidate) =>
+      candidate.id === projection.thread.activeProviderThreadId &&
+      candidate.providerInstanceId === projection.thread.modelSelection.instanceId,
+  );
+  return providerThread?.nativeMetadata?.modelSelection ?? null;
+}
+
 // Option ids providers use for reasoning effort (Codex, Claude, Grok/ACP, OpenCode).
 const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
 
@@ -155,6 +167,7 @@ const REASONING_EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "
 export function formatModelSelectionEffort(
   selection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> = [],
+  reportedSelection?: ModelSelection | null,
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
@@ -162,7 +175,7 @@ export function formatModelSelectionEffort(
   for (const id of REASONING_EFFORT_OPTION_IDS) {
     const descriptor = descriptors.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const label = getProviderOptionCurrentLabel(descriptor);
+    const label = getProviderOptionCurrentLabel(descriptor, selection, reportedSelection);
     if (label) return label;
   }
   return null;
