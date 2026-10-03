@@ -1410,10 +1410,19 @@ function withoutShellWrapper(command: string): string {
 
 const POWERSHELL_PROGRAMS = new Set(["powershell", "pwsh"]);
 
-// Common approved PowerShell verbs. Cmdlets are capitalized Verb-Noun, which
-// keeps lowercase Linux tools such as `update-alternatives` out.
-const POWERSHELL_CMDLET =
-  /^(?:Add|Clear|Compare|Compress|ConvertFrom|ConvertTo|Copy|Expand|Export|ForEach|Format|Get|Group|Import|Invoke|Join|Measure|Move|New|Out|Pop|Push|Read|Remove|Rename|Resolve|Select|Set|Sort|Split|Start|Stop|Test|Wait|Where|Write)-[A-Z][A-Za-z]*$/u;
+// PowerShell's approved verbs (`Get-Verb`), plus the ForEach, Where, Sort and
+// Tee of its built-in *-Object cmdlets. Cmdlets match only capitalized, as
+// agents write them: lowercase `update-grub` or `install-info` are Linux tools.
+const POWERSHELL_VERBS = new Set(
+  `Add Approve Assert Backup Block Build Checkpoint Clear Close Compare Complete Compress Confirm Connect Convert ConvertFrom ConvertTo Copy Debug Deny Deploy Disable Disconnect Dismount Edit Enable Enter Exit Expand Export Find ForEach Format Get Grant Group Hide Import Initialize Install Invoke Join Limit Lock Measure Merge Mount Move New Open Optimize Out Ping Pop Protect Publish Push Read Receive Redo Register Remove Rename Repair Request Reset Resize Resolve Restart Restore Resume Revoke Save Search Select Send Set Show Skip Sort Split Start Step Stop Submit Suspend Switch Sync Tee Test Trace Unblock Undo Uninstall Unlock Unprotect Unpublish Unregister Update Use Wait Watch Where Write`.split(
+    " ",
+  ),
+);
+
+function isPowerShellCmdlet(word: string): boolean {
+  const cmdlet = /^([A-Z][a-z]+(?:[A-Z][a-z]+)?)-[A-Z][A-Za-z]*$/u.exec(word);
+  return cmdlet !== null && POWERSHELL_VERBS.has(cmdlet[1]!);
+}
 
 /**
  * The grammar to highlight a command with: PowerShell when pwsh or powershell
@@ -1442,7 +1451,7 @@ function isPowerShellScript(command: string): boolean {
       // `$env:NAME` or `$name = value`; neither parses as POSIX shell.
       /^\$(?:env|global|local|script):/iu.test(statement) ||
       /^\$[A-Za-z_]\w*\s+=/u.test(statement) ||
-      POWERSHELL_CMDLET.test(statement.match(/^\S+/u)?.[0] ?? "")
+      isPowerShellCmdlet(statement.match(/^\S+/u)?.[0] ?? "")
     ) {
       return true;
     }
