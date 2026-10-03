@@ -183,6 +183,10 @@ function liveSubagent<Agent extends RuntimeSubagent>(
     status: liveStatus === "running" || liveStatus === "waiting" ? liveStatus : "pending",
     startedAt: startedAt ? DateTime.formatIso(startedAt) : agent.startedAt,
     completedAt: null,
+    // The settled task's output belongs to its first run, not this one.
+    progress: null,
+    result: null,
+    error: null,
   };
 }
 
