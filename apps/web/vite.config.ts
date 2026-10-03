@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
@@ -6,6 +7,7 @@ import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
 
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { vitestWebWorkerAlias } from "../../scripts/lib/vitestWebWorkerAlias.ts";
 import {
   clientConfigurationFingerprint,
   clientSourceFingerprint,
@@ -46,6 +48,12 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
 export default defineConfig({
+  // `pnpm test` runs this package's own test script, so Vitest resolves this
+  // config rather than the repository root one. Any test-only setting must be
+  // mirrored here or it silently does not apply.
+  test: {
+    alias: vitestWebWorkerAlias,
+  },
   plugins: [
     {
       name: "t3-client-build-stamp",
