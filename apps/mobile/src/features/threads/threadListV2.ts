@@ -1,3 +1,4 @@
+import type { ActiveThreadSortOrder } from "@t3tools/contracts/settings";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
   canSnooze,
@@ -17,7 +18,7 @@ import {
   sortInboxThreadsByReturn,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import {
-  sortActiveThreadsByOrderKey,
+  sortActiveThreads,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
@@ -212,8 +213,7 @@ function parseTimestampMs(isoDate: string): number {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** The active order shared by web and native: new/reopened rows, then the
-    saved arrangement. Activity does not move a thread. */
+/** Active rows use the same saved arrangement or message order on every client. */
 export function sortThreadsForListV2<
   T extends {
     readonly id: string;
@@ -221,13 +221,15 @@ export function sortThreadsForListV2<
     readonly unsettledAt?: string | null | undefined;
     readonly activeOrderKey?: string | null | undefined;
     readonly environmentId?: string | undefined;
+    readonly latestUserMessageAt?: string | null | undefined;
   },
->(threads: readonly T[]): T[] {
-  return sortActiveThreadsByOrderKey(threads);
+>(threads: readonly T[], order: ActiveThreadSortOrder = "manual"): T[] {
+  return sortActiveThreads(threads, order);
 }
 
 /** Canonical card section for Move up/down, independent of search or scope. */
 export function getThreadListV2OrderedSection(input: {
+  readonly activeThreadSortOrder?: ActiveThreadSortOrder;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
   readonly pendingOrder?: PendingThreadOrder | null;
@@ -257,12 +259,14 @@ export function getThreadListV2OrderedSection(input: {
   const ordered =
     input.section === "pinned"
       ? sortPinnedThreadsByOrderKey(threads)
-      : sortActiveThreadsByOrderKey(threads);
+      : sortActiveThreads(threads, input.activeThreadSortOrder);
   const pending =
     input.pendingOrder?.section === input.section
       ? reconcilePendingThreadOrder(input.pendingOrder, ordered)
       : null;
-  return applyPendingThreadOrder(ordered, input.section, pending);
+  return input.section === "active" && input.activeThreadSortOrder === "last_message"
+    ? ordered
+    : applyPendingThreadOrder(ordered, input.section, pending);
 }
 
 export interface ThreadListV2Item {
@@ -609,6 +613,7 @@ export function buildThreadListV2ListItems(input: {
  * the settled recency tail, matching the web v2 list.
  */
 export function buildThreadListV2Items(input: {
+  readonly activeThreadSortOrder?: ActiveThreadSortOrder;
   readonly pendingOrder?: PendingThreadOrder | null;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environmentId: EnvironmentId | null;
@@ -724,10 +729,13 @@ export function buildThreadListV2Items(input: {
   }
 
   // The beta inbox is time-ordered, so the saved arrangement (and any move in
-  // flight) is kept but not applied until the beta is off again.
+  // flight) is kept but not applied until the beta is off again. Message
+  // sorting keeps the arrangement the same way.
   const orderedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
-    : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
+    : input.activeThreadSortOrder === "last_message"
+      ? sortThreadsForListV2(active, "last_message")
+      : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   // Newest work first, by the same clock as the inbox.
   const orderedWorking = sortInboxThreadsByReturn(working);
   const orderedSnoozed = [...snoozed].sort(

@@ -8,6 +8,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import { useActiveThreadSort } from "../hooks/useActiveThreadSort";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -59,6 +60,7 @@ import {
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
+  ArrowUpDownIcon,
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
@@ -262,7 +264,18 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
@@ -2256,6 +2269,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   );
 });
 
+/** Thread navigation across connected environments. Active sorting is shared
+ * with native clients; pinned, snoozed, and settled sections keep their own order. */
 export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -2265,9 +2280,19 @@ export default function Sidebar() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const {
+    order: activeThreadSortOrder,
+    setOrder: setActiveThreadSortOrder,
+    available: sortAvailable,
+  } = useActiveThreadSort();
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  // Working beta orders the inbox by return time, so the sort choice only
+  // applies without it.
+  const sortsByLastMessage = !workingShelfEnabled && activeThreadSortOrder === "last_message";
+  // Either one orders the inbox by time, so a drop into Active only changes lifecycle.
+  const activeTimeOrdered = workingShelfEnabled || sortsByLastMessage;
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2663,7 +2688,9 @@ export default function Sidebar() {
       const supportsSettlement = capabilities?.threadSettlement === true;
       const supportsSnooze = capabilities?.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
+      if (!sortsByLastMessage && capabilities?.threadActiveReorder === true) {
+        activeReorderable.add(threadKey);
+      }
       // Older servers retain their existing drag actions. Active placement
       // additionally requires its own ordering capability at the drop target.
       if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
@@ -2710,7 +2737,7 @@ export default function Sidebar() {
     const sortedPinned = sortPinnedThreadsForSidebar(pinned);
     const sortedActive = workingShelfEnabled
       ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
-      : sortThreadsForSidebar(active);
+      : sortThreadsForSidebar(active, activeThreadSortOrder);
     return {
       pinnedThreads:
         optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -2723,7 +2750,7 @@ export default function Sidebar() {
       draggableThreadKeys: draggable,
       activeReorderableThreadKeys: activeReorderable,
       activeThreads:
-        optimisticDrop?.section !== "active" || optimisticDrop.order === null
+        sortsByLastMessage || optimisticDrop?.section !== "active" || optimisticDrop.order === null
           ? sortedActive
           : orderItemsByPreferredIds({
               items: sortedActive,
@@ -2742,11 +2769,13 @@ export default function Sidebar() {
       snoozeNow: preciseNow,
     };
   }, [
+    activeThreadSortOrder,
     nowMinute,
     optimisticDrop,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
+    sortsByLastMessage,
     threads,
     workingShelfEnabled,
   ]);
@@ -3658,21 +3687,23 @@ export default function Sidebar() {
       applySidebarThreadDrop(thread, "settled", dragState.occurredAt),
     ]).map(key);
   }, [dragState, settledThreads, threadByKey]);
-  // Working beta: the inbox is time-ordered too, so the preview shows the
-  // slot a drop will land in, not the slot under the pointer.
+  // Working beta and Last message: the inbox is time-ordered too, so the
+  // preview shows the slot a drop will land in, not the slot under the pointer.
   const draggedActiveOrder = useMemo(() => {
     const thread = dragState === null ? undefined : threadByKey.get(dragState.activeKey);
-    if (!workingShelfEnabled || dragState === null || thread === undefined) return undefined;
+    if (!activeTimeOrdered || dragState === null || thread === undefined) return undefined;
     const key = (candidate: EnvironmentThreadShell) =>
       scopedThreadKey(scopeThreadRef(candidate.environmentId, candidate.id));
-    return sortInboxThreadsByReturn(
-      [
-        ...activeThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
-        applySidebarThreadDrop(thread, "active", dragState.occurredAt),
-      ],
-      inboxReturns.returnedAt,
+    const afterDrop = [
+      ...activeThreads.filter((candidate) => key(candidate) !== dragState.activeKey),
+      applySidebarThreadDrop(thread, "active", dragState.occurredAt),
+    ];
+    return (
+      workingShelfEnabled
+        ? sortInboxThreadsByReturn(afterDrop, inboxReturns.returnedAt)
+        : sortThreadsForSidebar(afterDrop, "last_message")
     ).map(key);
-  }, [activeThreads, dragState, threadByKey, workingShelfEnabled]);
+  }, [activeThreads, activeTimeOrdered, dragState, threadByKey, workingShelfEnabled]);
   const sidebarSortingStrategy = useMemo(
     () =>
       createSidebarSortingStrategy({
@@ -3744,7 +3775,7 @@ export default function Sidebar() {
             activeOrder: activeKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
-            activeTimeOrdered: workingShelfEnabled,
+            activeTimeOrdered,
           }).kind !== "none"
         );
       },
@@ -3766,7 +3797,7 @@ export default function Sidebar() {
     pinnedKeys,
     sidebarListItems,
     threadByKey,
-    workingShelfEnabled,
+    activeTimeOrdered,
   ]);
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -3794,7 +3825,7 @@ export default function Sidebar() {
         activeOrder: activeKeys,
         activeKeysById,
         activeReorderableKeys: activeReorderableThreadKeys,
-        activeTimeOrdered: workingShelfEnabled,
+        activeTimeOrdered,
       });
       if (plan.kind === "none") return;
       if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
@@ -3928,7 +3959,7 @@ export default function Sidebar() {
       unpinThread,
       unsettleThread,
       unsnoozeThread,
-      workingShelfEnabled,
+      activeTimeOrdered,
     ],
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
@@ -4777,6 +4808,37 @@ export default function Sidebar() {
                     </ComboboxList>
                   </ComboboxPopup>
                 </Combobox>
+              }
+              sortControl={
+                <Menu>
+                  <MenuTrigger
+                    disabled={!sortAvailable || workingShelfEnabled}
+                    render={<SidebarHeaderIconButton label="Sort threads" />}
+                  >
+                    <ArrowUpDownIcon />
+                  </MenuTrigger>
+                  <MenuPopup align="end" side="bottom" className="min-w-48">
+                    <MenuGroup>
+                      <MenuGroupLabel>Sort active threads</MenuGroupLabel>
+                      <MenuRadioGroup
+                        value={activeThreadSortOrder}
+                        onValueChange={(value) => {
+                          if (value === "manual" || value === "last_message") {
+                            setOptimisticDrop(null);
+                            setActiveThreadSortOrder(value);
+                          }
+                        }}
+                      >
+                        <MenuRadioItem value="manual" closeOnClick>
+                          Configured order
+                        </MenuRadioItem>
+                        <MenuRadioItem value="last_message" closeOnClick>
+                          Last message
+                        </MenuRadioItem>
+                      </MenuRadioGroup>
+                    </MenuGroup>
+                  </MenuPopup>
+                </Menu>
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}

@@ -9,6 +9,7 @@ import {
   planPinnedMove,
   planPinnedReorder,
   resolveSettledThreadTimestamp,
+  sortActiveThreads,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
@@ -509,5 +510,51 @@ describe("sortActiveThreadsByOrderKey", () => {
     const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
     const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
     expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
+  });
+});
+
+describe("sortActiveThreads", () => {
+  it("switches to last message and restores the saved arrangement without changing keys", () => {
+    const threads = [
+      {
+        id: "first",
+        createdAt: "2026-03-09T08:00:00Z",
+        activeOrderKey: "b",
+        latestUserMessageAt: "2026-03-09T09:00:00Z",
+      },
+      {
+        id: "second",
+        createdAt: "2026-03-09T07:00:00Z",
+        activeOrderKey: "c",
+        latestUserMessageAt: "2026-03-09T12:00:00Z",
+      },
+      { id: "new", createdAt: "2026-03-09T10:00:00Z", activeOrderKey: null },
+    ];
+    expect(sortActiveThreads(threads, "last_message").map((thread) => thread.id)).toEqual([
+      "second",
+      "new",
+      "first",
+    ]);
+    expect(sortActiveThreads(threads, "manual").map((thread) => thread.id)).toEqual([
+      "new",
+      "first",
+      "second",
+    ]);
+    expect(threads.map((thread) => thread.activeOrderKey)).toEqual(["b", "c", null]);
+  });
+
+  it("uses creation for invalid message dates and preserves configured order for ties", () => {
+    const threads = [
+      {
+        id: "same",
+        environmentId: "b",
+        createdAt: "2026-03-09T10:00:00Z",
+        latestUserMessageAt: "invalid",
+      },
+      { id: "same", environmentId: "a", createdAt: "2026-03-09T10:00:00Z" },
+    ];
+    expect(
+      sortActiveThreads(threads, "last_message").map((thread) => thread.environmentId),
+    ).toEqual(["a", "b"]);
   });
 });

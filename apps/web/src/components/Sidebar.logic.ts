@@ -289,7 +289,7 @@ export function planSidebarThreadDrop(input: {
   readonly activeOrder: readonly string[];
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
-  /** Working beta: the inbox sorts by time, so drops only change lifecycle. */
+  /** Working beta or Last message: the inbox sorts by time, so drops only change lifecycle. */
   readonly activeTimeOrdered?: boolean;
 }): SidebarThreadDropPlan {
   const {
@@ -1022,7 +1022,7 @@ export function firstValidTimestampMs(
   return 0;
 }
 
-export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
+export { sortActiveThreads as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 // The Working section beta folds and orders the inbox the same way on mobile.
 export {
   isThreadWorking as isSidebarThreadWorking,

@@ -1,3 +1,4 @@
+import { useActiveThreadSort } from "./use-active-thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -148,10 +149,13 @@ function DragHandle(props: {
   );
 }
 
+/** Shows the same section order as the thread list. Active placement is disabled
+ * in message mode so a drag cannot overwrite the saved configured arrangement. */
 export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
+  const { order: activeThreadSortOrder } = useActiveThreadSort();
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
@@ -175,6 +179,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   }, [threads, now]);
   const sections = useMemo(() => {
     const shared = {
+      activeThreadSortOrder,
       threads,
       now,
       queuedThreadKeys,
@@ -205,7 +210,15 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: parked.filter((thread) => !effectiveSnoozed(thread, { now })),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [
+    activeThreadSortOrder,
+    threads,
+    configs,
+    now,
+    queuedThreadKeys,
+    pendingOrder,
+    workingShelfEnabled,
+  ]);
   const planners = useMemo(() => {
     const planner = (section: "pinned" | "active") =>
       createThreadMovePlanner({
@@ -219,7 +232,9 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
             (
               section === "pinned"
                 ? config.environment.capabilities.threadPinReorder
-                : !workingShelfEnabled && config.environment.capabilities.threadActiveReorder
+                : !workingShelfEnabled &&
+                  activeThreadSortOrder === "manual" &&
+                  config.environment.capabilities.threadActiveReorder
             )
               ? [id]
               : [],
@@ -227,7 +242,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
         ),
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, configs, workingShelfEnabled]);
+  }, [activeThreadSortOrder, sections, threads, configs, workingShelfEnabled]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;

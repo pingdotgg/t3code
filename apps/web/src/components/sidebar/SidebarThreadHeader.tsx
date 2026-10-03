@@ -29,8 +29,9 @@ export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so those controls stay out. */
   hasProjects: boolean;
-  /** The project scope combobox, rendered as the first icon of the group. */
+  /** The project scope combobox. */
   projectScope: ReactNode;
+  sortControl?: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
@@ -53,6 +54,7 @@ export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
   projectScope,
+  sortControl,
   onNewProject,
   onNewThread,
   newThreadDisabled,
@@ -124,6 +126,7 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {sortControl}
         {hasProjects ? (
           <>
             {projectScope}

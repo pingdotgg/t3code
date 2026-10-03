@@ -2253,5 +2253,32 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+
+    it("lets a pinned thread enter a time-ordered inbox that has no reorderable rows", () => {
+      // Last message sorting: no active row can be arranged, but lifecycle drops still land.
+      expect(
+        planSidebarThreadDrop({
+          activeKey: "p1",
+          activeSection: "pinned",
+          target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+          pinnedOrder: ["p1"],
+          pinnedKeysById: new Map([["p1", "m"]]),
+          activeOrder: ["a1", "a2"],
+          activeKeysById: new Map([
+            ["a1", "f"],
+            ["a2", "t"],
+          ]),
+          activeReorderableKeys: new Set(),
+          activeTimeOrdered: true,
+        }),
+      ).toEqual({
+        kind: "move-active",
+        order: null,
+        assignments: [],
+        unpin: true,
+        unsettle: false,
+        unsnooze: false,
+      });
+    });
   });
 });

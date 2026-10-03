@@ -1591,6 +1591,80 @@ it("excludes subagents from navigation, search and ordering while retaining user
   ).toEqual([fork.id, root.id]);
 });
 
+describe("shared active-thread sorting", () => {
+  it("uses message order in the list and arrangement sheet, then restores saved keys", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("first"),
+        title: "First",
+        activeOrderKey: "b",
+        latestUserMessageAt: "2026-06-01T09:00:00Z",
+      }),
+      makeThread({
+        id: ThreadId.make("second"),
+        title: "Second",
+        activeOrderKey: "c",
+        latestUserMessageAt: "2026-06-01T12:00:00Z",
+      }),
+      makeThread({ id: ThreadId.make("pin"), title: "Pinned", pinnedAt: NOW }),
+    ];
+    const input = { threads, environmentId: null, searchQuery: "", now: NOW };
+    expect(
+      buildThreadListV2Items({ ...input, activeThreadSortOrder: "last_message" }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["pin", "second", "first"]);
+    expect(
+      getThreadListV2OrderedSection({
+        threads,
+        section: "active",
+        now: NOW,
+        activeThreadSortOrder: "last_message",
+      }).map((row) => row.id),
+    ).toEqual(["second", "first"]);
+    expect(
+      buildThreadListV2Items({ ...input, activeThreadSortOrder: "manual" }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["pin", "first", "second"]);
+    expect(threads.map((row) => row.activeOrderKey)).toEqual(["b", "c", null]);
+  });
+
+  it("lets the Working section order the inbox even when message sorting is saved", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("older-message"),
+        title: "Older message",
+        createdAt: "2026-06-01T11:00:00Z",
+        latestUserMessageAt: "2026-06-01T09:00:00Z",
+      }),
+      makeThread({
+        id: ThreadId.make("newer-message"),
+        title: "Newer message",
+        createdAt: "2026-06-01T08:00:00Z",
+        latestUserMessageAt: "2026-06-01T12:00:00Z",
+      }),
+    ];
+    const input = {
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      activeThreadSortOrder: "last_message" as const,
+    };
+    expect(buildThreadListV2Items(input).items.map((row) => row.thread.id)).toEqual([
+      "newer-message",
+      "older-message",
+    ]);
+    // Return time (here: creation) wins while the section is on.
+    expect(
+      buildThreadListV2Items({ ...input, workingShelfEnabled: true }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["older-message", "newer-message"]);
+  });
+});
+
 /* ─── Recycled-list equality + per-row clock scoping ─────────────────── */
 
 const BASE_MS = Date.parse(NOW);
