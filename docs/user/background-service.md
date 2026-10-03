@@ -58,6 +58,14 @@ separately. Signing out of T3 Connect does not stop or uninstall the service.
 
 ## Troubleshooting
 
+The Linux service remembers tool paths from the shell where you install it
+and adds them after the paths supplied by the service manager. Updates and
+repairs retain those paths and the WSL distro, including when run over SSH.
+If an editor or provider works in your terminal but the service cannot find it, run
+`t3 service install` again from that terminal. In WSL, use a terminal in the
+same distro where `code` can launch your Windows VS Code installation. This
+restarts the service, so finish active agent turns first.
+
 Start with `t3 service status` on the host. It prints the log path and, on Linux,
 checks whether the installed service is running, enabled, and allowed to survive
 logout.

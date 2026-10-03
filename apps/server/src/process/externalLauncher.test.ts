@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -17,8 +18,10 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import { resolveServiceEnvironment } from "../cloud/serviceEnvironment.ts";
+import { bootServiceEnvironmentOf, renderBootServiceUnit } from "../cloud/bootService.ts";
 import * as ExternalLauncher from "./externalLauncher.ts";
 
 // Tests below write `#!/bin/sh` stubs into a real temp dir and hand that
@@ -60,7 +63,7 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
 
 const testLayer = (input: {
   readonly platform: NodeJS.Platform;
-  readonly env?: Record<string, string>;
+  readonly env?: NodeJS.ProcessEnv;
   readonly resolveExecutable?: (command: string) => string | undefined;
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
@@ -90,7 +93,7 @@ const testLayer = (input: {
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
     ),
-    ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+    Layer.succeed(HostProcessEnvironment, input.env ?? {}),
   );
 };
 
@@ -158,6 +161,84 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     ]);
     assert.equal(spawned.options.shell, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("discovers and launches editors after PATH hydration", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-hydration-" });
+    const bin = path.join(home, "VS Code", "bin");
+    yield* fs.makeDirectory(bin, { recursive: true });
+    yield* fs.writeFileString(path.join(bin, "code"), "#!/bin/sh\n");
+    yield* fs.chmod(path.join(bin, "code"), 0o755);
+    const env = { PATH: path.join(home, "empty"), HOME: home };
+    const startupConfig = ConfigProvider.fromEnv({ env: { ...env } });
+    let spawned: ChildProcess.StandardCommand | undefined;
+
+    yield* Effect.gen(function* () {
+      const startupPath = yield* Config.String("PATH");
+      env.PATH = bin;
+      assert.notEqual(yield* Config.String("PATH"), env.PATH);
+      assert.equal(yield* Config.String("PATH"), startupPath);
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "vscode");
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "/workspace/file.ts:12:4" });
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          testLayer({ platform: "linux", env, onSpawn: (command) => (spawned = command) }),
+          ConfigProvider.layer(startupConfig),
+        ),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "code");
+    assert.deepEqual(spawned.args, ["--goto", "/workspace/file.ts:12:4"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "discovers and launches a Windows editor from the service's fallback PATH",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-editor-" });
+      const bin = path.join(home, '100% "mounted drive"', "Microsoft VS Code", "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(path.join(bin, "code"), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, "code"), 0o755);
+      const unit = renderBootServiceUnit(
+        {
+          program: ["/t3", "__service-launcher"],
+          baseDir: home,
+          logPath: "/log",
+          unitPath: "/unit",
+        },
+        { environmentPath: bin, wslDistroName: "Ubuntu-24.04" },
+      );
+      const env = resolveServiceEnvironment({
+        HOME: home,
+        PATH: path.join(home, "manager-bin"),
+        ...bootServiceEnvironmentOf(unit),
+      });
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "vscode");
+        yield* launcher.launchEditor({ editor: "vscode", cwd: "/home/user/project/file.ts:2:3" });
+      }).pipe(
+        Effect.provide(
+          testLayer({ platform: "linux", env, onSpawn: (command) => (spawned = command) }),
+        ),
+      );
+      assert.equal(env.WSL_DISTRO_NAME, "Ubuntu-24.04");
+      assert.ok(spawned);
+      assert.equal(spawned.command, "code");
+      assert.deepEqual(spawned.args, ["--goto", "/home/user/project/file.ts:2:3"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 for (const platform of ["darwin", "linux"] as const) {
@@ -1173,14 +1254,10 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
       Layer.mergeAll(
         launcherLayer,
         Layer.succeed(HostProcessPlatform, "win32"),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "C:\\t3-editor-discovery-cache-test",
-              PATHEXT: ".COM;.EXE;.BAT;.CMD",
-            },
-          }),
-        ),
+        Layer.succeed(HostProcessEnvironment, {
+          PATH: "C:\\t3-editor-discovery-cache-test",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        }),
         TestClock.layer(),
       ),
     ),
@@ -1238,14 +1315,10 @@ it.effect("keeps scanning after the caller is interrupted and shares that scan",
       Layer.mergeAll(
         launcherLayer,
         Layer.succeed(HostProcessPlatform, "win32"),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "C:\\t3-editor-discovery-interrupt-test",
-              PATHEXT: ".COM;.EXE;.BAT;.CMD",
-            },
-          }),
-        ),
+        Layer.succeed(HostProcessEnvironment, {
+          PATH: "C:\\t3-editor-discovery-interrupt-test",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        }),
       ),
     ),
   );

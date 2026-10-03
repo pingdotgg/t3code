@@ -20,6 +20,11 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  mergeServicePaths,
+  SERVICE_PATH_ENV,
+  SERVICE_WSL_DISTRO_ENV,
+} from "./serviceEnvironment.ts";
+import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
   pinnedRuntimePaths,
@@ -59,20 +64,26 @@ function quoteSystemdValue(value: string): string {
 }
 
 /**
- * Reads `T3CODE_HOME` back out of a rendered unit or plist. Only values this
- * file writes are expected, so a quoted systemd value is unquoted and
- * unescaped the same way `quoteSystemdValue` produced it.
+ * Reads the `Environment=KEY=value` lines this module renders back out of a
+ * unit, reversing `quoteSystemdValue`. Not a parser for arbitrary unit syntax.
  */
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
-  if (systemd !== undefined) {
-    const raw = systemd.trim();
+export function bootServiceEnvironmentOf(contents: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [, key, raw] of contents.matchAll(/^Environment=([^=\s]+)=(.*)$/gm)) {
+    const value = raw!.trim();
     const unquoted =
-      raw.startsWith('"') && raw.endsWith('"')
-        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
-        : raw;
-    return unquoted.replaceAll("%%", "%");
+      value.startsWith('"') && value.endsWith('"')
+        ? value.slice(1, -1).replace(/\\(["\\])/g, "$1")
+        : value;
+    env[key!] = unquoted.replaceAll("%%", "%");
   }
+  return env;
+}
+
+/** Reads `T3CODE_HOME` back out of a rendered unit or plist. */
+export function bootServiceBaseDirOf(contents: string): string | undefined {
+  const systemd = bootServiceEnvironmentOf(contents).T3CODE_HOME;
+  if (systemd !== undefined) return systemd;
   const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
   if (plist !== undefined) {
     return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
@@ -94,7 +105,10 @@ export interface BootServicePlan {
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
-export function renderBootServiceUnit(plan: BootServicePlan): string {
+export function renderBootServiceUnit(
+  plan: BootServicePlan,
+  options: { readonly environmentPath: string; readonly wslDistroName?: string },
+): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -105,6 +119,12 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "[Service]",
     "Type=simple",
     "WorkingDirectory=%h",
+    `Environment=${SERVICE_PATH_ENV}=${quoteSystemdValue(options.environmentPath)}`,
+    // Windows editor launchers need the distro identity. WSL_INTEROP points
+    // to a session socket and must not be persisted across service restarts.
+    ...(options.wslDistroName
+      ? [`Environment=${SERVICE_WSL_DISTRO_ENV}=${quoteSystemdValue(options.wslDistroName)}`]
+      : []),
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
@@ -218,10 +238,22 @@ const STOP_STEP_TIMEOUT = Duration.seconds(120);
  * the command steps each flow runs. install/uninstall/status consume this and
  * never branch on platform.
  */
+export interface SavedServiceEnvironment {
+  readonly path?: string | undefined;
+  readonly wslDistroName?: string | undefined;
+}
+
+/** The installer PATH and WSL distro an installed systemd unit recorded. */
+function savedServiceEnvironmentOf(contents: string): SavedServiceEnvironment {
+  const env = bootServiceEnvironmentOf(contents);
+  return { path: env[SERVICE_PATH_ENV], wslDistroName: env[SERVICE_WSL_DISTRO_ENV] };
+}
+
 export interface BootServiceManager {
   readonly kind: "systemd" | "launchd";
   readonly unitPath: string;
-  readonly render: (plan: BootServicePlan) => string;
+  /** `saved` holds what the installed unit recorded from its installing shell. */
+  readonly render: (plan: BootServicePlan, saved?: SavedServiceEnvironment) => string;
   /** Before rewriting files, when a unit is already installed. */
   readonly stop: ReadonlyArray<BootServiceStep>;
   /** After files are written. The last entry starts the service. */
@@ -234,9 +266,12 @@ export interface BootServiceManager {
   readonly finalize: ReadonlyArray<BootServiceStep>;
 }
 
+/** A per-user systemd unit that carries the installer's PATH and WSL distro forward. */
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
+  readonly environmentPath: string;
+  readonly wslDistroName: string;
 }): BootServiceManager {
   const unitPath = input.path.join(
     input.homeDir,
@@ -248,7 +283,11 @@ function systemdManager(input: {
   return {
     kind: "systemd",
     unitPath,
-    render: renderBootServiceUnit,
+    render: (plan, saved = {}) =>
+      renderBootServiceUnit(plan, {
+        environmentPath: mergeServicePaths(input.environmentPath, saved.path),
+        wslDistroName: input.wslDistroName || saved.wslDistroName || "",
+      }),
     stop: [
       {
         step: "stopping the installed service",
@@ -388,12 +427,13 @@ function selectBootServiceManager(input: {
   readonly uid: number | undefined;
   readonly path: Path.Path;
   readonly environmentPath: string;
+  readonly wslDistroName: string;
 }): BootServiceManager | undefined {
   if (input.homeDir === "") {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager(input);
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({
@@ -552,6 +592,7 @@ export interface BootServiceHost {
   readonly execPath: string;
 }
 
+/** Builds the boot service for this host, reading HOME, PATH, and the WSL distro from the installing shell. */
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   readonly baseDir: string;
   readonly logsDir: string;
@@ -568,23 +609,26 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  const wslDistroName = (yield* Config.String("WSL_DISTRO_NAME").pipe(
+    Config.withDefault(""),
+  )).trim();
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const host = input.host ?? { execPath: hostExecPath };
-  const xmlSafeInstallerDirectories = installerPath.split(":").filter(
+  const safeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
       Array.from(directory).every((character) => {
         const code = character.charCodeAt(0);
-        return code >= 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+        return code >= 0x20 || (platform === "darwin" && [0x09, 0x0a, 0x0d].includes(code));
       }),
   );
   const environmentPath = Array.from(
     new Set([
-      ...xmlSafeInstallerDirectories,
+      ...safeInstallerDirectories,
       path.dirname(host.execPath),
-      "/opt/homebrew/bin",
+      ...(platform === "darwin" ? ["/opt/homebrew/bin"] : []),
       "/usr/local/bin",
       "/usr/bin",
       "/bin",
@@ -599,6 +643,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     uid,
     path,
     environmentPath,
+    wslDistroName,
   });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
@@ -624,6 +669,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  // Saved directories that are gone are dropped, so per-shell entries such as
+  // fnm's multishell bin do not pile up across reinstalls.
+  const readSavedEnvironment = Effect.gen(function* () {
+    const saved = savedServiceEnvironmentOf(yield* fs.readFileString(unitPath));
+    if (saved.path === undefined) return saved;
+    const existing = yield* Effect.filter(saved.path.split(":"), (directory) =>
+      fs.exists(directory).pipe(Effect.orElseSucceed(() => true)),
+    );
+    return { ...saved, path: existing.join(":") };
+  });
   // The executable hosts the launcher as a hidden subcommand of itself, so
   // the unit runs the pinned runtime directly.
   const plan: BootServicePlan = {
@@ -884,7 +939,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           return yield* new BootServiceUpdatePendingError();
         }
       }
-      yield* writeDurably(unitPath, manager.render(plan));
+      const previous = installed ? yield* readSavedEnvironment : undefined;
+      yield* writeDurably(unitPath, manager.render(plan, previous));
 
       if (start) {
         yield* runSteps(manager.activate);
@@ -964,7 +1020,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
-        : contents;
+        : contents
+            // PATH can differ in the inspecting shell. The distro is compared
+            // against the known or saved identity so a missing value is repairable.
+            .replace(/^Environment=T3_SERVICE_PATH=.*$/m, "Environment=T3_SERVICE_PATH=");
     const problems: BootServiceProblem[] =
       detectedManager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
@@ -976,7 +1035,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        normalizeUnit(unit) ===
+          normalizeUnit(detectedManager.render(plan, savedServiceEnvironmentOf(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

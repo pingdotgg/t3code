@@ -3,8 +3,14 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import { Launcher, readServiceState, writeServiceState } from "./serviceLauncher.ts";
+import {
+  resolveServiceEnvironment,
+  SERVICE_PATH_ENV,
+  SERVICE_WSL_DISTRO_ENV,
+} from "./cloud/serviceEnvironment.ts";
 import {
   compareExactServiceVersions,
   decodeServiceState,
@@ -21,6 +27,25 @@ it("accepts only exact semantic versions", () => {
   for (const version of ["latest", "01.2.3", "1.2.3-01", "1.2.3-alpha..1", "1.2.3+."]) {
     assert.isFalse(isExactServiceVersion(version), version);
   }
+});
+
+it("keeps manager paths first and uses installer values only as fallbacks", () => {
+  const env = {
+    PATH: "/opt/company/bin:/usr/bin",
+    [SERVICE_PATH_ENV]: "/mnt/d/VS Code/bin:/usr/bin::/home/user/.local/bin",
+    [SERVICE_WSL_DISTRO_ENV]: "Ubuntu-24.04",
+    WSL_INTEROP: "/run/WSL/current_interop",
+  };
+  assert.deepEqual(resolveServiceEnvironment(env), {
+    ...env,
+    PATH: "/opt/company/bin:/usr/bin:/mnt/d/VS Code/bin:/home/user/.local/bin",
+    WSL_DISTRO_NAME: "Ubuntu-24.04",
+  });
+  assert.equal(
+    resolveServiceEnvironment({ ...env, WSL_DISTRO_NAME: "Debian" }).WSL_DISTRO_NAME,
+    "Debian",
+  );
+  assert.deepEqual(resolveServiceEnvironment({ PATH: "/usr/bin" }), { PATH: "/usr/bin" });
 });
 
 it("orders exact semantic versions without treating build metadata as precedence", () => {
@@ -98,6 +123,44 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
+  it.effect("passes the merged environment to a real service child", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-env-" });
+      const versionDir = path.join(root, "runtime", "versions", "1.0.0");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        versionDir,
+        `const fs = require('node:fs');
+fs.writeFileSync(__dirname + '/child-env.txt', process.env.PATH + '\\n' + process.env.WSL_DISTRO_NAME);
+`,
+      );
+      vi.stubEnv("PATH", "/opt/company/bin:/usr/bin");
+      vi.stubEnv("WSL_DISTRO_NAME", undefined);
+      vi.stubEnv(SERVICE_PATH_ENV, "/mnt/d/VS Code/bin:/usr/bin");
+      vi.stubEnv(SERVICE_WSL_DISTRO_ENV, "Ubuntu-24.04");
+      try {
+        const launcher = new Launcher(root, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        });
+        // The stub exits after reporting its environment; the launcher treats
+        // any unrequested active-child exit as a failure.
+        const { cause } = yield* Effect.tryPromise(() => launcher.run()).pipe(Effect.flip);
+        assert.instanceOf(cause, Error);
+        assert.equal(cause.message, "Active child exited unexpectedly (0).");
+        assert.equal(
+          yield* fs.readFileString(path.join(versionDir, "child-env.txt")),
+          "/opt/company/bin:/usr/bin:/mnt/d/VS Code/bin\nUbuntu-24.04",
+        );
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }),
+  );
+
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
