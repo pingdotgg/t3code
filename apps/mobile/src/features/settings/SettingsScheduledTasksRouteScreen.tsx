@@ -38,6 +38,8 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
@@ -57,6 +59,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  DEFAULT_WEBHOOK_PROMPT,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
@@ -583,7 +586,14 @@ function TaskForm({
       environmentUnavailable
     )
       return;
-    const schedule = scheduleFromDraft(draft.schedule);
+    // Signatures are edited on desktop and web; send the task's current one,
+    // not the copy taken when this form opened, so a newer edit survives.
+    const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
+    const schedule = scheduleFromDraft(
+      draft.schedule.mode === "webhook" && liveTask?.schedule.type === "webhook"
+        ? { ...draft.schedule, signature: liveTask.schedule.signature }
+        : draft.schedule,
+    );
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
@@ -795,12 +805,20 @@ function TaskForm({
           <SegmentedControl
             options={[
               { value: "fixed_time", label: "At a time" },
-              { value: "interval", label: "Every interval" },
+              { value: "interval", label: "Interval" },
+              { value: "webhook", label: "Webhook" },
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
               setTimePickerOpen(false);
-              setDraft({ ...draft, schedule: { ...draft.schedule, mode } });
+              setDraft({
+                ...draft,
+                prompt:
+                  mode === "webhook" && !draft.prompt.trim()
+                    ? DEFAULT_WEBHOOK_PROMPT
+                    : draft.prompt,
+                schedule: { ...draft.schedule, mode },
+              });
             }}
           />
         </View>
@@ -874,6 +892,14 @@ function TaskForm({
               }}
             />
           </>
+        ) : draft.schedule.mode === "webhook" ? (
+          <WebhookScheduleDetails
+            environmentId={environmentId}
+            task={
+              tasks.data?.tasks.find((task) => task.id === draft.task?.id) ?? draft.task ?? null
+            }
+            signatureConfigured={draft.schedule.signature !== null}
+          />
         ) : (
           <>
             <FormField
@@ -925,6 +951,94 @@ function TaskForm({
           {saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
         </Text>
       </Pressable>
+    </View>
+  );
+}
+
+function WebhookScheduleDetails({
+  environmentId,
+  task,
+  signatureConfigured,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly task: ScheduledTask | null;
+  readonly signatureConfigured: boolean;
+}) {
+  const rotate = useAtomCommand(serverEnvironment.rotateScheduledTaskWebhookToken, {
+    label: "scheduled task rotate webhook token",
+    reportFailure: false,
+  });
+  const preparedConnection = usePreparedConnection(environmentId);
+  const httpBaseUrl =
+    preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : null;
+  const webhook = task?.schedule.type === "webhook" ? task.webhook : undefined;
+  // Without T3 Connect, the path is resolved on the address this phone uses.
+  const address = webhook
+    ? (webhook.url ?? (httpBaseUrl ? new URL(webhook.path, httpBaseUrl).href : webhook.path))
+    : null;
+  return (
+    <View className="gap-2 border-t border-border-subtle px-4 py-3">
+      <Text className="text-sm text-foreground-muted">
+        {
+          "The prompt can use {{body.a.b}}, {{headers.name}}, {{query.name}}, {{body}} and {{request}}. The filled-in prompt is all the agent sees."
+        }
+      </Text>
+      {task === null || address === null ? (
+        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+      ) : (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Copy webhook URL"
+            accessibilityHint="Copies the URL to the clipboard"
+            // A bare path is not something a sender can call, so only full URLs copy.
+            disabled={!address.startsWith("http")}
+            onPress={() => void tryCopyTextWithHaptic(address)}
+            className="gap-1 active:opacity-70"
+          >
+            <Text className="text-lg text-foreground">
+              {address.startsWith("http") ? "Webhook URL" : "Webhook path"}
+            </Text>
+            <Text className="text-sm text-foreground-muted" numberOfLines={2} selectable>
+              {address}
+            </Text>
+          </Pressable>
+          {webhook?.url === null ? (
+            <Text className="text-sm text-foreground-muted">
+              Link this environment to T3 Connect for a public URL.
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              Alert.alert("Rotate URL?", "The current URL stops working immediately.", [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Rotate",
+                  style: "destructive",
+                  onPress: () =>
+                    void rotate({ environmentId, input: { id: task.id } }).then((result) => {
+                      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                        Alert.alert(
+                          "Could not rotate URL",
+                          String(squashAtomCommandFailure(result)),
+                        );
+                      }
+                    }),
+                },
+              ])
+            }
+            className="min-h-11 justify-center active:opacity-70"
+          >
+            <Text className="text-base text-danger-foreground">Rotate URL</Text>
+          </Pressable>
+        </>
+      )}
+      {signatureConfigured ? (
+        <Text className="text-sm text-foreground-muted">
+          Signature check configured on desktop/web.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1009,8 +1123,6 @@ function EnvironmentTasks({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Edit ${task.title}`}
-              // Webhook tasks are not editable here yet; saving would drop their URL.
-              disabled={task.schedule.type === "webhook"}
               onPress={() => {
                 onEdit(task);
               }}
@@ -1035,9 +1147,10 @@ function EnvironmentTasks({
             </Pressable>
             <ControlPillMenu
               actions={[
-                ...(task.schedule.type === "webhook" ? [] : [{ id: "edit", title: "Edit" }]),
+                { id: "edit", title: "Edit" },
                 { id: "toggle", title: task.enabled ? "Pause" : "Resume" },
-                { id: "run", title: "Run now" },
+                // A webhook task has no request to run without.
+                ...(task.schedule.type === "webhook" ? [] : [{ id: "run", title: "Run now" }]),
                 { id: "delete", title: "Delete", attributes: { destructive: true } },
               ]}
               onPressAction={({ nativeEvent }) => {

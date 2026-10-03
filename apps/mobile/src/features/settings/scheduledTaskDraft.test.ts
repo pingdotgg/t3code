@@ -28,6 +28,25 @@ describe("scheduleDraftForTask", () => {
     const schedule = { type: "interval" as const, everyMs: 65_000 };
     expect(scheduleFromDraft(scheduleDraftForTask({ schedule }))).toEqual(schedule);
   });
+
+  it("round-trips a webhook schedule without a signature", () => {
+    const draft = scheduleDraftForTask({ schedule: { type: "webhook", signature: null } });
+    expect(draft.mode).toBe("webhook");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook", signature: null });
+  });
+
+  it("keeps a webhook signature on save without sending a secret", () => {
+    const signature = {
+      header: "x-hub-signature-256",
+      encoding: "hex" as const,
+      prefix: "sha256=",
+    };
+    const saved = scheduleFromDraft(
+      scheduleDraftForTask({ schedule: { type: "webhook", signature } }),
+    );
+    expect(saved).toEqual({ type: "webhook", signature });
+    expect(saved?.type === "webhook" && saved.signature && "secret" in saved.signature).toBe(false);
+  });
 });
 
 describe("hasScheduledTaskDraftChanges", () => {
