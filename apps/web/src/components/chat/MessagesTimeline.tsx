@@ -1741,7 +1741,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.kind === "work-toggle" ||
     row.kind === "thinking";
   const isExpandedToolGroupHeader =
-    (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
+    (row.kind === "work-toggle" || row.kind === "work-live" || row.kind === "thinking") &&
+    row.expanded === true;
 
   return (
     <div
@@ -1793,7 +1794,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ) : null}
           {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
           {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
+          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
         </WorkLogBlock>
       ) : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
@@ -3461,13 +3462,23 @@ function CompactingLabel() {
   );
 }
 
-function ThinkingTimelineRow() {
+function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
+  const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
   // Reserve the activity row during setup so the handoff keeps the same height.
-  return isPreparingWorktree || isCompacting ? (
-    <WorkLogRow label="" />
-  ) : (
-    <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
+  if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
+  const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const { groupId } = row;
+  if (groupId === undefined) return activity;
+  return (
+    <button
+      type="button"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      aria-expanded={row.expanded === true}
+      onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
+    >
+      {activity}
+    </button>
   );
 }
 

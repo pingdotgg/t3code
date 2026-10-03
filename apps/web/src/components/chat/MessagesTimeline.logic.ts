@@ -509,6 +509,9 @@ type MessagesTimelineRowContent =
       kind: "thinking";
       id: string;
       createdAt: string | null;
+      /** Tool calls this row stands in for after the latest one failed. */
+      groupId?: string;
+      expanded?: boolean;
     }
   | {
       kind: "work-toggle";
@@ -1737,11 +1740,35 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
-    nextRows.push({
-      kind: "thinking",
-      id: LIVE_ACTIVITY_ROW_ID,
-      createdAt: input.activeTurnStartedAt ?? null,
-    });
+    // A failed latest tool hands the row back to thinking, but its group
+    // stays reachable through the same disclosure the live row offers.
+    const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
+    if (failedGroupAnchor) {
+      const groupId = workGroupId(failedGroupAnchor.id);
+      const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+      nextRows.push({
+        kind: "thinking",
+        id: LIVE_ACTIVITY_ROW_ID,
+        createdAt: input.activeTurnStartedAt ?? null,
+        groupId,
+        expanded,
+      });
+      if (expanded) {
+        nextRows.push(
+          expandedWorkGroupRow(
+            groupId,
+            failedGroupAnchor.createdAt,
+            visibleActiveToolEntries.map((entry) => entry.entry),
+          ),
+        );
+      }
+    } else {
+      nextRows.push({
+        kind: "thinking",
+        id: LIVE_ACTIVITY_ROW_ID,
+        createdAt: input.activeTurnStartedAt ?? null,
+      });
+    }
   }
 
   const result = attachTrailingToolGroupsToAssistant(
@@ -1952,8 +1979,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
   switch (a.kind) {
     case "working":
-    case "thinking":
       return a.createdAt === (b as typeof a).createdAt;
+    case "thinking": {
+      const bt = b as typeof a;
+      return a.createdAt === bt.createdAt && a.groupId === bt.groupId && a.expanded === bt.expanded;
+    }
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
 
