@@ -5,6 +5,7 @@ import {
   FileSystem,
   Layer,
   Option,
+  Path,
   Schedule,
   Schema,
   Stream,
@@ -38,7 +39,13 @@ import {
 
 import { AuthControlPlaneRuntimeLive } from "../auth/Layers/AuthControlPlane.ts";
 import { AuthControlPlane } from "../auth/Services/AuthControlPlane.ts";
-import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "../config.ts";
+import {
+  deriveServerPaths,
+  DEV_STATE_VARIANT_URL,
+  ServerConfig,
+  type ServerConfigShape,
+  type ServerDerivedPaths,
+} from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { inspectPersistedServerRuntimeState, runtimePidIsAlive } from "../serverRuntimeState.ts";
 import { resolveCliEnvironmentCandidate, withAccountEnvironment } from "./accountEnvironment.ts";
@@ -256,6 +263,21 @@ export type ResolvedCliLiveTarget =
       readonly label?: string;
     };
 
+/**
+ * A base directory can hold two server state flavors: the installed/background
+ * server in `userdata` and the `pnpm dev` server in `dev`. Live discovery has to
+ * consider both, otherwise commands that only know `--base-dir` (including the
+ * nested CLI calls delegation makes) cannot reach a running dev server.
+ */
+type LocalRuntimeStateVariant = "userdata" | "dev";
+
+const LOCAL_RUNTIME_STATE_VARIANTS: ReadonlyArray<LocalRuntimeStateVariant> = ["userdata", "dev"];
+
+const localRuntimeStateDevUrl = (variant: LocalRuntimeStateVariant) =>
+  variant === "dev" ? DEV_STATE_VARIANT_URL : undefined;
+
+type ResolvedLocalBearerTarget = Extract<ResolvedCliLiveTarget, { readonly kind: "bearer" }>;
+
 const resolveLocalRuntimeTarget = (
   baseDir: string,
   input: {
@@ -263,36 +285,56 @@ const resolveLocalRuntimeTarget = (
     readonly source: "explicit-base-dir" | "implicit-local";
     readonly selectionReason: "--base-dir" | "--token" | "legacy-local-discovery";
   },
-) =>
+): Effect.Effect<
+  { readonly paths: ServerDerivedPaths; readonly target: ResolvedLocalBearerTarget },
+  CliLiveTargetError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
-    const paths = yield* deriveServerPaths(baseDir, undefined);
-    const runtimeState = yield* inspectPersistedServerRuntimeState(paths.serverRuntimeStatePath);
-    if (runtimeState._tag === "Missing") {
-      return yield* new CliLiveTargetError({
-        message:
-          "No running T3 server found. Start one with `t3 serve`, or pass --url and --token.",
-      });
+    const checkedStatePaths: Array<string> = [];
+    let unusableState: CliLiveTargetError | undefined;
+    for (const variant of LOCAL_RUNTIME_STATE_VARIANTS) {
+      const paths = yield* deriveServerPaths(baseDir, localRuntimeStateDevUrl(variant));
+      const runtimeState = yield* inspectPersistedServerRuntimeState(paths.serverRuntimeStatePath);
+      if (runtimeState._tag === "Missing") {
+        checkedStatePaths.push(paths.serverRuntimeStatePath);
+        continue;
+      }
+      if (runtimeState._tag === "Invalid") {
+        unusableState ??= new CliLiveTargetError({
+          message: `Invalid or unreadable T3 server runtime state at '${paths.serverRuntimeStatePath}'. Remove it and restart T3, or pass --url and --token.`,
+          cause: runtimeState.cause,
+        });
+        continue;
+      }
+      if (!runtimePidIsAlive(runtimeState.state.pid)) {
+        unusableState ??= new CliLiveTargetError({
+          message: `Stale T3 server runtime state at '${paths.serverRuntimeStatePath}' belongs to stopped process ${String(runtimeState.state.pid)}. Remove it and restart T3, or pass --url and --token.`,
+        });
+        continue;
+      }
+      return {
+        paths,
+        target: {
+          kind: "bearer",
+          origin: yield* normalizeHttpOrigin(runtimeState.state.origin),
+          ...(input.token === undefined ? {} : { token: input.token }),
+          baseDir,
+          source: input.source,
+          selectionReason: input.selectionReason,
+        } satisfies ResolvedLocalBearerTarget,
+      };
     }
-    if (runtimeState._tag === "Invalid") {
-      return yield* new CliLiveTargetError({
-        message: `Invalid or unreadable T3 server runtime state at '${paths.serverRuntimeStatePath}'. Remove it and restart T3, or pass --url and --token.`,
-        cause: runtimeState.cause,
-      });
-    }
-    if (!runtimePidIsAlive(runtimeState.state.pid)) {
-      return yield* new CliLiveTargetError({
-        message: `Stale T3 server runtime state at '${paths.serverRuntimeStatePath}' belongs to stopped process ${String(runtimeState.state.pid)}. Remove it and restart T3, or pass --url and --token.`,
-      });
-    }
-
-    return {
-      kind: "bearer",
-      origin: yield* normalizeHttpOrigin(runtimeState.state.origin),
-      ...(input.token === undefined ? {} : { token: input.token }),
-      baseDir,
-      source: input.source,
-      selectionReason: input.selectionReason,
-    } satisfies ResolvedCliLiveTarget;
+    return yield* (
+      unusableState ??
+        new CliLiveTargetError({
+          message: [
+            "No running T3 server found.",
+            ...checkedStatePaths.map((statePath) => `  checked ${statePath}`),
+            "Start one with `t3 serve`, or pass --url and --token.",
+          ].join("\n"),
+        })
+    );
   });
 
 const candidateTarget = (
@@ -345,11 +387,12 @@ export const resolveLiveTarget = (flags: CliLiveTargetFlags) =>
 
     if (Option.isSome(flags.baseDir) || Option.isSome(flags.token)) {
       const baseDir = yield* resolveCliBaseDir(flags.baseDir);
-      return yield* resolveLocalRuntimeTarget(baseDir, {
+      const resolved = yield* resolveLocalRuntimeTarget(baseDir, {
         ...(Option.isSome(flags.token) ? { token: flags.token.value } : {}),
         source: "explicit-base-dir",
         selectionReason: Option.isSome(flags.baseDir) ? "--base-dir" : "--token",
       });
+      return resolved.target;
     }
 
     const registryBaseDir = flags.registryBaseDir ?? Option.none();
@@ -421,10 +464,11 @@ export const resolveLiveTarget = (flags: CliLiveTargetFlags) =>
       } satisfies ResolvedCliLiveTarget;
     }
 
-    return yield* resolveLocalRuntimeTarget(baseDir, {
+    const resolved = yield* resolveLocalRuntimeTarget(baseDir, {
       source: "implicit-local",
       selectionReason: "legacy-local-discovery",
     });
+    return resolved.target;
   });
 
 const normalizeHttpOrigin = (rawUrl: string) =>
@@ -582,14 +626,14 @@ const withLocalProjectionSnapshotQuery = <A, E, R>(
       source: "explicit-base-dir",
       selectionReason: "--base-dir",
     });
-    if (localTarget.origin !== origin) {
+    if (localTarget.target.origin !== origin) {
       return yield* new CliLiveTargetError({
         message:
           `Refusing to read from '${baseDir}' because its live server origin changed from ` +
-          `'${origin}' to '${localTarget.origin}'.`,
+          `'${origin}' to '${localTarget.target.origin}'.`,
       });
     }
-    const paths = yield* deriveServerPaths(baseDir, undefined);
+    const paths = localTarget.paths;
     const sqliteLayer = makeRuntimeSqliteLayer({
       filename: paths.dbPath,
       readonly: true,
@@ -782,16 +826,16 @@ const withBorrowedLocalBearerToken = <A, E, R>(
       source: "explicit-base-dir",
       selectionReason: "--base-dir",
     });
-    if (localTarget.origin !== origin) {
+    if (localTarget.target.origin !== origin) {
       return yield* new CliLiveTargetError({
         message:
           `Refusing to send a credential borrowed from '${baseDir}' to '${origin}'. ` +
-          `That base directory belongs to the live server at '${localTarget.origin}'. ` +
+          `That base directory belongs to the live server at '${localTarget.target.origin}'. ` +
           "Configure an explicit --token for a different target.",
       });
     }
 
-    const paths = yield* deriveServerPaths(baseDir, undefined);
+    const paths = localTarget.paths;
     const config = {
       logLevel: "Error",
       traceMinLevel: "Error",

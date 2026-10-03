@@ -37,6 +37,7 @@ vi.mock("../primary", () => ({
     },
     environmentId: EnvironmentId.make("env-1"),
   })),
+  waitForPrimaryAuthentication: vi.fn(async () => undefined),
 }));
 
 vi.mock("./catalog", () => ({

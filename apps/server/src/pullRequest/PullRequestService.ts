@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import {
   isGitHubRateLimitMessage,
   PullRequestOperationError,
+  PullRequestActivity as PullRequestActivitySchema,
   PullRequestDetail as PullRequestDetailSchema,
   type PullRequestProviderKind,
   PullRequestUnavailableError,
@@ -90,6 +91,14 @@ const REPOSITORY_SEARCH_CHUNK = 100;
  */
 const LIST_CACHE_TTL = Duration.seconds(30);
 const DETAIL_CACHE_TTL = Duration.seconds(15);
+/**
+ * The client re-reads a focused conversation on an interval. A cache shorter than that interval
+ * cannot ever be read twice, so every poll becomes a fresh host read — and a conversation read is
+ * the most expensive one on the page, walking review threads and their comments. Cover the poll so
+ * consecutive panels and repeat visits share one answer, and let the client's own stale time
+ * absorb the difference: a poll inside the window is served from here without spending anything.
+ */
+const ACTIVITY_CACHE_TTL = Duration.seconds(45);
 const DIFF_CACHE_TTL = Duration.seconds(60);
 /** A commit is content-addressed, so its own diff cannot change under its key. */
 const COMMIT_DIFF_CACHE_TTL = Duration.minutes(10);
@@ -1698,14 +1707,16 @@ export const make = Effect.gen(function* () {
     return staleDetail(key, cachedRead(detailCache, key, lookup, hit), hit, lookup);
   };
 
+  const activityCodec = Schema.fromJsonString(PullRequestActivitySchema);
   const activityCache = yield* Cache.makeWith(
     (key: string) => {
       const [, projectId, repository, number] = JSON.parse(key) as [number, string, string, number];
-      return activityUncached({ projectId, repository, number } as PullRequestRef);
+      const reference = { projectId, repository, number } as PullRequestRef;
+      return persistedRead(reference, "activity", activityCodec, activityUncached(reference));
     },
     {
       capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: rateLimitAwareTtl(DETAIL_CACHE_TTL),
+      timeToLive: rateLimitAwareTtl(ACTIVITY_CACHE_TTL),
     },
   );
   const staleActivity = staleWhileRevalidate<PullRequestActivity>(

@@ -53,7 +53,7 @@ import {
   layer as AutomaticArchiveGuardRegistryLayer,
 } from "../Services/AutomaticArchiveGuardRegistry.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
-import { childReportDedupeKey } from "../dispatchAuthority.ts";
+import { childReportIdentity, legacyChildReportKey } from "../dispatchAuthority.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import {
   admitWorkspaceCommand,
@@ -250,25 +250,34 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   ) => {
     const delegation = model.threads.find((thread) => thread.id === command.threadId)?.nudging
       ?.delegation;
-    const assignmentId = command.assignmentId ?? delegation?.assignmentId;
-    if (!assignmentId) return null;
+    const identity = childReportIdentity({
+      childThreadId: command.threadId,
+      delegation,
+      claimedAssignmentId: command.assignmentId,
+      claimedDispatchId: command.dispatchId,
+      originTurnId: command.originTurnId,
+      reportId: command.reportId,
+    });
+    if (!identity) return null;
     return {
-      reportKey: childReportDedupeKey({
+      reportKey: identity.reportKey,
+      legacyReportKey: legacyChildReportKey({
         childThreadId: command.threadId,
-        dispatchId: command.dispatchId,
+        claimedDispatchId: command.dispatchId,
         originTurnId: command.originTurnId,
-        assignmentId,
+        assignmentId: identity.assignmentId,
         reportId: command.reportId,
+        resolvedDispatchId: identity.dispatchId,
       }),
-      assignmentId,
+      assignmentId: identity.assignmentId,
     };
   };
 
-  const findRecordedReportOutcome = (reportKey: string) =>
+  const findRecordedReportOutcome = (reportKey: string, legacyReportKey: string | null) =>
     sql<{ readonly outcome: string }>`
       SELECT outcome
       FROM delegation_report_receipts
-      WHERE report_key = ${reportKey}
+      WHERE report_key IN (${reportKey}, ${legacyReportKey ?? reportKey})
     `.pipe(
       Effect.map((rows) => {
         const outcome = rows[0]?.outcome;
@@ -401,7 +410,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const recordedReportOutcome =
           reportIdentity === null
             ? undefined
-            : yield* findRecordedReportOutcome(reportIdentity.reportKey);
+            : yield* findRecordedReportOutcome(
+                reportIdentity.reportKey,
+                reportIdentity.legacyReportKey,
+              );
         const eventBase = yield* decideOrchestrationCommand({
           command: admittedCommand,
           readModel,

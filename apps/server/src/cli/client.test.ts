@@ -226,6 +226,115 @@ it("uses T3CODE_HOME for live commands when --base-dir is omitted", async () => 
   }
 });
 
+const writeRuntimeState = async (
+  baseDir: string,
+  flavor: "userdata" | "dev",
+  state: { readonly pid: number; readonly port: number },
+) => {
+  const stateDir = join(baseDir, flavor);
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    join(stateDir, "server-runtime.json"),
+    `${JSON.stringify({
+      version: 1,
+      pid: state.pid,
+      port: state.port,
+      origin: `http://127.0.0.1:${String(state.port)}`,
+      startedAt: new Date().toISOString(),
+    })}\n`,
+    "utf8",
+  );
+};
+
+it("discovers a running dev server through --base-dir", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-dev-runtime-state-"));
+  try {
+    await writeRuntimeState(baseDir, "dev", { pid: process.pid, port: 14_537 });
+
+    const target = await Effect.runPromise(
+      resolveLiveTarget({
+        url: Option.none(),
+        token: Option.none(),
+        baseDir: Option.some(baseDir),
+        environment: Option.none(),
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    assert.equal(target.kind, "bearer");
+    if (target.kind !== "bearer") throw new Error("Expected local bearer target.");
+    assert.equal(target.origin, "http://127.0.0.1:14537");
+    assert.equal(target.baseDir, baseDir);
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+it("falls back to a running dev server when the production runtime state is stale", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-dev-fallback-runtime-state-"));
+  try {
+    await writeRuntimeState(baseDir, "userdata", { pid: 4_194_305, port: 3_773 });
+    await writeRuntimeState(baseDir, "dev", { pid: process.pid, port: 14_537 });
+
+    const target = await Effect.runPromise(
+      resolveLiveTarget({
+        url: Option.none(),
+        token: Option.none(),
+        baseDir: Option.some(baseDir),
+        environment: Option.none(),
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    assert.equal(target.kind, "bearer");
+    if (target.kind !== "bearer") throw new Error("Expected local bearer target.");
+    assert.equal(target.origin, "http://127.0.0.1:14537");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+it("prefers the production runtime state when both flavors are live", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-both-runtime-states-"));
+  try {
+    await writeRuntimeState(baseDir, "userdata", { pid: process.pid, port: 3_773 });
+    await writeRuntimeState(baseDir, "dev", { pid: process.pid, port: 14_537 });
+
+    const target = await Effect.runPromise(
+      resolveLiveTarget({
+        url: Option.none(),
+        token: Option.none(),
+        baseDir: Option.some(baseDir),
+        environment: Option.none(),
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    assert.equal(target.kind, "bearer");
+    if (target.kind !== "bearer") throw new Error("Expected local bearer target.");
+    assert.equal(target.origin, "http://127.0.0.1:3773");
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
+it("lists both checked runtime state paths when no server is running", async () => {
+  const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-no-runtime-state-"));
+  try {
+    const error = await Effect.runPromise(
+      resolveLiveTarget({
+        url: Option.none(),
+        token: Option.none(),
+        baseDir: Option.some(baseDir),
+        environment: Option.none(),
+      }).pipe(Effect.flip, Effect.provide(NodeServices.layer)),
+    );
+
+    assert.include(error.message, "No running T3 server found.");
+    assert.include(error.message, join(baseDir, "userdata", "server-runtime.json"));
+    assert.include(error.message, join(baseDir, "dev", "server-runtime.json"));
+  } finally {
+    await rm(baseDir, { recursive: true, force: true });
+  }
+});
+
 it("rejects persisted runtime state owned by a stopped process", async () => {
   const baseDir = await mkdtemp(join(tmpdir(), "t3-cli-stale-runtime-state-"));
   const runtimeStatePath = join(baseDir, "userdata", "server-runtime.json");

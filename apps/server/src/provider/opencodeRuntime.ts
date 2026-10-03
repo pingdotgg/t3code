@@ -174,7 +174,6 @@ export interface OpenCodeRuntimeShape {
   readonly startOpenCodeServerProcess: (input: {
     readonly binaryPath: string;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly directory?: string;
     readonly port?: number;
     readonly hostname?: string;
     readonly timeoutMs?: number;
@@ -188,7 +187,6 @@ export interface OpenCodeRuntimeShape {
     readonly binaryPath: string;
     readonly serverUrl?: string | null;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly directory?: string;
     readonly serverPassword?: string;
     readonly port?: number;
     readonly hostname?: string;
@@ -238,6 +236,35 @@ function parseServerUrlFromOutput(output: string): string | null {
 
 const SLUG_LINE_RE = /^(\S+\/\S+)\s*$/;
 const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
+
+/**
+ * Build `opencode serve` argv.
+ *
+ * The serve subcommand accepts only `--port`, `--hostname`, `--mDNS`,
+ * `--mDNS-domain`, and `--cors`; it rejects anything else by printing usage and
+ * exiting 1. In particular `--dir` belongs to `run`/`web`/`attach`, not
+ * `serve`.
+ *
+ * Upstream `serve` deliberately carries no ambient project: it sets
+ * `instance: false` and resolves the project per request. Scoping therefore
+ * belongs to the caller, and it is not redundant with anything this function
+ * does.
+ *
+ * `createOpencodeClient({ directory })` sets `x-opencode-directory` on every
+ * request, and a client interceptor rewrites that header into a `directory`
+ * query param for GET/HEAD only. It returns early for other methods, so a POST
+ * is not rewritten. Callers that need a POST bound to a specific project must
+ * keep passing `directory` per call — `client.mcp.add({ directory })` does,
+ * and must not be simplified to rely on the client-level value.
+ *
+ * @internal
+ */
+export function buildOpenCodeServeArgs(input: {
+  readonly hostname: string;
+  readonly port: number;
+}): ReadonlyArray<string> {
+  return ["serve", `--hostname=${input.hostname}`, `--port=${input.port}`];
+}
 
 // Agents that are always hidden in OpenCode but the CLI "agent list" command
 // does not expose the hidden flag. Keep in sync with OpenCode agent
@@ -531,12 +558,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ),
         ));
       const timeoutMs = input.timeoutMs ?? DEFAULT_OPENCODE_SERVER_TIMEOUT_MS;
-      const args = [
-        "serve",
-        `--hostname=${hostname}`,
-        `--port=${port}`,
-        ...(input.directory ? [`--dir=${input.directory}`] : []),
-      ];
+      const args = buildOpenCodeServeArgs({ hostname, port });
 
       const serverEnv = {
         ...(input.environment ?? process.env),
@@ -693,7 +715,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     return startOpenCodeServerProcess({
       binaryPath: input.binaryPath,
       ...(input.environment !== undefined ? { environment: input.environment } : {}),
-      ...(input.directory !== undefined ? { directory: input.directory } : {}),
       ...(input.port !== undefined ? { port: input.port } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -777,7 +798,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ...(input.serverUrl !== undefined ? { serverUrl: input.serverUrl } : {}),
           ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
           ...(input.environment !== undefined ? { environment: input.environment } : {}),
-          directory: input.cwd,
         });
         const client = createOpenCodeSdkClient({
           baseUrl: server.url,

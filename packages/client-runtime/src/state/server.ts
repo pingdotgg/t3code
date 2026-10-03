@@ -246,6 +246,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    replaceKeybindingRules: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:replace-keybinding-rules",
+      tag: WS_METHODS.serverReplaceKeybindingRules,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     updateSettings: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-settings",
       tag: WS_METHODS.serverUpdateSettings,

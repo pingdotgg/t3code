@@ -23,6 +23,8 @@ import {
   hasUnseenThreadCompletion,
   resolveThreadSemanticStatus,
 } from "@t3tools/client-runtime/state/thread-status";
+import { canSettle, effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -765,4 +767,137 @@ export function sortProjectsForSidebar<
     if (byTimestamp !== 0) return byTimestamp;
     return left.name.localeCompare(right.name) || left.id.localeCompare(right.id);
   });
+}
+
+/**
+ * Minimal row shape the settled partition needs. Kept structural (instead of
+ * importing `SidebarThreadRowView`) because `sidebarThreadTree` already
+ * imports this module.
+ */
+export interface PartitionableSidebarRow {
+  readonly thread: SidebarThreadSummary;
+  readonly threadKey: string;
+  readonly depth: number;
+  readonly status: ThreadStatusPill | null;
+}
+
+export interface PartitionedSidebarRows<TRow extends PartitionableSidebarRow> {
+  /** Root subtrees reordered whole: pinned, then active, then settled. */
+  readonly rowViews: TRow[];
+  /** Flattened keys of `rowViews`, backing Shift+Click range selection. */
+  readonly orderedThreadKeys: string[];
+  /** Every row key (roots and nested children) inside a settled subtree. */
+  readonly settledThreadKeys: ReadonlySet<string>;
+}
+
+function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
+  // SidebarThreadSummary.updatedAt is optional while the settled-timestamp
+  // input requires a string; a missing stamp falls through to the same
+  // bottom-of-list treatment as a malformed one.
+  const parsed = Date.parse(
+    resolveSettledThreadTimestamp({
+      settledAt: thread.settledAt ?? null,
+      latestUserMessageAt: thread.latestUserMessageAt,
+      latestTurn: thread.latestTurn,
+      updatedAt: thread.updatedAt ?? "",
+    }) ?? "",
+  );
+  return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+}
+
+export function resolveSettleMenuItems(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): ReadonlyArray<{ readonly id: "settle" | "reopen"; readonly label: string }> {
+  if (!input.settlementSupported) return [];
+  if (isCollapsedSettledRow({ status: input.status, thread: input.thread, now: input.now })) {
+    return [{ id: "reopen", label: "Reopen thread" }];
+  }
+  if (canSettle(input.thread, { now: input.now })) {
+    return [{ id: "settle", label: "Settle thread" }];
+  }
+  return [];
+}
+
+export function isCollapsedSettledRow(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly now: string;
+}): boolean {
+  return !isActiveThreadStatus(input.status) && effectiveSettled(input.thread, { now: input.now });
+}
+
+/**
+ * Sinks settled roots to the bottom of their own project list. The whole
+ * subtree follows its root, mirroring `classifySidebarV2Shelves`: a block
+ * stays active while any row in it — root or descendant — carries a status
+ * pill, since the root's own `canSettle` check cannot see pills like a failed
+ * turn or an unseen completion that still need attention. Pinned roots keep
+ * their leading position — a pin is an explicit order override the settle
+ * must not defeat — but still fade when settled, matching SidebarV2. Settled
+ * roots sort most-recently-settled first (`settledAt`, falling back through
+ * the same stamps `resolveSettledThreadTimestamp` uses); the sort is stable
+ * so ties keep their existing order.
+ *
+ * Blocks move whole, so nested-tree expansion, `selectVisibleThreadRows`
+ * windowing (including its active-route forced inclusion), and Shift+Click
+ * ranges keep working on the returned order.
+ */
+export function partitionSettledSidebarRows<TRow extends PartitionableSidebarRow>(
+  rowViews: readonly TRow[],
+  input: { readonly now: string; readonly pinnedThreadKeys?: ReadonlySet<string> },
+): PartitionedSidebarRows<TRow> {
+  const blocks: TRow[][] = [];
+  for (const row of rowViews) {
+    if (row.depth === 0 || blocks.length === 0) {
+      blocks.push([row]);
+    } else {
+      blocks[blocks.length - 1]!.push(row);
+    }
+  }
+
+  const pinnedBlocks: TRow[][] = [];
+  const activeBlocks: TRow[][] = [];
+  const settledBlocks: TRow[][] = [];
+  const settledThreadKeys = new Set<string>();
+  for (const block of blocks) {
+    const root = block[0]!;
+    const isSettledSubtree =
+      !block.some((row) => isActiveThreadStatus(row.status)) &&
+      effectiveSettled(root.thread, { now: input.now });
+    if (input.pinnedThreadKeys?.has(root.threadKey) === true) {
+      pinnedBlocks.push(block);
+      // A pin is an explicit order override, so the block stays leading —
+      // but settled-ness still shows through the fade.
+      if (isSettledSubtree) {
+        for (const row of block) {
+          settledThreadKeys.add(row.threadKey);
+        }
+      }
+      continue;
+    }
+    if (isSettledSubtree) {
+      settledBlocks.push(block);
+      for (const row of block) {
+        settledThreadKeys.add(row.threadKey);
+      }
+      continue;
+    }
+    activeBlocks.push(block);
+  }
+  settledBlocks.sort(
+    (left, right) =>
+      resolveSettledSortTimestampMs(right[0]!.thread) -
+      resolveSettledSortTimestampMs(left[0]!.thread),
+  );
+
+  const ordered = [...pinnedBlocks, ...activeBlocks, ...settledBlocks];
+  const reordered = ordered.flat();
+  return {
+    rowViews: reordered,
+    orderedThreadKeys: reordered.map((row) => row.threadKey),
+    settledThreadKeys,
+  };
 }

@@ -121,6 +121,12 @@
       "skillPath": "skills/engineering/triage/SKILL.md",
       "computedHash": "b954d74c219c805bf353d6642251a713c9b2e9cfdb11babfe588bcfe7dfd16d5"
     },
+    "visual-explainer": {
+      "source": "nicobailon/visual-explainer",
+      "sourceType": "github",
+      "skillPath": "plugins/visual-explainer/SKILL.md",
+      "computedHash": "e9458091664ca5029096ac99537513f97ab5da849a2f06a34700c9bfbc53d4ac"
+    },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",

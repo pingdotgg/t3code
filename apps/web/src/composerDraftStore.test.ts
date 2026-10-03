@@ -15,7 +15,9 @@ import {
   type ModelSelection,
   type ProviderOptionSelection,
   type PreviewAnnotationPayload,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 
 // The composer draft's `modelSelectionByProvider` and
@@ -62,6 +64,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -1708,5 +1711,157 @@ describe("createDebouncedStorage", () => {
     vi.advanceTimersByTime(300);
     expect(base.setItem).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledWith("key", "v2");
+  });
+});
+
+describe("deriveEffectiveComposerModelState global default", () => {
+  function serverProvider(input: {
+    provider?: ProviderDriverKind;
+    instanceId: string;
+    models?: ReadonlyArray<string>;
+  }): ServerProvider {
+    const driver = input.provider ?? CODEX_DRIVER;
+    return {
+      instanceId: ProviderInstanceId.make(input.instanceId),
+      driver,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: (input.models ?? []).map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {},
+      })),
+      slashCommands: [],
+      skills: [],
+    };
+  }
+
+  const providers = [
+    serverProvider({ provider: CODEX_DRIVER, instanceId: "codex", models: ["gpt-5.4", "gpt-5.5"] }),
+    serverProvider({
+      provider: COPILOT_DRIVER,
+      instanceId: "copilot",
+      models: ["gpt-6-luna", "gpt-6-sol"],
+    }),
+  ];
+
+  function settingsWithGlobalDefault(model: string): UnifiedSettings {
+    return {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: {
+        instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+        model,
+      },
+    };
+  }
+
+  it("uses the global default when thread and project specify nothing", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: null,
+      projectModelSelection: null,
+      settings: settingsWithGlobalDefault("gpt-5.5"),
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.5");
+    expect(state.modelOptions).toBeNull();
+  });
+
+  it("prefers the project default over the global default", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: null,
+      projectModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+      settings: settingsWithGlobalDefault("gpt-5.5"),
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+  });
+
+  it("prefers the thread selection over the global default", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+      projectModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.5"),
+      settings: settingsWithGlobalDefault("gpt-5.5"),
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+  });
+
+  it("keeps prior behavior when no global default is set", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: null,
+      projectModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.5"),
+      settings: DEFAULT_UNIFIED_SETTINGS,
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.5");
+  });
+
+  it("does not inherit global traits into an explicit optionless thread selection", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4"),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: {
+          instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+          model: "gpt-5.5",
+          options: toSelections({ effort: "high" }),
+        },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+    expect(state.modelOptions).toBeNull();
+  });
+
+  it("keeps the winning selection's traits instead of mixing levels", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers,
+      selectedProvider: CODEX_DRIVER,
+      selectedInstanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+      threadModelSelection: modelSelection(CODEX_DRIVER, "gpt-5.4", { effort: "low" }),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultModelSelection: {
+          instanceId: defaultInstanceIdForDriver(CODEX_DRIVER),
+          model: "gpt-5.5",
+          options: toSelections({ effort: "high" }),
+        },
+      },
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.4");
+    expect(state.modelOptions).toEqual(
+      providerModelOptions({
+        [defaultInstanceIdForDriver(CODEX_DRIVER)]: { effort: "low" },
+      }),
+    );
   });
 });

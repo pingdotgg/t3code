@@ -21,6 +21,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ServerConfig } from "../../config.ts";
 import type { PiRpcRecord } from "../PiRpc.ts";
 import { T3_PI_RUNTIME_MODE_ENV } from "../piT3McpExtensionSource.ts";
@@ -187,11 +188,15 @@ const makeFakePi = Effect.fnUntraced(function* (initialSessionFile: string) {
   };
 });
 
-const makeHarness = Effect.fnUntraced(function* (sessionFile = SESSION_FILE) {
+const makeHarness = Effect.fnUntraced(function* (
+  sessionFile = SESSION_FILE,
+  nativeEventLogger?: EventNdjsonLogger,
+) {
   const fake = yield* makeFakePi(sessionFile);
   const adapter = yield* makePiAdapter(settings, {
     environment: {},
     instanceId: PI_INSTANCE_ID,
+    ...(nativeEventLogger ? { nativeEventLogger } : {}),
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fake.spawner));
   const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
   yield* Stream.runForEach(adapter.streamEvents, (event) => Queue.offer(events, event)).pipe(
@@ -915,6 +920,44 @@ describe("PiAdapter", () => {
       assert.equal(exited.payload.exitKind, "error");
       assert.include(exited.payload.reason ?? "", "outside an active T3 turn");
       assert.isFalse(yield* adapter.hasSession(THREAD_ID));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("logs raw RPC records to the native logger in both directions", () =>
+    Effect.gen(function* () {
+      const written: Array<{ event: any; threadId: unknown }> = [];
+      const nativeEventLogger: EventNdjsonLogger = {
+        filePath: "/tmp/pi-native-test.ndjson",
+        write: (event, threadId) =>
+          Effect.sync(() => {
+            written.push({ event, threadId });
+          }),
+        close: () => Effect.void,
+      };
+      const { fake, adapter, takeEvent } = yield* makeHarness(SESSION_FILE, nativeEventLogger);
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "do the thing" });
+      yield* fake.takeRequest("prompt");
+      yield* takeEvent("turn.started");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      // turn.completed proves the pump processed both events in order, so
+      // their receive lines are logged by the time it arrives.
+      const completed = yield* takeEvent("turn.completed");
+      assert.equal(completed.payload.state, "completed");
+      const methods = written.map(
+        (entry) => (entry.event as { event?: { method?: unknown } }).event?.method,
+      );
+      assert.include(methods, "pi.rpc.send");
+      assert.include(methods, "pi.rpc.receive");
+      assert.isTrue(
+        written.every((entry) => entry.threadId === THREAD_ID),
+        "native lines carry the thread",
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });

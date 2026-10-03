@@ -2705,7 +2705,9 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       }
       args.push(input.path);
       yield* executeGit("GitCore.removeWorktree", input.cwd, args, {
-        timeoutMs: 15_000,
+        // Agent worktrees carry full dependency installs (~150k files); a short
+        // timeout kills git mid-delete and strands a half-removed checkout.
+        timeoutMs: 5 * 60_000,
         fallbackErrorMessage: "git worktree remove failed",
       }).pipe(
         Effect.mapError((error) =>

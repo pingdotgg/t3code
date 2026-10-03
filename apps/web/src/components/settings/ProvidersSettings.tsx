@@ -13,7 +13,9 @@ import { Equal } from "effect";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
+  resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolveDefaultModelSelectionState,
   resolveDelegatedThreadModelSelectionState,
 } from "../../modelSelection";
 import {
@@ -282,6 +284,36 @@ export function ProvidersSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.delegatedThreadModelSelection ?? null,
   );
 
+  const resolvedDefaultModelSelection = resolveDefaultModelSelectionState(
+    settings,
+    serverProviders,
+  );
+  const isDefaultModelDirty = !Equal.equals(
+    settings.defaultModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.defaultModelSelection ?? null,
+  );
+  const defaultModelInstanceEntry = resolvedDefaultModelSelection
+    ? gitModelInstanceEntries.find(
+        (entry) => entry.instanceId === resolvedDefaultModelSelection.instanceId,
+      )
+    : undefined;
+  const defaultModelProvider: ProviderDriverKind =
+    defaultModelInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  // Initial value for the empty state: the first enabled/available
+  // instance's default model. Null when no provider can serve one, which
+  // disables the Choose button.
+  const defaultModelChoice = (() => {
+    const entry =
+      gitModelInstanceEntries.find((candidate) => candidate.enabled && candidate.isAvailable) ??
+      gitModelInstanceEntries[0];
+    if (!entry) return null;
+    const model =
+      resolveAppModelSelectionForInstance(entry.instanceId, settings, serverProviders, null) ??
+      entry.models[0]?.slug ??
+      null;
+    return model ? createModelSelection(entry.instanceId, model) : null;
+  })();
+
   return (
     <SettingsPageContainer>
       <SettingsPageHeader
@@ -290,6 +322,87 @@ export function ProvidersSettingsPanel() {
       />
 
       <SettingsSection title="Models">
+        <SettingsRow
+          title="Default model"
+          description="Global fallback for new threads when neither the thread nor its project specifies a model."
+          resetAction={
+            isDefaultModelDirty ? (
+              <SettingResetButton
+                label="default model"
+                onClick={() => updateSettings({ defaultModelSelection: null })}
+              />
+            ) : null
+          }
+          control={
+            resolvedDefaultModelSelection ? (
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <ProviderModelPicker
+                  activeInstanceId={resolvedDefaultModelSelection.instanceId}
+                  model={resolvedDefaultModelSelection.model}
+                  lockedProvider={null}
+                  instanceEntries={gitModelInstanceEntries}
+                  modelOptionsByInstance={gitModelOptionsByInstance}
+                  triggerVariant="outline"
+                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                  onInstanceModelChange={(instanceId, model) => {
+                    updateSettings({
+                      defaultModelSelection: resolveDefaultModelSelectionState(
+                        {
+                          ...settings,
+                          defaultModelSelection: createModelSelection(instanceId, model),
+                        },
+                        serverProviders,
+                      ),
+                    });
+                  }}
+                />
+                <TraitsPicker
+                  provider={defaultModelProvider}
+                  models={defaultModelInstanceEntry?.models ?? []}
+                  model={resolvedDefaultModelSelection.model}
+                  prompt=""
+                  onPromptChange={() => {}}
+                  modelOptions={resolvedDefaultModelSelection.options}
+                  allowPromptInjectedEffort={false}
+                  triggerVariant="outline"
+                  triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                  onModelOptionsChange={(nextOptions) => {
+                    updateSettings({
+                      defaultModelSelection: resolveDefaultModelSelectionState(
+                        {
+                          ...settings,
+                          defaultModelSelection: createModelSelection(
+                            resolvedDefaultModelSelection.instanceId,
+                            resolvedDefaultModelSelection.model,
+                            nextOptions,
+                          ),
+                        },
+                        serverProviders,
+                      ),
+                    });
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <span className="text-xs text-muted-foreground">No global default</span>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={!defaultModelChoice}
+                  onClick={() => {
+                    if (defaultModelChoice) {
+                      updateSettings({ defaultModelSelection: defaultModelChoice });
+                    }
+                  }}
+                >
+                  Choose model
+                </Button>
+              </div>
+            )
+          }
+        />
+
         <SettingsRow
           title="Text generation model"
           description="Configure the model used for generated commit messages, PR titles, and similar Git text."
