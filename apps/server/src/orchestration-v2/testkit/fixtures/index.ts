@@ -27,6 +27,8 @@ import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
+import { CLAUDE_TODO_LIST_MODEL_SELECTION, claudeTodoListInput } from "./claude_todo_list/input.ts";
+import { assertClaudeTodoListOutput } from "./claude_todo_list/output.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeNestedBackgroundSubagentWakeInput } from "./claude_nested_background_subagent_wake/input.ts";
 import { assertClaudeNestedBackgroundSubagentWakeOutput } from "./claude_nested_background_subagent_wake/output.ts";
@@ -435,6 +437,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeMcpToolPresentationOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_todo_list",
+    buildInput: claudeTodoListInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./claude_todo_list/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_TODO_LIST_MODEL_SELECTION,
+        assertOutput: assertClaudeTodoListOutput,
       },
     ],
   },

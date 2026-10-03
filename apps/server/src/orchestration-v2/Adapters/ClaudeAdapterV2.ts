@@ -1609,7 +1609,11 @@ const CLAUDE_KNOWN_TOOL_CLASSIFICATIONS: Record<
   read: { itemType: "dynamic_tool", requestKind: "file-read" },
   sendmessage: { itemType: "dynamic_tool", requestKind: "command" },
   task: { itemType: "dynamic_tool", requestKind: "command" },
+  taskcreate: { itemType: "dynamic_tool", requestKind: "command" },
+  taskget: { itemType: "dynamic_tool", requestKind: "command" },
+  tasklist: { itemType: "dynamic_tool", requestKind: "command" },
   taskstop: { itemType: "dynamic_tool", requestKind: "command" },
+  taskupdate: { itemType: "dynamic_tool", requestKind: "command" },
   todowrite: { itemType: "dynamic_tool", requestKind: "command" },
   toolsearch: { itemType: "dynamic_tool", requestKind: "command" },
   webfetch: { itemType: "web_search", requestKind: "command" },
@@ -2876,6 +2880,80 @@ export function claudeSdkUserInputAnswers(
   );
 }
 
+interface ClaudeTask {
+  subject: string;
+  status: OrchestrationV2PlanStep["status"];
+}
+
+function claudeTaskField(value: unknown, key: string): string | undefined {
+  const field = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+  return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
+}
+
+function claudeTaskStatus(value: unknown): OrchestrationV2PlanStep["status"] {
+  return value === "completed" ? "completed" : value === "in_progress" ? "running" : "pending";
+}
+
+/**
+ * Applies a finished Claude 5 task tool call (TaskCreate, TaskUpdate,
+ * TaskList) to the session's task list, keyed by Claude's task id. These
+ * replace TodoWrite, which Claude 5 no longer offers. Returns whether the
+ * list changed.
+ */
+function applyClaudeTaskToolResult(
+  tasks: Map<string, ClaudeTask>,
+  toolName: string,
+  input: unknown,
+  result: unknown,
+): boolean {
+  if (toolName === "TaskList") {
+    const listed =
+      typeof result === "object" && result !== null ? Reflect.get(result, "tasks") : [];
+    if (!Array.isArray(listed)) return false;
+    tasks.clear();
+    for (const task of listed) {
+      const id = claudeTaskField(task, "id");
+      const subject = claudeTaskField(task, "subject");
+      if (id === undefined || subject === undefined) continue;
+      tasks.set(id, { subject, status: claudeTaskStatus(claudeTaskField(task, "status")) });
+    }
+    return true;
+  }
+  if (toolName === "TaskCreate") {
+    const created =
+      typeof result === "object" && result !== null ? Reflect.get(result, "task") : null;
+    const id = claudeTaskField(created, "id");
+    const subject = claudeTaskField(created, "subject") ?? claudeTaskField(input, "subject");
+    if (id === undefined || subject === undefined) return false;
+    tasks.set(id, { subject, status: claudeTaskStatus(claudeTaskField(input, "status")) });
+    return true;
+  }
+  if (toolName !== "TaskUpdate") return false;
+  const id = claudeTaskField(input, "taskId") ?? claudeTaskField(result, "taskId");
+  const task = id === undefined ? undefined : tasks.get(id);
+  if (id === undefined || task === undefined) return false;
+  const status = claudeTaskField(input, "status");
+  if (status === "deleted") return tasks.delete(id);
+  const subject = claudeTaskField(input, "subject");
+  const next = {
+    subject: subject ?? task.subject,
+    status: status === undefined ? task.status : claudeTaskStatus(status),
+  };
+  if (next.subject === task.subject && next.status === task.status) return false;
+  tasks.set(id, next);
+  return true;
+}
+
+function claudeTaskSteps(
+  tasks: ReadonlyMap<string, ClaudeTask>,
+): ReadonlyArray<OrchestrationV2PlanStep> {
+  return [...tasks].map(([id, task]) => ({
+    id: `task-${id}`,
+    text: task.subject,
+    status: task.status,
+  }));
+}
+
 export function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
@@ -2988,6 +3066,17 @@ export function makeClaudeAdapterV2(
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
+        // Claude 5 task tools edit one list per native thread, across turns.
+        // Rollback drops a thread's list; forks get a new native thread.
+        const claudeTasksByNativeThread = new Map<string, Map<string, ClaudeTask>>();
+        const claudeTasksFor = (nativeThreadId: string) => {
+          let tasks = claudeTasksByNativeThread.get(nativeThreadId);
+          if (tasks === undefined) {
+            tasks = new Map();
+            claudeTasksByNativeThread.set(nativeThreadId, tasks);
+          }
+          return tasks;
+        };
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
         );
@@ -6079,6 +6168,24 @@ export function makeClaudeAdapterV2(
             });
             yield* emitToolCallArtifacts(artifacts);
             context.toolCalls.delete(toolCall.nativeItemId);
+            if (
+              parentToolUseId === null &&
+              !isClaudeToolResultError(toolResult) &&
+              applyClaudeTaskToolResult(
+                claudeTasksFor(liveQuery.nativeThreadId),
+                toolCall.toolName,
+                claudeNativeToolInputValue(toolCall.input),
+                claudeNativeToolOutputValue(output),
+              )
+            ) {
+              // One todo list per turn, updated in place as tasks change.
+              yield* emitClaudePlanProjection({
+                context,
+                nativeItemId: `claude-tasks:${context.providerTurnId}`,
+                kind: "todo_list",
+                steps: claudeTaskSteps(claudeTasksFor(liveQuery.nativeThreadId)),
+              }).pipe(Effect.orDie);
+            }
           }
 
           const assistantParentToolUseId = parentToolUseIdFromSdkMessage(message);
@@ -7582,6 +7689,7 @@ export function makeClaudeAdapterV2(
 
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
+              claudeTasksByNativeThread.delete(nativeThreadId);
               const now = yield* DateTime.now;
 
               if (rollbackInput.target.type === "thread_start") {
@@ -7750,7 +7858,9 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     return makeClaudeAdapterV2({
       instanceId,
       settings: { ...config, enabled, binaryPath },
-      environment: claudeEnvironment,
+      // Claude 5 models only get TaskCreate/TaskUpdate/TaskList when the host
+      // opts in; they replace TodoWrite for the todo list. An explicit value wins.
+      environment: { CLAUDE_CODE_ENABLE_TODO_TOOLS: "1", ...claudeEnvironment },
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,

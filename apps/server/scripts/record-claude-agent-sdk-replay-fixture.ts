@@ -77,6 +77,7 @@ import {
   CLAUDE_BACKGROUND_TASK_WAKE_FOLLOW_UP_PROMPT,
   CLAUDE_BACKGROUND_TASK_WAKE_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_wake/input.ts";
+import { CLAUDE_TODO_LIST_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_todo_list/input.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_PROMPT,
@@ -231,6 +232,12 @@ const CLAUDE_RECORDINGS = {
     enableTools: true,
     backgroundWakeCounts: [1, 0, 1, 0],
     offerNextPromptImmediately: true,
+  },
+  claude_todo_list: {
+    prompts: [CLAUDE_TODO_LIST_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_todo_list/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
   },
   claude_background_task_interrupt: {
     prompts: [CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT],
@@ -506,7 +513,10 @@ async function assertWorkspacePathsAbsent(phase: "before" | "after"): Promise<vo
   }
 }
 
-if (shouldRemoveCwd && (scenario === "tool_call_read_only" || scenario === "subagent")) {
+if (
+  shouldRemoveCwd &&
+  (scenario === "tool_call_read_only" || scenario === "subagent" || scenario === "claude_todo_list")
+) {
   await runFileSystem(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
