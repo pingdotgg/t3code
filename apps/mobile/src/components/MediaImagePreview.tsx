@@ -52,7 +52,7 @@ export function MediaImagePreview(props: MediaImagePreviewProps) {
         visible
         presentationStyle="fullScreen"
         onRequestClose={props.onRequestClose}
-        swipeToCloseEnabled
+        swipeToCloseEnabled={false}
         doubleTapToZoomEnabled
         HeaderComponent={ImagePreviewHeader}
       />
