@@ -289,6 +289,32 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("runs the full command a legacy terminal auth method names", () =>
+  Effect.gen(function* () {
+    // Mistral Vibe installed from PyPI: the standard args assume the
+    // interpreter is the command, so appending them to the agent would fail.
+    const h = yield* makeHarness({
+      id: "vibe-setup",
+      name: "Register your API Key",
+      type: "terminal",
+      args: ["/venv/bin/vibe-acp", "--setup"],
+      _meta: {
+        "terminal-auth": {
+          command: "/venv/bin/python3",
+          args: ["/venv/bin/vibe-acp", "--setup"],
+          label: "Mistral Vibe Setup",
+        },
+      },
+    });
+    yield* h.controller.start("owner", Effect.void, "vibe-setup");
+    yield* h.phase("waiting");
+    assert.deepInclude(h.terminalSpawn(), {
+      shell: "/venv/bin/python3",
+      args: ["/venv/bin/vibe-acp", "--setup"],
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("cancels the login PTY and rejects further terminal input", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness(terminalMethod);

@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
@@ -12,6 +14,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import type { AcpSessionRuntimeStartResult } from "./AcpSessionRuntime.ts";
 import {
   acpRegistryProbeFailure,
@@ -355,6 +358,66 @@ describe("ACP Registry probe", () => {
       Effect.scoped,
     ),
   );
+
+  it.effect("advertises terminal auth through the standard and legacy capabilities", () => {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-registry-probe-"));
+    const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+    return Effect.gen(function* () {
+      yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ agentId: "mock-agent" }),
+        cwd: process.cwd(),
+        environment: process.env,
+      });
+
+      const initialize = NodeFS.readFileSync(requestLogPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .find((message) => message.method === "initialize");
+      expect(initialize?.params.clientCapabilities).toMatchObject({
+        auth: { terminal: true },
+        _meta: { "terminal-auth": true },
+      });
+    }).pipe(
+      Effect.provideService(
+        AcpRegistrySupport.AcpRegistryCatalog,
+        AcpRegistrySupport.AcpRegistryCatalog.of({
+          search: () => Effect.die("unused search"),
+          prepare: () => Effect.die("unused prepare"),
+          inspect: () => Effect.die("unused inspect"),
+          uninstallManagedBinary: () => Effect.die("unused uninstall"),
+          resolve: () =>
+            Effect.succeed({
+              agent: {
+                id: "mock-agent",
+                name: "Mock Agent",
+                version: "1.0.0",
+                description: "ACP probe test agent",
+                distribution: { npx: { package: "mock-agent@1.0.0" } },
+              },
+              distribution: "npx",
+              spawn: {
+                command: "node",
+                args: [mockAgentPath],
+                env: {
+                  ...process.env,
+                  T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS: "25",
+                  T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+                },
+              },
+            }),
+        }),
+      ),
+      Effect.provideService(
+        PtyAdapter.PtyAdapter,
+        PtyAdapter.PtyAdapter.of({ spawn: () => Effect.die("unused pty") }),
+      ),
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+    );
+  });
 
   it.effect("includes package resolution in the probe timeout", () =>
     Effect.gen(function* () {
