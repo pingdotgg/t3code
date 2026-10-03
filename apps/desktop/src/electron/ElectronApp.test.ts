@@ -1,5 +1,13 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { beforeEach, vi } from "vite-plus/test";
 
 const {
@@ -82,6 +90,33 @@ vi.mock("electron", () => ({
 
 import * as ElectronApp from "./ElectronApp.ts";
 
+const spawnedCommands: Array<ChildProcess.StandardCommand> = [];
+const electronAppLayer = ElectronApp.layer.pipe(
+  Layer.provide(
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          spawnedCommands.push(command as ChildProcess.StandardCommand);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(0),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            stdin: undefined as never,
+            stdout: undefined as never,
+            stderr: undefined as never,
+            all: undefined as never,
+            getInputFd: () => undefined as never,
+            getOutputFd: () => undefined as never,
+            unref: Effect.succeed(Effect.void),
+          });
+        }),
+      ),
+    ),
+  ),
+);
+
 describe("ElectronApp", () => {
   beforeEach(() => {
     appendSwitchMock.mockClear();
@@ -91,6 +126,7 @@ describe("ElectronApp", () => {
     onMock.mockClear();
     quitMock.mockClear();
     relaunchMock.mockClear();
+    spawnedCommands.length = 0;
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
     setPathMock.mockClear();
@@ -108,7 +144,7 @@ describe("ElectronApp", () => {
         resourcesPath: process.resourcesPath,
         runningUnderArm64Translation: false,
       });
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("reads the OS locale through the service", () =>
@@ -116,7 +152,7 @@ describe("ElectronApp", () => {
       const electronApp = yield* ElectronApp.ElectronApp;
 
       assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("normalizes POSIX-style locale identifiers that Intl rejects", () =>
@@ -125,7 +161,7 @@ describe("ElectronApp", () => {
       const electronApp = yield* ElectronApp.ElectronApp;
 
       assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("reports which app metadata property failed", () =>
@@ -145,7 +181,7 @@ describe("ElectronApp", () => {
         error.message,
         'Failed to read Electron app metadata property "app-version".',
       );
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("preserves Electron readiness failures", () =>
@@ -163,7 +199,7 @@ describe("ElectronApp", () => {
         error.message,
         "Failed to wait for the Electron app to become ready (packaged: true).",
       );
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("scopes app event listeners", () =>
@@ -179,7 +215,7 @@ describe("ElectronApp", () => {
 
       assert.deepEqual(onMock.mock.calls, [["activate", listener]]);
       assert.deepEqual(removeListenerMock.mock.calls, [["activate", listener]]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("scopes native updater quit listeners", () =>
@@ -197,7 +233,7 @@ describe("ElectronApp", () => {
       assert.deepEqual(autoUpdaterRemoveListenerMock.mock.calls, [
         ["before-quit-for-update", listener],
       ]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
   );
 
   it.effect("removes command-line switches through the service", () =>
@@ -206,6 +242,54 @@ describe("ElectronApp", () => {
       yield* electronApp.removeCommandLineSwitch("password-store");
 
       assert.deepEqual(removeSwitchMock.mock.calls, [["password-store"]]);
-    }).pipe(Effect.provide(ElectronApp.layer)),
+    }).pipe(Effect.provide(electronAppLayer)),
+  );
+
+  it.effect("relaunches through app.relaunch() off Linux", () =>
+    Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      yield* electronApp.relaunch({ args: ["--flag"] });
+
+      assert.deepEqual(relaunchMock.mock.calls, [[{ args: ["--flag"] }]]);
+      assert.equal(spawnedCommands.length, 0);
+    }).pipe(Effect.provide(electronAppLayer), Effect.provideService(HostProcessPlatform, "darwin")),
+  );
+
+  it.effect("relaunches on Linux after this process exits without app.relaunch()", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 relaunch " });
+      const output = path.join(directory, "argv");
+
+      yield* Effect.gen(function* () {
+        const electronApp = yield* ElectronApp.ElectronApp;
+        yield* electronApp.relaunch({
+          execPath: "/bin/sh",
+          args: ["-c", 'printf "%s\\n" "$@" > "$0"', output, "two words", "$HOME", "(Nightly)"],
+        });
+      }).pipe(
+        Effect.provide(electronAppLayer),
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+      assert.equal(relaunchMock.mock.calls.length, 0);
+      const [relauncher] = spawnedCommands;
+      assert.isDefined(relauncher);
+
+      // Ending the relauncher's stdin stands in for this process exiting.
+      const waiting = yield* spawner.spawn(
+        ChildProcess.make(relauncher!.command, relauncher!.args, {
+          ...relauncher!.options,
+          detached: false,
+        }),
+      );
+      assert.isTrue(yield* waiting.isRunning);
+      assert.isFalse(yield* fileSystem.exists(output));
+
+      yield* Stream.run(Stream.empty, waiting.stdin);
+      assert.equal(yield* waiting.exitCode, 0);
+      assert.equal(yield* fileSystem.readFileString(output), "two words\n$HOME\n(Nightly)\n");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -431,8 +431,9 @@ describe("DesktopUpdates", () => {
   });
 
   it.effect("logs bounded updater failure context without exposing the cause", () => {
-    const cause = new Error(
-      "request failed for https://user:secret@example.com/update?token=secret",
+    const cause = Object.assign(
+      new Error("request failed for https://user:secret@example.com/update?token=secret"),
+      { code: "HTTP_ERROR_404" },
     );
     const updaterError = new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
       channel: null,
@@ -459,6 +460,7 @@ describe("DesktopUpdates", () => {
         assert.isDefined(loggedAnnotation);
         assert.equal(loggedAnnotation.errorTag, "ElectronUpdaterCheckForUpdatesError");
         assert.isNull(loggedAnnotation.channel);
+        assert.equal(loggedAnnotation.errorCode, "HTTP_ERROR_404");
         assert.notProperty(loggedAnnotation, "error");
         assert.notInclude(Object.values(loggedAnnotation).map(String).join(" "), "secret");
         assert.equal(
@@ -604,6 +606,22 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("relaunches a .deb install itself instead of through electron-updater", () => {
+    const harness = makeHarness({ platform: "linux", packageType: "deb" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.deepEqual(harness.installSteps, ["quitAndInstall(no-run)", "relaunch"]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
       const stopping = yield* Deferred.make<void>();
@@ -658,6 +676,102 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect("reports a failed install check on the first install click", () => {
+    const harness = makeHarness({
+      quitAndInstall: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+          channel: "latest",
+          isSilent: true,
+          isForceRunAfter: true,
+          cause: new Error("No update filepath provided, can't quit and install"),
+        }),
+      ),
+    });
+    const loggedAnnotations: Array<Record<string, unknown>> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotations = fiber.getRef(References.CurrentLogAnnotations);
+      if (annotations.errorTag === "ElectronUpdaterQuitAndInstallError") {
+        loggedAnnotations.push(annotations);
+      }
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.equal(result.state.errorContext, "install");
+        assert.isNotNull(result.state.message);
+        assert.equal(loggedAnnotations.at(-1)?.reason, "no-installer-path");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          harness.layer,
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("blames no_new_privs when a Linux installer command fails under it", () =>
+    Effect.gen(function* () {
+      const loggedReason = (noNewPrivs: 0 | 1) => {
+        const harness = makeHarness({
+          platform: "linux",
+          packageType: "deb",
+          procSelfStatus: `Name:\tt3code\nNoNewPrivs:\t${noNewPrivs}\nSeccomp:\t0\n`,
+          quitAndInstall: Effect.fail(
+            new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+              channel: "latest",
+              isSilent: true,
+              isForceRunAfter: true,
+              cause: new Error("Command pkexec exited with code 127"),
+            }),
+          ),
+        });
+        const loggedAnnotations: Array<Record<string, unknown>> = [];
+        const logger = Logger.make(({ fiber }) => {
+          const annotations = fiber.getRef(References.CurrentLogAnnotations);
+          if (annotations.errorTag === "ElectronUpdaterQuitAndInstallError") {
+            loggedAnnotations.push(annotations);
+          }
+        });
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+            yield* updates.install;
+            return loggedAnnotations.at(-1);
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              TestClock.layer(),
+              harness.layer,
+              Logger.layer([logger], { mergeWithExisting: false }),
+            ),
+          ),
+        );
+      };
+
+      const flagged = yield* loggedReason(1);
+      assert.equal(flagged?.reason, "no-new-privs");
+      assert.equal(flagged?.exitStatus, 127);
+      const unflagged = yield* loggedReason(0);
+      assert.isUndefined(unflagged?.reason);
+      assert.equal(unflagged?.exitStatus, 127);
+    }),
+  );
 
   it.effect("holds the install reservation until failed-install recovery finishes", () => {
     const recoveryStarted = Deferred.makeUnsafe<void>();
@@ -726,6 +840,45 @@ describe("DesktopUpdates", () => {
         assert.equal((yield* updates.getState).errorContext, "install");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("logs the exit status of a refused installer command", () => {
+    const harness = makeHarness();
+    const loggedAnnotations: Array<Record<string, unknown>> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotations = fiber.getRef(References.CurrentLogAnnotations);
+      if (annotations.errorTag === "DesktopUpdaterReportedError") {
+        loggedAnnotations.push(annotations);
+      }
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        yield* updates.install;
+        // electron-updater's DebUpdater reports a dismissed pkexec prompt this way.
+        harness.emit("error", new Error("Command pkexec exited with code 126"));
+        yield* flushCallbacks;
+
+        const loggedAnnotation = loggedAnnotations.at(-1);
+        assert.isDefined(loggedAnnotation);
+        assert.equal(loggedAnnotation.operation, "install");
+        assert.equal(loggedAnnotation.exitStatus, 126);
+        assert.notProperty(loggedAnnotation, "errorCode");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          harness.layer,
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
   });
 
   it.effect("rejects a prepared install when the downloaded version changed", () => {

@@ -14,6 +14,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
     on: vi.fn(),
+    prependListener: vi.fn(),
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
@@ -40,6 +41,7 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.downloadUpdate.mockClear();
     autoUpdaterMock.downloadUpdate.mockImplementation(() => Promise.resolve([]));
     autoUpdaterMock.on.mockClear();
+    autoUpdaterMock.prependListener.mockClear();
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
@@ -134,6 +136,44 @@ describe("ElectronUpdater", () => {
       );
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("fails quit-and-install with an error the updater emits during the call", () =>
+    Effect.gen(function* () {
+      const cause = new Error("No update filepath provided, can't quit and install");
+      const otherError = new Error("background check failed");
+      const errorListener = vi.fn();
+      autoUpdaterMock.quitAndInstall.mockImplementationOnce(() => {
+        const [eventName, captureInstallError] = autoUpdaterMock.prependListener.mock.calls[0] as [
+          string,
+          (error: unknown) => void,
+        ];
+        assert.equal(eventName, "error");
+        captureInstallError(cause);
+      });
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+
+      const error = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* updater.on("error", errorListener);
+          const [, registeredListener] = autoUpdaterMock.on.mock.calls[0] as [
+            string,
+            (error: unknown) => void,
+          ];
+          const error = yield* updater
+            .quitAndInstall({ isSilent: true, isForceRunAfter: true })
+            .pipe(Effect.flip);
+          registeredListener(cause);
+          registeredListener(otherError);
+          return error;
+        }),
+      );
+
+      assert.instanceOf(error, ElectronUpdater.ElectronUpdaterQuitAndInstallError);
+      assert.strictEqual(error.cause, cause);
+      assert.deepEqual(errorListener.mock.calls, [[otherError]]);
+      assert.equal(autoUpdaterMock.removeListener.mock.calls[0]?.[0], "error");
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 });
