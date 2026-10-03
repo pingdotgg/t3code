@@ -68,4 +68,32 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
   });
+
+  it("directs Hebrew question content that starts with English technical terms", () => {
+    const markup = renderPanel({
+      ...prompt,
+      questions: [
+        {
+          ...prompt.questions[0]!,
+          header: "בחירת גישה",
+          question: "React Server Components האם להשתמש בהם בפרויקט החדש שלנו?",
+          options: [
+            { label: "כן, להשתמש ב-RSC", description: "מתאים ל-Next.js App Router" },
+            { label: "Client Components", description: "להשאיר את הממשק בצד הלקוח" },
+          ],
+        },
+      ],
+    });
+
+    expect(markup).toMatch(/dir="rtl"[^>]*>בחירת גישה/);
+    expect(markup).toMatch(
+      /dir="rtl"[^>]*>React Server Components האם להשתמש בהם בפרויקט החדש שלנו\?/,
+    );
+    expect(markup).toMatch(/dir="rtl"[^>]*>כן, להשתמש ב-RSC/);
+    expect(markup).toMatch(/dir="rtl"[^>]*>מתאים ל-Next\.js App Router/);
+    expect(markup).toMatch(/dir="ltr"[^>]*>Client Components/);
+    expect(markup).toMatch(/dir="rtl"[^>]*>להשאיר את הממשק בצד הלקוח/);
+    expect(markup).toContain("text-start");
+    expect(markup).not.toContain("text-left");
+  });
 });

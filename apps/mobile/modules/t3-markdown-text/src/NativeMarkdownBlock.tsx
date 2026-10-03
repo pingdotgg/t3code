@@ -1,6 +1,7 @@
 import { createContext, memo, useContext, useMemo } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import { resolveTextDirection } from "@t3tools/shared/textDirection";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
@@ -9,7 +10,10 @@ import {
   nativeMarkdownListItemBlocks,
   nativeMarkdownNodePosition,
 } from "./nativeMarkdownText";
-import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
+import {
+  MarkdownDirectionContext,
+  NativeMarkdownSelectableText,
+} from "./NativeMarkdownSelectableText";
 import type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
@@ -114,6 +118,7 @@ function HighlightedCodeText(props: {
       fontFamily: MONO_FONT_FAMILY,
       fontSize,
       lineHeight,
+      textAlign: "left" as const,
     }),
     [props.textStyle.codeColor, fontSize, lineHeight],
   );
@@ -164,6 +169,7 @@ function NativeCodeBlock(props: {
         borderCurve: "continuous",
         borderRadius: 10,
         borderWidth: 1,
+        direction: "ltr",
         marginVertical: props.compact ? 7 : 0,
         overflow: "hidden",
       }}
@@ -256,6 +262,7 @@ function NativeTable(props: {
           borderCurve: "continuous",
           borderRadius: 8,
           borderWidth: 1,
+          direction: "ltr",
           overflow: "hidden",
         }}
       >
@@ -286,6 +293,7 @@ function NativeTable(props: {
                   )}
                   textStyle={props.textStyle}
                   onLinkPress={props.onLinkPress}
+                  direction={resolveTextDirection(nodeText(cell))}
                 />
               </View>
             ))}
@@ -423,9 +431,11 @@ function NativeList(props: {
   const ordered = props.node.ordered ?? false;
   const start = props.node.start ?? 1;
   const nested = props.depth > 0;
+  const direction = useContext(MarkdownDirectionContext);
   return (
     <View
       style={{
+        direction,
         gap: nested ? 3 : 5,
       }}
     >
@@ -447,13 +457,13 @@ function NativeList(props: {
         return (
           <View
             key={nodeKey(item, index)}
-            style={{ alignItems: "flex-start", flexDirection: "row" }}
+            style={{ alignItems: "flex-start", direction, flexDirection: "row" }}
           >
             <View
               style={{
                 width: markerWidth,
                 height: props.textStyle.lineHeight,
-                marginRight: 6,
+                marginEnd: 6,
                 alignItems: ordered ? "flex-end" : "center",
                 justifyContent: "flex-start",
               }}
@@ -501,6 +511,7 @@ export function NativeMarkdownBlock(props: {
   readonly depth?: number;
   readonly compact?: boolean;
 }) {
+  const direction = useContext(MarkdownDirectionContext);
   const depth = props.depth ?? 0;
   switch (props.node.type) {
     case "document":
@@ -559,10 +570,13 @@ export function NativeMarkdownBlock(props: {
       return (
         <View
           style={{
-            borderLeftColor: props.textStyle.quoteMarkerColor,
-            borderLeftWidth: 2,
+            borderLeftColor: direction === "rtl" ? undefined : props.textStyle.quoteMarkerColor,
+            borderLeftWidth: direction === "rtl" ? 0 : 2,
+            borderRightColor: direction === "rtl" ? props.textStyle.quoteMarkerColor : undefined,
+            borderRightWidth: direction === "rtl" ? 2 : 0,
             marginVertical: props.compact ? 4 : 0,
-            paddingLeft: 11,
+            paddingLeft: direction === "rtl" ? 0 : 11,
+            paddingRight: direction === "rtl" ? 11 : 0,
             paddingVertical: 2,
             gap: 6,
           }}

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo } from "react";
 import { decodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
+import type { TextDirection } from "@t3tools/shared/textDirection";
 import {
   findNodeHandle,
   Image,
@@ -30,6 +31,9 @@ import { parseComposerContextHref } from "@t3tools/shared/composerContextReferen
 import { contextChipPresentation } from "./nativeMarkdownText";
 
 export const MarkdownContextClipboardContext = createContext("");
+
+/** Document direction for selectable prose and the rich blocks beside it. */
+export const MarkdownDirectionContext = createContext<TextDirection>("ltr");
 
 export interface MarkdownFileContextMenuHandlers {
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
@@ -196,8 +200,12 @@ export function NativeMarkdownSelectableText(props: {
   readonly runs: ReadonlyArray<NativeMarkdownTextRun>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  /** Overrides the surrounding markdown direction. Table cells resolve on their own. */
+  readonly direction?: TextDirection;
 }) {
   const colorScheme = useColorScheme();
+  const inheritedDirection = useContext(MarkdownDirectionContext);
+  const direction = props.direction ?? inheritedDirection;
   const menu = useContext(MarkdownFileContextMenuContext);
   const contextClipboardFragment = useContext(MarkdownContextClipboardContext);
   const contextRecords = useMemo(
@@ -326,6 +334,7 @@ export function NativeMarkdownSelectableText(props: {
     props.textStyle.quoteMarkerColor,
     props.textStyle.dividerColor,
     props.textStyle.contextChipBorderColor,
+    direction,
   ].join(":");
 
   return (
@@ -349,6 +358,7 @@ export function NativeMarkdownSelectableText(props: {
         fontFamily: props.textStyle.fontFamily,
         fontSize: props.textStyle.fontSize,
         lineHeight: props.textStyle.lineHeight,
+        textAlign: direction === "rtl" ? "right" : "left",
       }}
     >
       {keyedRuns.map(({ key, run, text, linkIcon, chip, androidChip }) => {

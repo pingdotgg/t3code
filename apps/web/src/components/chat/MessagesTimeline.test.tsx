@@ -546,6 +546,101 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  it("resolves each message and block from its own text direction", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry("English user message."),
+          buildUserTimelineEntry("הודעת משתמש בעברית."),
+          buildAssistantTimelineEntry("English assistant message."),
+          buildAssistantTimelineEntry("תשובת עוזר בעברית."),
+        ]}
+      />,
+    );
+
+    const messageRoots = [...markup.matchAll(/<div\b[^>]*>/g)]
+      .map((match) => match[0])
+      .filter((tag) => /\bclass="chat-markdown(?:\s|")/.test(tag));
+    expect(messageRoots).toHaveLength(4);
+    expect(messageRoots.every((tag) => tag.includes('dir="auto"'))).toBe(true);
+  });
+
+  it("keeps code left-to-right inside a right-to-left message", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        markdownCwd="/workspace"
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            ["בדוק את `src/index.ts` והריץ `vp test` ואז:", "", "```sh", "vp test run", "```"].join(
+              "\n",
+            ),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/<a\b(?=[^>]*dir="ltr")(?=[^>]*chat-markdown-file-link)[^>]*>/);
+    expect(markup).toMatch(/<code\b(?=[^>]*dir="ltr")[^>]*>vp test<\/code>/);
+    expect(markup).toMatch(/<div\b(?=[^>]*chat-markdown-codeblock)(?=[^>]*dir="ltr")[^>]*>/);
+  });
+
+  it("keeps table columns left-to-right and lets each cell choose its direction", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            ["| Name | תיאור |", "| --- | --- |", "| test | בדיקה |"].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/<div\b(?=[^>]*chat-markdown-table-container)(?=[^>]*dir="ltr")[^>]*>/);
+    expect(markup.match(/<(?:th|td)\b(?=[^>]*dir="auto")[^>]*>/g)).toHaveLength(4);
+  });
+
+  it("uses logical spacing for GitHub alerts", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildAssistantTimelineEntry("> [!NOTE]\n> הודעת התראה בעברית.")]}
+      />,
+    );
+
+    expect(markup).toMatch(/<div role="note" dir="rtl" class="[^"]*border-s-2[^"]*ps-3/);
+    expect(markup).toContain("<bdi>Note</bdi>");
+    expect(markup).not.toContain("border-l-2");
+  });
+
+  it("puts quote borders and list markers on the prose start side", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            [
+              "- הפעל את הבדיקות",
+              "- שמור על `git status` משמאל",
+              "",
+              "> ציטוט שנשאר בצד ההתחלה",
+              "",
+              "- English item",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(/<ul\b[^>]*dir="rtl"/);
+    expect(markup).toMatch(/<li\b[^>]*dir="rtl"[^>]*>הפעל את הבדיקות/);
+    expect(markup).toMatch(/<blockquote\b[^>]*dir="rtl"/);
+    expect(markup).toMatch(/<ul\b[^>]*dir="ltr"/);
+    expect(markup).toMatch(/<li\b[^>]*dir="ltr"[^>]*>English item/);
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -591,7 +686,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('<code data-inline-code="">&lt;tag attr=&quot;x&quot;&gt;</code>');
+    expect(markup).toContain(
+      '<code data-inline-code="" dir="ltr">&lt;tag attr=&quot;x&quot;&gt;</code>',
+    );
     expect(markup).toContain("&lt;root&gt;&lt;child enabled=&quot;true&quot; /&gt;&lt;/root&gt;");
   });
 

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
+import { resolveMarkdownProseDirection } from "@t3tools/shared/textDirection";
 
 import {
   nativeMarkdownChunkSpacing,
@@ -12,6 +13,7 @@ import {
 import { MarkdownImageRendererContext, NativeMarkdownBlock } from "./NativeMarkdownBlock";
 import {
   MarkdownContextClipboardContext,
+  MarkdownDirectionContext,
   MarkdownFileContextMenuContext,
   NativeMarkdownSelectableText,
   type MarkdownFileContextMenuHandlers,
@@ -51,7 +53,7 @@ export function SelectableMarkdownText({
   marginTop = 0,
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
-  const chunks = useMemo(() => {
+  const { chunks, direction } = useMemo(() => {
     const parsedDocument = nativeMarkdownWithAuthoredWindowsPaths(
       parseMarkdownWithOptions(markdown, { gfm: true, html: true, math: false }),
       markdown,
@@ -59,14 +61,17 @@ export function SelectableMarkdownText({
     const document = preserveSoftBreaks
       ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument)
       : parsedDocument;
-    return nativeMarkdownDocumentChunks(document).map((chunk) =>
-      chunk.kind === "selectable"
-        ? {
-            ...chunk,
-            runs: nativeMarkdownDocumentRuns(chunk.node, skills),
-          }
-        : chunk,
-    );
+    return {
+      direction: resolveMarkdownProseDirection(document),
+      chunks: nativeMarkdownDocumentChunks(document).map((chunk) =>
+        chunk.kind === "selectable"
+          ? {
+              ...chunk,
+              runs: nativeMarkdownDocumentRuns(chunk.node, skills),
+            }
+          : chunk,
+      ),
+    };
   }, [markdown, preserveSoftBreaks, skills]);
 
   const fileContextMenuHandlers = useMemo<MarkdownFileContextMenuHandlers | null>(
@@ -81,39 +86,41 @@ export function SelectableMarkdownText({
     <MarkdownContextClipboardContext.Provider value={contextClipboardFragment ?? ""}>
       <MarkdownImageRendererContext.Provider value={renderImage ?? null}>
         <MarkdownFileContextMenuContext.Provider value={fileContextMenuHandlers}>
-          {/* A percentage width here creates a cyclic intrinsic measurement inside
-          shrink-to-fit containers such as user-message bubbles. Yoga then gives
-          the native text node an unbounded second pass and the parent only clips
-          the resulting single-line width instead of reflowing it. */}
-          <View style={{ flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
-            {chunks.map((chunk, index) => {
-              const content =
-                chunk.kind === "rich" ? (
-                  <NativeMarkdownBlock
-                    node={chunk.node}
-                    skills={skills}
-                    textStyle={textStyle}
-                    highlightCode={highlightCode}
-                    onLinkPress={onLinkPress}
-                  />
-                ) : (
-                  <NativeMarkdownSelectableText
-                    runs={chunk.runs}
-                    textStyle={textStyle}
-                    onLinkPress={onLinkPress}
-                  />
-                );
+          <MarkdownDirectionContext.Provider value={direction}>
+            {/* A percentage width here creates a cyclic intrinsic measurement inside
+            shrink-to-fit containers such as user-message bubbles. Yoga then gives
+            the native text node an unbounded second pass and the parent only clips
+            the resulting single-line width instead of reflowing it. */}
+            <View style={{ direction, flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
+              {chunks.map((chunk, index) => {
+                const content =
+                  chunk.kind === "rich" ? (
+                    <NativeMarkdownBlock
+                      node={chunk.node}
+                      skills={skills}
+                      textStyle={textStyle}
+                      highlightCode={highlightCode}
+                      onLinkPress={onLinkPress}
+                    />
+                  ) : (
+                    <NativeMarkdownSelectableText
+                      runs={chunk.runs}
+                      textStyle={textStyle}
+                      onLinkPress={onLinkPress}
+                    />
+                  );
 
-              return (
-                <View
-                  key={chunk.key}
-                  style={{ paddingTop: nativeMarkdownChunkSpacing(chunks[index - 1], chunk) }}
-                >
-                  {content}
-                </View>
-              );
-            })}
-          </View>
+                return (
+                  <View
+                    key={chunk.key}
+                    style={{ paddingTop: nativeMarkdownChunkSpacing(chunks[index - 1], chunk) }}
+                  >
+                    {content}
+                  </View>
+                );
+              })}
+            </View>
+          </MarkdownDirectionContext.Provider>
         </MarkdownFileContextMenuContext.Provider>
       </MarkdownImageRendererContext.Provider>
     </MarkdownContextClipboardContext.Provider>

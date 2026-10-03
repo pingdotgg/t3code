@@ -53,6 +53,7 @@ import {
 import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
+import { resolveTextDirection } from "@t3tools/shared/textDirection";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
@@ -308,6 +309,7 @@ function CodexArtifactTemplateCard(props: {
       data-artifact-kind={props.template.artifactKind}
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
+      dir="auto"
     >
       <div className="flex min-w-0 flex-1 items-center gap-3">
         <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-xs">
@@ -826,6 +828,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
       ref={containerRef}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
+      dir="ltr"
     >
       <ScrollArea radius="none" chainVerticalScroll scrollFade className="w-full max-w-full">
         <table ref={tableRef} {...props}>
@@ -905,7 +908,7 @@ function MarkdownDetails({
         data-markdown-details-open={isOpen ? "true" : "false"}
       >
         <CollapsibleTrigger
-          className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
+          className="flex w-full items-center gap-2 py-2 text-start text-sm font-medium text-foreground data-panel-open:[&_svg]:rotate-90"
           data-markdown-details-summary=""
         >
           <ChevronRightIcon
@@ -1045,6 +1048,7 @@ function MarkdownCodeBlock({
       className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
+      dir="ltr"
     >
       <div className="chat-markdown-codeblock-header flex items-center justify-between gap-2 pt-1.5 pr-1.5 pb-0 pl-3 select-none">
         <span className="inline-flex min-w-0 items-center gap-1.5 font-mono text-2xs">
@@ -1830,6 +1834,25 @@ function hastPlainTextDeep(node: unknown): string {
   return node.children.map(hastPlainTextDeep).join("");
 }
 
+// dir="auto" skips descendants that have their own dir, so a quote or list whose
+// children set dir="auto" stays ltr and keeps its border and markers on the left.
+// Resolve the container from its prose instead. Inline code must not flip it.
+function hastProseText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  if ("tagName" in node && (node.tagName === "code" || node.tagName === "pre")) return "";
+  if ("type" in node && node.type === "text" && "value" in node && typeof node.value === "string") {
+    return node.value;
+  }
+  if (!("children" in node) || !Array.isArray(node.children)) return "";
+  let text = "";
+  for (const child of node.children) text += hastProseText(child);
+  return text;
+}
+
+function markdownNodeDirection(node: unknown) {
+  return resolveTextDirection(hastProseText(node));
+}
+
 /**
  * Whether the link carries any words of its own. An anchor that is only an image — a badge, a
  * "Fix in Cursor" button — already shows its identity, and a favicon bolted on in front of it
@@ -2249,6 +2272,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind="mention"
               render={<a href={href} />}
+              dir="ltr"
               className={MARKDOWN_FILE_LINK_CLASS_NAME}
               data-markdown-copy={copyMarkdown}
               onClick={(event) => {
@@ -2272,6 +2296,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             <ContextChip
               kind="mention"
               render={<button type="button" />}
+              dir="ltr"
               aria-label={`File options for ${label}`}
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
@@ -2811,6 +2836,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
     return (
       <Tag
         {...props}
+        dir="auto"
         aria-level={headingLevelOffset > 0 ? Math.min(level + headingLevelOffset, 6) : undefined}
       />
     );
@@ -2837,21 +2863,34 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+    return (
+      <p {...props} dir="auto">
+        {renderSkillInlineMarkdownChildren(children, skills)}
+      </p>
+    );
   },
-  blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
+  blockquote: function MarkdownBlockquote({ node, children, ...props }) {
     const alert =
       GITHUB_ALERT_PRESENTATIONS[String((props as Record<string, unknown>)["data-alert"] ?? "")];
+    const direction = markdownNodeDirection(node);
     if (!alert) {
-      return <blockquote {...props}>{children}</blockquote>;
+      return (
+        <blockquote {...props} dir={direction}>
+          {children}
+        </blockquote>
+      );
     }
     // Not a <blockquote>: the stylesheet mutes those, and an alert's body is ordinary
     // text under a colored title — which is how the host renders it.
     return (
-      <div role="note" className={cn("my-1 border-l-2 pl-3", alert.borderClassName)}>
+      <div
+        role="note"
+        dir={direction}
+        className={cn("my-1 border-s-2 ps-3", alert.borderClassName)}
+      >
         <p className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}>
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-          {alert.label}
+          <bdi>{alert.label}</bdi>
         </p>
         {children}
       </div>
@@ -2863,7 +2902,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         .length ?? 0;
     const gutterStyle = orderedListGutterStyle(itemCount, start);
     return (
-      <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
+      <ol
+        {...props}
+        dir={markdownNodeDirection(node)}
+        start={start}
+        style={gutterStyle ? { ...style, ...gutterStyle } : style}
+      />
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {
@@ -2872,7 +2916,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const markerOffset =
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
     return (
-      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li
+        {...props}
+        dir={markdownNodeDirection(node)}
+        data-task-marker-offset={markerOffset ?? undefined}
+      >
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
@@ -3159,7 +3207,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
     }
     return (
-      <code {...props} className={className}>
+      <code {...props} className={className} dir="ltr">
         {children}
       </code>
     );
@@ -3296,6 +3344,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;
   },
+  th: function MarkdownTh({ node: _node, ...props }) {
+    return <th {...props} dir="auto" />;
+  },
+  td: function MarkdownTd({ node: _node, ...props }) {
+    return <td {...props} dir="auto" />;
+  },
+  ul: function MarkdownUnorderedList({ node, ...props }) {
+    return <ul {...props} dir={markdownNodeDirection(node)} />;
+  },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
@@ -3305,7 +3362,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
-      return <pre {...props}>{children}</pre>;
+      return (
+        <pre {...props} dir="ltr">
+          {children}
+        </pre>
+      );
     }
 
     const language = extractFenceLanguage(codeBlock.className);
@@ -3325,13 +3386,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
+          fallback={
+            <pre {...props} dir="ltr">
+              {children}
+            </pre>
+          }
         >
           {/* Reserve the block's height but stay hidden until Shiki has colored
               it, so plain text never flashes before the highlighted version. */}
           <Suspense
             fallback={
-              <pre {...props} className="invisible" aria-hidden>
+              <pre {...props} className="invisible" aria-hidden dir="ltr">
                 {children}
               </pre>
             }
@@ -3388,6 +3453,7 @@ function ChatMarkdown({
         "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)] [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
+      dir="auto"
       // Gates the fade-in for blocks that arrive while the response streams.
       data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}

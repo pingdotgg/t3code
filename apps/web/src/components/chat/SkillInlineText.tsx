@@ -72,7 +72,9 @@ function SkillChip(props: { skill: InlineSkill; rawText: string }) {
   return (
     <ContextChip kind="skill" data-markdown-copy={props.rawText}>
       <SkillChipIcon />
-      <ContextChipLabel>{formatProviderSkillDisplayName(props.skill)}</ContextChipLabel>
+      <ContextChipLabel>
+        <bdi>{formatProviderSkillDisplayName(props.skill)}</bdi>
+      </ContextChipLabel>
     </ContextChip>
   );
 }
