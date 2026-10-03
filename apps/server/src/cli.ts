@@ -4334,6 +4334,29 @@ const gitStatusCommand = Command.make("status", {
   ),
 );
 
+const gitActivityLogCommand = Command.make("log", {
+  ...liveTargetFlags,
+  all: Flag.boolean("all").pipe(Flag.withDefault(false)),
+  thread: Flag.string("thread").pipe(Flag.optional),
+  pr: Flag.integer("pr").pipe(Flag.optional),
+  limit: limitFlag,
+}).pipe(
+  Command.withDescription("List recent app-owned Git activity; --all includes read-only commands."),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const result = yield* callWsRpc(flags, (client) =>
+        client[WS_METHODS.gitLog]({
+          all: flags.all,
+          limit: Option.getOrElse(flags.limit, () => 100),
+          ...(Option.isSome(flags.thread) ? { threadId: ThreadId.make(flags.thread.value) } : {}),
+          ...(Option.isSome(flags.pr) ? { pullRequestNumber: flags.pr.value } : {}),
+        }),
+      );
+      yield* printJson(result);
+    }),
+  ),
+);
+
 const gitWatchCommand = Command.make("watch", {
   ...liveTargetFlags,
   cwd: cwdFlag,
@@ -4576,6 +4599,7 @@ const gitStackedActionCommand = Command.make("stacked-action", {
 const gitCommand = Command.make("git").pipe(
   Command.withDescription("Run Git operations through T3."),
   Command.withSubcommands([
+    gitActivityLogCommand,
     gitStatusCommand,
     gitWatchCommand,
     gitPullCommand,

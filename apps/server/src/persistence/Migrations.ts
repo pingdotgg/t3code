@@ -116,7 +116,8 @@ import Migration0111 from "./Migrations/111_RemoveRedundantProjectionIndexes.ts"
 import Migration0112 from "./Migrations/112_RequeuePullRequestGatedWorktreeCleanup.ts";
 import Migration0113 from "./Migrations/113_ProjectionCheckpointTransitionFiles.ts";
 import Migration0114 from "./Migrations/114_RepairThreadContextHistory.ts";
-import Migration0115 from "./Migrations/115_QueueHoldAndShutdownMarker.ts";
+import Migration0115 from "./Migrations/115_GitActivityLedger.ts";
+import Migration0116 from "./Migrations/116_QueueHoldAndShutdownMarker.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -232,7 +233,8 @@ export const migrationEntries = [
   [112, "RequeuePullRequestGatedWorktreeCleanup", Migration0112],
   [113, "ProjectionCheckpointTransitionFiles", Migration0113],
   [114, "RepairThreadContextHistory", Migration0114],
-  [115, "QueueHoldAndShutdownMarker", Migration0115],
+  [115, "GitActivityLedger", Migration0115],
+  [116, "QueueHoldAndShutdownMarker", Migration0116],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
