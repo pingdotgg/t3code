@@ -2954,6 +2954,12 @@ export function makeClaudeAdapterV2(
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        // A retry can report only a generic 429, omitting the rate-limit frame
+        // from the previous turn on this native conversation.
+        const usageLimitResetByNativeThread = new Map<
+          string,
+          { readonly model: string; readonly windows: ReadonlyMap<string, string | null> }
+        >();
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
@@ -5403,7 +5409,7 @@ export function makeClaudeAdapterV2(
                 limitType,
                 Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
                   ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null,
+                  : (context.rateLimitResetTimes.get(limitType) ?? null),
               );
             } else if (
               rateLimitInfo.status === "allowed" ||
@@ -5412,6 +5418,18 @@ export function makeClaudeAdapterV2(
             ) {
               context.rejectedRateLimitTypes.delete(limitType);
               context.rateLimitResetTimes.delete(limitType);
+              const previous = usageLimitResetByNativeThread.get(liveQuery.nativeThreadId);
+              if (previous?.windows.has(limitType)) {
+                const windows = new Map(previous.windows);
+                windows.delete(limitType);
+                if (windows.size === 0)
+                  usageLimitResetByNativeThread.delete(liveQuery.nativeThreadId);
+                else
+                  usageLimitResetByNativeThread.set(liveQuery.nativeThreadId, {
+                    ...previous,
+                    windows,
+                  });
+              }
             }
             // Rejected windows pause the SDK without ending its turn. Overage
             // and warnings keep running; repeats of a window need only one notice.
@@ -6261,7 +6279,19 @@ export function makeClaudeAdapterV2(
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
-            const resetTimes = Array.from(context.rateLimitResetTimes.values());
+            const previousReset = usageLimitResetByNativeThread.get(liveQuery.nativeThreadId);
+            const resetWindows = new Map(
+              previousReset?.model === context.input.modelSelection.model
+                ? Array.from(previousReset.windows).filter(
+                    ([, reset]) =>
+                      reset === null || Date.parse(reset) > DateTime.toEpochMillis(completedAt),
+                  )
+                : [],
+            );
+            for (const [limitType, reset] of context.rateLimitResetTimes) {
+              resetWindows.set(limitType, reset ?? resetWindows.get(limitType) ?? null);
+            }
+            const resetTimes = Array.from(resetWindows.values());
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
@@ -6273,6 +6303,14 @@ export function makeClaudeAdapterV2(
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt }
                 : resultFailure;
+            if (terminalFailure?.class === "usage_limit" && resetAt !== null) {
+              usageLimitResetByNativeThread.set(liveQuery.nativeThreadId, {
+                model: context.input.modelSelection.model,
+                windows: resetWindows,
+              });
+            } else {
+              usageLimitResetByNativeThread.delete(liveQuery.nativeThreadId);
+            }
             yield* finalizeActiveTurn({
               context,
               status: interrupted ? "interrupted" : terminalStatusFromResult(message, failureHint),

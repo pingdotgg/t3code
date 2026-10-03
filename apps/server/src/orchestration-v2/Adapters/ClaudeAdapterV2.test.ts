@@ -2675,6 +2675,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect.each([false, true])(
+    "retains a known usage reset across generic retries, clearing it on recovery (%s)",
+    (clear) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const resetsAt = Math.floor(DateTime.toEpochMillis(now) / 1000) + 7_200;
+        const resetAt = DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000));
+        const start = (ordinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-reset-retention-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue.",
+              attachments: [],
+            }),
+          );
+        const fail = (ordinal: number) =>
+          Queue.offerAll(harness.sdkMessages, [
+            makeAssistantErrorFrame({
+              uuid: `00000000-0000-4000-8000-0000000007${ordinal}0`,
+              error: "rate_limit",
+            }),
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-0000000007${ordinal}1`,
+              result: "API Error",
+              terminalReason: "api_error",
+              isError: true,
+              apiErrorStatus: 429,
+            }),
+          ]);
+        yield* start(1);
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt },
+            uuid: "00000000-0000-4000-8000-000000000700",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          // A repeated notification may omit the date; it must not erase it.
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+            uuid: "00000000-0000-4000-8000-000000000701",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]);
+        yield* fail(1);
+        const first = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(first.status, "failed");
+        if (first.status !== "failed") return;
+        assert.equal(first.failure.resetAt, resetAt);
+        yield* start(2);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "allowed", rateLimitType: "seven_day" },
+            uuid: "00000000-0000-4000-8000-000000000703",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        if (clear) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: { status: "allowed", rateLimitType: "five_hour" },
+              uuid: "00000000-0000-4000-8000-000000000702",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* fail(2);
+        const second = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(second.status, "failed");
+        if (second.status !== "failed") return;
+        assert.equal(second.failure.resetAt, clear ? null : resetAt);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
