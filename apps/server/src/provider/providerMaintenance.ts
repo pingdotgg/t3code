@@ -213,6 +213,20 @@ export function makeTargetedProviderUpdateAction(
   return { ...update, args, command };
 }
 
+/**
+ * The action that installs `latestVersion`. pnpm 11 and later resolve `@latest`
+ * to the newest release older than `minimumReleaseAge` and still exit 0, so a
+ * pnpm-global update installs the advertised version by exact spec instead.
+ */
+export function resolveLatestProviderUpdateAction(
+  capabilities: ProviderMaintenanceCapabilities,
+  latestVersion: string | null,
+): ProviderMaintenanceCommandAction | null {
+  const update = capabilities.update;
+  if (update?.lockKey !== "pnpm-global" || latestVersion === null) return update;
+  return makeTargetedProviderUpdateAction(capabilities, latestVersion) ?? update;
+}
+
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
@@ -652,7 +666,7 @@ export function createProviderVersionAdvisory(input: {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: capabilities.update?.command ?? null,
+    updateCommand: resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ?? null,
     canUpdate: capabilities.update !== null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,

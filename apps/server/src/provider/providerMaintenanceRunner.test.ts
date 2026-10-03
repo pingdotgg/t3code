@@ -406,6 +406,42 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect("installs the advertised version when pnpm owns the global install", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: "@openai/codex",
+              updateExecutable: "pnpm",
+              updateArgs: ["add", "-g", "@openai/codex@latest"],
+              updateLockKey: "pnpm-global",
+            }),
+          ),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, [
+        { command: "pnpm", args: ["add", "-g", "@openai/codex@9.9.9"] },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("9.9.9"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("aborts without running when the installation changed since the advisory", () => {
     const calls: Array<string> = [];
     return Effect.gen(function* () {

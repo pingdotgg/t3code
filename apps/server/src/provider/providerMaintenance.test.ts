@@ -214,6 +214,42 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("pins the advertised version in a pnpm-global update command", () => {
+    const pnpmTool = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateExecutable: "pnpm",
+      updateArgs: ["add", "-g", "@example/package-tool@latest"],
+      updateLockKey: "pnpm-global",
+    });
+    const npmTool = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateExecutable: "npm",
+      updateArgs: ["install", "-g", "@example/package-tool@latest"],
+      updateLockKey: "npm-global:/opt/node",
+    });
+    const advisoryFor = (
+      maintenanceCapabilities: typeof pnpmTool,
+      latestVersion: string | null = "1.1.0",
+    ) =>
+      createProviderVersionAdvisory({
+        driver: driver("packageTool"),
+        currentVersion: "1.0.0",
+        latestVersion,
+        maintenanceCapabilities,
+      });
+
+    expect(advisoryFor(pnpmTool).updateCommand).toBe("pnpm add -g @example/package-tool@1.1.0");
+    expect(advisoryFor(npmTool).updateCommand).toBe("npm install -g @example/package-tool@latest");
+    expect(advisoryFor(pnpmTool, "1.1.0-beta.1").updateCommand).toBe(
+      "pnpm add -g @example/package-tool@latest",
+    );
+    expect(advisoryFor(pnpmTool, null).updateCommand).toBe(
+      "pnpm add -g @example/package-tool@latest",
+    );
+  });
+
   it("keeps the manual update hint when the install is behind but unowned", () => {
     expect(
       createProviderVersionAdvisory({
