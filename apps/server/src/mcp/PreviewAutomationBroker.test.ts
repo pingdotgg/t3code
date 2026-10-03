@@ -93,6 +93,8 @@ it.effect("evicts a timed-out host and discards its buffered actions", () =>
       expect(bufferedExit?._tag).toBe("Success");
       if (bufferedExit?._tag === "Success") {
         expect(bufferedExit.value).toBeInstanceOf(PreviewAutomationClientDisconnectedError);
+        expect(bufferedExit.value).toMatchObject({ operation: "click", timeoutMs: 10_000 });
+        expect(bufferedExit.value.message).toContain("host generation was evicted");
       }
 
       yield* Deferred.succeed(releaseConsumer, undefined);
