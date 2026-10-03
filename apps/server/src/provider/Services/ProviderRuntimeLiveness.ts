@@ -39,6 +39,15 @@ export interface ProviderThreadRuntimeObservation {
    * be able to hold a reaper off forever, so a consumer bounds the hold by age.
    */
   readonly settledTurns: ReadonlyMap<string, number>;
+  /**
+   * Last event observed per turn id -> when it was seen, bounded.
+   *
+   * Prefer this over `lastEventAtMs` when asking whether the provider is still
+   * working on a *specific* turn. Thread-level activity is the wrong signal:
+   * a background agent or a later turn keeps emitting for the same thread and
+   * would otherwise make a stuck projection look alive indefinitely.
+   */
+  readonly lastEventAtMsByTurn: ReadonlyMap<string, number>;
 }
 
 export interface ProviderRuntimeLivenessShape {

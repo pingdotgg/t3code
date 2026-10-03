@@ -58,7 +58,10 @@ type MismatchHoldReason =
 
 const mismatchHoldReason = (input: {
   readonly settledTurnAgeMs: number | null;
-  readonly silenceDurationMs: number | null;
+  /** Silence measured for the observed turn, not for the whole thread. */
+  readonly turnSilenceDurationMs: number | null;
+  /** Thread-wide silence, for diagnostics only. Never gates a hold. */
+  readonly threadSilenceDurationMs: number | null;
   readonly settledTurnGraceMs: number;
   readonly settledTurnHoldMs: number;
   readonly projectedActiveTurnId: string | null;
@@ -72,7 +75,15 @@ const mismatchHoldReason = (input: {
   }
   // A terminal event for the active turn is probably still travelling. Adapters
   // update their session before emitting, so this closes that window.
-  if (input.silenceDurationMs !== null && input.silenceDurationMs < input.settledTurnGraceMs) {
+  //
+  // Measured per turn, never per thread: a background agent or a later turn
+  // keeps emitting for the same thread, and a thread-scoped signal would hand a
+  // projection that never converges an unbounded reprieve — the exact failure
+  // this hold exists to prevent, inverted.
+  if (
+    input.turnSilenceDurationMs !== null &&
+    input.turnSilenceDurationMs < input.settledTurnGraceMs
+  ) {
     return "provider_still_reporting";
   }
   // The turn the projection names changed while this sweep was deciding.
@@ -281,11 +292,15 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
             )?.session?.activeTurnId;
             const settledTurnAgeMs =
               settledAtMs === undefined ? null : Math.max(0, now - settledAtMs);
-            const providerSilenceDurationMs =
+            const lastTurnEventAtMs = observation?.lastEventAtMsByTurn.get(activeTurnId);
+            const turnSilenceDurationMs =
+              lastTurnEventAtMs === undefined ? null : Math.max(0, now - lastTurnEventAtMs);
+            const threadSilenceDurationMs =
               observation === null ? null : Math.max(0, now - observation.lastEventAtMs);
             const holdReason = mismatchHoldReason({
               settledTurnAgeMs,
-              silenceDurationMs: providerSilenceDurationMs,
+              turnSilenceDurationMs,
+              threadSilenceDurationMs,
               settledTurnGraceMs,
               settledTurnHoldMs,
               projectedActiveTurnId: currentActiveTurnId ?? null,
@@ -304,7 +319,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
                 activeProviderSessionStatus: activeSession?.status ?? null,
                 activeProviderSessionTurnId: activeSession?.activeTurnId ?? null,
                 projectedActiveTurnId: currentActiveTurnId ?? null,
-                providerSilenceDurationMs,
+                turnSilenceDurationMs,
+                threadSilenceDurationMs,
                 settledTurnAgeMs,
               });
               continue;
@@ -350,7 +366,8 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
               provider: binding.provider,
               activeTurnId: thread.session.activeTurnId,
               idleDurationMs: Number.isNaN(lastSeenMs) ? null : now - lastSeenMs,
-              providerSilenceDurationMs,
+              turnSilenceDurationMs,
+              threadSilenceDurationMs,
               settledTurnAgeMs,
               activeProviderSessionStatus: activeSession?.status ?? null,
               activeProviderSessionTurnId: activeSession?.activeTurnId ?? null,

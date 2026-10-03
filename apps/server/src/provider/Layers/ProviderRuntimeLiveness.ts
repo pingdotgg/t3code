@@ -25,6 +25,9 @@ const SETTLING_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set(
  */
 const MAX_SETTLED_TURNS = 8;
 
+/** Same bound for per-turn activity: only the active turn is ever queried. */
+const MAX_TRACKED_TURNS = 8;
+
 /**
  * Threads stop emitting once their work is done, so entries must not be kept
  * forever. Comfortably longer than the reaper's inactivity threshold (30 min)
@@ -48,8 +51,18 @@ interface MutableObservation {
    * `ProviderRuntimeIngestion` falls back to the session's active turn.
    */
   lastStartedTurnId: string | null;
-  /** Settled turn id -> when the settle was observed. Insertion-ordered. */
+  /**
+   * Settled turn id -> when the settle was observed. Insertion-ordered.
+   */
   readonly settledTurns: Map<string, number>;
+  /**
+   * Last event seen per turn id, so a reconciler can ask "is the provider still
+   * reporting *this turn*" rather than "is the provider still reporting for
+   * this thread". Thread-level silence is the wrong signal: a background agent
+   * or a later turn keeps emitting for the same thread and would otherwise
+   * grant an unbounded reprieve to a projection stuck on an older turn.
+   */
+  readonly turnActivity: Map<string, number>;
 }
 
 interface LedgerState {
@@ -58,7 +71,23 @@ interface LedgerState {
 }
 
 function newObservation(nowMs: number): MutableObservation {
-  return { lastEventAtMs: nowMs, lastStartedTurnId: null, settledTurns: new Map() };
+  return {
+    lastEventAtMs: nowMs,
+    lastStartedTurnId: null,
+    settledTurns: new Map(),
+    turnActivity: new Map(),
+  };
+}
+
+/** Bounded insertion-ordered map helper: refresh `key`, drop the oldest overflow. */
+function touchBounded(map: Map<string, number>, key: string, valueMs: number, limit: number): void {
+  map.delete(key);
+  map.set(key, valueMs);
+  while (map.size > limit) {
+    const oldest = map.keys().next();
+    if (oldest.done === true) break;
+    map.delete(oldest.value);
+  }
 }
 
 const makeProviderRuntimeLiveness = Effect.gen(function* () {
@@ -101,16 +130,18 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
         const settledTurnId = event.turnId ?? observation.lastStartedTurnId;
         if (settledTurnId !== null) {
           // A resumed session can re-report a terminal event for a turn already
-          // in the tail; Map.set keeps insertion order stable for a repeat.
-          observation.settledTurns.delete(settledTurnId);
-          observation.settledTurns.set(settledTurnId, nowMs);
-          // Map iteration is insertion-ordered, so this drops the oldest ids.
-          while (observation.settledTurns.size > MAX_SETTLED_TURNS) {
-            const oldest = observation.settledTurns.keys().next();
-            if (oldest.done === true) break;
-            observation.settledTurns.delete(oldest.value);
-          }
+          // in the tail; `touchBounded` keeps insertion order stable for a repeat.
+          touchBounded(observation.settledTurns, settledTurnId, nowMs, MAX_SETTLED_TURNS);
         }
+      }
+
+      // Per-turn activity is only credited when the event names its turn. A turnId-less
+      // event still proves the thread is alive, but not that *this* turn is
+      // progressing, so it must not extend a per-turn reprieve. Attributing it
+      // to the last announced turn is what let a background agent's events keep
+      // a projection stuck on an older turn held indefinitely.
+      if (event.turnId !== undefined) {
+        touchBounded(observation.turnActivity, event.turnId, nowMs, MAX_TRACKED_TURNS);
       }
 
       observation.lastEventAtMs = nowMs;
@@ -132,6 +163,7 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
         return {
           lastEventAtMs: observation.lastEventAtMs,
           settledTurns: new Map(observation.settledTurns),
+          lastEventAtMsByTurn: new Map(observation.turnActivity),
         };
       }),
     );
