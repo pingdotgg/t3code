@@ -127,7 +127,12 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    provider.driver !== ProviderDriverKind.make("opencode") &&
+    provider.driver !== ProviderDriverKind.make("claudeAgent")
+  ) {
     return true;
   }
 
@@ -139,6 +144,7 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   }
 
   // Successful discovery replaces these inventories so cached retired models disappear.
+  // Claude's probe also drops models the installed CLI is too old for.
   // Antigravity's local health check does not authenticate or discover models.
   const isPendingAntigravityAuthentication =
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";

@@ -1016,6 +1016,45 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
       });
 
+      it("drops Claude models the installed CLI is too old for once the probe finishes", () => {
+        const supportedModel = {
+          slug: "claude-supported",
+          name: "Supported",
+          isCustom: false,
+          capabilities: null,
+        } as const;
+        const pendingProvider = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          status: "warning",
+          enabled: true,
+          installed: false,
+          auth: { status: "unknown" },
+          checkedAt: "2026-09-28T00:00:00.000Z",
+          version: null,
+          models: [
+            supportedModel,
+            { slug: "claude-needs-newer-cli", name: "Newer", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const readyProvider = {
+          ...pendingProvider,
+          status: "ready",
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-28T00:01:00.000Z",
+          version: "2.1.0",
+          models: [supportedModel],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(pendingProvider, readyProvider).models,
+          readyProvider.models,
+        );
+      });
+
       describe("Codex model inventories", () => {
         const cachedProvider = {
           instanceId: ProviderInstanceId.make("codex-personal"),
