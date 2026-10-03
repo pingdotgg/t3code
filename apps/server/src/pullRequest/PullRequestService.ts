@@ -245,6 +245,10 @@ interface SupportedProject {
   readonly host: string;
 }
 
+/**
+ * Host and workspace scope persisted entries. Scoped invalidation cannot reach an old key after
+ * either changes; those entries are reclaimed by the no-reference global refresh.
+ */
 function persistedReadKey(
   input: PullRequestRef,
   operation: string,
