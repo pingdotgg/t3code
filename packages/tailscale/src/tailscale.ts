@@ -145,10 +145,8 @@ export interface TailscaleStatus {
 const collectStdout = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
-    Stream.runFold(
-      () => "",
-      (acc, chunk) => acc + chunk,
-    ),
+    Stream.runCollect,
+    Effect.map((chunks) => chunks.join("")),
   );
 
 const collectStderr = collectStdout;
