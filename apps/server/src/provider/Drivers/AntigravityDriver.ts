@@ -392,12 +392,14 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Crypto.Crypto, crypto),
-        Effect.map((read) => read.pipe(Effect.provideService(HttpClient.HttpClient, httpClient))),
       );
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,
         probe,
-        usageLimits,
+        usageLimits: usageLimits.read.pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        ),
+        usageLimitsCredentialFingerprint: usageLimits.credentialFingerprint,
         auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
         supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),

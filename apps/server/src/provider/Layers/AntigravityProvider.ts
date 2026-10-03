@@ -129,6 +129,7 @@ interface AntigravityProviderOptions {
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly usageLimits?: Effect.Effect<ServerProviderUsageLimits>;
+  readonly usageLimitsCredentialFingerprint?: Effect.Effect<string | undefined>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
@@ -178,6 +179,28 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     Effect.flatMap((state) => options.stampIdentity(state.draft)),
   );
 
+  /** Clear the previous account's limits without waiting for the quota backend. */
+  const clearChangedAccountLimits = Effect.fn("AntigravityProvider.clearChangedAccountLimits")(
+    function* (revision: number) {
+      if (!options.usageLimitsCredentialFingerprint) return;
+      const fingerprint = yield* options.usageLimitsCredentialFingerprint;
+      const cleared = yield* SubscriptionRef.modify(metadata, (state) => {
+        const limits = state.draft.usageLimits;
+        if (
+          state.authRevision !== revision ||
+          !limits ||
+          (limits.credentialFingerprint === undefined && limits.windows.length === 0) ||
+          (fingerprint !== undefined && limits.credentialFingerprint === fingerprint)
+        ) {
+          return [false, state] as const;
+        }
+        return [true, { ...state, draft: { ...state.draft, usageLimits: undefined } }] as const;
+      });
+      if (cleared) yield* Ref.set(lastUsageAttempt, undefined);
+    },
+  );
+
+  /** Read quotas in the background, serialized and throttled for the current account revision. */
   const refreshUsageLimits = Effect.fn("AntigravityProvider.refreshUsageLimits")(function* (
     revision: number,
     force = false,
@@ -186,6 +209,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     if (!read) return;
     yield* usageSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        yield* clearChangedAccountLimits(revision);
         const state = yield* SubscriptionRef.get(metadata);
         if (state.authRevision !== revision || !state.draft.enabled || !state.draft.installed)
           return;
@@ -194,6 +218,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         if (!force && last !== undefined && now - last < 30_000) return;
         yield* Ref.set(lastUsageAttempt, now);
         const limits = yield* read;
+        if (
+          options.usageLimitsCredentialFingerprint &&
+          limits.credentialFingerprint !== undefined &&
+          (yield* options.usageLimitsCredentialFingerprint) !== limits.credentialFingerprint
+        ) {
+          yield* clearChangedAccountLimits(revision);
+          return;
+        }
         yield* SubscriptionRef.update(metadata, (current) =>
           current.authRevision !== revision
             ? current
@@ -274,7 +306,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
-    if (initialized !== undefined) yield* refreshUsageLimits(next.authRevision, true);
+    if (initialized !== undefined) {
+      yield* refreshUsageLimits(next.authRevision).pipe(Effect.forkIn(scope));
+    }
     return yield* getSnapshot;
   });
 
@@ -307,6 +341,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     started: AcpSessionRuntimeStartResult,
     cwd?: string,
   ) {
+    yield* clearChangedAccountLimits((yield* SubscriptionRef.get(metadata)).authRevision);
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);

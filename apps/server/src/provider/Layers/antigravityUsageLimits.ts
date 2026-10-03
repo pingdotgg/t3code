@@ -96,7 +96,27 @@ export const makeAntigravityUsageLimits = Effect.fn("makeAntigravityUsageLimits"
     const cachedToken = yield* Ref.make<
       { readonly source: string; readonly token: string; readonly expiresAt: number } | undefined
     >(undefined);
-    return Effect.gen(function* () {
+    const fingerprint = Effect.fn("antigravityCredentialFingerprint")(function* (
+      file: typeof TokenFile.Type,
+    ) {
+      const identity =
+        file.refresh_token?.trim() ||
+        (typeof file.token === "string" ? file.token : file.token?.access_token)?.trim() ||
+        file.access_token?.trim();
+      return identity
+        ? Encoding.encodeHex(yield* crypto.digest("SHA-256", new TextEncoder().encode(identity)))
+        : undefined;
+    });
+    // Account identity must be available even when the quota backend is down.
+    const credentialFingerprint = Effect.gen(function* () {
+      if (!input.enabled || input.authMethod !== "oauth-personal") return undefined;
+      const source = yield* fs.readFileString(input.tokenPath);
+      return yield* fingerprint(yield* decodeTokenFile(source));
+    }).pipe(
+      Effect.timeout("2 seconds"),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const read = Effect.gen(function* () {
       const checkedAt = DateTime.formatIso(yield* DateTime.now);
       if (!input.enabled || input.authMethod !== "oauth-personal") {
         return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
@@ -114,68 +134,73 @@ export const makeAntigravityUsageLimits = Effect.fn("makeAntigravityUsageLimits"
           return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
         }
         const file = yield* decodeTokenFile(source);
-        const now = yield* Clock.currentTimeMillis;
-        const cached = yield* Ref.get(cachedToken);
-        const stored =
-          (typeof file.token === "string" ? file.token : file.token?.access_token)?.trim() ||
-          file.access_token?.trim();
-        const refresh = Effect.gen(function* () {
-          if (!file.refresh_token || !file.client_id || !file.client_secret) return undefined;
-          const response = yield* client.execute(
-            HttpClientRequest.post(TOKEN_URL).pipe(
-              HttpClientRequest.bodyUrlParams({
-                grant_type: "refresh_token",
-                refresh_token: file.refresh_token,
-                client_id: file.client_id,
-                client_secret: file.client_secret,
-              }),
-            ),
-          );
-          const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
-            Effect.flatMap(HttpClientResponse.schemaBodyJson(TokenResponse)),
-          );
-          yield* Ref.set(cachedToken, {
-            source,
-            token: body.access_token,
-            expiresAt: (yield* Clock.currentTimeMillis) + body.expires_in * 1000,
-          });
-          return body.access_token;
-        });
-        const token =
-          cached?.source === source && cached.expiresAt > now + 60_000
-            ? cached.token
-            : stored || (yield* refresh);
-        if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
-        const request = (accessToken: string) =>
-          client.execute(
-            HttpClientRequest.post(QUOTA_URL).pipe(
-              HttpClientRequest.bearerToken(accessToken),
-              HttpClientRequest.setHeader("user-agent", "antigravity"),
-              HttpClientRequest.bodyJsonUnsafe({}),
-            ),
-          );
-        const first = yield* request(token);
-        const response =
-          first.status === 401
-            ? yield* refresh.pipe(
-                Effect.flatMap((next) => (next ? request(next) : Effect.succeed(first))),
-              )
-            : first;
-        const summary = yield* HttpClientResponse.filterStatusOk(response).pipe(
-          Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummary)),
-        );
-        const limits = antigravityQuotaSummaryToLimits(summary, checkedAt);
-        const identity = file.refresh_token;
-        return identity && !limits.unavailable
-          ? {
-              ...limits,
-              credentialFingerprint: Encoding.encodeHex(
-                yield* crypto.digest("SHA-256", new TextEncoder().encode(identity)),
+        const identity = yield* fingerprint(file);
+        return yield* Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          const cached = yield* Ref.get(cachedToken);
+          const stored =
+            (typeof file.token === "string" ? file.token : file.token?.access_token)?.trim() ||
+            file.access_token?.trim();
+          const refresh = Effect.gen(function* () {
+            if (!file.refresh_token || !file.client_id || !file.client_secret) return undefined;
+            const response = yield* client.execute(
+              HttpClientRequest.post(TOKEN_URL).pipe(
+                HttpClientRequest.bodyUrlParams({
+                  grant_type: "refresh_token",
+                  refresh_token: file.refresh_token,
+                  client_id: file.client_id,
+                  client_secret: file.client_secret,
+                }),
               ),
-            }
-          : limits;
+            );
+            const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(TokenResponse)),
+            );
+            yield* Ref.set(cachedToken, {
+              source,
+              token: body.access_token,
+              expiresAt: (yield* Clock.currentTimeMillis) + body.expires_in * 1000,
+            });
+            return body.access_token;
+          });
+          const token =
+            cached?.source === source && cached.expiresAt > now + 60_000
+              ? cached.token
+              : stored || (yield* refresh);
+          if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+          const request = (accessToken: string) =>
+            client.execute(
+              HttpClientRequest.post(QUOTA_URL).pipe(
+                HttpClientRequest.bearerToken(accessToken),
+                HttpClientRequest.setHeader("user-agent", "antigravity"),
+                HttpClientRequest.bodyJsonUnsafe({}),
+              ),
+            );
+          const first = yield* request(token);
+          const response =
+            first.status === 401
+              ? yield* refresh.pipe(
+                  Effect.flatMap((next) => (next ? request(next) : Effect.succeed(first))),
+                )
+              : first;
+          const summary = yield* HttpClientResponse.filterStatusOk(response).pipe(
+            Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummary)),
+          );
+          return antigravityQuotaSummaryToLimits(summary, checkedAt);
+        }).pipe(
+          Effect.timeout("15 seconds"),
+          Effect.orElseSucceed(() =>
+            makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: "Antigravity could not read usage limits.",
+            }),
+          ),
+          Effect.map((limits) =>
+            identity ? { ...limits, credentialFingerprint: identity } : limits,
+          ),
+        );
       }).pipe(
-        Effect.timeout("15 seconds"),
         // HTTP and schema failures may contain credentials. Publish a fixed message.
         Effect.orElseSucceed(() =>
           makeUnavailableUsageLimits({
@@ -186,5 +211,6 @@ export const makeAntigravityUsageLimits = Effect.fn("makeAntigravityUsageLimits"
         ),
       );
     });
+    return { read, credentialFingerprint };
   },
 );

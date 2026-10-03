@@ -93,12 +93,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       // enrichment owns usage state can explicitly replace or clear it.
       const merged = withUsageLimits(
         nextSnapshot,
-        options?.replaceUsageLimits
-          ? resolveUsageLimitsAfterProbe({
-              published: state.snapshot.usageLimits,
-              probed: nextSnapshot.usageLimits,
-            })
-          : state.snapshot.usageLimits,
+        options?.replaceUsageLimits ? nextSnapshot.usageLimits : state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;

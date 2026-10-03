@@ -47,12 +47,12 @@ const makeFixture = Effect.fn("antigravityUsageFixture")(function* (input: {
   const directory = yield* fs.makeTempDirectoryScoped();
   const tokenPath = path.join(directory, "acp_token.json");
   if (input.contents !== undefined) yield* fs.writeFileString(tokenPath, input.contents);
-  const read = yield* makeAntigravityUsageLimits({
+  const reader = yield* makeAntigravityUsageLimits({
     enabled: input.enabled ?? true,
     authMethod: input.authMethod ?? "oauth-personal",
     tokenPath,
   });
-  return { fs, tokenPath, read };
+  return { fs, tokenPath, ...reader };
 });
 
 describe("Antigravity subscription limits", () => {
@@ -126,6 +126,7 @@ describe("Antigravity subscription limits", () => {
         );
         expect(refreshes).toBe(1);
         expect(quotas).toBe(2);
+        expect(yield* fixture.credentialFingerprint).toBe(first.credentialFingerprint);
         expect(first.credentialFingerprint).toMatch(/^[a-f0-9]{64}$/);
         expect(second.credentialFingerprint).toBe(first.credentialFingerprint);
         expect(yield* fixture.fs.readFileString(fixture.tokenPath)).toBe(contents);
@@ -136,6 +137,25 @@ describe("Antigravity subscription limits", () => {
           HttpClient.make(() => Effect.die("unexpected request")),
         ),
       ),
+  );
+
+  it.effect(
+    "reads account identity locally and detects replaced, missing, or invalid credentials",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({ contents: encodeJson(credentials) });
+        const first = yield* fixture.credentialFingerprint;
+        expect(first).toMatch(/^[a-f0-9]{64}$/);
+        yield* fixture.fs.writeFileString(
+          fixture.tokenPath,
+          encodeJson({ ...credentials, refresh_token: "account-b" }),
+        );
+        expect(yield* fixture.credentialFingerprint).not.toBe(first);
+        yield* fixture.fs.writeFileString(fixture.tokenPath, "invalid json");
+        expect(yield* fixture.credentialFingerprint).toBeUndefined();
+        yield* fixture.fs.remove(fixture.tokenPath);
+        expect(yield* fixture.credentialFingerprint).toBeUndefined();
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("retries an expired stored access token once", () =>
@@ -183,13 +203,16 @@ describe("Antigravity subscription limits", () => {
 
   it.effect.each([403, 500] as const)("reports a failed probe for HTTP %s", (status) =>
     Effect.gen(function* () {
-      const fixture = yield* makeFixture({ contents: encodeJson({ access_token: "token" }) });
+      const fixture = yield* makeFixture({
+        contents: encodeJson({ ...credentials, access_token: "token" }),
+      });
       const client = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(request, new Response("private error", { status })),
         ),
       );
       const limits = yield* fixture.read.pipe(Effect.provideService(HttpClient.HttpClient, client));
+      expect(limits.credentialFingerprint).toBe(yield* fixture.credentialFingerprint);
       expect(limits.unavailable).toEqual({
         reason: "probeFailed",
         message: "Antigravity could not read usage limits.",
