@@ -1290,7 +1290,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Fork chat from this response"');
   });
 
-  it("renders cumulative changed files, matching the unfiltered turn diff", async () => {
+  it("lists the turn's own transition files, matching the turn diff it opens", async () => {
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");
@@ -1326,6 +1326,7 @@ describe("MessagesTimeline", () => {
                   { path: "src/unrelated.ts", additions: 10, deletions: 0 },
                 ],
                 turnFiles: [{ path: "src/plan.md", additions: 5, deletions: 1 }],
+                transitionFiles: [{ path: "src/plan.md", additions: 5, deletions: 1 }],
               },
             ],
           ])
@@ -1334,13 +1335,56 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("Changed files");
-    expect(markup).toContain("+15");
+    expect(markup).toContain("+5");
     expect(markup).toContain("-1");
     expect(markup).toContain("plan.md");
-    expect(markup).toContain("unrelated.ts");
+    expect(markup).not.toContain("unrelated.ts");
   });
 
-  it("hides the card when the cumulative summary is empty", async () => {
+  it("keeps the card visible when a turn reverts an earlier one", async () => {
+    const assistantMessageId = MessageId.make("message-assistant");
+    const turnId = TurnId.make("turn-revert");
+    // Turn 2 reverts turn 1, so the cumulative list is empty while turn 2 still
+    // has real changes. The card must follow the turn range, not the cumulative one.
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-04-22T19:00:45.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Reverted.",
+              createdAt: "2026-04-22T19:00:45.000Z",
+              completedAt: "2026-04-22T19:03:33.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId,
+                completedAt: "2026-04-22T19:03:33.000Z",
+                files: [],
+                turnFiles: [],
+                transitionFiles: [{ path: "src/revert.md", additions: 0, deletions: 3 }],
+              },
+            ],
+          ])
+        }
+      />,
+    );
+
+    expect(markup).toContain("revert.md");
+  });
+
+  it("hides the card when the turn's transition list is empty", async () => {
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");

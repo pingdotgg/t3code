@@ -127,6 +127,7 @@ function finish(
     files: [],
     agentTouchedPaths: [],
     turnFiles: [],
+    transitionFiles: [],
     checkpointTurnCount: 1,
   };
 }
