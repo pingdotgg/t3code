@@ -282,6 +282,12 @@ export function wrapCommandForLinuxCgroup(
         '[ "$actual" = "$expected" ] || exit 126',
         "unset ELECTRON_RUN_AS_NODE T3_ACP_CGROUP_WRAPPER",
         "trap 'exit 125' 0",
+        // The trap alone does not cover a failed `exec`: bash — which is
+        // /bin/sh on Arch derivatives — exits 127 without running the EXIT
+        // trap, so a missing agent binary reported "killed by the wrapper"
+        // instead of "never launched". Resolve the target first; `command -v`
+        // handles both PATH names and absolute paths in every POSIX shell.
+        'command -v -- "$1" >/dev/null 2>&1 || exit 125',
         'exec "$@"',
       ].join("\n"),
       "t3-acp-cgroup-wrapper",
