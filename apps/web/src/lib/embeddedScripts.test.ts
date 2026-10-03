@@ -60,6 +60,7 @@ describe("embeddedScripts", () => {
     [`deno eval --config deno.json 'console.log(1)'`, "typescript", "console.log(1)"],
     [`node -C development -e 'console.log(1)'`, "javascript", "console.log(1)"],
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
+    [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`perl -E 'say 1'`, "perl", "say 1"],
     [`sqlite3 app.db "select * from users"`, "sql", "select * from users"],
     [`psql -d app -c 'select 1'`, "sql", "select 1"],
