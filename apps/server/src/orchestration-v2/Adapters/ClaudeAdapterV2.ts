@@ -6928,10 +6928,14 @@ export function makeClaudeAdapterV2(
           const openedWithResume = (yield* Ref.get(openedNativeThreads)).has(nativeThreadId);
           // openedNativeThreads is per session instance and is lost when the
           // provider session is idle-released. A prior persisted provider turn
-          // proves the native session already exists, so the query must resume
-          // it; reopening with a fixed session id makes the CLI fail fast with
-          // "Session ID ... is already in use".
-          const hasPersistedProviderTurn = turnInput.providerTurnOrdinal > 1;
+          // on this native thread proves the native session already exists, so
+          // the query must resume it; reopening with a fixed session id makes
+          // the CLI fail fast with "Session ID ... is already in use". Earlier
+          // turns on the provider thread do not count once a fresh-session
+          // fallback has bound a new native id: resuming that id fails with
+          // "No conversation found".
+          const hasPersistedProviderTurn =
+            turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({

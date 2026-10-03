@@ -85,6 +85,9 @@ interface CapturedTurn {
   readonly providerThreadId: ProviderThreadId;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly nativeThreadId?: string | null;
+  readonly providerTurnOrdinal?: number;
+  readonly nativeThreadHasTurns?: boolean;
 }
 
 function unimplemented(driver: ProviderDriverKind, detail: string) {
@@ -232,6 +235,11 @@ function makeTestAdapter(input: {
                   providerThreadId: turnInput.providerThread.id,
                   text: turnInput.message.text,
                   attachments: turnInput.message.attachments,
+                  nativeThreadId: turnInput.providerThread.nativeThreadRef?.nativeId ?? null,
+                  providerTurnOrdinal: turnInput.providerTurnOrdinal,
+                  ...(turnInput.nativeThreadHasTurns === undefined
+                    ? {}
+                    : { nativeThreadHasTurns: turnInput.nativeThreadHasTurns }),
                 },
               ]);
               if (
@@ -1049,6 +1057,111 @@ describe("orchestration v2 provider switching", () => {
           );
         }),
       ),
+  );
+
+  it.live("starts a replacement native thread as new after the resume fallback", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("resume-fallback-native-turns");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const failResumeOnce = yield* Ref.make(false);
+        const generation = yield* Ref.make(0);
+        const registry = ProviderAdapterRegistry.makeLayer([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            failResumeOnce,
+            nativeThreadGeneration: generation,
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const runToCompletion = (ordinal: number) =>
+            Effect.gen(function* () {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`resume-fallback:${ordinal}`),
+                threadId,
+                messageId: MessageId.make(`resume-fallback:${ordinal}`),
+                createdBy: "user",
+                creationSource: "web",
+                text: `Request ${ordinal}`,
+                attachments: [],
+                modelSelection: CLAUDE_MODEL_SELECTION,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* orchestrator.streamStoredEvents.pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.type === "run.updated" &&
+                    event.payload.ordinal === ordinal &&
+                    (event.payload.status === "completed" || event.payload.status === "failed"),
+                ),
+                Stream.runHead,
+              );
+              yield* worker.drain();
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("resume-fallback:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Resume fallback",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* runToCompletion(1);
+          // A detached session resumes on the next turn, as after a restart.
+          const providerThread = (yield* orchestrator.getThreadProjection(threadId))
+            .providerThreads[0]!;
+          yield* orchestrator.dispatch({
+            type: "provider-session.detach",
+            commandId: CommandId.make("resume-fallback:detach"),
+            threadId,
+            providerSessionId: providerThread.providerSessionId!,
+          });
+          yield* worker.drain();
+          yield* Ref.set(failResumeOnce, true);
+          yield* runToCompletion(2);
+          yield* runToCompletion(3);
+
+          const turns = yield* Ref.get(capturedTurns);
+          assert.equal(turns.length, 3);
+          assert.equal(yield* Ref.get(generation), 2);
+          // The fallback binds a new native thread to a provider thread that
+          // already has a turn, so the provider must not resume it.
+          assert.notEqual(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+          assert.isAbove(turns[1]?.providerTurnOrdinal ?? 0, 1);
+          assert.isFalse(turns[1]?.nativeThreadHasTurns);
+          assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
+          assert.isTrue(turns[2]?.nativeThreadHasTurns);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "resume-fallback-native-turns",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: { type: "readOnly" },
+                },
+              },
+              registry,
+            ),
+          ),
+        );
+      }),
+    ),
   );
 
   it.live.each(
