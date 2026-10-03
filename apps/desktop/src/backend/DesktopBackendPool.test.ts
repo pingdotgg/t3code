@@ -178,7 +178,14 @@ function layerPool(
         DesktopState.layer,
         DesktopWslEnvironment.layerTest(),
         ElectronDialog.layer,
-        ElectronApp.layer,
+        ElectronApp.layer.pipe(
+          Layer.provide(
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
+            ),
+          ),
+        ),
         Layer.succeed(DesktopWindow.DesktopWindow, {
           createMain: Effect.die("unexpected window create"),
           ensureMain: Effect.die("unexpected window ensure"),
