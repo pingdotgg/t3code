@@ -4,7 +4,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -34,6 +39,14 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    // The server thread a new draft was opened from, so the composer's
+    // "Previous worktree" entry can offer that thread's worktree.
+    draftOrigin?: ScopedThreadRef;
+  }
+}
 
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
@@ -93,6 +106,10 @@ export function useNewThreadHandler() {
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
+      const draftOriginState =
+        currentRouteTarget?.kind === "server"
+          ? { state: { draftOrigin: currentRouteTarget.threadRef } }
+          : {};
       // A new thread carries the user's working mode from the thread being
       // viewed. The target project's configured model still wins; interaction
       // mode carries independently. Permissions, branch, worktree, and env mode
@@ -321,6 +338,7 @@ export function useNewThreadHandler() {
             to: "/draft/$draftId",
             params: { draftId: emptyStoredDraftThread.draftId },
             replace: options?.replace ?? false,
+            ...draftOriginState,
           });
           return opened;
         })();
@@ -397,6 +415,7 @@ export function useNewThreadHandler() {
             to: "/draft/$draftId",
             params: { draftId: racedDraft.draftId },
             replace: options?.replace ?? false,
+            ...draftOriginState,
           });
           return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
         }
@@ -426,6 +445,7 @@ export function useNewThreadHandler() {
           to: "/draft/$draftId",
           params: { draftId },
           replace: options?.replace ?? false,
+          ...draftOriginState,
         });
         return { draftId, threadId };
       })();

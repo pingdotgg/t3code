@@ -27,21 +27,65 @@ const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 describe("resolvePreviousWorktreeSeed", () => {
+  const olderWorktreeThread = {
+    id: "origin",
+    branch: "t3/origin",
+    worktreePath: "/repo/.t3/worktrees/origin",
+    updatedAt: "2026-07-20T00:00:00.000Z",
+  };
+  const newerWorktreeThread = {
+    id: "finished-later",
+    branch: "t3/finished-later",
+    worktreePath: "/repo/.t3/worktrees/finished-later",
+    updatedAt: "2026-07-22T00:00:00.000Z",
+  };
+
+  it("prefers the thread the draft was opened from over a more recent one", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [olderWorktreeThread, newerWorktreeThread],
+        currentWorktreePath: null,
+        originThreadId: "origin",
+      }),
+    ).toEqual({ branch: "t3/origin", worktreePath: "/repo/.t3/worktrees/origin" });
+  });
+
+  it("falls back to recency when the origin thread has no worktree", () => {
+    expect(
+      resolvePreviousWorktreeSeed({
+        threads: [
+          {
+            id: "local",
+            branch: "main",
+            worktreePath: null,
+            updatedAt: "2026-07-23T00:00:00.000Z",
+          },
+          olderWorktreeThread,
+          newerWorktreeThread,
+        ],
+        currentWorktreePath: null,
+        originThreadId: "local",
+      }),
+    ).toEqual({ branch: "t3/finished-later", worktreePath: "/repo/.t3/worktrees/finished-later" });
+  });
+
   it("picks the most recently updated worktree thread", () => {
     expect(
       resolvePreviousWorktreeSeed({
         threads: [
           {
+            id: "older",
             branch: "t3/older",
             worktreePath: "/repo/.t3/worktrees/older",
             updatedAt: "2026-07-20T00:00:00.000Z",
           },
           {
+            id: "newer",
             branch: "t3/newer",
             worktreePath: "/repo/.t3/worktrees/newer",
             updatedAt: "2026-07-22T00:00:00.000Z",
           },
-          { branch: "main", worktreePath: null, updatedAt: "2026-07-23T00:00:00.000Z" },
+          { id: "main", branch: "main", worktreePath: null, updatedAt: "2026-07-23T00:00:00.000Z" },
         ],
         currentWorktreePath: null,
       }),
@@ -53,6 +97,7 @@ describe("resolvePreviousWorktreeSeed", () => {
       resolvePreviousWorktreeSeed({
         threads: [
           {
+            id: "current",
             branch: "t3/current",
             worktreePath: "/repo/.t3/worktrees/current",
             updatedAt: "2026-07-22T00:00:00.000Z",
@@ -66,7 +111,9 @@ describe("resolvePreviousWorktreeSeed", () => {
   it("returns null when no thread has a worktree", () => {
     expect(
       resolvePreviousWorktreeSeed({
-        threads: [{ branch: "main", worktreePath: null, updatedAt: "2026-07-22T00:00:00.000Z" }],
+        threads: [
+          { id: "main", branch: "main", worktreePath: null, updatedAt: "2026-07-22T00:00:00.000Z" },
+        ],
         currentWorktreePath: null,
       }),
     ).toBeNull();
@@ -77,17 +124,20 @@ describe("resolvePreviousWorktreeSeed", () => {
       resolvePreviousWorktreeSeed({
         threads: [
           {
+            id: "archived",
             branch: "t3/archived",
             worktreePath: "/repo/.t3/worktrees/archived",
             updatedAt: "2026-07-23T00:00:00.000Z",
             archivedAt: "2026-07-23T01:00:00.000Z",
           },
           {
+            id: "garbage-timestamp",
             branch: "t3/garbage-timestamp",
             worktreePath: "/repo/.t3/worktrees/garbage",
             updatedAt: "not-a-date",
           },
           {
+            id: "live",
             branch: "t3/live",
             worktreePath: "/repo/.t3/worktrees/live",
             updatedAt: "2026-07-21T00:00:00.000Z",

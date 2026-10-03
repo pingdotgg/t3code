@@ -129,19 +129,23 @@ export interface PreviousWorktreeSeed {
   worktreePath: string;
 }
 
-// The most recently touched worktree in the project that the composer isn't
-// already pointing at. Backs the "Previous worktree" entry in the workspace
-// selector so a follow-up thread can hop back into the worktree you just
-// worked in without hunting for its branch. Archived threads don't compete —
-// the rest of the UI hides them, so their worktrees shouldn't resurface here.
+// The worktree the user just worked in, other than the one the composer
+// already points at. Backs the "Previous worktree" entry in the workspace
+// selector so a follow-up thread can hop back into it without hunting for its
+// branch. The thread the draft was opened from wins when it has a worktree;
+// otherwise the project's most recently touched worktree stands in. Archived
+// threads don't compete — the rest of the UI hides them, so their worktrees
+// shouldn't resurface here.
 export function resolvePreviousWorktreeSeed(input: {
   threads: ReadonlyArray<{
+    id: string;
     branch: string | null;
     worktreePath: string | null;
     updatedAt: string;
     archivedAt?: string | null;
   }>;
   currentWorktreePath: string | null;
+  originThreadId?: string | null;
 }): PreviousWorktreeSeed | null {
   let latest: { branch: string | null; worktreePath: string; updatedAt: number } | null = null;
   for (const thread of input.threads) {
@@ -151,6 +155,9 @@ export function resolvePreviousWorktreeSeed(input: {
       (thread.archivedAt ?? null) !== null
     ) {
       continue;
+    }
+    if (thread.id === input.originThreadId) {
+      return { branch: thread.branch, worktreePath: thread.worktreePath };
     }
     const updatedAt = toSortableTimestamp(thread.updatedAt);
     if (updatedAt === null) {

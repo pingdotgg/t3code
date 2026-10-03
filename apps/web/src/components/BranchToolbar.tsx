@@ -1,6 +1,7 @@
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useLocation } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   FolderGit2Icon,
@@ -546,9 +547,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (serverThread !== null && activeWorktreePath !== null);
 
-  // "Previous worktree" hops a draft into the most recently active worktree
-  // of this project — the "keep going where I just was" follow-up flow. Only
-  // drafts can hop; started server threads have their workspace pinned.
+  // "Previous worktree" hops a draft into the worktree of the thread it was
+  // opened from (or the project's most recently active one) — the "keep going
+  // where I just was" follow-up flow. Only drafts can hop; started server
+  // threads have their workspace pinned.
   const canUsePreviousWorktree =
     draftThread !== null && serverThread === null && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = useMemo(
@@ -556,15 +558,22 @@ export const BranchToolbar = memo(function BranchToolbar({
     [canUsePreviousWorktree, activeProjectRef],
   );
   const projectThreads = useThreadShellsForProjectRefs(projectRefsForWorktreeLookup);
+  const draftOrigin = useLocation({ select: (location) => location.state.draftOrigin });
+  // Thread ids are only unique within an environment.
+  const originThreadId =
+    draftOrigin?.environmentId === activeProjectRef?.environmentId
+      ? (draftOrigin?.threadId ?? null)
+      : null;
   const previousWorktreeSeed = useMemo(
     () =>
       canUsePreviousWorktree
         ? resolvePreviousWorktreeSeed({
             threads: projectThreads,
             currentWorktreePath: activeWorktreePath,
+            originThreadId,
           })
         : null,
-    [activeWorktreePath, canUsePreviousWorktree, projectThreads],
+    [activeWorktreePath, canUsePreviousWorktree, originThreadId, projectThreads],
   );
   const previousWorktreeLabel = previousWorktreeSeed
     ? resolvePreviousWorktreeLabel(previousWorktreeSeed)
