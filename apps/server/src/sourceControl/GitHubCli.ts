@@ -330,6 +330,7 @@ export class GitHubCli extends Context.Service<
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly repository: string;
+      readonly host?: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
     readonly createRepository: (input: {
@@ -1019,7 +1020,13 @@ export const make = Effect.gen(function* () {
     getRepositoryCloneUrls: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
+        args: [
+          "repo",
+          "view",
+          input.host === undefined ? input.repository : `${input.host}/${input.repository}`,
+          "--json",
+          "nameWithOwner,url,sshUrl",
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
