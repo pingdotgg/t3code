@@ -262,6 +262,10 @@ File links refer to the environment's machine, including when you connect remote
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
+On Linux with a local environment, right-click a file link and choose **Reveal in
+Files** to select it in your file manager. If your desktop cannot select the file,
+T3 Code opens its containing folder instead.
+
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.
