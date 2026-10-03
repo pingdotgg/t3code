@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { cursorRateModel } from "./cursorUsageReader.ts";
+import type { UsageSpeed } from "./usageTranscripts.ts";
 import {
   cacheSavingsUsd,
   createOverrideRateTable,
@@ -23,11 +24,15 @@ describe("usage pricing", () => {
     outputTokens: 1_000_000,
     reasoningTokens: 500_000,
   };
-  const record = (model: string, reportedCostUsd: number | null = null, fast = false) => ({
+  const record = (
+    model: string,
+    reportedCostUsd: number | null = null,
+    speed: UsageSpeed = "standard",
+  ) => ({
     model,
     totals,
     reportedCostUsd,
-    fast,
+    speed,
   });
 
   it("uses custom token rates ahead of public and provider-reported costs", () => {
@@ -117,18 +122,44 @@ describe("usage pricing", () => {
     const overrides = createOverrideRateTable({
       "claude-opus-5-5": { inputCostPerMillionTokens: 4, outputCostPerMillionTokens: 20 },
     });
-    const cost = (model: string, fast: boolean, custom?: typeof overrides) =>
-      priceUsage(table, record(model, null, fast), custom).costUsd;
+    const cost = (model: string, speed: UsageSpeed, custom?: typeof overrides) =>
+      priceUsage(table, record(model, null, speed), custom).costUsd;
 
-    expect(cost("claude-opus-5-5", true)).toBeCloseTo(2 * cost("claude-opus-5-5", false));
-    expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, true))).toBeCloseTo(
+    expect(cost("claude-opus-5-5", "fast")).toBeCloseTo(2 * cost("claude-opus-5-5", "standard"));
+    expect(cacheSavingsUsd(table, record("claude-opus-5-5", null, "fast"))).toBeCloseTo(
       2 * cacheSavingsUsd(table, record("claude-opus-5-5")),
     );
     // No published fast tier, and custom prices, both stay at the standard rate.
-    expect(cost("claude-fable-5-1", true)).toBe(cost("claude-fable-5-1", false));
-    expect(cost("claude-opus-5-5", true, overrides)).toBe(
-      cost("claude-opus-5-5", false, overrides),
+    expect(cost("claude-fable-5-1", "fast")).toBe(cost("claude-fable-5-1", "standard"));
+    expect(cost("claude-opus-5-5", "fast", overrides)).toBe(
+      cost("claude-opus-5-5", "standard", overrides),
     );
+  });
+
+  it("prices Codex priority and ultrafast requests at their published tier rates", () => {
+    const table = parseRateTable({
+      "gpt-6-astra": {
+        ...rate(1e-5, 1e-6),
+        input_cost_per_token_priority: 2e-5,
+        output_cost_per_token_priority: 1e-4,
+        cache_read_input_token_cost_priority: 2e-6,
+        input_cost_per_token_ultrafast: 6e-5,
+        output_cost_per_token_ultrafast: 3e-4,
+        // No ultrafast cache rate: keeps the standard 10:1 input-to-cache ratio.
+      },
+      "gpt-6-sol": rate(2e-6, 2e-7),
+    });
+    const cost = (model: string, speed: UsageSpeed) =>
+      priceUsage(table, record(model, null, speed)).costUsd;
+    const standard = cost("gpt-6-astra", "standard");
+
+    expect(cost("gpt-6-astra", "fast")).toBeCloseTo(2 * standard);
+    expect(cost("gpt-6-astra", "ultrafast")).toBeCloseTo(6 * standard);
+    expect(cacheSavingsUsd(table, record("gpt-6-astra", null, "ultrafast"))).toBeCloseTo(
+      6 * cacheSavingsUsd(table, record("gpt-6-astra")),
+    );
+    // A tier the model does not publish bills at the standard rate.
+    expect(cost("gpt-6-sol", "ultrafast")).toBe(cost("gpt-6-sol", "standard"));
   });
 
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
