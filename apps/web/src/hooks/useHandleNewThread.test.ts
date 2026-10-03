@@ -266,6 +266,33 @@ describe.each([
     },
   );
 
+  it.each([null, "/remote/project-feature"])(
+    "preserves explicit branch and checkout %s over workspace defaults",
+    async (worktreePath) => {
+      testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
+      const projectRef = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
+      const options = {
+        branch: "feature",
+        worktreePath,
+        envMode: worktreePath ? ("worktree" as const) : ("local" as const),
+        startFromOrigin: false,
+      };
+      const opened = await useNewThreadHandler()(projectRef, options);
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        opened!.draftId,
+        expect.objectContaining(options),
+      );
+      if (draft) {
+        expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
+          draft.draftId,
+          expect.objectContaining(options),
+        );
+      }
+    },
+  );
+
   it.each([true, false])(
     "preserves an explicit start-from-origin choice of %s",
     async (startFromOrigin) => {

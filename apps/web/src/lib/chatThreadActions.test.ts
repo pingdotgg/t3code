@@ -12,6 +12,7 @@ import {
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,
+  startNewThreadOnBranch,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
 
@@ -167,5 +168,48 @@ describe("chatThreadActions", () => {
 
     expect(didStart).toBe(false);
     expect(handleNewThread).not.toHaveBeenCalled();
+  });
+});
+
+describe("startNewThreadOnBranch", () => {
+  it.each([null, "/remote/project-feature"])(
+    "reuses the branch with checkout %s",
+    async (worktreePath) => {
+      const handleNewThread = vi.fn(async () => ({ draftId: "draft" }));
+      const thread = {
+        environmentId: ENVIRONMENT_ID,
+        projectId: PROJECT_ID,
+        branch: "feature",
+        worktreePath,
+      };
+      expect(await startNewThreadOnBranch(thread, handleNewThread)).toBe(true);
+      expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), {
+        branch: "feature",
+        worktreePath,
+        envMode: worktreePath ? "worktree" : "local",
+        startFromOrigin: false,
+      });
+    },
+  );
+  it.each([
+    null,
+    { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID, branch: null, worktreePath: null },
+  ])("does not create a draft without a saved branch", async (thread) => {
+    const handleNewThread = vi.fn(async () => ({}));
+    expect(await startNewThreadOnBranch(thread, handleNewThread)).toBe(false);
+    expect(handleNewThread).not.toHaveBeenCalled();
+  });
+  it("reports when creation does not open a draft", async () => {
+    expect(
+      await startNewThreadOnBranch(
+        {
+          environmentId: ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          branch: "feature",
+          worktreePath: null,
+        },
+        async () => null,
+      ),
+    ).toBe(false);
   });
 });

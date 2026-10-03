@@ -111,7 +111,11 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
-import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import {
+  resolveThreadActionProjectRef,
+  startNewThreadFromContext,
+  startNewThreadOnBranch,
+} from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -1900,6 +1904,21 @@ function OpenCommandPaletteDialog(props: {
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    });
+  }
+
+  if (activeThread?.branch) {
+    const thread = activeThread;
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread-on-branch",
+      searchTerms: ["new thread on", thread.branch ?? "", "branch", "worktree", "checkout"],
+      title: `New thread on ${thread.branch}`,
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.newOnBranch",
+      run: async () => {
+        await startNewThreadOnBranch(thread, handleNewThread);
+      },
     });
   }
 

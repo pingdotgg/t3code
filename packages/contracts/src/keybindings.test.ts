@@ -100,6 +100,12 @@ it.effect("parses keybinding rules", () =>
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
+    const parsedOnBranch = yield* decode(KeybindingRule, {
+      key: "mod+alt+b",
+      command: "chat.newOnBranch",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedOnBranch.command, "chat.newOnBranch");
 
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",

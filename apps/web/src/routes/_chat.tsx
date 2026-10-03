@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
@@ -14,7 +15,7 @@ import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { startNewThreadFromContext, startNewThreadOnBranch } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -92,6 +93,26 @@ function ChatRouteGlobalShortcuts() {
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      if (command === "chat.newOnBranch") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        void settlePromise(() => startNewThreadOnBranch(activeThread, handleNewThread)).then(
+          (result) => {
+            if (result._tag !== "Failure") return;
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not create thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          },
+        );
         return;
       }
 
