@@ -969,7 +969,9 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                       ? "text-foreground"
                       : "text-foreground-subtle"
                   }
-                >{`  ${answerPreview}`}</Text>
+                >
+                  {row.workEntry.questionAnswer ? `  ${answerPreview}` : ` · ${answerPreview}`}
+                </Text>
               ) : null}
             </WorkLogLabel>
           </>

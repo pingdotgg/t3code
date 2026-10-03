@@ -5177,6 +5177,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 previewText
               )}
             </span>
+            {trailingPreview && !answerPreview ? (
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                ·
+              </span>
+            ) : null}
             {trailingPreview ? (
               <span
                 className={cn(
