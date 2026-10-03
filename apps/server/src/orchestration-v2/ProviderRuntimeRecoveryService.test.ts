@@ -671,11 +671,23 @@ it.effect(
     const providerThreadId = ProviderThreadId.make("provider_thread_recovery_cancel");
     const providerTurnId = ProviderTurnId.make("provider_turn_recovery_cancel");
     const providerSessionId = ProviderSessionId.make("provider_session_recovery_cancel");
+    const assistantItemId = TurnItemId.make("turn_item_recovery_cancel_assistant");
+    const reasoningItemId = TurnItemId.make("turn_item_recovery_cancel_reasoning");
+    const commandItemId = TurnItemId.make("turn_item_recovery_cancel");
+    const asyncQuestionNodeId = NodeId.make("node_recovery_cancel_async_question");
+    const asyncQuestionItemId = TurnItemId.make("turn_item_recovery_cancel_async_question");
     let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
       null;
     const projection = {
       thread: { id: threadId },
-      runtimeRequests: [],
+      runtimeRequests: [
+        {
+          id: RuntimeRequestId.make("request_recovery_cancel_async_question"),
+          nodeId: asyncQuestionNodeId,
+          status: "pending",
+          responseCapability: { type: "message" },
+        },
+      ],
       providerSessions: [
         {
           id: providerSessionId,
@@ -716,15 +728,42 @@ it.effect(
           status: "running",
         },
       ],
-      nodes: [{ id: rootNodeId, runId, status: "running" }],
+      nodes: [
+        { id: rootNodeId, runId, status: "running" },
+        { id: asyncQuestionNodeId, runId, status: "waiting" },
+      ],
       subagents: [],
       messages: [{ id: MessageId.make("message_recovery_cancel"), runId, streaming: true }],
       turnItems: [
         {
-          id: TurnItemId.make("turn_item_recovery_cancel"),
+          id: commandItemId,
           runId,
           nodeId: rootNodeId,
+          type: "command_execution",
           status: "running",
+        },
+        {
+          id: assistantItemId,
+          runId,
+          nodeId: rootNodeId,
+          type: "assistant_message",
+          status: "running",
+          streaming: true,
+        },
+        {
+          id: reasoningItemId,
+          runId,
+          nodeId: rootNodeId,
+          type: "reasoning",
+          status: "running",
+          streaming: true,
+        },
+        {
+          id: asyncQuestionItemId,
+          runId,
+          nodeId: asyncQuestionNodeId,
+          type: "user_input_request",
+          status: "waiting",
         },
       ],
     } as unknown as OrchestrationV2ThreadProjection;
@@ -779,12 +818,58 @@ it.effect(
           ["provider-turn.updated", "cancelled"],
           ["message.updated", null],
           ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
+          ["turn-item.updated", "cancelled"],
           ["provider-thread.updated", "idle"],
           ["provider-session.updated", "stopped"],
         ],
       );
       const messageEvent = events.find((event) => event.type === "message.updated");
       assert.isFalse(messageEvent?.type === "message.updated" && messageEvent.payload.streaming);
+      const turnItemEventById = (id: TurnItemId) =>
+        events.find((event) => event.type === "turn-item.updated" && event.payload.id === id);
+      const commandEvent = turnItemEventById(commandItemId);
+      assert.equal(
+        commandEvent?.type === "turn-item.updated" ? commandEvent.payload.status : null,
+        "cancelled",
+      );
+      assert.equal(
+        commandEvent?.type === "turn-item.updated" ? commandEvent.payload.type : null,
+        "command_execution",
+      );
+      assert.isFalse(
+        commandEvent?.type === "turn-item.updated" && "streaming" in commandEvent.payload,
+      );
+      const assistantEvent = turnItemEventById(assistantItemId);
+      assert.equal(
+        assistantEvent?.type === "turn-item.updated" ? assistantEvent.payload.status : null,
+        "cancelled",
+      );
+      assert.equal(
+        assistantEvent?.type === "turn-item.updated" &&
+          assistantEvent.payload.type === "assistant_message"
+          ? assistantEvent.payload.streaming
+          : null,
+        false,
+      );
+      const reasoningEvent = turnItemEventById(reasoningItemId);
+      assert.equal(
+        reasoningEvent?.type === "turn-item.updated" ? reasoningEvent.payload.status : null,
+        "cancelled",
+      );
+      assert.equal(
+        reasoningEvent?.type === "turn-item.updated" && reasoningEvent.payload.type === "reasoning"
+          ? reasoningEvent.payload.streaming
+          : null,
+        false,
+      );
+      assert.isUndefined(turnItemEventById(asyncQuestionItemId));
+      assert.isUndefined(events.find((event) => event.type === "runtime-request.updated"));
+      assert.isUndefined(
+        events.find(
+          (event) => event.type === "node.updated" && event.payload.id === asyncQuestionNodeId,
+        ),
+      );
     }).pipe(Effect.provide(layer));
   },
 );
