@@ -120,32 +120,30 @@ it.effect(
     ),
 );
 
-for (const deadStatus of ["stopped", "error"] as const) {
-  it.effect(
-    `restarts and releases the live session when a newer ${deadStatus} session exists`,
-    () =>
-      Effect.gen(function* () {
-        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-        const thread = projection();
-        const result = yield* service.plan({
-          projection: {
-            ...thread,
-            providerSessions: [
-              ...thread.providerSessions,
-              deadSessionRecord("dead_session", deadStatus),
-            ],
-          },
-          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-        });
-        assert.equal(result.transition.type, "restart_and_resume");
-        assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
-      }).pipe(
-        Effect.provide(
-          testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
-        ),
+it.effect.each(["stopped", "error"] as const)(
+  "restarts and releases the live session when a newer %s session exists",
+  (deadStatus) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const thread = projection();
+      const result = yield* service.plan({
+        projection: {
+          ...thread,
+          providerSessions: [
+            ...thread.providerSessions,
+            deadSessionRecord("dead_session", deadStatus),
+          ],
+        },
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      assert.equal(result.transition.type, "restart_and_resume");
+      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+    }).pipe(
+      Effect.provide(
+        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }),
       ),
-  );
-}
+    ),
+);
 
 it.effect("releases the newest live session, not the newest record overall", () =>
   Effect.gen(function* () {
@@ -275,32 +273,29 @@ it.effect("hands off from a native provider thread after its session detaches", 
   ),
 );
 
-for (const deadStatus of ["stopped", "error"] as const) {
-  it.effect(
-    `applies a model change on next turn when a ${deadStatus} session negotiated model switching`,
-    () =>
-      Effect.gen(function* () {
-        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-        const result = yield* service.plan({
-          projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
-          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
-        });
-        // Static capabilities report no in-session switch, but the dead
-        // record's negotiated capabilities describe the provider: without
-        // them the ACP classification rejects the selection instead of
-        // reopening with the requested model on the next run.
-        assert.equal(result.transition.type, "switch_model_in_session");
-        assert.deepEqual(result.releaseProviderSessionIds, []);
-      }).pipe(
-        Effect.provide(
-          testLayer(
-            { [currentInstanceId]: { continuationKey: "codex:account:primary" } },
-            (input) => Effect.succeed(acpSelectionTransition(input)),
-          ),
+it.effect.each(["stopped", "error"] as const)(
+  "applies a model change on next turn when a %s session negotiated model switching",
+  (deadStatus) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const result = yield* service.plan({
+        projection: deadNativeThreadProjection(deadStatus, CodexProviderCapabilitiesV2),
+        targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+      });
+      // Static capabilities report no in-session switch, but the dead
+      // record's negotiated capabilities describe the provider: without
+      // them the ACP classification rejects the selection instead of
+      // reopening with the requested model on the next run.
+      assert.equal(result.transition.type, "switch_model_in_session");
+      assert.deepEqual(result.releaseProviderSessionIds, []);
+    }).pipe(
+      Effect.provide(
+        testLayer({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+          Effect.succeed(acpSelectionTransition(input)),
         ),
       ),
-  );
-}
+    ),
+);
 
 it.effect("rejects a model change the dead record never negotiated support for", () =>
   Effect.gen(function* () {

@@ -2599,210 +2599,206 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  for (const automatic of [false, true]) {
-    it.effect(
-      `promotes only one queued run after each terminal run (notification: ${automatic})`,
-      () =>
-        Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const eventSink = yield* EventSink.EventSinkV2;
-          const threadId = ThreadId.make(`runtime-layer-serialized-queue-thread-${automatic}`);
+  it.effect.each([false, true])(
+    "promotes only one queued run after each terminal run (notification: %s)",
+    (automatic) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-layer-serialized-queue-thread-${automatic}`);
 
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`runtime-layer-serialized-queue-create-${automatic}`),
-            threadId,
-            projectId: ProjectId.make(`runtime-layer-serialized-queue-project-${automatic}`),
-            title: "Serialized queue",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: process.cwd(),
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`runtime-layer-serialized-queue-active-${automatic}`),
-            threadId,
-            messageId: MessageId.make(`runtime-layer-serialized-queue-active-${automatic}`),
-            text: "Active",
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "start_immediately" },
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: automatic ? "agent" : "user",
-            creationSource: automatic ? "provider" : "web",
-            ...(automatic
-              ? {
-                  notification: {
-                    source: { kind: "monitor" as const },
-                    outcome: "updated" as const,
-                    summary: "Monitor updated",
-                    detail: "Build is green",
-                  },
-                }
-              : {}),
-            commandId: CommandId.make(`runtime-layer-serialized-queue-first-${automatic}`),
-            threadId,
-            messageId: MessageId.make(`runtime-layer-serialized-queue-first-${automatic}`),
-            text: "First queued",
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "queue_after_active" },
-          });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`runtime-layer-serialized-queue-second-${automatic}`),
-            threadId,
-            messageId: MessageId.make(`runtime-layer-serialized-queue-second-${automatic}`),
-            text: "Second queued",
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "queue_after_active" },
-          });
-
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const activeRun = before.runs.find((run) => run.status === "starting");
-          const queuedRuns = before.runs
-            .filter((run) => run.status === "queued")
-            .toSorted((left, right) => left.ordinal - right.ordinal);
-          const firstQueuedRun = queuedRuns[0];
-          const secondQueuedRun = queuedRuns[1];
-          assert.isDefined(activeRun);
-          assert.isDefined(firstQueuedRun);
-          assert.isDefined(secondQueuedRun);
-          assert.isFalse(
-            before.turnItems.some(
-              (item) =>
-                item.type === "user_message" &&
-                (item.messageId === firstQueuedRun.userMessageId ||
-                  item.messageId === secondQueuedRun.userMessageId),
-            ),
-            "queued messages must not exist as turn items before dispatch",
-          );
-
-          const promotedRunIds = yield* Queue.unbounded<RunId>();
-          const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
-          yield* eventSink.stream({ threadId, afterSequence }).pipe(
-            Stream.runForEach((stored) =>
-              stored.event.type === "run.updated" && stored.event.payload.status === "starting"
-                ? Queue.offer(promotedRunIds, stored.event.payload.id)
-                : Effect.void,
-            ),
-            Effect.forkScoped,
-          );
-          yield* Effect.yieldNow;
-
-          const activeCompletedAt = yield* DateTime.now;
-          yield* eventSink.write({
-            events: [
-              {
-                id: EventId.make(`runtime-layer-serialized-queue-active-completed-${automatic}`),
-                type: "run.updated",
-                threadId,
-                runId: activeRun.id,
-                ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
-                providerInstanceId: activeRun.providerInstanceId,
-                occurredAt: activeCompletedAt,
-                payload: {
-                  ...activeRun,
-                  status: "completed",
-                  completedAt: activeCompletedAt,
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-serialized-queue-create-${automatic}`),
+          threadId,
+          projectId: ProjectId.make(`runtime-layer-serialized-queue-project-${automatic}`),
+          title: "Serialized queue",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-serialized-queue-active-${automatic}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-serialized-queue-active-${automatic}`),
+          text: "Active",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: automatic ? "agent" : "user",
+          creationSource: automatic ? "provider" : "web",
+          ...(automatic
+            ? {
+                notification: {
+                  source: { kind: "monitor" as const },
+                  outcome: "updated" as const,
+                  summary: "Monitor updated",
+                  detail: "Build is green",
                 },
-              },
-            ],
-          });
+              }
+            : {}),
+          commandId: CommandId.make(`runtime-layer-serialized-queue-first-${automatic}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-serialized-queue-first-${automatic}`),
+          text: "First queued",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-serialized-queue-second-${automatic}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-serialized-queue-second-${automatic}`),
+          text: "Second queued",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
 
-          assert.equal(yield* Queue.take(promotedRunIds), firstQueuedRun.id);
-          const afterFirstPromotion = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(
-            afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
-            "starting",
-          );
-          assert.equal(
-            afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-            "queued",
-          );
-          const promotedMessageItem = afterFirstPromotion.turnItems.find(
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const activeRun = before.runs.find((run) => run.status === "starting");
+        const queuedRuns = before.runs
+          .filter((run) => run.status === "queued")
+          .toSorted((left, right) => left.ordinal - right.ordinal);
+        const firstQueuedRun = queuedRuns[0];
+        const secondQueuedRun = queuedRuns[1];
+        assert.isDefined(activeRun);
+        assert.isDefined(firstQueuedRun);
+        assert.isDefined(secondQueuedRun);
+        assert.isFalse(
+          before.turnItems.some(
             (item) =>
-              item.runId === firstQueuedRun.id &&
-              (item.type === "user_message" || item.type === "notification"),
-          );
-          assert.isDefined(promotedMessageItem);
-          if (automatic) {
-            assert.equal(promotedMessageItem.type, "notification");
-            assert.equal(
-              afterFirstPromotion.messages.find(
-                (message) => message.id === firstQueuedRun.userMessageId,
-              )?.text,
-              "First queued",
-            );
-            assert.equal(
-              afterFirstPromotion.messages.find(
-                (message) => message.id === firstQueuedRun.userMessageId,
-              )?.notification?.summary,
-              "Monitor updated",
-            );
-            assert.isFalse(
-              afterFirstPromotion.turnItems.some(
-                (item) =>
-                  item.type === "user_message" && item.messageId === firstQueuedRun.userMessageId,
-              ),
-            );
-          } else {
-            assert.equal(promotedMessageItem.type, "user_message");
-          }
-          assert.isTrue(
-            promotedMessageItem.startedAt !== null &&
-              DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
-                DateTime.toEpochMillis(activeCompletedAt),
-          );
+              item.type === "user_message" &&
+              (item.messageId === firstQueuedRun.userMessageId ||
+                item.messageId === secondQueuedRun.userMessageId),
+          ),
+          "queued messages must not exist as turn items before dispatch",
+        );
 
-          const promotedFirst = afterFirstPromotion.runs.find(
-            (run) => run.id === firstQueuedRun.id,
-          );
-          assert.isDefined(promotedFirst);
-          const firstCompletedAt = yield* DateTime.now;
-          yield* eventSink.write({
-            events: [
-              {
-                id: EventId.make(`runtime-layer-serialized-queue-first-completed-${automatic}`),
-                type: "run.updated",
-                threadId,
-                runId: promotedFirst.id,
-                ...(promotedFirst.rootNodeId === null ? {} : { nodeId: promotedFirst.rootNodeId }),
-                providerInstanceId: promotedFirst.providerInstanceId,
-                occurredAt: firstCompletedAt,
-                payload: {
-                  ...promotedFirst,
-                  status: "completed",
-                  completedAt: firstCompletedAt,
-                },
+        const promotedRunIds = yield* Queue.unbounded<RunId>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+              ? Queue.offer(promotedRunIds, stored.event.payload.id)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+
+        const activeCompletedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`runtime-layer-serialized-queue-active-completed-${automatic}`),
+              type: "run.updated",
+              threadId,
+              runId: activeRun.id,
+              ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: activeCompletedAt,
+              payload: {
+                ...activeRun,
+                status: "completed",
+                completedAt: activeCompletedAt,
               },
-            ],
-          });
+            },
+          ],
+        });
 
-          assert.equal(yield* Queue.take(promotedRunIds), secondQueuedRun.id);
-          const afterSecondPromotion = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(yield* Queue.take(promotedRunIds), firstQueuedRun.id);
+        const afterFirstPromotion = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
+          "starting",
+        );
+        assert.equal(
+          afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
+          "queued",
+        );
+        const promotedMessageItem = afterFirstPromotion.turnItems.find(
+          (item) =>
+            item.runId === firstQueuedRun.id &&
+            (item.type === "user_message" || item.type === "notification"),
+        );
+        assert.isDefined(promotedMessageItem);
+        if (automatic) {
+          assert.equal(promotedMessageItem.type, "notification");
           assert.equal(
-            afterSecondPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
-            "completed",
+            afterFirstPromotion.messages.find(
+              (message) => message.id === firstQueuedRun.userMessageId,
+            )?.text,
+            "First queued",
           );
           assert.equal(
-            afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-            "starting",
+            afterFirstPromotion.messages.find(
+              (message) => message.id === firstQueuedRun.userMessageId,
+            )?.notification?.summary,
+            "Monitor updated",
           );
-        }),
-    );
-  }
+          assert.isFalse(
+            afterFirstPromotion.turnItems.some(
+              (item) =>
+                item.type === "user_message" && item.messageId === firstQueuedRun.userMessageId,
+            ),
+          );
+        } else {
+          assert.equal(promotedMessageItem.type, "user_message");
+        }
+        assert.isTrue(
+          promotedMessageItem.startedAt !== null &&
+            DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
+              DateTime.toEpochMillis(activeCompletedAt),
+        );
+
+        const promotedFirst = afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id);
+        assert.isDefined(promotedFirst);
+        const firstCompletedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`runtime-layer-serialized-queue-first-completed-${automatic}`),
+              type: "run.updated",
+              threadId,
+              runId: promotedFirst.id,
+              ...(promotedFirst.rootNodeId === null ? {} : { nodeId: promotedFirst.rootNodeId }),
+              providerInstanceId: promotedFirst.providerInstanceId,
+              occurredAt: firstCompletedAt,
+              payload: {
+                ...promotedFirst,
+                status: "completed",
+                completedAt: firstCompletedAt,
+              },
+            },
+          ],
+        });
+
+        assert.equal(yield* Queue.take(promotedRunIds), secondQueuedRun.id);
+        const afterSecondPromotion = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          afterSecondPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
+          "completed",
+        );
+        assert.equal(
+          afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
+          "starting",
+        );
+      }),
+  );
 
   it.effect.each(["usage_limit", "provider_error"] as const)(
     "handles a queued message after a %s failure",
@@ -2993,112 +2989,106 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  for (const trigger of ["startup", "shutdown"] as const) {
-    it.effect(
-      `preserves and holds queued messages across ${trigger} until explicitly resumed`,
-      () =>
-        Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
-          const threadId = ThreadId.make(`queue-hold-${trigger}`);
+  it.effect.each(["startup", "shutdown"] as const)(
+    "preserves and holds queued messages across %s until explicitly resumed",
+    (trigger) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        const threadId = ThreadId.make(`queue-hold-${trigger}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Recover queue",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        for (const [index, text] of ["Active", "First queued", "Second queued"].entries()) {
           yield* orchestrator.dispatch({
-            type: "thread.create",
+            type: "message.dispatch",
             createdBy: "user",
             creationSource: "web",
-            commandId: CommandId.make(`${threadId}:create`),
+            commandId: CommandId.make(`${threadId}:message:${index}`),
             threadId,
-            projectId: ProjectId.make(`${threadId}:project`),
-            title: "Recover queue",
+            messageId: MessageId.make(`${threadId}:message:${index}`),
+            text,
+            attachments: [],
             modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: process.cwd(),
+            dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
           });
-          for (const [index, text] of ["Active", "First queued", "Second queued"].entries()) {
-            yield* orchestrator.dispatch({
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make(`${threadId}:message:${index}`),
-              threadId,
-              messageId: MessageId.make(`${threadId}:message:${index}`),
-              text,
-              attachments: [],
-              modelSelection,
-              dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
-            });
-          }
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const queued = before.runs.filter((run) => run.status === "queued");
-          assert.equal(queued.length, 2);
-          yield* recovery.reconcile(trigger);
-          // A second boot must preserve the hold, even when only queued work remains.
-          yield* recovery.reconcile("startup");
-          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-          assert.isTrue((yield* maintenance.rebuild).valid);
-          assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
-          const held = yield* orchestrator.getThreadProjection(threadId);
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const queued = before.runs.filter((run) => run.status === "queued");
+        assert.equal(queued.length, 2);
+        yield* recovery.reconcile(trigger);
+        // A second boot must preserve the hold, even when only queued work remains.
+        yield* recovery.reconcile("startup");
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          held.runs.map((run) => run.status),
+          ["cancelled", "queued", "queued"],
+        );
+        for (const run of queued) {
           assert.deepEqual(
-            held.runs.map((run) => run.status),
-            ["cancelled", "queued", "queued"],
+            held.runs.find((row) => row.id === run.id),
+            { ...run, queueHeld: true },
           );
-          for (const run of queued) {
-            assert.deepEqual(
-              held.runs.find((row) => row.id === run.id),
-              { ...run, queueHeld: true },
-            );
-            assert.deepEqual(
-              held.messages.find((row) => row.id === run.userMessageId),
-              before.messages.find((row) => row.id === run.userMessageId),
-            );
-            assert.equal(
-              held.attempts.find((row) => row.id === run.activeAttemptId)?.status,
-              "pending",
-            );
-            assert.equal(held.nodes.find((row) => row.id === run.rootNodeId)?.status, "pending");
-          }
-          // Editing and reordering are allowed without releasing the hold.
-          const first = queued[0]!;
-          const second = queued[1]!;
-          yield* orchestrator.dispatch({
-            type: "queued-run.edit",
-            commandId: CommandId.make(`${threadId}:edit`),
-            threadId,
-            runId: second.id,
-            text: "Edited second message",
-          });
-          yield* orchestrator.dispatch({
-            type: "queued-run.reorder",
-            commandId: CommandId.make(`${threadId}:reorder`),
-            threadId,
-            runId: second.id,
-            beforeRunId: first.id,
-          });
-          assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
-          const resume = {
-            type: "queue.resume" as const,
-            commandId: CommandId.make(`${threadId}:resume`),
-            threadId,
-          };
-          yield* orchestrator.dispatch(resume);
-          yield* orchestrator.dispatch(resume);
-          const resumed = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
-          assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");
-          assert.isFalse(resumed.runs.some((run) => run.status === "queued" && run.queueHeld));
-          assert.equal(
-            resumed.messages.find((row) => row.id === second.userMessageId)?.text,
-            "Edited second message",
+          assert.deepEqual(
+            held.messages.find((row) => row.id === run.userMessageId),
+            before.messages.find((row) => row.id === run.userMessageId),
           );
           assert.equal(
-            resumed.runs.length,
-            3,
-            "resume retries must not duplicate messages or runs",
+            held.attempts.find((row) => row.id === run.activeAttemptId)?.status,
+            "pending",
           );
-        }),
-    );
-  }
+          assert.equal(held.nodes.find((row) => row.id === run.rootNodeId)?.status, "pending");
+        }
+        // Editing and reordering are allowed without releasing the hold.
+        const first = queued[0]!;
+        const second = queued[1]!;
+        yield* orchestrator.dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make(`${threadId}:edit`),
+          threadId,
+          runId: second.id,
+          text: "Edited second message",
+        });
+        yield* orchestrator.dispatch({
+          type: "queued-run.reorder",
+          commandId: CommandId.make(`${threadId}:reorder`),
+          threadId,
+          runId: second.id,
+          beforeRunId: first.id,
+        });
+        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        const resume = {
+          type: "queue.resume" as const,
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
+        };
+        yield* orchestrator.dispatch(resume);
+        yield* orchestrator.dispatch(resume);
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
+        assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");
+        assert.isFalse(resumed.runs.some((run) => run.status === "queued" && run.queueHeld));
+        assert.equal(
+          resumed.messages.find((row) => row.id === second.userMessageId)?.text,
+          "Edited second message",
+        );
+        assert.equal(resumed.runs.length, 3, "resume retries must not duplicate messages or runs");
+      }),
+  );
 
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {

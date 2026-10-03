@@ -1088,8 +1088,9 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  for (const operation of ["request", "notification"] as const) {
-    it.effect(`rejects a ${operation} if the connection ends while its logger is running`, () =>
+  it.effect.each(["request", "notification"] as const)(
+    "rejects a %s if the connection ends while its logger is running",
+    (operation) =>
       Effect.gen(function* () {
         const { stdio, input, output } = yield* makeInMemoryStdio();
         const writeStarted = yield* Deferred.make<void>();
@@ -1127,6 +1128,5 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         assert.strictEqual(failure, error);
         assert.equal(yield* Queue.size(output), 0);
       }),
-    );
-  }
+  );
 });

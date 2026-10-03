@@ -862,8 +862,9 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
   }),
 );
 
-for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard"] as const) {
-  it.effect(`handles ${scenario} before the provider turn starts`, () =>
+it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as const)(
+  "handles %s before the provider turn starts",
+  (scenario) =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread:run-execution-settings-failure");
       const runId = RunId.make("run:run-execution-settings-failure");
@@ -1030,8 +1031,7 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
         assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
       }
     }),
-  );
-}
+);
 
 it.effect("keeps ingesting owned child events after the root turn terminalizes", () =>
   Effect.gen(function* () {
@@ -3149,8 +3149,9 @@ it.effect("emits run_interrupt_result when hard-stop finalizes the active attemp
   }),
 );
 
-for (const status of ["completed", "interrupted", "cancelled", "failed"] as const) {
-  it.effect(`refreshes pull requests after the current root run ${status}`, () =>
+it.effect.each(["completed", "interrupted", "cancelled", "failed"] as const)(
+  "refreshes pull requests after the current root run %s",
+  (status) =>
     Effect.gen(function* () {
       const { observed } = yield* captureRootRunTermination({
         key: `pull-request-refresh:${status}`,
@@ -3162,8 +3163,7 @@ for (const status of ["completed", "interrupted", "cancelled", "failed"] as cons
         "pull-requests-refreshed",
       ]);
     }),
-  );
-}
+);
 
 it.effect("does not refresh pull requests for auxiliary or stale provider terminals", () =>
   Effect.gen(function* () {

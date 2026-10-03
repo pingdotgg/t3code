@@ -3,4 +3,6 @@
 # Keep entries sorted alphabetically. Only the trusted upstream main copy applies.
 github:juliusmarminge
 github:maria-rcks
+github:markflorkowski
 github:t3dotgg
+github:Yash-Singh1

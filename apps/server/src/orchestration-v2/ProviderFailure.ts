@@ -36,6 +36,8 @@ function causeMessage(cause: unknown): string | undefined {
       switch ((cause as Record<string, unknown>)._tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
+        case "ClaudeBackgroundWorkBlocksQueryReplacementError":
+          return stringField(cause, "message");
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
         case "ProviderAdapterTurnStartError":

@@ -478,6 +478,49 @@ describe("threadRuntimeCanArchive", () => {
 });
 
 describe("presentPendingBackgroundWork", () => {
+  it.each(["Subagent:", "Subagent:   "])(
+    "falls back to the subagent noun when %s has no display name",
+    (description) => {
+      const presentation = presentPendingBackgroundWork([
+        { taskId: "unnamed", kind: "subagent", description },
+      ]);
+
+      expect(presentation?.title).toBe("Waiting on a subagent");
+      expect(presentation?.items[0]?.label).toBe("subagent");
+    },
+  );
+
+  it.each([
+    "/root/luna_window_properties",
+    "Subagent: /root/luna_window_properties",
+    "/root/parent/luna_window_properties",
+  ])("uses the subagent display name for %s", (description) => {
+    const childThreadId = ThreadId.make("thread:luna");
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "luna", kind: "subagent", description, childThreadId },
+    ]);
+
+    expect(presentation).toEqual({
+      title: "Waiting on subagent Luna Window Properties",
+      items: [{ taskId: "luna", kind: "subagent", label: "Luna Window Properties", childThreadId }],
+    });
+  });
+
+  it("formats subagent names in a mixed roster and preserves command descriptions", () => {
+    const presentation = presentPendingBackgroundWork([
+      { taskId: "cmd", kind: "command", description: "/root/run_tests" },
+      { taskId: "luna", kind: "subagent", description: "/root/luna_window_properties" },
+      { taskId: "review", kind: "subagent", description: "Review src/math.ts" },
+    ]);
+
+    expect(presentation?.title).toBe("Waiting on 2 subagents and 1 command");
+    expect(presentation?.items.map((item) => item.label)).toEqual([
+      "Luna Window Properties",
+      "Review src/math.ts",
+      "/root/run_tests",
+    ]);
+  });
+
   it("names a single piece of work by kind", () => {
     expect(
       presentPendingBackgroundWork([

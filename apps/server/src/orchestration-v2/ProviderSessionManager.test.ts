@@ -52,6 +52,7 @@ import {
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
 const TestDatabaseLayer = SqlitePersistenceMemory;
@@ -383,7 +384,14 @@ function makeTestLayer(input: {
     }),
   );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
-    Layer.provide(Layer.mergeAll(configuredEventSinkLayer, IdAllocator.layer, TestStoresLayer)),
+    Layer.provide(
+      Layer.mergeAll(
+        configuredEventSinkLayer,
+        IdAllocator.layer,
+        TestStoresLayer,
+        ThreadCommandExecutor.layer,
+      ),
+    ),
   );
   return Layer.mergeAll(
     TestStoresLayer,
@@ -3007,8 +3015,9 @@ it.effect(
     }),
 );
 
-for (const workspaceState of ["missing", "file"] as const) {
-  it.effect(`rejects a ${workspaceState} workspace before opening a provider session`, () =>
+it.effect.each(["missing", "file"] as const)(
+  "rejects a %s workspace before opening a provider session",
+  (workspaceState) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const root = yield* fileSystem.makeTempDirectoryScoped();
@@ -3053,8 +3062,7 @@ for (const workspaceState of ["missing", "file"] as const) {
         );
       }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(NodeServices.layer)),
-  );
-}
+);
 
 it.effect(
   "rejects a deleted workspace before reusing a live session without changing its state",

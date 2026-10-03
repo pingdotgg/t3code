@@ -58,7 +58,9 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
-      const executablePath = path.join(tempDir, "fake-claude.mjs");
+      const executablePath = yield* path.fromFileUrl(
+        new URL("./testing/ClaudeCapabilitiesProbe.fixture.mjs", import.meta.url),
+      );
       const invocationPath = path.join(tempDir, "invocation.json");
       // The probe aborts the SDK without awaiting the child's exit, and on
       // Windows a directory that is still some process's cwd cannot be
@@ -79,61 +81,6 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           }).catch(() => undefined),
         ),
       );
-
-      yield* fs.writeFileString(
-        executablePath,
-        [
-          "#!/usr/bin/env node",
-          'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
-          'import { createInterface } from "node:readline";',
-          "const args = process.argv.slice(2);",
-          'const mcpConfigIndex = args.indexOf("--mcp-config");',
-          "const rawMcpConfig = mcpConfigIndex >= 0 ? args[mcpConfigIndex + 1] : undefined;",
-          "let mcpConfig;",
-          "if (rawMcpConfig) {",
-          '  const contents = existsSync(rawMcpConfig) ? readFileSync(rawMcpConfig, "utf8") : rawMcpConfig;',
-          "  try { mcpConfig = JSON.parse(contents); } catch { mcpConfig = contents; }",
-          "}",
-          "writeFileSync(process.env.T3_PROBE_INVOCATION_PATH, JSON.stringify({",
-          "  args,",
-          "  cwd: process.cwd(),",
-          "  connectorEnv: process.env.ENABLE_CLAUDEAI_MCP_SERVERS,",
-          "  mcpConfig,",
-          "}));",
-          "const lines = createInterface({ input: process.stdin });",
-          'lines.on("line", (line) => {',
-          "  const message = JSON.parse(line);",
-          '  if (message.type !== "control_request") return;',
-          "  const reply = (response) => process.stdout.write(JSON.stringify({",
-          '    type: "control_response",',
-          '    response: { subtype: "success", request_id: message.request_id, response },',
-          '  }) + "\\n");',
-          '  if (message.request?.subtype === "initialize") {',
-          "    reply({",
-          '      commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
-          "      agents: [],",
-          '      output_style: "default",',
-          '      available_output_styles: ["default"],',
-          "      models: [],",
-          '      account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
-          "    });",
-          "  }",
-          "  // The probe follows initialize with get_usage on the same process.",
-          '  if (message.request?.subtype === "get_usage") {',
-          "    reply({",
-          "      session: {},",
-          '      subscription_type: "pro",',
-          "      rate_limits_available: true,",
-          '      rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },',
-          "      behaviors: null,",
-          "    });",
-          "  }",
-          "});",
-          "setInterval(() => {}, 1_000);",
-          "",
-        ].join("\n"),
-      );
-      yield* fs.chmod(executablePath, 0o755);
 
       const capabilities = yield* probeClaudeCapabilities(
         decodeClaudeSettings({ binaryPath: executablePath }),

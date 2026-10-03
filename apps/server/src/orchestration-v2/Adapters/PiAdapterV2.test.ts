@@ -589,8 +589,9 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  for (const invalidReplacement of ["veto", "same identity"] as const) {
-    it.effect(`rejects a replacement with ${invalidReplacement}`, () =>
+  it.effect.each(["veto", "same identity"] as const)(
+    "rejects a replacement with %s",
+    (invalidReplacement) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime } = yield* openRuntime(fake);
@@ -617,8 +618,7 @@ describe("PiAdapterV2", () => {
         yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
         assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  );
 
   it.effect("retires a timed-out lifecycle process before a late switch can race replacement", () =>
     Effect.gen(function* () {
@@ -983,90 +983,85 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  for (const historical of [false, true]) {
-    it.effect(
-      `natively forks ${historical ? "a historical turn" : "the latest turn"} into an independent session`,
-      () =>
-        Effect.gen(function* () {
-          const fake = yield* makeFakePi;
-          const forkFake = yield* makeFakePi;
-          const forkFile = "/fake/forked.jsonl";
-          const { runtime, takeEvent } = yield* openRuntime(
-            fake,
-            "default",
-            THREAD_ID,
-            SESSION_ID,
-            forkFake,
-          );
-          const source = yield* runtime.ensureThread({
-            threadId: THREAD_ID,
-            modelSelection: modelSelection("default"),
-            runtimePolicy,
-          });
-          const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
-            id: ProviderTurnId.make(`turn-${ordinal}`),
-            providerThreadId: source.id,
-            nodeId: NodeId.make(`node-${ordinal}`),
-            runAttemptId: null,
-            nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
-            ordinal,
-            status: "completed",
-            startedAt: null,
-            completedAt: null,
-          });
-          forkFake.queueState({ sessionFile: forkFile });
-          fake.queueState({ sessionFile: forkFile });
-          const target = ThreadId.make("fork-target");
-          const forked = yield* runtime.forkThread({
-            sourceProviderThread: source,
-            sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
-            providerTurnId: turn(1).id,
-            targetThreadId: target,
-          });
-          assert.equal(forked.appThreadId, target);
-          assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
-          assert.notEqual(forked.id, source.id);
-          assert.equal(source.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
-          const args = forkFake.lastSpawn().args;
-          assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
-          assert.include(args, "--no-extensions");
-          assert.include(args, "--no-tools");
-          assert.notInclude(args, "--no-session");
-          assert.deepEqual(
-            forkFake
-              .allRequests()
-              .filter((request) => request.type === "fork")
-              .map((request) => request.entryId),
-            historical ? ["u2"] : [],
-          );
-          assert.isFalse(
-            fake
-              .allRequests()
-              .some((request) => request.type === "fork" || request.type === "clone"),
-          );
-          // ProviderTurnStartService adopts the fork into its pending row.
-          const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
-          yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
-          yield* fake.emit({ type: "agent_start" });
-          yield* fake.emit({ type: "agent_settled" });
-          const updated = yield* takeEvent(
-            (event) =>
-              event.type === "provider_thread.updated" &&
-              event.providerThread.appThreadId === target,
-          );
-          assert.isTrue(
-            updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
-          );
-          yield* takeEvent((event) => event.type === "turn.terminal");
-          yield* runtime.resumeThread({ providerThread: adopted });
-          assert.equal(
-            fake.allRequests().findLast((request) => request.type === "switch_session")
-              ?.sessionPath,
-            forkFile,
-          );
-        }).pipe(Effect.scoped, Effect.provide(testLayer)),
-    );
-  }
+  it.effect.each([
+    { historical: false, label: "the latest turn" },
+    { historical: true, label: "a historical turn" },
+  ])("natively forks $label into an independent session", ({ historical }) =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked.jsonl";
+      const { runtime, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        forkFake,
+      );
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`turn-${ordinal}`),
+        providerThreadId: source.id,
+        nodeId: NodeId.make(`node-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
+        ordinal,
+        status: "completed",
+        startedAt: null,
+        completedAt: null,
+      });
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const target = ThreadId.make("fork-target");
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: source,
+        sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
+        providerTurnId: turn(1).id,
+        targetThreadId: target,
+      });
+      assert.equal(forked.appThreadId, target);
+      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+      assert.notEqual(forked.id, source.id);
+      assert.equal(source.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
+      assert.include(args, "--no-extensions");
+      assert.include(args, "--no-tools");
+      assert.notInclude(args, "--no-session");
+      assert.deepEqual(
+        forkFake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId),
+        historical ? ["u2"] : [],
+      );
+      assert.isFalse(
+        fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
+      );
+      // ProviderTurnStartService adopts the fork into its pending row.
+      const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
+      yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const updated = yield* takeEvent(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.appThreadId === target,
+      );
+      assert.isTrue(
+        updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
+      );
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* runtime.resumeThread({ providerThread: adopted });
+      assert.equal(
+        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath,
+        forkFile,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 
   it.effect("observes official subagent results without inventing child threads", () =>
     Effect.gen(function* () {
