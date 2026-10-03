@@ -654,15 +654,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   ),
                 );
             }
-            // Uninterruptible: the transaction above has already committed, so
-            // every event below is durable whether or not this fiber survives.
-            // An interrupt mid-loop would strand committed events that nothing
-            // re-publishes — the read model would advance past events no live
-            // subscriber received, and only a full snapshot resync would repair
-            // it. Publication is pure in-memory fan-out, so atomicity costs
-            // nothing and cannot wedge shutdown. Projection reconciliation
-            // deliberately stays interruptible: it is slow, SQL-backed, and
-            // carries its own durable repair path.
+            // Committed, so an interrupt mid-loop would strand events nothing
+            // re-publishes. Pure in-memory fan-out, so atomicity is free.
             yield* Effect.uninterruptible(
               Effect.gen(function* () {
                 for (const [index, event] of committedCommand.committedEvents.entries()) {
@@ -994,19 +987,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     );
     const command = envelope.command;
     const cleanupPath = cleanupWorktreePath(command, readModel.threads);
-    // The global worktree lock protects checkouts whose on-disk state is being
-    // created, removed, or handed between threads. Admitting a turn start does
-    // none of those: it claims workspace ownership (SQLite plus the filesystem
-    // ledger) and runs read-only Git commands. Holding the single global permit
-    // for it serialized every thread's turn start behind every other thread's,
-    // which was the dominant `thread.turn.start` commit latency under load.
-    //
-    // Admission is still serialized against checkout removal, and by a
-    // *different* primitive: turn starts take the per-checkout `withCheckout`
-    // reservation below, and removal takes both that reservation and this
-    // global lock. A removal already holding either one blocks admission.
-    // `thread.meta.update` and `thread.queued-turn.create` also target a
-    // checkout without mutating it, so they stay unlocked like turn starts.
+    // Admission claims ownership and runs read-only Git, so taking the single
+    // global permit for it serialized every thread's start behind every other's
+    // — the dominant commit latency under load. Removal still takes both this
+    // lock and the per-checkout reservation below, and reserving a cleanup now
+    // takes that reservation too, so either blocks admission.
     const mutatesCheckoutOnDisk =
       command.type === "thread.archive" ||
       command.type === "thread.unarchive" ||

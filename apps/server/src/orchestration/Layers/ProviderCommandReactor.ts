@@ -1142,13 +1142,9 @@ const make = Effect.gen(function* () {
         threadId: event.payload.threadId,
         session: {
           ...sessionBeforeTurn.session,
-          // A terminal status here describes the *previous* turn — a stop leaves
-          // `interrupted`, a failed turn leaves `error`. Keeping it while starting
-          // the next turn made every reader conclude the new start had already
-          // resolved: the invariant's busy check, the projector, and the snapshot
-          // all treat terminal-with-no-active-turn as settled, so the start was
-          // retired before the provider was ever called and a duplicate send got
-          // through. This is the common send-after-stop path.
+          // A terminal status here describes the *previous* turn, and every
+          // reader treats terminal-with-no-active-turn as settled — so keeping it
+          // retired this start before the provider was called.
           status: isTerminalOrchestrationSessionStatus(sessionBeforeTurn.session.status)
             ? "starting"
             : sessionBeforeTurn.session.status,

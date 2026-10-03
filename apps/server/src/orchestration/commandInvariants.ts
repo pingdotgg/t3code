@@ -122,33 +122,14 @@ export function requireThread(input: {
   );
 }
 
-/**
- * Busy means "a turn start is accepted or running", per the shared
- * `deriveThreadBusyState` so this cannot drift from what clients offer.
- *
- * This previously also compared the newest user message against the newest
- * completed turn. That timestamp stood in for the acceptance-to-acknowledgement
- * window and was wrong in both directions: a manual stop can share a message's
- * millisecond with its terminal turn, while a forked thread or a
- * checkpoint-less turn leaves no completed turn to compare against. The second
- * case wedged the thread permanently, rejecting every later start while the UI
- * showed it idle. See `packages/shared/src/threadBusyState.ts`.
- */
 export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
   return deriveThreadBusyState(thread) !== "idle";
 }
 
 /**
- * Whether a checkout may be rewritten under this thread — auto-pull, checkout
- * restore, and similar Git mutations.
- *
- * This is deliberately *broader* than {@link threadHasInFlightTurn}. A thread
- * whose newest user message postdates its newest completed turn has unanswered
- * work whose turn never started, so pulling the branch under it would move the
- * ground out from under that work even though the thread is not busy enough to
- * block a new turn start. That question is about file-system safety, not about
- * turn admission, which is why the timestamp comparison lives here instead of
- * in the invariant.
+ * Deliberately broader than {@link threadHasInFlightTurn}: unanswered work blocks
+ * a checkout rewrite even when it does not block a new turn start. File-system
+ * safety, not turn admission.
  */
 export function threadCheckoutHasUnsettledWork(thread: OrchestrationThread): boolean {
   if (threadHasInFlightTurn(thread)) {
@@ -158,20 +139,17 @@ export function threadCheckoutHasUnsettledWork(thread: OrchestrationThread): boo
   if (!latestUserMessage) {
     return false;
   }
-  // A thread with no completed turn at all has unresolved work whenever a user
-  // message is waiting on it. The old code excluded this by also accepting a
-  // matching `provider.turn.start.failed`, but that made a failed start with no
-  // completed turn block checkout rewrites forever; a thread that never got a
-  // turn is exactly the case where an unanswered message is the signal.
+  // Excluding a failed start here blocked checkout rewrites forever on a thread
+  // that never got a turn, which is exactly when an unanswered message matters.
   if (thread.latestTurn?.completedAt == null) {
     return true;
   }
   return latestUserMessage.createdAt > thread.latestTurn.completedAt;
 }
 
-// Shared by the probes below: they ask different questions but must agree on
-// which messages count as "the provider never got a turn". Takes the message the
-// caller already resolved rather than re-scanning `thread.messages`.
+// Shared by the probes below, which must agree on which messages count as "the
+// provider never got a turn". Takes the caller's resolved message rather than
+// re-scanning `thread.messages`.
 function hasFailedTurnStart(
   thread: OrchestrationThread,
   latestUserMessage: OrchestrationMessage | undefined,

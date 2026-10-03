@@ -810,14 +810,9 @@ export const OrchestrationLatestTurn = Schema.Struct({
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
 /**
- * A `thread.turn.start` that has been accepted but whose provider turn has not
- * been acknowledged yet. During this window neither `latestTurn` nor the
- * session reports work, so this is the only authoritative busy signal — see
- * `deriveThreadBusyState` in `@t3tools/shared/threadBusyState`.
- *
- * Set only by `thread.turn-start-requested`. Imported or forked history
- * carries messages but never this intent, so a forked thread is immediately
- * sendable.
+ * A `thread.turn.start` accepted but not yet acknowledged — the only busy signal
+ * in that window. Set only by `thread.turn-start-requested`, never by imported or
+ * forked history, so a forked thread is immediately sendable.
  */
 export const OrchestrationPendingTurnStart = Schema.Struct({
   messageId: MessageId,
@@ -910,11 +905,7 @@ export const OrchestrationThread = Schema.Struct({
   validationRequest: Schema.optionalKey(Schema.NullOr(ValidationRequest)),
   validationRun: Schema.optionalKey(Schema.NullOr(ValidationRun)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
-  /**
-   * Accepted-but-unacknowledged turn start. Authoritative during the
-   * acknowledgement window (see `deriveThreadBusyState`); absent or null
-   * whenever no start is outstanding.
-   */
+  /** See {@link OrchestrationPendingTurnStart}. */
   pendingTurnStart: Schema.optionalKey(Schema.NullOr(OrchestrationPendingTurnStart)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

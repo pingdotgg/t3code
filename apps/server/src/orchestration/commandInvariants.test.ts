@@ -233,9 +233,6 @@ describe("commandInvariants", () => {
   });
 
   it("treats a message with no accepted turn start as idle", () => {
-    // Regression: the old heuristic compared the newest user message against the
-    // newest completed turn, so an offline draft or a fork left the thread
-    // permanently "in flight" and every later start was rejected.
     const thread = readModel.threads[0]!;
     const withMessage = {
       ...thread,
@@ -256,8 +253,6 @@ describe("commandInvariants", () => {
   });
 
   it("keeps a thread with no completed turn sendable, as after a provider fork", () => {
-    // A provider-forked thread imports messages but never records a turn, so it
-    // has no latestTurn to compare against. Deleting it as wedged was the bug.
     const thread = readModel.threads[0]!;
     expect(
       threadHasInFlightTurn({
@@ -286,8 +281,6 @@ describe("commandInvariants", () => {
       messageId: MessageId.make("msg-pending"),
       requestedAt: now,
     };
-    // Accepted, not yet acknowledged: no turn, session idle. Still busy, so a
-    // double send is rejected instead of starting a second turn.
     expect(threadHasInFlightTurn({ ...thread, pendingTurnStart: pendingStart })).toBe(true);
     expect(
       threadHasInFlightTurn({
@@ -307,7 +300,6 @@ describe("commandInvariants", () => {
         ],
       }),
     ).toBe(true);
-    // Acknowledged: running turn, no pending start.
     expect(
       threadHasInFlightTurn({
         ...thread,
@@ -331,8 +323,6 @@ describe("commandInvariants", () => {
 
   it("stays busy through an interrupt that arrives before acknowledgement", () => {
     const thread = readModel.threads[0]!;
-    // The provider has not returned a turn id yet, so cancellation intent has
-    // nowhere else to live; releasing busy here would let a second turn start.
     expect(
       threadHasInFlightTurn({
         ...thread,
@@ -354,8 +344,7 @@ describe("commandInvariants", () => {
           attachments: [],
           turnId: null,
           streaming: false,
-          // Shares its millisecond with the terminal turn: a manual stop can do
-          // that, so message-vs-completion ordering cannot decide busy.
+          // A manual stop can share its millisecond with the terminal turn.
           createdAt: now,
           updatedAt: now,
         },

@@ -168,24 +168,15 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
 
 /**
- * Whether a queued follow-up must hold rather than send *or steer*.
- *
- * A running turn is not blocking: the drain steers an active turn instead of
- * starting a new one, so that case must still reach the send path.
- *
- * What genuinely blocks is a turn that is accepted but not yet acknowledged. The
- * start is authoritative from the moment the server commits it, but there is no
- * turn id yet, so the message can be neither steered nor accepted — sending
- * draws exactly the "already has a turn in flight" rejection this state exists to
- * avoid. `starting` blocks for the same reason: the session is coming up and no
- * turn exists to steer.
+ * A running turn is steerable, so it still reaches the send path. What blocks is
+ * an accepted-but-unacknowledged start: there is no turn id yet, so the message
+ * can be neither steered nor sent.
  */
 export function isThreadOutboxThreadBusy(thread: {
   readonly session?: { readonly status: string; readonly activeTurnId?: string | null } | null;
   readonly pendingTurnStart?: OrchestrationPendingTurnStart | null;
 }): boolean {
   if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
-    // Steerable: the drain turns this into a steer, not a new start.
     return false;
   }
   return (
@@ -216,10 +207,8 @@ export function resolveThreadOutboxDeliveryAction(input: {
   if (!input.threadExists) {
     return input.shellStatus === "live" ? "remove" : "wait";
   }
-  // `threadBusy` is the caller's signal that this thread has an accepted turn
-  // that cannot be steered yet. Honoured here rather than only forwarded: a
-  // thread busy for that reason must wait for the acknowledgement, otherwise the
-  // send is rejected and the message falls into the restore path.
+  // An unsteerable accepted start must wait: sending draws the duplicate
+  // rejection and falls into the restore path.
   if (input.environmentConnected && !input.threadBusy) {
     return "send";
   }

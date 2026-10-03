@@ -1433,10 +1433,8 @@ function ChatViewBody(
   );
   const hasPendingTurnStart = activeThread?.pendingTurnStart != null;
   const rawPhase = derivePhase(activeThread?.session ?? null, activeThread?.pendingTurnStart);
-  // A session can stay `running` after its turn has settled, which is what the
-  // downgrade below exists to correct. An accepted-but-unacknowledged start also
-  // derives as `running`, but that is authoritative rather than stale, so it must
-  // survive the downgrade or the composer offers a send the server rejects.
+  // The downgrade corrects a stale `running` session, so an unacknowledged start
+  // must survive it.
   const phase: SessionPhase = sessionActivelyWorking
     ? "running"
     : rawPhase === "running" && !hasPendingTurnStart

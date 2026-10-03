@@ -36,19 +36,9 @@ export interface GitWorktreeIdentity {
 }
 
 /**
- * Canonicalizes `worktreePath` and reports its Git top level from one pass.
- *
- * Workspace admission needs both values for the same path, and reaching them
- * separately canonicalizes the path twice before running `git rev-parse` once.
- * Resolving them together lets a caller that already holds an identity reuse it
- * instead of re-deriving it for the same decision.
- *
- * Nothing is cached across decisions. Identity has to stay authoritative: a
- * checkout that was removed, recreated, or handed to another thread must be
- * re-read from Git, and a memo keyed on a path cannot tell a replaced checkout
- * from the one it replaced. Cache invalidation on every cleanup, recreation, and
- * handoff would leave a stale-identity window open, so the only reuse here is
- * within a single admission.
+ * Both values from one pass, so admission stops canonicalizing the path twice.
+ * Deliberately not cached across decisions: a memo keyed on a path cannot tell a
+ * replaced checkout from the one it replaced.
  */
 export async function resolveGitWorktreeIdentity(
   worktreePath: string,

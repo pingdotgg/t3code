@@ -1533,14 +1533,7 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
-/**
- * Session status alone cannot decide "busy": a `thread.turn.start` is
- * authoritative from the moment it commits, but the session only reports
- * `running` once the provider acknowledges. Reading only the session made the
- * composer offer a start the server rejects with "already has a turn in
- * flight". Delegates to the shared derivation so this cannot drift from the
- * orchestration invariant.
- */
+/** Delegates to the shared derivation so this cannot drift from the invariant. */
 export function derivePhase(
   session: ThreadSession | null,
   pendingTurnStart?: OrchestrationPendingTurnStart | null,

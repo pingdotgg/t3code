@@ -358,10 +358,6 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
-    // Snapshot hydration must carry the pending start too, not just the live
-    // event path. Without it a reconnecting client or second browser rebuilt its
-    // thread from a snapshot with no pending start and offered a send the server
-    // rejects as a duplicate.
     pendingTurnStart: thread.pendingTurnStart ?? null,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
@@ -511,9 +507,7 @@ function toThreadShell(thread: Thread): ThreadShell {
 function toThreadTurnState(thread: Thread): ThreadTurnState {
   return {
     latestTurn: thread.latestTurn,
-    // Must round-trip through turn state: it is the only place the pending start
-    // is persisted, so dropping it here left the derived thread permanently
-    // un-pending and silently disabled the composer block.
+    // The only place the pending start is persisted.
     pendingTurnStart: thread.pendingTurnStart ?? null,
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
@@ -741,8 +735,6 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
-    // Otherwise the memoized write is skipped and a pending start that starts or
-    // retires never reaches the derived thread.
     pendingTurnStartsEqual(left.pendingTurnStart ?? null, right.pendingTurnStart ?? null) &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
   );
@@ -2264,8 +2256,6 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
-        // Mirrors the server read model so the composer treats the thread as
-        // busy during the acceptance-to-acknowledgement window.
         pendingTurnStart: {
           messageId: event.payload.messageId,
           requestedAt: event.payload.createdAt,
@@ -2328,11 +2318,7 @@ function applyEnvironmentOrchestrationEvent(
             event.payload.session,
             thread.pendingSourceProposedPlan,
           ),
-          // Shared with the projector, its SQL projection, and both client
-          // reducers. Retiring only on acknowledgement left the web thread
-          // holding a pending start the server had already resolved when the
-          // provider died before acknowledging, which kept the composer blocked
-          // until a snapshot resync.
+          // Shared with the projector, its SQL projection, and both reducers.
           ...(sessionResolvesPendingTurnStart(event.payload.session)
             ? { pendingTurnStart: null }
             : {}),
@@ -2572,8 +2558,6 @@ function applyEnvironmentOrchestrationEvent(
             exceededActivityLimit = allActivities.length > MAX_THREAD_ACTIVITIES;
           }
 
-          // A failed start resolves the pending start, so the composer offers
-          // send again instead of queueing behind a start that will never run.
           const failureMessageId =
             nextActivity.payload != null &&
             typeof nextActivity.payload === "object" &&

@@ -305,14 +305,9 @@ export const makeClientCommandDispatcher = ({
           )
         : dispatchEffect;
 
-    // Both client transports funnel through here, so this is the one place that
-    // can explain a rejection in server.log. Without it a rejected command shows
-    // up as an "unexplained error" the caller has to correlate by hand, which is
-    // what made a spurious turn-start rejection hard to diagnose.
-    //
-    // Correlation fields only. The reason is logged by class rather than by
-    // message: invariant details embed user content (thread and message ids,
-    // workspace paths), and this log is not the place for that.
+    // The one place both client transports pass through, so a rejection is
+    // explainable in server.log. Reason by class only: invariant details embed
+    // user content.
     return dispatched.pipe(
       Effect.tapError((error) =>
         Effect.logWarning("client command rejected", {

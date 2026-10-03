@@ -1040,20 +1040,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  /**
-   * Accepted-but-unacknowledged turn starts, one row per thread. Backs
-   * `pendingTurnStart` in both the full read model and the shell so a restarted
-   * server and a reconnecting client agree with the live projector about whether
-   * a start is still outstanding.
-   */
-  // Gated on the NOT EXISTS above: the placeholder row is durable, but
-  // a start that already resolved must not be reported as outstanding. Deletion
-  // happens on the events that resolve a start, and bootstrap skips historical
-  // events by design, so a placeholder written before this branch shipped — or
-  // stranded by a process death between commit and the resolving event — would
-  // otherwise wedge the thread permanently. Repairing at read time covers both
-  // without a migration, and matches the live projector because both sides ask the
-  // same question of the same session state.
+  /** One row per thread, backing `pendingTurnStart` in the read model and shell. */
+  // Gated on the NOT EXISTS below: deletion runs on the events that resolve a
+  // start and bootstrap skips historical events, so a row stranded by a process
+  // death between commit and that event would otherwise wedge the thread.
   const pendingTurnStartRowColumns = sql`
   pending.pending_message_id AS "pendingMessageId",
   pending.requested_at AS "requestedAt",

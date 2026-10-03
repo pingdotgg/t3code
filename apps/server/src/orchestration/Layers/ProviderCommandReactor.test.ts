@@ -576,11 +576,8 @@ describe("ProviderCommandReactor", () => {
   ): Promise<void> {
     const completedAt = input.completedAt ?? new Date().toISOString();
     const turnId = input.turnId ?? asTurnId("turn-1");
-    // A real turn is acknowledged by the provider before it completes: the
-    // session reports `running` with the active turn. That acknowledgement is
-    // what retires the accepted-but-unacknowledged start, so a harness that only
-    // completes the diff leaves the thread permanently busy and every later start
-    // looks like a double send.
+    // A real turn is acknowledged before it completes, and that acknowledgement
+    // is what retires the pending start.
     {
       const readModel = await Effect.runPromise(harness.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -624,8 +621,6 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    // ...and then `turn.completed` releases the session back to ready, which is
-    // what makes the thread sendable again.
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     await Effect.runPromise(
@@ -3353,10 +3348,8 @@ describe("ProviderCommandReactor", () => {
     ).toBe(true);
   });
   it("rejects a duplicate start when the session carries a previous terminal status", async () => {
-    // After an interrupt the session is `interrupted` with no active turn. The
-    // next start used to keep that terminal status, so every reader concluded the
-    // new start had already resolved and the duplicate below was accepted. This
-    // is the common send-after-stop path.
+    // The send-after-stop path: the session still carries the previous turn's
+    // terminal status, so the duplicate below used to be accepted.
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -3382,7 +3375,6 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     await completeTurnForNextStart(harness, { commandId: "cmd-terminal-complete" });
 
-    // Leave the session in the terminal state a stop or failed turn produces.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.session.set",

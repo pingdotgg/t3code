@@ -883,8 +883,7 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             latestTurn: latestTurnFromSession(thread, session),
-            // Shared with the SQL projection and both client reducers so a
-            // pending start cannot be retired by one and still held by another.
+            // Shared with the SQL projection and both client reducers.
             ...(sessionResolvesPendingTurnStart(session) ? { pendingTurnStart: null } : {}),
             updatedAt: event.occurredAt,
           }),
@@ -1300,14 +1299,9 @@ export function projectEvent(
             return nextBase;
           }
 
-          // A failed start resolves the pending start, so the thread is sendable
-          // again. Only the failure for the pending message clears it — a failure
-          // for an older message must not unblock a newer start.
-          //
-          // `payload` is Schema.Unknown, so it can be null or undefined. Narrow
-          // before reading it: this runs for every appended activity, and an
-          // unguarded property access threw a TypeError that failed the whole
-          // orchestration transaction instead of recording the activity.
+          // Only the pending message's own failure clears it. `payload` is
+          // Schema.Unknown and this runs for every appended activity, so an
+          // unguarded read threw a TypeError that failed the whole transaction.
           const pending = thread.pendingTurnStart;
           const activityPayload = payload.activity.payload;
           const failureMessageId =

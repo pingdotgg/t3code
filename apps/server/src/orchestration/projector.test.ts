@@ -2016,8 +2016,7 @@ describe("orchestration projector", () => {
       requestedAt,
     });
 
-    // A session transition that does not acknowledge a turn keeps it pending:
-    // `ready` and `starting` are pre-acknowledgement states.
+    // Pre-acknowledgement statuses keep it pending.
     const stillPending = await Effect.runPromise(
       projectEvent(
         requested,
@@ -2045,7 +2044,6 @@ describe("orchestration projector", () => {
     );
     expect(stillPending.threads[0]?.pendingTurnStart).not.toBeNull();
 
-    // Provider acknowledgement retires it.
     const acknowledged = await Effect.runPromise(
       projectEvent(
         stillPending,
@@ -2074,7 +2072,6 @@ describe("orchestration projector", () => {
     expect(acknowledged.threads[0]?.pendingTurnStart).toBeNull();
     expect(acknowledged.threads[0]?.latestTurn?.state).toBe("running");
 
-    // A fresh start that fails resolves, so the thread is sendable again.
     const retried = await Effect.runPromise(
       projectEvent(
         acknowledged,
@@ -2151,8 +2148,7 @@ describe("orchestration projector", () => {
     );
     expect(requested.threads[0]?.pendingTurnStart?.messageId).toBe("message-unacked");
 
-    // The provider process died before reporting a turn. The session goes
-    // terminal with no active turn, so the start must not stay pending forever.
+    // Died before reporting a turn: terminal with no active turn.
     const died = await Effect.runPromise(
       projectEvent(
         requested,
@@ -2183,9 +2179,7 @@ describe("orchestration projector", () => {
   });
 
   it("records activities whose payload is null without throwing", async () => {
-    // `OrchestrationThreadActivity.payload` is Schema.Unknown, so null is valid.
-    // Reading `.messageId` off it unguarded threw a TypeError inside projectEvent,
-    // which failed the whole orchestration transaction and lost the activity.
+    // `payload` is Schema.Unknown, so null is valid; reading it unguarded threw.
     const threadId = "thread-null-activity-payload";
     const model = await createThreadModel(threadId, "2026-03-01T12:00:00.000Z");
     const appended = await Effect.runPromise(

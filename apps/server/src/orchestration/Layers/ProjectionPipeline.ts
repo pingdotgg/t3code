@@ -1090,22 +1090,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : {}),
             createdAt: event.payload.activity.createdAt,
           });
-          // Provider acknowledgement deletes the placeholder, but a start that
-          // fails or is cancelled never gets one. Without this the row survives
-          // the turn and every later read reports a permanently pending start.
-          // Must match the in-memory projector's rule exactly: only the failure
-          // for the pending message clears it, or a late failure for an older
-          // message would delete a newer start's row and report the thread idle
-          // while the invariant still considers it busy.
+          // Must match the projector exactly: a late failure for an older
+          // message must not delete a newer start's row.
           if (event.payload.activity.kind === "provider.turn.start.failed") {
             const pending = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
               threadId: event.payload.threadId,
             });
-            // Identical narrowing to the in-memory projector: `payload` is
-            // Schema.Unknown and may be null, so an optional chain still threw,
-            // and a non-string `messageId` made this projection keep a row the
-            // projector deleted — the snapshot reported idle while the invariant
-            // still considered the thread busy.
+            // Matches the projector's narrowing. `payload` is Schema.Unknown,
+            // so it may be null; a non-string `messageId` would desync the two.
             const activityPayload = event.payload.activity.payload;
             const failureMessageId =
               typeof activityPayload === "object" &&
@@ -1362,8 +1354,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
-            // Resolves a start that was never acknowledged, so the placeholder
-            // does not outlive the turn and report the thread permanently pending.
             // Must match the in-memory projector exactly.
             if (turnId === null && sessionResolvesPendingTurnStart(event.payload.session)) {
               yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
