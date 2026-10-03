@@ -104,6 +104,10 @@ make your first commit before pushing.
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
 messages, review titles, and descriptions from your changes.
 
+An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
+If its badge is missing because several remotes hold that branch, set the branch's upstream to
+the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
+
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
