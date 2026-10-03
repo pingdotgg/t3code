@@ -422,6 +422,13 @@ export const ProviderRegistryLive = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
+    // Orders workspace scans by when they started, so a rescan cannot replace
+    // what a scan that started after it already committed. Per instance, the
+    // newest committed start for each cwd, capped like the snapshots are.
+    const scanStartsRef = yield* Ref.make(0);
+    const committedScanStartsRef = yield* Ref.make<
+      ReadonlyMap<ProviderInstanceId, ReadonlyMap<string, number>>
+    >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -663,6 +670,146 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* instance.snapshot.resolveMaintenance(options);
     });
 
+    // Defined before `syncLiveSources`: the rescan consumers it forks may
+    // already have a report waiting and must find these initialized.
+    const updateProviders = (
+      update: (providers: ReadonlyArray<ServerProvider>) => ReadonlyArray<ServerProvider>,
+    ) =>
+      Ref.modify(providersRef, (currentProviders) => {
+        const nextProviders = update(currentProviders);
+        return [[currentProviders, nextProviders] as const, nextProviders];
+      }).pipe(
+        Effect.tap(([previousProviders, nextProviders]) =>
+          haveProvidersChanged(previousProviders, nextProviders)
+            ? PubSub.publish(changesPubSub, nextProviders)
+            : Effect.void,
+        ),
+        Effect.map(([, nextProviders]) => nextProviders),
+      );
+
+    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+      readonly fresh?: boolean;
+      // Scan again although the cwd has a snapshot, without the machine-wide
+      // work of a fresh scan. For a change the instance itself reported.
+      readonly rescan?: boolean;
+    }) {
+      const forced = input.fresh === true || input.rescan === true;
+      // Fresh scans drop other instances' snapshots for this cwd first, so a
+      // composer on one of them scans again on next use, even when this
+      // instance is gone or cannot be scanned.
+      if (input.fresh) {
+        yield* updateProviders((providers) =>
+          providers.map((candidate) =>
+            candidate.instanceId === input.instanceId
+              ? candidate
+              : dropProviderWorkspaceSnapshot(candidate, input.cwd),
+          ),
+        );
+      }
+      const providers = yield* Ref.get(providersRef);
+      const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
+      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+      const scannedFrom = workspaceSnapshotOf(provider);
+      if (!provider || !provider.enabled || (!forced && scannedFrom)) {
+        return providers;
+      }
+      const instance = yield* instanceRegistry.getInstance(input.instanceId);
+      if (!instance?.snapshotForCwd) return providers;
+      // Snapshots go to every client and are capped, so a rescan only
+      // refreshes a cwd a client asked about: one it holds a snapshot for, or
+      // whose first scan is still running and may have read the folder too
+      // early. Sessions of threads nobody has open add nothing.
+      if (
+        input.rescan === true &&
+        !scannedFrom &&
+        !(yield* Ref.get(workspaceRefreshesRef)).get(instance)?.has(input.cwd)
+      ) {
+        return providers;
+      }
+      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+        const current = refreshes.get(instance);
+        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        const next = new Map(refreshes);
+        next.set(instance, new Set(current).add(input.cwd));
+        return [true, next] as const;
+      });
+      // A forced scan never joins a running one, which may predate the change.
+      if (!claimed && !forced) return yield* Ref.get(providersRef);
+      const startedAt = yield* Ref.updateAndGet(scanStartsRef, (count) => count + 1);
+      // Fresh scans also re-read the machine snapshot: Claude's plugin
+      // commands come from it, not from the cwd scan.
+      const refreshMachineSnapshot = input.fresh
+        ? (instance.invalidateCaches ?? Effect.void).pipe(
+            Effect.andThen(refreshInstance(input.instanceId)),
+          )
+        : Effect.void;
+      return yield* refreshMachineSnapshot.pipe(
+        Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.flatMap((scopedSnapshot) =>
+          scopedSnapshot.status === "error"
+            ? Ref.get(providersRef)
+            : instanceRegistry.getInstance(input.instanceId).pipe(
+                Effect.flatMap((currentInstance) => {
+                  if (currentInstance !== instance) return Ref.get(providersRef);
+                  // Write only if the cwd's snapshot did not change during the
+                  // scan. A session event or another scan that landed first is newer.
+                  // A rescan starts after the change it reports, so a scan that
+                  // started earlier and landed first is the stale one. It still
+                  // loses to a scan that started after it and landed first.
+                  return Ref.modify(committedScanStartsRef, (committed) => {
+                    const forInstance = committed.get(input.instanceId);
+                    const latest = forInstance?.get(input.cwd) ?? 0;
+                    const cwds = new Map(forInstance);
+                    cwds.delete(input.cwd);
+                    cwds.set(input.cwd, Math.max(latest, startedAt));
+                    for (const oldest of cwds.keys()) {
+                      if (cwds.size <= MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER) break;
+                      cwds.delete(oldest);
+                    }
+                    return [
+                      input.rescan === true && latest > startedAt,
+                      new Map(committed).set(input.instanceId, cwds),
+                    ] as const;
+                  }).pipe(
+                    Effect.flatMap((superseded) =>
+                      superseded
+                        ? Ref.get(providersRef)
+                        : updateProviders((currentProviders) =>
+                            currentProviders.map((candidate) =>
+                              candidate.instanceId === input.instanceId &&
+                              (input.rescan === true ||
+                                Equal.equals(workspaceSnapshotOf(candidate), scannedFrom))
+                                ? upsertProviderWorkspaceSnapshot(
+                                    candidate,
+                                    input.cwd,
+                                    scopedSnapshot,
+                                  )
+                                : candidate,
+                            ),
+                          ),
+                    ),
+                  );
+                }),
+              ),
+        ),
+        Effect.ensuring(
+          claimed
+            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
+                const next = new Map(refreshes);
+                const current = new Set(next.get(instance));
+                current.delete(input.cwd);
+                if (current.size) next.set(instance, current);
+                else next.delete(instance);
+                return next;
+              })
+            : Effect.void,
+        ),
+      );
+    });
+
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -749,6 +896,15 @@ export const ProviderRegistryLive = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              refreshWorkspaceSnapshot({
+                instanceId: instance.instanceId,
+                cwd,
+                rescan: true,
+              }).pipe(Effect.ignoreCause({ log: true })),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -879,100 +1035,6 @@ export const ProviderRegistryLive = Layer.effect(
         cause: Cause.pretty(cause),
       });
       return yield* Ref.get(providersRef);
-    });
-
-    const updateProviders = (
-      update: (providers: ReadonlyArray<ServerProvider>) => ReadonlyArray<ServerProvider>,
-    ) =>
-      Ref.modify(providersRef, (currentProviders) => {
-        const nextProviders = update(currentProviders);
-        return [[currentProviders, nextProviders] as const, nextProviders];
-      }).pipe(
-        Effect.tap(([previousProviders, nextProviders]) =>
-          haveProvidersChanged(previousProviders, nextProviders)
-            ? PubSub.publish(changesPubSub, nextProviders)
-            : Effect.void,
-        ),
-        Effect.map(([, nextProviders]) => nextProviders),
-      );
-
-    const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly cwd: string;
-      readonly fresh?: boolean;
-    }) {
-      // Fresh scans drop other instances' snapshots for this cwd first, so a
-      // composer on one of them scans again on next use, even when this
-      // instance is gone or cannot be scanned.
-      if (input.fresh) {
-        yield* updateProviders((providers) =>
-          providers.map((candidate) =>
-            candidate.instanceId === input.instanceId
-              ? candidate
-              : dropProviderWorkspaceSnapshot(candidate, input.cwd),
-          ),
-        );
-      }
-      const providers = yield* Ref.get(providersRef);
-      const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
-        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
-      const scannedFrom = workspaceSnapshotOf(provider);
-      if (!provider || !provider.enabled || (!input.fresh && scannedFrom)) {
-        return providers;
-      }
-      const instance = yield* instanceRegistry.getInstance(input.instanceId);
-      if (!instance?.snapshotForCwd) return providers;
-      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
-        const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
-        const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
-        return [true, next] as const;
-      });
-      // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
-      // Fresh scans also re-read the machine snapshot: Claude's plugin
-      // commands come from it, not from the cwd scan.
-      const refreshMachineSnapshot = input.fresh
-        ? (instance.invalidateCaches ?? Effect.void).pipe(
-            Effect.andThen(refreshInstance(input.instanceId)),
-          )
-        : Effect.void;
-      return yield* refreshMachineSnapshot.pipe(
-        Effect.andThen(instance.snapshotForCwd(input.cwd)),
-        Effect.flatMap((scopedSnapshot) =>
-          scopedSnapshot.status === "error"
-            ? Ref.get(providersRef)
-            : instanceRegistry.getInstance(input.instanceId).pipe(
-                Effect.flatMap((currentInstance) => {
-                  if (currentInstance !== instance) return Ref.get(providersRef);
-                  // Write only if the cwd's snapshot did not change during the
-                  // scan. A session event or another scan that landed first is newer.
-                  return updateProviders((currentProviders) =>
-                    currentProviders.map((candidate) =>
-                      candidate.instanceId === input.instanceId &&
-                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                        ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
-                        : candidate,
-                    ),
-                  );
-                }),
-              ),
-        ),
-        Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
-        ),
-      );
     });
 
     return {

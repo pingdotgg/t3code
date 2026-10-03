@@ -27,23 +27,34 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
   EnvironmentId,
+  MessageId,
+  NodeId,
   type ClaudeSettings,
   type CodexSettings,
   type CursorSettings,
   type GrokSettings,
   type OpenCodeSettings,
+  ProjectId,
   ProviderDriverKind,
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
 } from "@t3tools/contracts";
 import { HostProcessPlatform, isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -52,6 +63,8 @@ import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
@@ -821,5 +834,147 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "keeps a Claude session start reported before anyone listens and ends with the instance",
+    () =>
+      Effect.gen(function* () {
+        const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+        const processed = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+        const queryRunner = ClaudeAgentSdkQueryRunner.of({
+          allocateSessionId: Effect.succeed("native-thread-workspace-rescan"),
+          open: () =>
+            Effect.succeed({
+              // The next pull happens after the adapter handled the previous frame.
+              messages: Stream.fromQueue(sdkMessages).pipe(
+                Stream.flatMap((message) =>
+                  Stream.make(message).pipe(
+                    Stream.concat(
+                      Stream.fromEffect(
+                        Effect.suspend(() => {
+                          const handled = processed.get(message);
+                          return handled === undefined
+                            ? Effect.void
+                            : Deferred.succeed(handled, undefined);
+                        }),
+                      ).pipe(Stream.drain),
+                    ),
+                  ),
+                ),
+              ),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused forkSession"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        });
+        const claudeId = ProviderInstanceId.make("claude_rescan");
+        const claudeConfig = {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: false,
+            config: makeClaudeConfig({}),
+          },
+        } satisfies ProviderInstanceConfigMap;
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [ClaudeDriver],
+          configMap: claudeConfig,
+        }).pipe(Effect.provideService(ClaudeAgentSdkQueryRunner, queryRunner));
+        const instance = yield* registry.getInstance(claudeId);
+        expect(instance?.workspaceRescans).toBeDefined();
+
+        const cwd = "/synthetic/worktree";
+        const threadId = ThreadId.make("thread-workspace-rescan");
+        const modelSelection = { instanceId: claudeId, model: "claude-sonnet-4-6" } as const;
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        const runtime = yield* instance!.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-workspace-rescan"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const attemptId = RunAttemptId.make("attempt-workspace-rescan");
+        yield* runtime.startTurn({
+          appThread: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project-workspace-rescan"),
+            title: "Workspace rescan",
+            providerInstanceId: claudeId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          threadId,
+          runId: RunId.make("run-workspace-rescan"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId,
+          rootNodeId: NodeId.make("node-workspace-rescan"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-workspace-rescan"),
+            text: "Start.",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const init = {
+          type: "system",
+          subtype: "init",
+          cwd,
+          session_id: "native-thread-workspace-rescan",
+          uuid: "00000000-0000-4000-8000-000000000801",
+        } as unknown as SDKMessage;
+        const handled = yield* Deferred.make<void>();
+        processed.set(init, handled);
+        yield* Queue.offer(sdkMessages, init);
+        yield* Deferred.await(handled);
+
+        // The registry has not subscribed to the stream yet, so the report
+        // must have been kept for it.
+        const first = yield* instance!.workspaceRescans!.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.timeout("5 seconds"),
+        );
+        expect(first).toEqual([cwd]);
+
+        // Removing the instance closes its scope, which ends the stream.
+        const listener = yield* instance!.workspaceRescans!.pipe(Stream.runDrain, Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* mutator.reconcile({});
+        yield* Fiber.join(listener).pipe(Effect.timeout("5 seconds"));
+      }).pipe(Effect.provide(testLayer)),
   );
 });

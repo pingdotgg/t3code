@@ -35,6 +35,7 @@ import type {
 import type * as Effect from "effect/Effect";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
@@ -77,6 +78,12 @@ export interface ProviderInstance {
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
+  /**
+   * Workspaces whose skills may have changed since the registry scanned them,
+   * such as a session whose startup hooks have just finished. The registry
+   * rescans each emitted cwd through `snapshotForCwd`.
+   */
+  readonly workspaceRescans?: Stream.Stream<string>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   /** Invalidate T3-owned discovery caches before an explicit provider refresh. */
   readonly invalidateCaches?: Effect.Effect<void>;

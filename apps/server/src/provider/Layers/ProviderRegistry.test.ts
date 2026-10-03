@@ -9,8 +9,10 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -39,6 +41,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -1759,6 +1762,518 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
           }).pipe(Effect.provide(runtimeServices));
         }),
+      );
+
+      it.effect(
+        "rescans a held workspace when its instance reports a started session",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const fileSystem = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const root = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: "t3-provider-registry-session-rescan-",
+              });
+              const homePath = path.join(root, "claude-home");
+              const workspace = path.join(root, "worktree");
+              yield* fileSystem.makeDirectory(workspace, { recursive: true });
+              const driver = ProviderDriverKind.make("claudeAgent");
+              const instanceId = ProviderInstanceId.make("claudeAgent");
+              const machineProvider = {
+                instanceId,
+                driver,
+                status: "ready",
+                enabled: true,
+                installed: true,
+                auth: { status: "authenticated" },
+                checkedAt: "2026-06-10T00:00:00.000Z",
+                version: "1.0.0",
+                models: [],
+                slashCommands: [],
+                skills: [],
+              } as const satisfies ServerProvider;
+              const cacheInvalidations = yield* Ref.make(0);
+              const rescans = yield* Queue.unbounded<string>();
+              const instance: ProviderInstance = {
+                instanceId,
+                driverKind: driver,
+                continuationIdentity: {
+                  driverKind: driver,
+                  continuationKey: "claudeAgent:instance:claudeAgent",
+                },
+                displayName: undefined,
+                enabled: true,
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driver,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Effect.succeed(machineProvider),
+                  refresh: Effect.succeed(machineProvider),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                snapshotForCwd: (cwd) =>
+                  discoverClaudeSkills({ homePath }, cwd).pipe(
+                    Effect.map((skills) => ({ ...machineProvider, skills })),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
+                workspaceRescans: Stream.fromQueue(rescans),
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              };
+              const registryChanges = yield* PubSub.unbounded<void>();
+              const scope = yield* Scope.make();
+              yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+              const runtimeServices = yield* Layer.build(
+                ProviderRegistryLive.pipe(
+                  Layer.provideMerge(
+                    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                      getInstance: (requestedId) =>
+                        Effect.succeed(requestedId === instanceId ? instance : undefined),
+                      listInstances: Effect.succeed([instance]),
+                      listUnavailable: Effect.succeed([]),
+                      streamChanges: Stream.fromPubSub(registryChanges),
+                      subscribeChanges: PubSub.subscribe(registryChanges),
+                    }),
+                  ),
+                  Layer.provideMerge(
+                    ServerConfig.layerTest(process.cwd(), {
+                      prefix: "t3-provider-registry-session-rescan-",
+                    }),
+                  ),
+                  Layer.provideMerge(NodeServices.layer),
+                ),
+              ).pipe(Scope.provide(scope));
+
+              yield* Effect.gen(function* () {
+                const registry = yield* ProviderRegistry.ProviderRegistry;
+                const workspaceSkills = () =>
+                  registry.getProviders.pipe(
+                    Effect.map((providers) =>
+                      providers[0]?.workspaceSnapshots
+                        ?.find((snapshot) => snapshot.cwd === workspace)
+                        ?.skills.map((skill) => skill.name),
+                    ),
+                  );
+
+                // The composer scans as soon as the worktree exists, before a
+                // SessionStart hook has linked the project skills in.
+                yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: workspace });
+                assert.deepStrictEqual(yield* workspaceSkills(), []);
+                const skillDir = path.join(workspace, ".claude", "skills", "deploy");
+                yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+                yield* fileSystem.writeFileString(
+                  path.join(skillDir, "SKILL.md"),
+                  [
+                    "---",
+                    "name: deploy",
+                    "description: Deploy the app.",
+                    "---",
+                    "",
+                    "# Deploy",
+                  ].join("\n"),
+                );
+                yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: workspace });
+                assert.deepStrictEqual(yield* workspaceSkills(), []);
+
+                const update = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+                yield* Effect.yieldNow;
+                yield* Queue.offer(rescans, workspace);
+                assert.strictEqual((yield* Fiber.join(update))._tag, "Some");
+                assert.deepStrictEqual(yield* workspaceSkills(), ["deploy"]);
+                // A session start rescans the one cwd; it is not the explicit
+                // refresh that re-reads the machine snapshot.
+                assert.strictEqual(yield* Ref.get(cacheInvalidations), 0);
+              }).pipe(Effect.provide(runtimeServices));
+            }).pipe(Effect.provide(NodeServices.layer)),
+          ),
+        { timeout: 10_000 },
+      );
+
+      it.effect("lets a rescan overwrite the snapshot of an older scan that committed first", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const skillsBefore = [
+            { name: "before", path: "/workspace/before/SKILL.md", enabled: true },
+          ];
+          const skillsAfter = [{ name: "after", path: "/workspace/after/SKILL.md", enabled: true }];
+          // The first scan to start reads the folder before the hooks ran, the
+          // second after. Each waits for its own release, so the older one can
+          // commit first.
+          const scans = yield* Ref.make(0);
+          const gates = [yield* Deferred.make<void>(), yield* Deferred.make<void>()] as const;
+          const started = yield* Queue.unbounded<number>();
+          const rescans = yield* Queue.unbounded<string>();
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(machineProvider),
+              refresh: Effect.succeed(machineProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: () =>
+              Effect.gen(function* () {
+                const index = (yield* Ref.getAndUpdate(scans, (count) => count + 1)) as 0 | 1;
+                yield* Queue.offer(started, index);
+                yield* Deferred.await(gates[index]);
+                return { ...machineProvider, skills: index === 0 ? skillsBefore : skillsAfter };
+              }),
+            workspaceRescans: Stream.fromQueue(rescans),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const registryChanges = yield* PubSub.unbounded<void>();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requestedId) =>
+                    Effect.succeed(requestedId === instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.fromPubSub(registryChanges),
+                  subscribeChanges: PubSub.subscribe(registryChanges),
+                }),
+              ),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-rescan-race-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const composerScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            assert.strictEqual(yield* Queue.take(started), 0);
+            yield* Queue.offer(rescans, "/workspace");
+            assert.strictEqual(yield* Queue.take(started), 1);
+            const rescanned = yield* registry.streamChanges.pipe(
+              Stream.filter(
+                (providers) =>
+                  providers[0]?.workspaceSnapshots?.some((s) => s.skills === skillsAfter) === true,
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(gates[0], undefined);
+            yield* Fiber.join(composerScan);
+            yield* Deferred.succeed(gates[1], undefined);
+            assert.strictEqual((yield* Fiber.join(rescanned))._tag, "Some");
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+              [skillsAfter],
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("does not scan a rescan for a cwd no client asked about", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const scannedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+          const rescans = yield* Queue.unbounded<string>();
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(machineProvider),
+              refresh: Effect.succeed(machineProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: (cwd) =>
+              Ref.updateAndGet(scannedCwds, (cwds) => [...cwds, cwd]).pipe(
+                // Each scan differs, so every commit is a visible change.
+                Effect.map((cwds) => ({
+                  ...machineProvider,
+                  skills: [{ name: `scan-${cwds.length}`, path: `${cwd}/SKILL.md`, enabled: true }],
+                })),
+              ),
+            workspaceRescans: Stream.fromQueue(rescans),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const registryChanges = yield* PubSub.unbounded<void>();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requestedId) =>
+                    Effect.succeed(requestedId === instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.fromPubSub(registryChanges),
+                  subscribeChanges: PubSub.subscribe(registryChanges),
+                }),
+              ),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-unrequested-rescan-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/requested" });
+            // Sessions of threads nobody has open report their cwd too; those
+            // must not add entries that evict a composer's snapshot.
+            const updated = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+            yield* Effect.yieldNow;
+            yield* Queue.offer(rescans, "/unrequested");
+            yield* Queue.offer(rescans, "/requested");
+            assert.strictEqual((yield* Fiber.join(updated))._tag, "Some");
+            assert.deepStrictEqual(yield* Ref.get(scannedCwds), ["/requested", "/requested"]);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.cwd),
+              ["/requested"],
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      // A Claude-shaped instance whose workspace scans follow a script: each
+      // call takes the next entry, waits for its gate, then returns its skills.
+      const makeScriptedWorkspaceRegistry = Effect.fn("makeScriptedWorkspaceRegistry")(function* (
+        script: ReadonlyArray<{
+          readonly skills: string;
+          readonly gate?: Deferred.Deferred<void>;
+        }>,
+        rescans: Queue.Queue<string>,
+      ) {
+        const driver = ProviderDriverKind.make("claudeAgent");
+        const instanceId = ProviderInstanceId.make("claudeAgent");
+        const machineProvider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const next = yield* Ref.make(0);
+        const started = yield* Queue.unbounded<number>();
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: "claudeAgent:instance:claudeAgent",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(machineProvider),
+            refresh: Effect.succeed(machineProvider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: (cwd) =>
+            Effect.gen(function* () {
+              const index = yield* Ref.getAndUpdate(next, (count) => count + 1);
+              const step = script[index];
+              if (step === undefined) return yield* Effect.die(`unscripted scan ${index}`);
+              yield* Queue.offer(started, index);
+              if (step.gate) yield* Deferred.await(step.gate);
+              return {
+                ...machineProvider,
+                skills: [
+                  { name: step.skills, path: `${cwd}/${step.skills}/SKILL.md`, enabled: true },
+                ],
+              };
+            }),
+          workspaceRescans: Stream.fromQueue(rescans),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const registryChanges = yield* PubSub.unbounded<void>();
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistryLive.pipe(
+            Layer.provideMerge(
+              Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                getInstance: (requestedId) =>
+                  Effect.succeed(requestedId === instanceId ? instance : undefined),
+                listInstances: Effect.succeed([instance]),
+                listUnavailable: Effect.succeed([]),
+                streamChanges: Stream.fromPubSub(registryChanges),
+                subscribeChanges: PubSub.subscribe(registryChanges),
+              }),
+            ),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-scripted-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+        const heldSkills = (cwd: string) =>
+          Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const providers = yield* registry.getProviders;
+            return providers[0]?.workspaceSnapshots
+              ?.find((snapshot) => snapshot.cwd === cwd)
+              ?.skills.map((item) => item.name);
+          });
+        return { instanceId, runtimeServices, started, heldSkills };
+      });
+
+      it.effect(
+        "keeps a fresh scan that started after a rescan when the rescan finishes last",
+        () =>
+          Effect.gen(function* () {
+            const rescanGate = yield* Deferred.make<void>();
+            const freshGate = yield* Deferred.make<void>();
+            const rescans = yield* Queue.unbounded<string>();
+            const { instanceId, runtimeServices, started, heldSkills } =
+              yield* makeScriptedWorkspaceRegistry(
+                [
+                  { skills: "other-initial" },
+                  { skills: "initial" },
+                  { skills: "rescan", gate: rescanGate },
+                  { skills: "fresh", gate: freshGate },
+                  { skills: "other-rescan" },
+                ],
+                rescans,
+              );
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/other" });
+              yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+              yield* Queue.offer(rescans, "/workspace");
+              assert.strictEqual(yield* Queue.takeN(started, 3).pipe(Effect.map((n) => n[2])), 2);
+              // The fresh scan starts after the rescan and commits first.
+              const fresh = yield* registry
+                .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace", fresh: true })
+                .pipe(Effect.forkChild);
+              assert.strictEqual(yield* Queue.take(started), 3);
+              yield* Deferred.succeed(freshGate, undefined);
+              yield* Fiber.join(fresh);
+              assert.deepStrictEqual(yield* heldSkills("/workspace"), ["fresh"]);
+              yield* Deferred.succeed(rescanGate, undefined);
+              // Reports are handled in order, so once /other was rescanned the
+              // rescan of /workspace has finished.
+              const settled = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+              yield* Effect.yieldNow;
+              yield* Queue.offer(rescans, "/other");
+              yield* Fiber.join(settled);
+              assert.deepStrictEqual(yield* heldSkills("/other"), ["other-rescan"]);
+              assert.deepStrictEqual(yield* heldSkills("/workspace"), ["fresh"]);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+      );
+
+      it.effect(
+        "serves a session start reported before the registry finished building",
+        () =>
+          Effect.gen(function* () {
+            const rescans = yield* Queue.unbounded<string>();
+            yield* Queue.offer(rescans, "/workspace");
+            const { instanceId, runtimeServices, heldSkills } =
+              yield* makeScriptedWorkspaceRegistry(
+                [{ skills: "initial" }, { skills: "rescan" }],
+                rescans,
+              );
+            yield* Effect.gen(function* () {
+              const registry = yield* ProviderRegistry.ProviderRegistry;
+              yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+              const rescanned = yield* registry.streamChanges.pipe(
+                Stream.runHead,
+                Effect.forkChild,
+              );
+              yield* Effect.yieldNow;
+              yield* Queue.offer(rescans, "/workspace");
+              assert.strictEqual((yield* Fiber.join(rescanned))._tag, "Some");
+              assert.deepStrictEqual(yield* heldSkills("/workspace"), ["rescan"]);
+            }).pipe(Effect.provide(runtimeServices));
+          }),
+        { timeout: 10_000 },
       );
 
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
