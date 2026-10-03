@@ -10,6 +10,48 @@ export function resolveThreadDetailsCardDensity(
   return "essential";
 }
 
+export interface ThreadDetailsContentHeights {
+  readonly full: number;
+  readonly compact: number;
+}
+
+export interface ThreadDetailsContentMeasurement {
+  readonly key: string;
+  /** Stable per-density baselines, used only to choose a density. */
+  readonly heights: ThreadDetailsContentHeights;
+  /**
+   * Latest measured full natural height. This is the card's real footprint when
+   * open, so obstacles that avoid the card use it rather than a density
+   * baseline, which stays at the collapsed minimum.
+   */
+  readonly latestFull: number;
+}
+
+/**
+ * Density is chosen from the smallest height each density has measured for the
+ * current key. Watching the latest measurement instead would let the bounded
+ * Previous-agents lineage, once expanded, grow the full height past the card,
+ * fold it to compact, and unmount the section the user just opened. The list
+ * scrolls inside the card rather than lowering the density, and the card still
+ * folds below its collapsed content. The latest full height is kept separately
+ * for the card's reported footprint, which must clear the real expanded card
+ * rather than a density baseline and survives folding.
+ */
+export function recordThreadDetailsContentHeight(
+  current: ThreadDetailsContentMeasurement,
+  key: string,
+  density: "full" | "compact",
+  measured: number,
+): ThreadDetailsContentMeasurement {
+  const sameKey = current.key === key;
+  const heights = sameKey ? current.heights : { full: 0, compact: 0 };
+  const baseline = heights[density];
+  const value = baseline === 0 ? measured : Math.min(baseline, measured);
+  const latestFull = density === "full" ? measured : sameKey ? current.latestFull : 0;
+  if (sameKey && baseline === value && current.latestFull === latestFull) return current;
+  return { key, heights: { ...heights, [density]: value }, latestFull };
+}
+
 /**
  * The card pins to the top right while a readable chat lane fits beside it.
  * The chat canvas decides whether chat moves over to make room.

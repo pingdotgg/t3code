@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  recordThreadDetailsContentHeight,
   resolveThreadDetailsCardDensity,
   resolveThreadDetailsCardLayout,
+  type ThreadDetailsContentMeasurement,
 } from "./threadDetailsCardLayout";
 
 const lane = { padding: 20, minChatWidth: 640 };
@@ -86,5 +88,67 @@ describe("card content fitting", () => {
   it("measures unseen content before deciding to fold it", () => {
     expect(resolveThreadDetailsCardDensity(300, { full: 0, compact: 0 })).toBe("full");
     expect(resolveThreadDetailsCardDensity(300, { full: 570, compact: 0 })).toBe("compact");
+  });
+});
+
+describe("card content measurement", () => {
+  const key = "environment:thread:280";
+  const measure = (
+    current: ThreadDetailsContentMeasurement,
+    heights: { full?: number; compact?: number },
+  ) => {
+    let next = current;
+    if (heights.full !== undefined)
+      next = recordThreadDetailsContentHeight(next, key, "full", heights.full);
+    if (heights.compact !== undefined)
+      next = recordThreadDetailsContentHeight(next, key, "compact", heights.compact);
+    return next;
+  };
+  const empty = (): ThreadDetailsContentMeasurement => ({
+    key,
+    heights: { full: 0, compact: 0 },
+    latestFull: 0,
+  });
+
+  it("keeps full density when opening Previous agents grows the bounded list", () => {
+    const collapsed = measure(empty(), { full: 350, compact: 180 });
+    // Expanding Previous agents adds its bounded scroll list. It must scroll
+    // inside the card instead of growing the remembered full height, which would
+    // fold the card and unmount the section the user just opened.
+    const expanded = measure(collapsed, { full: 598 });
+    expect(expanded.heights.full).toBe(350);
+    expect(resolveThreadDetailsCardDensity(560, expanded.heights)).toBe("full");
+    // The obstacle still has to clear the real 598px card, not the 350px density
+    // baseline, or a floating preview overlaps the expanded lineage.
+    expect(expanded.latestFull).toBe(598);
+  });
+
+  it("retains the full footprint while compact and refreshes it on restore", () => {
+    const expanded = measure(measure(empty(), { full: 350, compact: 180 }), { full: 598 });
+    // Folding to compact measures the compact tree; the full footprint survives
+    // so the obstacle does not shrink while the card folds to make room.
+    const folded = measure(expanded, { compact: 220 });
+    expect(folded.heights.compact).toBe(180);
+    expect(folded.latestFull).toBe(598);
+    // Restoring full re-measures the real tree, and the baseline still folds
+    // against the collapsed content when space is tight.
+    const restored = measure(folded, { full: 598 });
+    expect(restored.latestFull).toBe(598);
+    expect(resolveThreadDetailsCardDensity(560, restored.heights)).toBe("full");
+    expect(resolveThreadDetailsCardDensity(300, restored.heights)).toBe("compact");
+  });
+
+  it("records a smaller full height when the panel legitimately shrinks", () => {
+    const measured = measure(empty(), { full: 350 });
+    const shrunk = measure(measured, { full: 300 });
+    expect(shrunk.heights.full).toBe(300);
+    expect(shrunk.latestFull).toBe(300);
+    expect(resolveThreadDetailsCardDensity(320, shrunk.heights)).toBe("full");
+  });
+
+  it("resets measurements when the card switches measurement key", () => {
+    const measured = measure(empty(), { full: 350, compact: 180 });
+    const next = recordThreadDetailsContentHeight(measured, "other", "full", 260);
+    expect(next).toEqual({ key: "other", heights: { full: 260, compact: 0 }, latestFull: 260 });
   });
 });

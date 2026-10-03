@@ -7,8 +7,10 @@ import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { useChatCanvas } from "./ChatCanvasContext";
 import {
+  recordThreadDetailsContentHeight,
   resolveThreadDetailsCardDensity,
   resolveThreadDetailsCardLayout,
+  type ThreadDetailsContentMeasurement,
 } from "./threadDetailsCardLayout";
 
 /** One card owns its placement and folds content only when that content cannot fit. */
@@ -50,12 +52,16 @@ export function ThreadDetailsCard({
   );
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
   const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}`;
-  const [measurements, setMeasurements] = useState({
+  const [measurements, setMeasurements] = useState<ThreadDetailsContentMeasurement>({
     key: measurementKey,
     heights: { full: 0, compact: 0 },
+    latestFull: 0,
   });
-  const contentHeights =
-    measurements.key === measurementKey ? measurements.heights : { full: 0, compact: 0 };
+  const measured = measurements.key === measurementKey ? measurements : null;
+  // Density follows the stable baselines; the reported footprint follows the
+  // latest full height so an expanded card is not underreported as collapsed.
+  const contentHeights = measured?.heights ?? { full: 0, compact: 0 };
+  const latestFull = measured?.latestFull ?? 0;
   const height = placement?.height ?? Math.max(0, (canvas?.container.height ?? 0) - 52);
   const density = resolveThreadDetailsCardDensity(height, contentHeights);
   const reportDetailsCard = canvas?.reportDetailsCard;
@@ -64,8 +70,8 @@ export function ThreadDetailsCard({
     ? preferredPlacement.x + preferredPlacement.width
     : undefined;
   const cardBottom =
-    preferredPlacement && contentHeights.full > 0
-      ? preferredPlacement.y + Math.min(contentHeights.full, preferredPlacement.height)
+    preferredPlacement && latestFull > 0
+      ? preferredPlacement.y + Math.min(latestFull, preferredPlacement.height)
       : undefined;
   useLayoutEffect(() => {
     reportDetailsCard?.(
@@ -83,17 +89,15 @@ export function ThreadDetailsCard({
   useLayoutEffect(() => {
     const element = contentElement;
     if (!element || density === "essential") return;
-    // Measure the single content tree before the scroll viewport clips it. Retain each
-    // observed height so increasing available space restores the detail it can hold.
+    // Measure the single content tree before the scroll viewport clips it. The
+    // reducer keeps a stable per-density baseline so a bounded, scrollable
+    // section (Lineage) can expand without folding the card that owns it.
     const measure = () => {
       const frame = element.closest<HTMLElement>("[data-thread-details-card]");
       const next = element.offsetHeight + (frame ? frame.offsetHeight - frame.clientHeight : 0);
-      setMeasurements((current) => {
-        const heights = current.key === measurementKey ? current.heights : { full: 0, compact: 0 };
-        return current.key === measurementKey && heights[density] === next
-          ? current
-          : { key: measurementKey, heights: { ...heights, [density]: next } };
-      });
+      setMeasurements((current) =>
+        recordThreadDetailsContentHeight(current, measurementKey, density, next),
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
