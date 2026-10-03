@@ -1,4 +1,6 @@
 import * as NodeOS from "node:os";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import type {
   Query as ClaudeQuery,
@@ -43,6 +45,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Tool } from "effect/unstable/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -73,6 +76,8 @@ const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
 });
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const CLAUDE_TEST_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
   model: "claude-sonnet-4-6",
@@ -2045,7 +2050,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       return yield* Effect.die(`Timed out waiting for ${label}.`);
     });
 
+  const proxyFixtureFileSystem = (
+    fileSystem: FileSystem.FileSystem,
+    root: string,
+    kernel = "Linux synthetic fixture",
+  ) => {
+    const fixturePath = (filePath: string) =>
+      filePath.startsWith("/etc/claude-code/")
+        ? `${root}/managed/${filePath.slice("/etc/claude-code/".length)}`
+        : filePath;
+    return {
+      ...fileSystem,
+      exists: (filePath: string) => {
+        const resolved = fixturePath(filePath);
+        return resolved.startsWith(`${root}/`)
+          ? fileSystem.exists(resolved)
+          : Effect.succeed(false);
+      },
+      readFileString: (filePath: string) =>
+        filePath === "/proc/version"
+          ? Effect.succeed(kernel)
+          : fileSystem.readFileString(fixturePath(filePath)),
+      readDirectory: (filePath: string) => fileSystem.readDirectory(fixturePath(filePath)),
+    };
+  };
+
   const makeWakeHarnessWithOptions = (options?: {
+    readonly launchArgs?: string;
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
@@ -2074,7 +2105,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_CLAUDE_SETTINGS,
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs: options?.launchArgs ?? DEFAULT_CLAUDE_SETTINGS.launchArgs,
+        },
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -2370,6 +2404,776 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }
         assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  const proxyResetCases: ReadonlyArray<{
+    readonly name: string;
+    readonly launchArgs?: string;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly relativeConfig?: boolean;
+    readonly literalConfig?: boolean;
+    readonly emptyConfig?: boolean;
+    readonly unicodeConfig?: boolean;
+    readonly defaultProviderHome?: boolean;
+    readonly kernel?: string;
+    readonly managedPolicy?: "base" | "drop-in";
+    readonly source?: "user settings" | "project settings" | "api key";
+    readonly settingsProfile?: boolean;
+    readonly settingsHome?: boolean;
+    readonly settingsEnv?: Readonly<Record<string, string>>;
+    readonly settingsEndpointOnly?: boolean;
+    readonly retryAfter?: string | null;
+    readonly now?: string;
+    readonly status?: number;
+    readonly native?: "complete" | "partial" | "recovered" | "overage";
+    readonly result?: "success" | "auth failure" | "server error";
+    readonly conflictingSettings?: boolean;
+    readonly globalSettings?: boolean;
+    readonly profile?: boolean;
+    readonly resolvedModel?: string;
+    readonly modelFallback?: "model_fallback" | "model_refusal_fallback";
+    readonly localFallback?: boolean;
+    readonly platform?: NodeJS.Platform;
+    readonly expectedReset: string | null;
+    readonly expectedProbe: boolean;
+  }> = [
+    ...(["darwin", "win32", "freebsd"] as const).map((platform) => ({
+      name: `${platform} managed policy cannot be inferred`,
+      platform,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    ...["CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CODE_HOST_CREDS_FILE"].flatMap((key) =>
+      ([undefined, "user settings", "project settings", "global settings"] as const).map(
+        (source) => ({
+          name: `${source ?? "inherited"} host-managed ${key}`,
+          ...(source === "user settings" || source === "project settings" ? { source } : {}),
+          ...(source === undefined
+            ? {
+                environment: {
+                  [key]:
+                    key === "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"
+                      ? "1"
+                      : "/fixture/host-creds.json",
+                },
+              }
+            : {
+                settingsEnv: {
+                  [key]:
+                    key === "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST"
+                      ? "1"
+                      : "/fixture/host-creds.json",
+                },
+              }),
+          ...(source === "global settings" ? { globalSettings: true } : {}),
+          expectedReset: null,
+          expectedProbe: false,
+        }),
+      ),
+    ),
+    ...[
+      { CLAUDE_CODE_REMOTE: "true" },
+      { CLAUDE_CODE_REMOTE: "false" },
+      { CLAUDE_CODE_ENTRYPOINT: "claude-desktop" },
+      { CLAUDE_CODE_ENTRYPOINT: "claude-desktop-3p" },
+      { CLAUDE_CODE_ENTRYPOINT: "local-agent" },
+    ].flatMap((markers) =>
+      ([undefined, "user settings", "project settings", "global settings"] as const).map(
+        (source) => ({
+          name: `${source ?? "inherited"} OAuth-preferred ${encodeJson(markers)}`,
+          ...(source === "user settings" || source === "project settings" ? { source } : {}),
+          ...(source === undefined ? { environment: markers } : { settingsEnv: markers }),
+          ...(source === "global settings" ? { globalSettings: true } : {}),
+          expectedReset: null,
+          expectedProbe: false,
+        }),
+      ),
+    ),
+    ...(["model_fallback", "model_refusal_fallback"] as const).map((modelFallback) => ({
+      name: `${modelFallback} request model is uncertain`,
+      resolvedModel: "proxy-original-model",
+      modelFallback,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    {
+      name: "local refusal fallback leaves main request model intact",
+      resolvedModel: "proxy-original-model",
+      modelFallback: "model_refusal_fallback",
+      localFallback: true,
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "provider HOME hides request body override",
+      defaultProviderHome: true,
+      settingsEnv: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "provider HOME supplies default settings",
+      defaultProviderHome: true,
+      source: "user settings",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    ...(["emptyConfig", "unicodeConfig"] as const).map((kind) => ({
+      name: `${kind} selects native user settings`,
+      [kind]: true,
+      settingsEnv: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' },
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    {
+      name: "Unicode global config preserves its literal path",
+      unicodeConfig: true,
+      globalSettings: true,
+      settingsEnv: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    ...([undefined, "user settings", "project settings", "global settings"] as const).map(
+      (source) => ({
+        name: `${source ?? "inherited"} custom OAuth configuration`,
+        ...(source === "user settings" || source === "project settings" ? { source } : {}),
+        ...(source === undefined
+          ? { environment: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://oauth.example.invalid" } }
+          : { settingsEnv: { CLAUDE_CODE_CUSTOM_OAUTH_URL: "https://oauth.example.invalid" } }),
+        ...(source === "global settings" ? { globalSettings: true } : {}),
+        expectedReset: null,
+        expectedProbe: false,
+      }),
+    ),
+    {
+      name: "literal config directory keeps whitespace",
+      literalConfig: true,
+      source: "user settings",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    ...["WSL_DISTRO_NAME", "WSL_INTEROP"].flatMap((key) =>
+      ([undefined, "user settings", "global settings"] as const).map((source) => ({
+        name: `${source ?? "inherited"} ${key} managed policy`,
+        ...(source === "user settings" ? { source } : {}),
+        ...(source === undefined
+          ? { environment: { [key]: "synthetic-wsl" } }
+          : { settingsEnv: { [key]: "synthetic-wsl" } }),
+        ...(source === "global settings" ? { globalSettings: true } : {}),
+        expectedReset: null,
+        expectedProbe: false,
+      })),
+    ),
+    ...["Linux Microsoft synthetic kernel", "Linux WSL synthetic kernel"].map((kernel) => ({
+      name: `managed policy kernel ${kernel}`,
+      kernel,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    ...(["base", "drop-in"] as const).map((managedPolicy) => ({
+      name: `synthetic managed ${managedPolicy} request body override`,
+      managedPolicy,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    {
+      name: "project settings proxy credentials",
+      source: "project settings",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    ...["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"].map((key) => ({
+      name: `project destination with inherited ${key}`,
+      source: "project settings" as const,
+      environment: { [key]: "synthetic-inherited-credential" },
+      settingsEndpointOnly: true,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    {
+      name: "relative Claude config directory",
+      source: "user settings",
+      relativeConfig: true,
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "Unix socket proxy transport",
+      environment: { ANTHROPIC_UNIX_SOCKET: "/fixture-api.sock" },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "dual proxy credentials",
+      environment: { ANTHROPIC_API_KEY: "second-fixture-key" },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "settings flag mentioned in quoted prompt",
+      launchArgs: '--append-system-prompt "mention --settings here"',
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    ...[
+      "--settings /fixture-settings.json",
+      "--settings=/fixture-settings.json",
+      "--setting-sources user",
+      "--managed-settings={}",
+      "--bare",
+    ].map((launchArgs) => ({
+      name: `settings selection ${launchArgs}`,
+      launchArgs,
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    {
+      name: "profile home override",
+      source: "user settings",
+      settingsHome: true,
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "profile in user settings",
+      source: "user settings",
+      settingsProfile: true,
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "global endpoint override",
+      globalSettings: true,
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    { name: "implicit auth profile", profile: true, expectedReset: null, expectedProbe: false },
+    {
+      name: "resolved model",
+      resolvedModel: "proxy-custom-model",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    { name: "environment", expectedReset: "1970-01-01T00:02:00.000Z", expectedProbe: true },
+    ...["http_proxy", "https_proxy", "all_proxy"].map((key) => ({
+      name: `inherited ${key} transport`,
+      environment: { [key]: "http://127.0.0.1:1" },
+      expectedReset: null,
+      expectedProbe: false,
+    })),
+    ...[
+      "CLAUDE_CODE_CLIENT_CERT",
+      "CLAUDE_CODE_CLIENT_KEY",
+      "CLAUDE_CODE_CLIENT_KEY_PASSPHRASE",
+    ].flatMap((key) => [
+      {
+        name: `inherited ${key} transport`,
+        environment: { [key]: "synthetic-client-certificate-setting" },
+        expectedReset: null,
+        expectedProbe: false,
+      },
+      {
+        name: `user settings ${key} transport`,
+        source: "user settings" as const,
+        settingsEnv: { [key]: "synthetic-client-certificate-setting" },
+        expectedReset: null,
+        expectedProbe: false,
+      },
+      {
+        name: `global settings ${key} transport`,
+        globalSettings: true,
+        settingsEnv: { [key]: "synthetic-client-certificate-setting" },
+        expectedReset: null,
+        expectedProbe: false,
+      },
+    ]),
+    ...([undefined, "user settings", "project settings", "global settings"] as const).map(
+      (source) => ({
+        name: `${source ?? "inherited"} extra request body`,
+        ...(source === "user settings" || source === "project settings" ? { source } : {}),
+        ...(source === undefined
+          ? { environment: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' } }
+          : { settingsEnv: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' } }),
+        ...(source === "global settings" ? { globalSettings: true } : {}),
+        expectedReset: null,
+        expectedProbe: false,
+      }),
+    ),
+    {
+      name: "user settings lowercase proxy transport",
+      source: "user settings",
+      settingsEnv: { https_proxy: "http://127.0.0.1:1" },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "global settings lowercase proxy transport",
+      globalSettings: true,
+      settingsEnv: { https_proxy: "http://127.0.0.1:1" },
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "user settings",
+      source: "user settings",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "API key",
+      source: "api key",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "HTTP date",
+      retryAfter: "Thu, 01 Jan 1970 00:02:00 GMT",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "RFC 850 HTTP date",
+      retryAfter: "Thursday, 01-Jan-70 00:02:00 GMT",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "asctime HTTP date",
+      retryAfter: "Thu Jan  1 00:02:00 1970",
+      expectedReset: "1970-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "RFC 850 year relative to current century",
+      now: "2070-01-01T00:00:00.000Z",
+      retryAfter: "Wednesday, 01-Jan-70 00:02:00 GMT",
+      expectedReset: "2070-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "RFC 850 century rollover",
+      now: "1999-12-31T23:59:00.000Z",
+      retryAfter: "Saturday, 01-Jan-00 00:02:00 GMT",
+      expectedReset: "2000-01-01T00:02:00.000Z",
+      expectedProbe: true,
+    },
+    {
+      name: "partial native reset",
+      native: "partial",
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "native reset",
+      native: "complete",
+      expectedReset: "1970-01-01T00:05:00.000Z",
+      expectedProbe: false,
+    },
+    ...[
+      null,
+      "garbage",
+      "0",
+      "-1",
+      "1.5",
+      "999999999999999999",
+      "Wed, 31 Dec 1969 23:59:59 GMT",
+      "Wednesday, 01-Jan-70 00:02:00 GMT",
+      "Thursday, 30-Feb-70 00:02:00 GMT",
+      "Wed Jan  1 00:02:00 1970",
+      "Thu Feb 30 00:02:00 1970",
+    ].map((retryAfter) => ({
+      name: `unknown delay ${retryAfter}`,
+      retryAfter,
+      expectedReset: null,
+      expectedProbe: true,
+    })),
+    { name: "successful probe", status: 200, expectedReset: null, expectedProbe: true },
+    { name: "redirect", status: 302, expectedReset: null, expectedProbe: true },
+    {
+      name: "conflicting user settings",
+      conflictingSettings: true,
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    { name: "successful turn", result: "success", expectedReset: null, expectedProbe: false },
+    {
+      name: "authentication failure",
+      result: "auth failure",
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "server error after limit",
+      result: "server error",
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "recovered bucket",
+      native: "recovered",
+      result: "success",
+      expectedReset: null,
+      expectedProbe: false,
+    },
+    {
+      name: "overage",
+      native: "overage",
+      result: "success",
+      expectedReset: null,
+      expectedProbe: false,
+    },
+  ];
+
+  it.effect.each(proxyResetCases)("reports a trustworthy proxy reset for $name", (scenario) =>
+    Effect.gen(function* () {
+      if (scenario.now !== undefined) yield* TestClock.setTime(Date.parse(scenario.now));
+      const requests: Array<{
+        url: string | undefined;
+        authorization: string | undefined;
+        key: string | undefined;
+        body: string;
+      }> = [];
+      const server = yield* HttpServer.HttpServer;
+      yield* server.serve(
+        Effect.gen(function* () {
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          requests.push({
+            url: request.url,
+            authorization: request.headers.authorization,
+            key: request.headers["x-api-key"],
+            body: yield* request.text,
+          });
+          return HttpServerResponse.empty({
+            status: scenario.status ?? 429,
+            headers: {
+              ...(scenario.retryAfter === null
+                ? {}
+                : { "Retry-After": scenario.retryAfter ?? "120" }),
+              ...(scenario.status === 302 ? { Location: "/redirect-target" } : {}),
+            },
+          });
+        }),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const cwd = `${root}/workspace`;
+      const configDir = scenario.emptyConfig
+        ? cwd
+        : scenario.unicodeConfig
+          ? `${root}/caf\u00e9`
+          : scenario.defaultProviderHome
+            ? `${root}/provider-home/.claude`
+            : scenario.literalConfig
+              ? `${root}/ config `
+              : scenario.relativeConfig
+                ? `${cwd}/.proxy-config`
+                : root;
+      yield* fs.makeDirectory(cwd, { recursive: true });
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      const proxyEnvironment = {
+        ANTHROPIC_BASE_URL: HttpServer.formatAddress(server.address),
+        ...(scenario.source === "api key"
+          ? { ANTHROPIC_API_KEY: "synthetic-key" }
+          : { ANTHROPIC_AUTH_TOKEN: "synthetic-token" }),
+      };
+      if (
+        scenario.source === "user settings" ||
+        scenario.source === "project settings" ||
+        scenario.defaultProviderHome ||
+        scenario.emptyConfig ||
+        scenario.unicodeConfig ||
+        scenario.conflictingSettings
+      ) {
+        const settingsDir = scenario.source === "project settings" ? `${cwd}/.claude` : configDir;
+        yield* fs.makeDirectory(settingsDir, { recursive: true });
+        yield* fs.writeFileString(
+          `${settingsDir}/settings.json`,
+          encodeJson({
+            env: {
+              ...(scenario.settingsEndpointOnly
+                ? { ANTHROPIC_BASE_URL: proxyEnvironment.ANTHROPIC_BASE_URL }
+                : proxyEnvironment),
+              ...scenario.settingsEnv,
+              ...(scenario.settingsProfile ? { ANTHROPIC_PROFILE: "fixture-profile" } : {}),
+              ...(scenario.settingsHome ? { XDG_CONFIG_HOME: "/fixture-other-home" } : {}),
+              ...(scenario.conflictingSettings ? { ANTHROPIC_AUTH_TOKEN: "different-token" } : {}),
+            },
+          }),
+        );
+      }
+      if (scenario.globalSettings) {
+        const globalConfigDir = scenario.unicodeConfig ? `${root}/cafe\u0301` : configDir;
+        yield* fs.makeDirectory(globalConfigDir, { recursive: true });
+        yield* fs.writeFileString(
+          `${globalConfigDir}/.claude.json`,
+          encodeJson({ env: scenario.settingsEnv ?? { ANTHROPIC_AUTH_TOKEN: "different-token" } }),
+        );
+      }
+      if (scenario.managedPolicy) {
+        const filePath =
+          scenario.managedPolicy === "base"
+            ? `${root}/managed/managed-settings.json`
+            : `${root}/managed/managed-settings.d/override.json`;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+        yield* fs.writeFileString(
+          filePath,
+          encodeJson({ env: { CLAUDE_CODE_EXTRA_BODY: '{"model":"synthetic-other-model"}' } }),
+        );
+      }
+      const profileDir = `${configDir}/anthropic`;
+      if (scenario.profile) {
+        yield* fs.makeDirectory(`${profileDir}/configs`, { recursive: true });
+        yield* fs.writeFileString(
+          `${profileDir}/configs/default.json`,
+          encodeJson({ authentication: { type: "oidc_federation" } }),
+        );
+      }
+      const harness = yield* makeWakeHarnessWithOptions({
+        ...(scenario.launchArgs === undefined ? {} : { launchArgs: scenario.launchArgs }),
+        environment: {
+          ...(scenario.defaultProviderHome
+            ? { HOME: `${root}/provider-home` }
+            : {
+                CLAUDE_CONFIG_DIR: scenario.emptyConfig
+                  ? ""
+                  : scenario.unicodeConfig
+                    ? `${root}/caf\u0065\u0301`
+                    : scenario.relativeConfig
+                      ? ".proxy-config"
+                      : configDir,
+              }),
+          XDG_CONFIG_HOME: configDir,
+          ...(scenario.source === "user settings" || scenario.source === "project settings"
+            ? {}
+            : proxyEnvironment),
+          ...scenario.environment,
+        },
+      }).pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          proxyFixtureFileSystem(fs, root, scenario.kernel),
+        ),
+      );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-proxy-reset"),
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd },
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      if (scenario.resolvedModel)
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            model: scenario.resolvedModel,
+            uuid: "00000000-0000-4000-8000-000000000699",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      if (scenario.modelFallback)
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: scenario.modelFallback,
+            original_model: "proxy-original-model",
+            fallback_model: "proxy-fallback-model",
+            trigger: "refusal",
+            direction: "retry",
+            scope: scenario.localFallback ? "local" : "session",
+            request_id: null,
+            uuid: "00000000-0000-4000-8000-000000000698",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      if (scenario.native !== undefined) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt: 300,
+              ...(scenario.native === "overage" ? { isUsingOverage: true } : {}),
+            },
+            uuid: "00000000-0000-4000-8000-000000000692",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        if (scenario.native === "partial" || scenario.native === "recovered") {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: scenario.native === "partial" ? "rejected" : "allowed",
+                rateLimitType: scenario.native === "partial" ? "seven_day" : "five_hour",
+              },
+              uuid: "00000000-0000-4000-8000-000000000693",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+      }
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000690",
+          error:
+            scenario.result === "success"
+              ? undefined
+              : scenario.result === "auth failure"
+                ? "authentication_failed"
+                : "rate_limit",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000691",
+          result: "Synthetic result",
+          isError: scenario.result !== "success",
+          terminalReason: scenario.result === "success" ? "completed" : "api_error",
+          ...(scenario.result === "success"
+            ? {}
+            : {
+                apiErrorStatus:
+                  scenario.result === "auth failure"
+                    ? 401
+                    : scenario.result === "server error"
+                      ? 500
+                      : 429,
+              }),
+        }),
+      ]);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, scenario.result === "success" ? "completed" : "failed");
+      if (terminal.status === "failed") {
+        assert.equal(
+          terminal.failure.class,
+          scenario.result === "auth failure" || scenario.result === "server error"
+            ? "provider_error"
+            : "usage_limit",
+        );
+        assert.equal(terminal.failure.resetAt, scenario.expectedReset);
+      }
+      assert.deepEqual(
+        requests,
+        scenario.expectedProbe
+          ? [
+              {
+                url: "/v1/messages/count_tokens",
+                authorization: scenario.source === "api key" ? undefined : "Bearer synthetic-token",
+                key: scenario.source === "api key" ? "synthetic-key" : undefined,
+                body: encodeJson({
+                  model: scenario.resolvedModel ?? "claude-sonnet-4-6",
+                  messages: [{ role: "user", content: "quota" }],
+                }),
+              },
+            ]
+          : [],
+      );
+      assert.lengthOf(harness.terminalEvents(), 1);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, scenario.platform ?? "linux"),
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, NodeHttpServer.layerTest),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { phase: "HTTP request", action: "interruption" },
+    { phase: "configuration", action: "interruption" },
+    { phase: "configuration", action: "timeout" },
+  ])("bounds a quota probe during $phase by $action", ({ phase, action }) =>
+    Effect.gen(function* () {
+      const requested = yield* Deferred.make<void>();
+      const requestClosed = yield* Deferred.make<void>();
+      const server = yield* HttpServer.HttpServer;
+      yield* server.serve(
+        Effect.gen(function* () {
+          yield* HttpServerRequest.HttpServerRequest;
+          yield* Deferred.succeed(requested, undefined);
+          return yield* Effect.never;
+        }).pipe(Effect.interruptible, Effect.ensuring(Deferred.succeed(requestClosed, undefined))),
+      );
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* fs.makeTempDirectoryScoped();
+      const fixtureFileSystem = proxyFixtureFileSystem(fs, configDir);
+      const probeFileSystem = {
+        ...fixtureFileSystem,
+        exists: (filePath: string) =>
+          phase === "configuration" && filePath === `${configDir}/anthropic/active_config`
+            ? Deferred.succeed(requested, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.interruptible,
+                Effect.ensuring(Deferred.succeed(requestClosed, undefined)),
+              )
+            : fixtureFileSystem.exists(filePath),
+      };
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (messages) => Queue.shutdown(messages),
+        environment: {
+          CLAUDE_CONFIG_DIR: configDir,
+          XDG_CONFIG_HOME: configDir,
+          ANTHROPIC_BASE_URL: HttpServer.formatAddress(server.address),
+          ANTHROPIC_AUTH_TOKEN: "synthetic-token",
+        },
+      }).pipe(Effect.provideService(FileSystem.FileSystem, probeFileSystem));
+      const attemptId = RunAttemptId.make("attempt-proxy-cancel");
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000694",
+          error: "rate_limit",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000695",
+          result: "API Error",
+          isError: true,
+          apiErrorStatus: 429,
+          terminalReason: "api_error",
+        }),
+      ]);
+      yield* Deferred.await(requested);
+      if (action === "timeout") {
+        yield* TestClock.adjust("5 seconds");
+      } else {
+        yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          })
+          .pipe(Effect.forkScoped);
+      }
+      yield* Deferred.await(requestClosed);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, action === "timeout" ? "failed" : "interrupted");
+      if (terminal.status === "failed") assert.equal(terminal.failure.resetAt, null);
+      assert.lengthOf(harness.terminalEvents(), 1);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "linux"),
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, NodeServices.layer, NodeHttpServer.layerTest),
+      ),
     ),
   );
 
