@@ -3052,6 +3052,79 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.live("hands the flavor the selection a live session was last configured with", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-previous-selection");
+      const previousSelections: Array<ModelSelection | null> = [];
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath }),
+          applyModelSelection: ({ modelSelection, previousSelection }) =>
+            Effect.sync(() => {
+              previousSelections.push(previousSelection);
+              return modelSelection.model;
+            }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-previous-selection");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const initial: ModelSelection = { instanceId, model: "default" };
+      const alternate: ModelSelection = { instanceId, model: "composer-2" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-previous-selection"),
+        modelSelection: initial,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: initial,
+        runtimePolicy,
+      });
+      // Activation describes the session itself, so the flavor starts from the
+      // setup alone; later same-runtime switches reuse that stored setup and
+      // get the selection they applied last.
+      for (const modelSelection of [alternate, initial]) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            modelSelection,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+      }
+      assert.deepEqual(previousSelections, [null, initial, alternate]);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("skips requested options that the active ACP session does not expose", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
