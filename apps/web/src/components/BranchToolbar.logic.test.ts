@@ -1,8 +1,10 @@
-import { EnvironmentId, type VcsRef } from "@t3tools/contracts";
+import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ProviderInstanceId, RunId, type VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  isWorktreeChangeBlocked,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -894,5 +896,90 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("isWorktreeChangeBlocked", () => {
+  const runtime = (
+    status: ThreadRuntimeSummary["status"],
+    activeRunId: string | null = "run-1",
+  ): ThreadRuntimeSummary => ({
+    status,
+    activeRunId: activeRunId === null ? null : RunId.make(activeRunId),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: null,
+    lastError: null,
+    updatedAt: "2026-10-02T00:00:00.000Z",
+  });
+  const secondaryWorktree = "/repo/.t3/worktrees/feature-a";
+
+  it.each(["preparing", "starting", "running", "waiting"] as const)(
+    "blocks a worktree change while the run is %s",
+    (status) => {
+      expect(
+        isWorktreeChangeBlocked({
+          runtime: runtime(status),
+          currentWorktreePath: null,
+          nextWorktreePath: secondaryWorktree,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("blocks a worktree change while a queued run waits on an attached run", () => {
+    expect(
+      isWorktreeChangeBlocked({
+        runtime: runtime("queued"),
+        currentWorktreePath: null,
+        nextWorktreePath: secondaryWorktree,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ["the thread has no runtime", null],
+    ["the thread is idle", runtime("idle", null)],
+    ["the last run completed", runtime("completed", null)],
+    ["the last run was interrupted", runtime("interrupted", null)],
+    ["only a queued run remains", runtime("queued", null)],
+  ])("allows a worktree change when %s", (_label, threadRuntime) => {
+    expect(
+      isWorktreeChangeBlocked({
+        runtime: threadRuntime,
+        currentWorktreePath: null,
+        nextWorktreePath: secondaryWorktree,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["the main checkout", null],
+    ["a secondary worktree", secondaryWorktree],
+  ])("allows staying in %s mid-run", (_label, worktreePath) => {
+    expect(
+      isWorktreeChangeBlocked({
+        runtime: runtime("running"),
+        currentWorktreePath: worktreePath,
+        nextWorktreePath: worktreePath,
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["a ref checked out in the main repo", { isDefault: false, worktreePath: "/repo" }],
+    ["the default ref with no checkout", { isDefault: true, worktreePath: null }],
+  ])("blocks returning to the main checkout via %s mid-run", (_label, refName) => {
+    const { nextWorktreePath } = resolveBranchSelectionTarget({
+      activeProjectCwd: "/repo",
+      activeWorktreePath: secondaryWorktree,
+      refName,
+    });
+    expect(
+      isWorktreeChangeBlocked({
+        runtime: runtime("running"),
+        currentWorktreePath: secondaryWorktree,
+        nextWorktreePath,
+      }),
+    ).toBe(true);
   });
 });
