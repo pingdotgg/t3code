@@ -27,6 +27,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { cn } from "~/lib/utils";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -542,8 +543,13 @@ export default function FileBrowserPanel({
           More matches available. Refine your search.
         </div>
       ) : null}
+      {/* Once rows are on screen, loading is announced but never takes space: a row appearing
+          above the tree pushes every file down under the pointer. The refresh icon shows it. */}
       {(isPending || pathSearch.isPending) && (
-        <div role="status" className="px-3 py-1 text-xs text-muted-foreground">
+        <div
+          role="status"
+          className={cn("px-3 py-1 text-xs text-muted-foreground", entries.length > 0 && "sr-only")}
+        >
           Loading files…
         </div>
       )}
