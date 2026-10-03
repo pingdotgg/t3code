@@ -137,12 +137,6 @@ export const DEFAULT_PROVIDER_DRIVER_KIND = COPILOT_DRIVER_KIND;
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
-/**
- * Canonical default selection for automated runs (self-testing, delegated
- * validation, fresh auto-bootstrapped projects): Copilot GPT-6 Luna with
- * reasoning effort pinned to low for speed and cost. Explicit user, project,
- * or per-delegation settings always win over this; it only fills gaps.
- */
 export const DEFAULT_AUTOMATED_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("copilot"),
   model: "gpt-6-luna",

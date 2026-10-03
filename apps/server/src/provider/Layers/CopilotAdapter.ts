@@ -178,10 +178,10 @@ const WORKSPACE_HANDOFF_REQUIRED_MESSAGE =
   "T3 blocked a raw Git worktree add/move. Use the create_isolated_workspace or switch_workspace tool so the thread's workspace, checkpoints, and diffs stay aligned. git worktree remove is allowed for cleanup.";
 
 /**
- * Factory delegated-thread default: Copilot `gpt-6-luna` on low reasoning.
- * Used when settings have not been loaded or carry no delegated selection.
- * Explicit per-delegation `defaults.model` / `child.model` values always win
- * over this; the parent session model is never inherited.
+ * Factory delegated-thread default: Copilot `gpt-6-luna`. Used when settings
+ * have not been loaded or carry no delegated selection. Explicit per-delegation
+ * `defaults.model` / `child.model` values always win over this; the parent
+ * session model is never inherited.
  */
 export const FACTORY_DELEGATED_THREAD_DEFAULT: ModelSelection = DEFAULT_AUTOMATED_MODEL_SELECTION;
 
