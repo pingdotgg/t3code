@@ -1362,8 +1362,8 @@ function ImportStep({
 
   return (
     <StepShell
-      title="Choose your projects"
-      description="Import projects and conversations from your selected computers."
+      title="Import your projects"
+      description="Import projects and conversations from Claude Code and Codex on your selected computers."
     >
       {candidates.length > 0 ? (
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
