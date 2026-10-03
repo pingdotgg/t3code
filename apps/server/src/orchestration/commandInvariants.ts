@@ -1,3 +1,4 @@
+import { deriveThreadBusyState } from "@t3tools/shared/threadBusyState";
 import type {
   OrchestrationCommand,
   OrchestrationQueuedTurn,
@@ -119,39 +120,48 @@ export function requireThread(input: {
   );
 }
 
+/**
+ * Busy means "a turn start is accepted or running", per the shared
+ * `deriveThreadBusyState` so this cannot drift from what clients offer.
+ *
+ * This previously also compared the newest user message against the newest
+ * completed turn. That timestamp stood in for the acceptance-to-acknowledgement
+ * window and was wrong in both directions: a manual stop can share a message's
+ * millisecond with its terminal turn, while a forked thread or a
+ * checkpoint-less turn leaves no completed turn to compare against. The second
+ * case wedged the thread permanently, rejecting every later start while the UI
+ * showed it idle. See `packages/shared/src/threadBusyState.ts`.
+ */
 export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
-  if (thread.latestTurn?.state === "running") {
+  return deriveThreadBusyState(thread) !== "idle";
+}
+
+/**
+ * Whether a checkout may be rewritten under this thread — auto-pull, checkout
+ * restore, and similar Git mutations.
+ *
+ * This is deliberately *broader* than {@link threadHasInFlightTurn}. A thread
+ * whose newest user message postdates its newest completed turn has unanswered
+ * work whose turn never started, so pulling the branch under it would move the
+ * ground out from under that work even though the thread is not busy enough to
+ * block a new turn start. That question is about file-system safety, not about
+ * turn admission, which is why the timestamp comparison lives here instead of
+ * in the invariant.
+ */
+export function threadCheckoutHasUnsettledWork(thread: OrchestrationThread): boolean {
+  if (threadHasInFlightTurn(thread)) {
     return true;
   }
-
-  if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
-    return true;
-  }
-
   const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
   if (!latestUserMessage) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
-    if (
-      activity.kind !== "provider.turn.start.failed" ||
-      activity.createdAt < latestUserMessage.createdAt
-    ) {
-      return false;
-    }
-    const messageId =
-      typeof activity.payload === "object" &&
-      activity.payload !== null &&
-      "messageId" in activity.payload &&
-      typeof activity.payload.messageId === "string"
-        ? activity.payload.messageId
-        : null;
-    return messageId === null || messageId === latestUserMessage.id;
-  });
-  if (failedTurnStart) {
-    return false;
-  }
-  if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
+  // A thread with no completed turn at all has unresolved work whenever a user
+  // message is waiting on it. The old code excluded this by also accepting a
+  // matching `provider.turn.start.failed`, but that made a failed start with no
+  // completed turn block checkout rewrites forever; a thread that never got a
+  // turn is exactly the case where an unanswered message is the signal.
+  if (thread.latestTurn?.completedAt == null) {
     return true;
   }
   return latestUserMessage.createdAt > thread.latestTurn.completedAt;

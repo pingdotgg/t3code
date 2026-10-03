@@ -11,6 +11,7 @@ import {
   OrchestrationThread,
 } from "@t3tools/contracts";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
 import { Effect, Schema } from "effect";
 
@@ -70,6 +71,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
   WorkflowArtifactCreatedPayload,
   WorkflowNodeWorkerStartedPayload,
   WorkflowRunFinalizedPayload,
@@ -898,10 +900,35 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             latestTurn: latestTurnFromSession(thread, session),
+            // Shared with the SQL projection and both client reducers so a
+            // pending start cannot be retired by one and still held by another.
+            ...(sessionResolvesPendingTurnStart(session) ? { pendingTurnStart: null } : {}),
             updatedAt: event.occurredAt,
           }),
         };
       });
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            pendingTurnStart: {
+              messageId: payload.messageId,
+              requestedAt: payload.createdAt,
+              ...(payload.sourceProposedPlan !== undefined
+                ? { sourceProposedPlan: payload.sourceProposedPlan }
+                : {}),
+            },
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
 
     case "thread.queued-turn-created":
       return decodeForEvent(
@@ -1217,10 +1244,23 @@ export function projectEvent(
             return nextBase;
           }
 
+          // A failed start resolves the pending start, so the thread is sendable
+          // again. Only the failure for the pending message clears it — a failure
+          // for an older message must not unblock a newer start.
+          const pending = thread.pendingTurnStart;
+          const failureMessageId = (payload.activity.payload as { readonly messageId?: unknown })
+            .messageId;
+          const clearsPendingStart =
+            payload.activity.kind === "provider.turn.start.failed" &&
+            pending !== undefined &&
+            pending !== null &&
+            (failureMessageId === undefined || failureMessageId === pending.messageId);
+
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities: appendThreadActivity(thread, payload.activity),
+              ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
               updatedAt: event.occurredAt,
             }),
           };

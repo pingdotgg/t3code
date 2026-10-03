@@ -232,9 +232,12 @@ describe("commandInvariants", () => {
     ).toBe(false);
   });
 
-  it("does not keep legacy pre-acknowledgement failures in flight", () => {
+  it("treats a message with no accepted turn start as idle", () => {
+    // Regression: the old heuristic compared the newest user message against the
+    // newest completed turn, so an offline draft or a fork left the thread
+    // permanently "in flight" and every later start was rejected.
     const thread = readModel.threads[0]!;
-    const withPendingMessage = {
+    const withMessage = {
       ...thread,
       messages: [
         {
@@ -249,29 +252,100 @@ describe("commandInvariants", () => {
         },
       ],
     };
-    expect(threadHasInFlightTurn(withPendingMessage)).toBe(true);
+    expect(threadHasInFlightTurn(withMessage)).toBe(false);
+  });
+
+  it("keeps a thread with no completed turn sendable, as after a provider fork", () => {
+    // A provider-forked thread imports messages but never records a turn, so it
+    // has no latestTurn to compare against. Deleting it as wedged was the bug.
+    const thread = readModel.threads[0]!;
     expect(
       threadHasInFlightTurn({
-        ...withPendingMessage,
-        activities: [
+        ...thread,
+        latestTurn: null,
+        session: { ...thread.session!, status: "error", activeTurnId: null },
+        messages: [
           {
-            id: EventId.make("provider-failure"),
-            tone: "error",
-            kind: "provider.turn.start.failed",
-            summary: "Provider turn start failed",
-            payload: { detail: "network unavailable" },
+            id: MessageId.make("msg-forked"),
+            role: "user",
+            text: "forked history",
+            attachments: [],
             turnId: null,
+            streaming: false,
             createdAt: now,
+            updatedAt: now,
           },
         ],
       }),
     ).toBe(false);
   });
 
-  it("treats a stopped turn as idle when its message and completion share a timestamp", () => {
+  it("is busy from acceptance until the provider acknowledges", () => {
+    const thread = readModel.threads[0]!;
+    const pendingStart = {
+      messageId: MessageId.make("msg-pending"),
+      requestedAt: now,
+    };
+    // Accepted, not yet acknowledged: no turn, session idle. Still busy, so a
+    // double send is rejected instead of starting a second turn.
+    expect(threadHasInFlightTurn({ ...thread, pendingTurnStart: pendingStart })).toBe(true);
+    expect(
+      threadHasInFlightTurn({
+        ...thread,
+        pendingTurnStart: pendingStart,
+        messages: [
+          {
+            id: pendingStart.messageId,
+            role: "user",
+            text: "second send",
+            attachments: [],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      }),
+    ).toBe(true);
+    // Acknowledged: running turn, no pending start.
+    expect(
+      threadHasInFlightTurn({
+        ...thread,
+        pendingTurnStart: null,
+        latestTurn: {
+          turnId: TurnId.make("turn-running"),
+          state: "running" as const,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+        session: {
+          ...thread.session!,
+          status: "running",
+          activeTurnId: TurnId.make("turn-running"),
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("stays busy through an interrupt that arrives before acknowledgement", () => {
+    const thread = readModel.threads[0]!;
+    // The provider has not returned a turn id yet, so cancellation intent has
+    // nowhere else to live; releasing busy here would let a second turn start.
+    expect(
+      threadHasInFlightTurn({
+        ...thread,
+        pendingTurnStart: { messageId: MessageId.make("msg-interrupt"), requestedAt: now },
+      }),
+    ).toBe(true);
+  });
+
+  it("treats a stopped turn as idle regardless of message timestamps", () => {
     const base = readModel.threads[0]!;
     const stopped = {
       ...base,
+      pendingTurnStart: null,
       messages: [
         {
           id: MessageId.make("msg-stopped"),
@@ -280,6 +354,8 @@ describe("commandInvariants", () => {
           attachments: [],
           turnId: null,
           streaming: false,
+          // Shares its millisecond with the terminal turn: a manual stop can do
+          // that, so message-vs-completion ordering cannot decide busy.
           createdAt: now,
           updatedAt: now,
         },
@@ -306,38 +382,29 @@ describe("commandInvariants", () => {
           },
         ],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("keeps a pending user turn in flight when a later system message is appended", () => {
+  it("does not keep a thread in flight because of a failed start for an older message", () => {
     const thread = readModel.threads[0]!;
     expect(
       threadHasInFlightTurn({
         ...thread,
-        messages: [
+        pendingTurnStart: null,
+        latestTurn: null,
+        activities: [
           {
-            id: MessageId.make("msg-queued"),
-            role: "user",
-            text: "queued work",
-            attachments: [],
+            id: EventId.make("provider-failure"),
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { detail: "network unavailable" },
             turnId: null,
-            streaming: false,
-            createdAt: "2026-09-05T06:00:00.000Z",
-            updatedAt: "2026-09-05T06:00:00.000Z",
-          },
-          {
-            id: MessageId.make("msg-system"),
-            role: "system",
-            text: "Related activity",
-            attachments: [],
-            turnId: null,
-            streaming: false,
-            createdAt: "2026-09-05T06:00:00.001Z",
-            updatedAt: "2026-09-05T06:00:00.001Z",
+            createdAt: now,
           },
         ],
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("requires non-negative integers", async () => {

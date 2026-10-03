@@ -1496,7 +1496,7 @@ function ChatViewBody(
     () => formatProviderDisplayName(selectedProvider),
     [selectedProvider],
   );
-  const rawPhase = derivePhase(activeThread?.session ?? null);
+  const rawPhase = derivePhase(activeThread?.session ?? null, activeThread?.pendingTurnStart);
   const phase: SessionPhase = sessionActivelyWorking
     ? "running"
     : rawPhase === "running"

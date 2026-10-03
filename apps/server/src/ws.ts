@@ -874,6 +874,8 @@ const makeWsRpcLayer = (
                       ];
                     })
                   : [];
+              // Rejections are logged once, in the shared client command
+              // dispatcher both transports use.
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               yield* Effect.logInfo("client command committed", {
                 ...correlation,

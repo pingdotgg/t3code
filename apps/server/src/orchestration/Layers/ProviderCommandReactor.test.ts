@@ -564,12 +564,43 @@ describe("ProviderCommandReactor", () => {
     },
   ): Promise<void> {
     const completedAt = input.completedAt ?? new Date().toISOString();
+    const turnId = input.turnId ?? asTurnId("turn-1");
+    // A real turn is acknowledged by the provider before it completes: the
+    // session reports `running` with the active turn. That acknowledgement is
+    // what retires the accepted-but-unacknowledged start, so a harness that only
+    // completes the diff leaves the thread permanently busy and every later start
+    // looks like a double send.
+    {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      const providerName = thread?.session?.providerName ?? "codex";
+      const providerInstanceId = thread?.session?.providerInstanceId;
+      const runtimeMode = thread?.session?.runtimeMode ?? "approval-required";
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`${input.commandId}-ack`),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName,
+            ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
+            runtimeMode,
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: completedAt,
+          },
+          createdAt: completedAt,
+        }),
+      );
+    }
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make(input.commandId),
         threadId: ThreadId.make("thread-1"),
-        turnId: input.turnId ?? asTurnId("turn-1"),
+        turnId,
         checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/thread-1/${input.commandId}`),
         status: "ready",
         files: [],
@@ -577,6 +608,26 @@ describe("ProviderCommandReactor", () => {
         turnFiles: [],
         checkpointTurnCount: 1,
         completedAt,
+        createdAt: completedAt,
+      }),
+    );
+
+    // ...and then `turn.completed` releases the session back to ready, which is
+    // what makes the thread sendable again.
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make(`${input.commandId}-release`),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          ...thread!.session!,
+          status: "ready",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: completedAt,
+        },
         createdAt: completedAt,
       }),
     );

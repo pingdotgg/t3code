@@ -12,6 +12,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 /**
  * Retention limits for collections within a thread.
@@ -369,6 +370,13 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // Mirrors the list reducer: the start is authoritative before the
+          // provider acknowledges, so the detail view must hold the pending state
+          // the server invariant relies on.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.occurredAt,
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -524,6 +532,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };

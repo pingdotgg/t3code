@@ -557,6 +557,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               planId: "plan-1",
             },
           },
+          pendingTurnStart: null,
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
@@ -688,6 +689,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               planId: "plan-1",
             },
           },
+          pendingTurnStart: null,
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
@@ -736,6 +738,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.isDefined(snapshotThread);
         assert.deepEqual(threadDetail.value, {
           ...snapshotThread,
+          pendingTurnStart: null,
           activityContext: [],
           hasMoreActivities: false,
           hasMoreCurrentTurnActivities: false,

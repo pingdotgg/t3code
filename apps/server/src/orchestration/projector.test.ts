@@ -9,6 +9,7 @@ import {
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { threadHasInFlightTurn } from "./commandInvariants.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
 function makeEvent(input: {
@@ -1983,5 +1984,254 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints).toHaveLength(500);
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
+  });
+  it("tracks the pending turn start from acceptance through acknowledgement and failure", async () => {
+    const threadId = "thread-pending-turn-start";
+    const requestedAt = "2026-03-01T10:00:00.000Z";
+    const acknowledgedAt = "2026-03-01T10:00:02.000Z";
+    const model = await createThreadModel(threadId, requestedAt);
+
+    const requested = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 900,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: "cmd-turn-start",
+          payload: {
+            threadId,
+            messageId: "message-pending",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: requestedAt,
+          },
+        }),
+      ),
+    );
+    expect(requested.threads[0]?.pendingTurnStart).toEqual({
+      messageId: "message-pending",
+      requestedAt,
+    });
+
+    // A session transition that does not acknowledge a turn keeps it pending:
+    // `ready` and `starting` are pre-acknowledgement states.
+    const stillPending = await Effect.runPromise(
+      projectEvent(
+        requested,
+        makeEvent({
+          sequence: 901,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T10:00:01.000Z",
+          commandId: "cmd-session-idle",
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "pi",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-03-01T10:00:01.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(stillPending.threads[0]?.pendingTurnStart).not.toBeNull();
+
+    // Provider acknowledgement retires it.
+    const acknowledged = await Effect.runPromise(
+      projectEvent(
+        stillPending,
+        makeEvent({
+          sequence: 902,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: acknowledgedAt,
+          commandId: "cmd-session-running",
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "pi",
+              runtimeMode: "full-access",
+              activeTurnId: "turn-1",
+              lastError: null,
+              updatedAt: acknowledgedAt,
+            },
+          },
+        }),
+      ),
+    );
+    expect(acknowledged.threads[0]?.pendingTurnStart).toBeNull();
+    expect(acknowledged.threads[0]?.latestTurn?.state).toBe("running");
+
+    // A fresh start that fails resolves, so the thread is sendable again.
+    const retried = await Effect.runPromise(
+      projectEvent(
+        acknowledged,
+        makeEvent({
+          sequence: 903,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T10:01:00.000Z",
+          commandId: "cmd-turn-start-2",
+          payload: {
+            threadId,
+            messageId: "message-retry",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-03-01T10:01:00.000Z",
+          },
+        }),
+      ),
+    );
+    expect(retried.threads[0]?.pendingTurnStart?.messageId).toBe("message-retry");
+
+    const failed = await Effect.runPromise(
+      projectEvent(
+        retried,
+        makeEvent({
+          sequence: 904,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T10:01:01.000Z",
+          commandId: "cmd-failure",
+          payload: {
+            threadId,
+            activity: {
+              id: "activity-failed",
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: { messageId: "message-retry" },
+              turnId: null,
+              createdAt: "2026-03-01T10:01:01.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(failed.threads[0]?.pendingTurnStart).toBeNull();
+  });
+
+  it("resolves a pending start when the provider dies before acknowledging", async () => {
+    const threadId = "thread-pending-turn-unacked";
+    const requestedAt = "2026-03-01T10:00:00.000Z";
+    const model = await createThreadModel(threadId, requestedAt);
+    const requested = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 920,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: "cmd-unacked-start",
+          payload: {
+            threadId,
+            messageId: "message-unacked",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: requestedAt,
+          },
+        }),
+      ),
+    );
+    expect(requested.threads[0]?.pendingTurnStart?.messageId).toBe("message-unacked");
+
+    // The provider process died before reporting a turn. The session goes
+    // terminal with no active turn, so the start must not stay pending forever.
+    const died = await Effect.runPromise(
+      projectEvent(
+        requested,
+        makeEvent({
+          sequence: 921,
+          type: "thread.session-set",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T10:00:05.000Z",
+          commandId: "cmd-unacked-death",
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "error",
+              providerName: "pi",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: "Provider process exited unexpectedly.",
+              updatedAt: "2026-03-01T10:00:05.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(died.threads[0]?.pendingTurnStart).toBeNull();
+    expect(threadHasInFlightTurn(died.threads[0]!)).toBe(false);
+  });
+
+  it("does not clear a pending start for a failure belonging to an older message", async () => {
+    const threadId = "thread-pending-turn-mismatch";
+    const requestedAt = "2026-03-01T10:00:00.000Z";
+    const model = await createThreadModel(threadId, requestedAt);
+    const requested = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 910,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: requestedAt,
+          commandId: "cmd-turn-start-mismatch",
+          payload: {
+            threadId,
+            messageId: "message-newest",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: requestedAt,
+          },
+        }),
+      ),
+    );
+
+    const afterOlderFailure = await Effect.runPromise(
+      projectEvent(
+        requested,
+        makeEvent({
+          sequence: 911,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-03-01T10:00:01.000Z",
+          commandId: "cmd-older-failure",
+          payload: {
+            threadId,
+            activity: {
+              id: "activity-older-failure",
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: { messageId: "message-older" },
+              turnId: null,
+              createdAt: "2026-03-01T10:00:01.000Z",
+            },
+          },
+        }),
+      ),
+    );
+    expect(afterOlderFailure.threads[0]?.pendingTurnStart?.messageId).toBe("message-newest");
   });
 });

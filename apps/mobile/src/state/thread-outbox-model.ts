@@ -4,6 +4,7 @@ import {
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import { hasPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import {
   CommandId,
   EnvironmentId,
@@ -15,6 +16,7 @@ import {
   RuntimeMode,
   ThreadId,
   type ModelSelection as ModelSelectionType,
+  type OrchestrationPendingTurnStart,
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
@@ -164,6 +166,29 @@ export function threadOutboxRetryDelayMs(attempt: number): number {
 }
 
 export type ThreadOutboxDeliveryAction = "wait" | "remove" | "send";
+
+/**
+ * Whether a queued follow-up must hold instead of sending.
+ *
+ * A turn start is authoritative from the moment the server commits it, but the
+ * provider only reports `running` once it acknowledges. A shell whose start is
+ * still pending therefore looks idle here, and sending into that window is exactly
+ * what the server rejects with "already has a turn in flight" — the same
+ * rejection web hit before both surfaces read `pendingTurnStart`.
+ *
+ * `starting` is kept alongside the shared pending signal because a mobile shell can
+ * report it while the provider session is still coming up, before any turn exists.
+ */
+export function isThreadOutboxThreadBusy(thread: {
+  readonly session?: { readonly status: string } | null;
+  readonly pendingTurnStart?: OrchestrationPendingTurnStart | null;
+}): boolean {
+  return (
+    hasPendingTurnStart(thread.pendingTurnStart) ||
+    thread.session?.status === "running" ||
+    thread.session?.status === "starting"
+  );
+}
 
 export function resolveThreadOutboxDeliveryAction(input: {
   readonly isCreation: boolean;

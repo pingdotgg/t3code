@@ -14,6 +14,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -263,6 +264,12 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          // The start is authoritative before the provider acknowledges, so the
+          // client must hold the same pending state the server invariant does.
+          pendingTurnStart: {
+            messageId: event.payload.messageId,
+            requestedAt: event.occurredAt,
+          },
           updatedAt: event.occurredAt,
         },
       };
@@ -434,6 +441,9 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           latestTurn,
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };

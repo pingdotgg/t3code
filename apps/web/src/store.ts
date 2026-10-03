@@ -432,6 +432,7 @@ export function mapThreadShell(
     snoozedAt: thread.snoozedAt ?? null,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequest: thread.pullRequest ?? null,
@@ -2221,6 +2222,15 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        // Mirrors the server read model so the composer treats the thread as
+        // busy during the acceptance-to-acknowledgement window.
+        pendingTurnStart: {
+          messageId: event.payload.messageId,
+          requestedAt: event.payload.createdAt,
+          ...(event.payload.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+            : {}),
+        },
         hasMoreCurrentTurnActivities: false,
         updatedAt: event.occurredAt,
       }));
@@ -2266,17 +2276,23 @@ function applyEnvironmentOrchestrationEvent(
       }));
 
     case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        session: mapSession(event.payload.session),
-        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn: latestTurnFromSessionUpdate(
-          thread.latestTurn,
-          event.payload.session,
-          thread.pendingSourceProposedPlan,
-        ),
-        updatedAt: event.occurredAt,
-      }));
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        // Provider acknowledgement retires the pending start.
+        const acknowledged =
+          event.payload.session.status === "running" && event.payload.session.activeTurnId !== null;
+        return {
+          ...thread,
+          session: mapSession(event.payload.session),
+          error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+          latestTurn: latestTurnFromSessionUpdate(
+            thread.latestTurn,
+            event.payload.session,
+            thread.pendingSourceProposedPlan,
+          ),
+          ...(acknowledged ? { pendingTurnStart: null } : {}),
+          updatedAt: event.occurredAt,
+        };
+      });
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>
@@ -2509,9 +2525,24 @@ function applyEnvironmentOrchestrationEvent(
             exceededActivityLimit = allActivities.length > MAX_THREAD_ACTIVITIES;
           }
 
+          // A failed start resolves the pending start, so the composer offers
+          // send again instead of queueing behind a start that will never run.
+          const failureMessageId =
+            nextActivity.payload != null &&
+            typeof nextActivity.payload === "object" &&
+            "messageId" in nextActivity.payload &&
+            typeof nextActivity.payload.messageId === "string"
+              ? nextActivity.payload.messageId
+              : null;
+          const clearsPendingStart =
+            nextActivity.kind === "provider.turn.start.failed" &&
+            thread.pendingTurnStart != null &&
+            (failureMessageId === null || failureMessageId === thread.pendingTurnStart.messageId);
+
           return {
             ...thread,
             activities,
+            ...(clearsPendingStart ? { pendingTurnStart: null } : {}),
             hasMoreActivities: (thread.hasMoreActivities ?? false) || exceededActivityLimit,
             hasMoreCurrentTurnActivities:
               (thread.hasMoreCurrentTurnActivities ?? false) || evictedCurrentTurnActivity,

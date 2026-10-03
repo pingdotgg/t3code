@@ -312,6 +312,10 @@
       "types": "./src/t3ProjectFile.ts",
       "import": "./src/t3ProjectFile.ts"
     },
+    "./threadBusyState": {
+      "types": "./src/threadBusyState.ts",
+      "import": "./src/threadBusyState.ts"
+    },
     "./threadEnvMode": {
       "types": "./src/threadEnvMode.ts",
       "import": "./src/threadEnvMode.ts"

@@ -5,6 +5,7 @@ import {
   extractWorkLogToolLifecycleStatus,
   mergeWorkLogToolData,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { hasPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { extractNormalizedChangedFilePathsFromToolPayload } from "@t3tools/shared/toolChangedFiles";
 import { extractToolCommandInput } from "@t3tools/shared/toolActivity";
 import {
@@ -13,6 +14,7 @@ import {
   isToolLifecycleItemType,
   MessageId,
   type OrchestrationLatestTurn,
+  type OrchestrationPendingTurnStart,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
   ProviderDriverKind,
@@ -1531,9 +1533,23 @@ export function inferCheckpointTurnCountByTurnId(
   return result;
 }
 
-export function derivePhase(session: ThreadSession | null): SessionPhase {
+/**
+ * Session status alone cannot decide "busy": a `thread.turn.start` is
+ * authoritative from the moment it commits, but the session only reports
+ * `running` once the provider acknowledges. Reading only the session made the
+ * composer offer a start the server rejects with "already has a turn in
+ * flight". Delegates to the shared derivation so this cannot drift from the
+ * orchestration invariant.
+ */
+export function derivePhase(
+  session: ThreadSession | null,
+  pendingTurnStart?: OrchestrationPendingTurnStart | null,
+): SessionPhase {
   if (!session || session.status === "closed") return "disconnected";
   if (session.status === "connecting") return "connecting";
   if (session.status === "running") return "running";
+  if (hasPendingTurnStart(pendingTurnStart)) {
+    return "running";
+  }
   return "ready";
 }

@@ -868,12 +868,26 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     );
     const command = envelope.command;
     const cleanupPath = cleanupWorktreePath(command, readModel.threads);
-    const requiresWorktreeLock =
-      cleanupPath !== null ||
+    // The global worktree lock protects checkouts whose on-disk state is being
+    // created, removed, or handed between threads. Admitting a turn start does
+    // none of those: it claims workspace ownership (SQLite plus the filesystem
+    // ledger) and runs read-only Git commands. Holding the single global permit
+    // for it serialized every thread's turn start behind every other thread's,
+    // which was the dominant `thread.turn.start` commit latency under load.
+    //
+    // Admission is still serialized against checkout removal, and by a
+    // *different* primitive: turn starts take the per-checkout `withCheckout`
+    // reservation below, and removal takes both that reservation and this
+    // global lock. A removal already holding either one blocks admission.
+    // `thread.meta.update` and `thread.queued-turn.create` also target a
+    // checkout without mutating it, so they stay unlocked like turn starts.
+    const mutatesCheckoutOnDisk =
       command.type === "thread.archive" ||
       command.type === "thread.unarchive" ||
-      command.type === "thread.delete";
-    const worktreeProcess = requiresWorktreeLock ? withWorktreeLock(process) : process;
+      command.type === "thread.delete" ||
+      command.type === "thread.workspace.handoff" ||
+      (command.type === "thread.create" && cleanupPath !== null);
+    const worktreeProcess = mutatesCheckoutOnDisk ? withWorktreeLock(process) : process;
     if (command.type !== "thread.turn.start" && command.type !== "thread.queued-turn.dispatch") {
       return worktreeProcess;
     }

@@ -289,16 +289,39 @@ export const makeClientCommandDispatcher = ({
         ? dispatchBootstrapTurnStart(normalizedCommand)
         : dispatchThroughStartupGate(normalizedCommand, orchestrationEngine, startup);
 
-    return normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-      ? Effect.flatMap(CheckoutCoordinator, (checkoutCoordinator) =>
-          startup.enqueueCommand(
-            dispatchEffect.pipe(Effect.provideService(CheckoutCoordinator, checkoutCoordinator)),
-          ),
-        ).pipe(
-          Effect.mapError((cause) =>
-            toOrchestrationDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-          ),
-        )
-      : dispatchEffect;
+    const dispatched =
+      normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+        ? Effect.flatMap(CheckoutCoordinator, (checkoutCoordinator) =>
+            startup.enqueueCommand(
+              dispatchEffect.pipe(Effect.provideService(CheckoutCoordinator, checkoutCoordinator)),
+            ),
+          ).pipe(
+            Effect.mapError((cause) =>
+              toOrchestrationDispatchCommandError(
+                cause,
+                "Failed to dispatch orchestration command",
+              ),
+            ),
+          )
+        : dispatchEffect;
+
+    // Both client transports funnel through here, so this is the one place that
+    // can explain a rejection in server.log. Without it a rejected command shows
+    // up as an "unexplained error" the caller has to correlate by hand, which is
+    // what made a spurious turn-start rejection hard to diagnose.
+    //
+    // Correlation fields only. The reason is logged by class rather than by
+    // message: invariant details embed user content (thread and message ids,
+    // workspace paths), and this log is not the place for that.
+    return dispatched.pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("client command rejected", {
+          commandId: normalizedCommand.commandId,
+          commandType: normalizedCommand.type,
+          ...("threadId" in normalizedCommand ? { threadId: normalizedCommand.threadId } : {}),
+          reason: error._tag,
+        }),
+      ),
+    );
   };
 };
