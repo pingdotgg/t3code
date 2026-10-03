@@ -95,6 +95,10 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
+  // WSL NAT runs set this to the distro IP for hosts where wslhost loopback
+  // forwarding is unreliable. Readiness uses it only while httpBaseUrl stays
+  // unreachable; the manager then rewrites httpBaseUrl in currentConfig.
+  readonly fallbackHttpBaseUrl?: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
   // Present for a WSL run after the configured/default distro has been
@@ -229,7 +233,9 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
-  readonly onReady?: () => Effect.Effect<void>;
+  // Receives the base URL that answered readiness: httpBaseUrl, or
+  // fallbackHttpBaseUrl when only the fallback is reachable.
+  readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
@@ -288,10 +294,10 @@ export interface BackendInstanceSpec {
   // bootstrap-token closure inside DesktopBackendConfiguration uses
   // crypto.randomBytes (Effect 4 beta.73 migration).
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
-  // Receives the *resolved* httpBaseUrl of the run that just became
-  // ready. The window service uses this to decide what URL to load
-  // (the WSL backend reports its distro IP, the Windows backend reports
-  // 127.0.0.1). Splitting this off from configResolve avoids races
+  // Receives the httpBaseUrl that answered readiness for the run that
+  // just became ready. The window service uses this to decide what URL
+  // to load (loopback, or the WSL distro IP when only that fallback
+  // answered). Splitting this off from configResolve avoids races
   // between "fired onReady" and "currentConfig already advanced".
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
@@ -576,15 +582,34 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // on "Connecting to WSL…" forever even though the backend kept running
   // and became healthy. Each round gets a fresh budget, and the forked
   // loop is torn down with the run scope once the child exits.
-  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
+  const readinessTimeout = options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT;
+  const probeUrl = (httpBaseUrl: URL, timeout: Duration.Duration) =>
     waitForHttpReady({
       executablePath: options.executablePath,
       entryPath: options.entryPath,
       cwd: options.cwd,
-      httpBaseUrl: options.httpBaseUrl,
-      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-    }).pipe(
-      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
+      httpBaseUrl,
+      timeout,
+    }).pipe(Effect.as(httpBaseUrl));
+  // httpBaseUrl stays preferred: the fallback only wins when it answers and a
+  // fresh probe of httpBaseUrl still fails, so hosts that reach both keep
+  // using httpBaseUrl.
+  const probeReachableUrl =
+    options.fallbackHttpBaseUrl === undefined
+      ? probeUrl(options.httpBaseUrl, readinessTimeout)
+      : Effect.race(
+          probeUrl(options.httpBaseUrl, readinessTimeout),
+          probeUrl(options.fallbackHttpBaseUrl, readinessTimeout).pipe(
+            Effect.flatMap((fallbackUrl) =>
+              probeUrl(options.httpBaseUrl, DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT).pipe(
+                Effect.orElseSucceed(() => fallbackUrl),
+              ),
+            ),
+          ),
+        );
+  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
+    probeReachableUrl.pipe(
+      Effect.flatMap((readyUrl) => options.onReady?.(readyUrl) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
@@ -923,7 +948,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               exitObserved: true,
             })),
-          onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (readyUrl) {
+            const usedFallback = readyUrl.href !== config.value.httpBaseUrl.href;
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -936,6 +962,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   ...latest,
                   restartAttempt: 0,
                   ready: true,
+                  // currentConfig feeds the renderer bootstraps and local
+                  // auth, so they must dial the URL that actually answered.
+                  config: Option.map(latest.config, (current) => ({
+                    ...current,
+                    httpBaseUrl: readyUrl,
+                  })),
                 },
               ] as const;
             });
@@ -943,7 +975,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            if (usedFallback) {
+              yield* logInstanceWarning("backend unreachable at its primary URL; using fallback", {
+                httpBaseUrl: config.value.httpBaseUrl.href,
+                fallbackHttpBaseUrl: readyUrl.href,
+              });
+            }
+            yield* spec.onReady?.(readyUrl) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
               config.value.wslRuntimeId !== undefined

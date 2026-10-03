@@ -1096,10 +1096,8 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
-          // httpBaseUrl uses the resolved distro IP from the test stub,
-          // not localhost — the renderer reaches the backend directly to
-          // avoid relying on wslhost forwarding.
-          assert.equal(config.httpBaseUrl.href, "http://172.27.0.99:5050/");
+          assert.equal(config.httpBaseUrl.href, "http://127.0.0.1:5050/");
+          assert.equal(config.fallbackHttpBaseUrl?.href, "http://172.27.0.99:5050/");
           assert.equal(config.env.OPENAI_API_KEY, "openai-key");
           assert.equal(config.env.ANTHROPIC_API_KEY, "anthropic-key");
           assert.equal(config.env.T3CODE_OTLP_PROTOCOL, "http/protobuf");

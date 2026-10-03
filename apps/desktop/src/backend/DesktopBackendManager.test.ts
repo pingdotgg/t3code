@@ -807,6 +807,58 @@ describe("DesktopBackendManager", () => {
       ),
   );
 
+  describe("fallback readiness URL", () => {
+    // Starts an instance with a loopback primary and a distro-IP fallback and
+    // returns the URL currentConfig settles on, which the renderer reads.
+    const readyUrl = (loopbackAnswers: boolean) =>
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const fallbackProbed = yield* Deferred.make<void>();
+        const instance = yield* makeTestInstance({
+          config: {
+            ...baseConfig,
+            fallbackHttpBaseUrl: new URL("http://172.27.0.99:3773"),
+          },
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(makeProcess({ exitCode: Effect.never }))),
+          ),
+          httpClientLayer: httpClientLayer((request) => {
+            const loopback = request.url.startsWith("http://127.0.0.1:");
+            return (loopback ? Effect.void : Deferred.succeed(fallbackProbed, void 0)).pipe(
+              Effect.as(responseForRequest(request, loopback && !loopbackAnswers ? 503 : 200)),
+            );
+          }),
+          onReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        if (!loopbackAnswers) {
+          // Let the loopback re-check time out before the fallback is accepted.
+          yield* Deferred.await(fallbackProbed);
+          yield* TestClock.adjust(Duration.seconds(2));
+        }
+        yield* Deferred.await(ready);
+        return Option.getOrThrow(yield* instance.currentConfig).httpBaseUrl.href;
+      }).pipe(Effect.provide(TestClock.layer()));
+
+    it.effect("uses the distro IP when only it answers", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          assert.equal(yield* readyUrl(false), "http://172.27.0.99:3773/");
+        }),
+      ),
+    );
+
+    it.effect("keeps loopback when both answer", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          assert.equal(yield* readyUrl(true), "http://127.0.0.1:3773/");
+        }),
+      ),
+    );
+  });
+
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
     Effect.scoped(
       Effect.gen(function* () {
