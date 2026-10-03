@@ -37,6 +37,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
+import { usageAvailability } from "./usageAvailability";
+import { UsageCompatibilityNotice } from "./UsageCompatibilityNotice";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -103,6 +105,8 @@ export function UsageRouteScreen() {
     selectedEnvironmentIds,
   );
   const isFocused = useIsFocused();
+  const availability = usageAvailability(selectedEnvironments, merged.contractMismatches);
+  const usageUnavailable = availability.notices.length > 0 && !availability.hasCompatibleSummary;
   const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && tab === "limits");
   const cursorAccessEnvironments = cursorKeychainAccessEnvironments(selectedEnvironments);
   const refreshAfterCursorEnable = () => {
@@ -325,7 +329,10 @@ export function UsageRouteScreen() {
                   {merged.duplicateSources.join(", ")}
                 </Text>
               ) : null}
-              {isPending ? (
+              {isPending &&
+              !availability.canRetry &&
+              merged.contractMismatches.length === 0 &&
+              selectedEnvironments.every((environment) => environment.isConnected) ? (
                 <Text className="py-16 text-center text-base text-foreground-muted">
                   Scanning provider transcripts…
                 </Text>
@@ -342,25 +349,34 @@ export function UsageRouteScreen() {
                       {message}
                     </Text>
                   ))}
-                  <ChartCard
-                    merged={merged}
-                    days={chartDays}
-                    daily={chartTotals}
-                    metric={metric}
-                    sinceDay={window.sinceDay}
-                    untilDay={window.untilDay}
-                    isPast24Hours={isPast24Hours}
-                    timeZone={window.timeZone}
+                  <UsageCompatibilityNotice
+                    availability={availability}
+                    onRetry={refreshWindow}
+                    refreshing={refreshingUsage}
                   />
-                  <ProviderSection
-                    merged={merged}
-                    metric={metric}
-                    cursorAccessEnvironments={cursorAccessEnvironments}
-                    showCursorEnvironment={selectedEnvironments.length > 1}
-                    onCursorEnabled={refreshAfterCursorEnable}
-                  />
-                  <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-                  <ModelsSection merged={merged} />
+                  {!usageUnavailable ? (
+                    <>
+                      <ChartCard
+                        merged={merged}
+                        days={chartDays}
+                        daily={chartTotals}
+                        metric={metric}
+                        sinceDay={window.sinceDay}
+                        untilDay={window.untilDay}
+                        isPast24Hours={isPast24Hours}
+                        timeZone={window.timeZone}
+                      />
+                      <ProviderSection
+                        merged={merged}
+                        metric={metric}
+                        cursorAccessEnvironments={cursorAccessEnvironments}
+                        showCursorEnvironment={selectedEnvironments.length > 1}
+                        onCursorEnabled={refreshAfterCursorEnable}
+                      />
+                      <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                      <ModelsSection merged={merged} />
+                    </>
+                  ) : null}
                 </>
               )}
             </>
