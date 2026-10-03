@@ -454,7 +454,8 @@ export type PullRequestListStatsResult = typeof PullRequestListStatsResult.Type;
 
 /**
  * Forget what the server has cached, so the next read asks the host. With a reference it
- * forgets that one change request's detail and diff; without one it forgets the listings.
+ * forgets that one change request's detail, activity, and diff; without one it clears persisted reads and
+ * refreshes workspace listings.
  * A separate request rather than a flag on the reads, so an explicit "refresh" one person
  * presses is the only thing that spends host requests — every ordinary read shares.
  */
