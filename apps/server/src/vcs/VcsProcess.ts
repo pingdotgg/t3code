@@ -93,7 +93,10 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
       (normalized.includes("could not resolve to a pullrequest") ||
         normalized.includes("repository.pullrequest") ||
         normalized.includes("no pull requests found for branch") ||
-        normalized.includes("pull request not found"))) ||
+        normalized.includes("pull request not found") ||
+        // `gh api` reports a missing resource or an endpoint the host does not serve as
+        // "gh: Not Found (HTTP 404)"; GraphQL reads say "HTTP 404: Not Found (...)".
+        normalized.includes("http 404"))) ||
     (command === "glab" &&
       (normalized.includes("merge request not found") ||
         normalized.includes("not found") ||
