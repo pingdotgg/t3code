@@ -75,6 +75,21 @@ describe("effect-acp errors", () => {
     });
   });
 
+  it("adds the reason ACP SDKs carry in error data to the message", () => {
+    const fromAgent = (data: unknown) =>
+      AcpError.AcpRequestError.fromProtocolError(
+        AcpSchema.Error.make({ code: -32603, message: "Internal error", data }),
+        { method: "session/new" },
+      );
+
+    // TypeScript and Python SDKs wrap uncaught agent errors as `{ details }`.
+    expect(fromAgent({ details: "Droid process exited unexpectedly (exit code 1)" }).message).toBe(
+      "Internal error: Droid process exited unexpectedly (exit code 1)",
+    );
+    // The Rust SDK sends a plain string, which may already restate the message.
+    expect(fromAgent("Internal error: Agent error").message).toBe("Internal error: Agent error");
+  });
+
   it("does not expose legacy diagnostic detail as the transport message", () => {
     const cause = new Error("connection refused at a private endpoint");
     const error = new AcpError.AcpTransportError({

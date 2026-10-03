@@ -125,7 +125,7 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
     cause,
     ...(isAcpRequestError(cause)
       ? {
-          message: cause.errorMessage,
+          message: cause.message,
           code: String(cause.code),
           class:
             // Per-agent exception: see the note above registerMistralVibeAcpExtensions.

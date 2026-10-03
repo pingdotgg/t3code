@@ -187,6 +187,18 @@ export class AcpInputStreamEndedError extends Schema.TaggedError<AcpInputStreamE
   }
 }
 
+/**
+ * Reason text ACP SDKs put in an error's `data`: a plain string (Rust SDK) or
+ * `{ details }` (TypeScript and Python SDKs). Other shapes carry no reason.
+ */
+function protocolErrorDetail(data: unknown): string | undefined {
+  if (typeof data === "string") return data;
+  if (typeof data === "object" && data !== null && "details" in data) {
+    return typeof data.details === "string" ? data.details : undefined;
+  }
+  return undefined;
+}
+
 export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpRequestError", {
   code: AcpSchema.ErrorCode,
   errorMessage: Schema.String,
@@ -199,8 +211,12 @@ export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpR
   maximumPathDepth: Schema.optionalKey(Schema.Number),
   cause: Schema.optionalKey(Schema.Defect()),
 }) {
+  /** The agent's message plus any detail its ACP SDK attached in `data`. */
   override get message() {
-    return this.errorMessage;
+    const detail = protocolErrorDetail(this.data)?.trim();
+    if (!detail) return this.errorMessage;
+    // TypeScript SDK detail often restates the message ("Internal error: Agent error").
+    return detail.startsWith(this.errorMessage) ? detail : `${this.errorMessage}: ${detail}`;
   }
 
   static fromProtocolError(

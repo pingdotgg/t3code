@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { AcpRequestError } from "effect-acp/errors";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -32,7 +33,10 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { ProviderAdapterEventStreamError } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterEventStreamError,
+  ProviderAdapterOpenSessionError,
+} from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -582,6 +586,31 @@ effectIt.effect("terminalizes a starting run when its provider session cannot op
           class: "provider_error",
           message: "DESCRIPTION is not valid ACP JSON",
         },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("fails a run with the agent's reason from beneath session and adapter errors", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("acpRegistry"),
+        providerSessionId: ProviderSessionId.make("provider-session-acp"),
+        cause: AcpRequestError.internalError("Internal error", {
+          details: "Droid process exited unexpectedly (exit code 1)",
+        }),
+      }),
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider session failed to open",
+        failure: { message: "Internal error: Droid process exited unexpectedly (exit code 1)" },
       },
     ]);
   }),
