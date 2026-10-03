@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useMemo } from "react";
+import { createContext, memo, useContext, useMemo, type ReactNode } from "react";
 import { Image, Platform, ScrollView, Text, useColorScheme, View } from "react-native";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
@@ -21,6 +21,10 @@ import { useHighlightedCode, type HighlightedCode } from "./useHighlightedCode";
 
 /** Set by SelectableMarkdownText so images anywhere in the block tree can use it. */
 export const MarkdownImageRendererContext = createContext<MarkdownImageRenderer | null>(null);
+
+export const MarkdownCodeRendererContext = createContext<
+  ((source: string, language: string | undefined, children: ReactNode) => ReactNode) | null
+>(null);
 
 const MONO_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
@@ -502,6 +506,7 @@ export function NativeMarkdownBlock(props: {
   readonly compact?: boolean;
 }) {
   const depth = props.depth ?? 0;
+  const renderCodeBlock = useContext(MarkdownCodeRendererContext);
   switch (props.node.type) {
     case "document":
       return (
@@ -519,8 +524,8 @@ export function NativeMarkdownBlock(props: {
           ))}
         </View>
       );
-    case "code_block":
-      return (
+    case "code_block": {
+      const source = (
         <NativeCodeBlock
           node={props.node}
           textStyle={props.textStyle}
@@ -528,6 +533,10 @@ export function NativeMarkdownBlock(props: {
           compact={props.compact}
         />
       );
+      return renderCodeBlock
+        ? renderCodeBlock(props.node.content ?? "", props.node.language ?? undefined, source)
+        : source;
+    }
     case "table":
       return (
         <NativeTable

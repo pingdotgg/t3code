@@ -1,6 +1,8 @@
 import type { SelectableMarkdownTextProps } from "@t3tools/mobile-markdown-text/renderer";
 
-type MobileSelectableMarkdownTextProps = Omit<SelectableMarkdownTextProps, "highlightCode">;
+type MobileSelectableMarkdownTextProps = Omit<SelectableMarkdownTextProps, "highlightCode"> & {
+  isStreaming?: boolean | undefined;
+};
 
 export type {
   MarkdownFileContextMenu,

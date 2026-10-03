@@ -87,6 +87,11 @@ export interface SelectableMarkdownTextProps {
   readonly fileContextMenu?: (href: string) => MarkdownFileContextMenu | undefined;
   readonly onFileContextMenuAction?: (href: string, actionId: string) => void;
   readonly renderImage?: MarkdownImageRenderer;
+  readonly renderCodeBlock?: (
+    source: string,
+    language: string | undefined,
+    children: import("react").ReactNode,
+  ) => import("react").ReactNode;
   readonly marginTop?: number;
   readonly marginBottom?: number;
 }

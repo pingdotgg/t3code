@@ -591,6 +591,26 @@ describe("ChatMarkdown file option chips", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 
+  it.each(["", "   ", "> "])(
+    "offers preview only for closed Mermaid fences with prefix %s",
+    (prefix) => {
+      const source = ["```mermaid", "flowchart LR", "A --> B", "```"]
+        .map((line) => prefix + line)
+        .join("\n");
+      expect(renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={source} />)).toContain(
+        "Preview diagram",
+      );
+      expect(
+        renderToStaticMarkup(
+          <ChatMarkdown cwd={undefined} text={source.split("\n").slice(0, -1).join("\n")} />,
+        ),
+      ).not.toContain("Preview diagram");
+      expect(
+        renderToStaticMarkup(<ChatMarkdown cwd={undefined} text={source} isStreaming />),
+      ).not.toContain("Preview diagram");
+    },
+  );
+
   it("leaves malformed and similarly named file directives literal", () => {
     for (const text of [
       ':codex-file-citation{purpose="output"}',

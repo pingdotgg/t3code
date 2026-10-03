@@ -12,3 +12,8 @@ import type { MobileThemeVariables } from "./mobileTheme";
 export function useUniwindTheme(): MobileThemeVariables {
   return useAppearancePreferences().themeVariables;
 }
+
+/** Resolved app appearance for renderers with their own light/dark palette. */
+export function useMobileThemeAppearance() {
+  return useAppearancePreferences().themeAppearance;
+}
