@@ -357,6 +357,25 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   }
 }
 
+const CLAUDE_LAUNCH_SETTINGS_PROBLEMS = {
+  missing: "needs a JSON object or a settings file path",
+  unreadable: "names a file that could not be read",
+  invalid: "is not a JSON object",
+} as const;
+
+/** A `--settings` launch arg Claude cannot start with. Its message is shown in the thread. */
+export class ClaudeLaunchSettingsError extends Schema.TaggedError<ClaudeLaunchSettingsError>()(
+  "ClaudeLaunchSettingsError",
+  {
+    reason: Schema.Literals(["missing", "unreadable", "invalid"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `The Claude launch argument --settings ${CLAUDE_LAUNCH_SETTINGS_PROBLEMS[this.reason]}. Fix it in Settings → Providers → Claude, then send the message again.`;
+  }
+}
+
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
@@ -433,7 +452,7 @@ export interface ClaudeAgentSdkLoggedQueryOptions {
   readonly cwd?: ClaudeAgentSdkQueryOptions["cwd"];
   readonly allowedTools?: ClaudeAgentSdkQueryOptions["allowedTools"];
   readonly disallowedTools?: ClaudeAgentSdkQueryOptions["disallowedTools"];
-  readonly settings?: ClaudeAgentSdkQueryOptions["settings"];
+  readonly settingsKeys?: ReadonlyArray<string>;
   readonly effort?: ClaudeAgentSdkQueryOptions["effort"];
   readonly includePartialMessages?: true;
   readonly pathToClaudeCodeExecutable?: ClaudeAgentSdkQueryOptions["pathToClaudeCodeExecutable"];
@@ -548,7 +567,11 @@ export function loggedClaudeQueryOptions(
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
     ...(options.disallowedTools === undefined ? {} : { disallowedTools: options.disallowedTools }),
-    ...(options.settings === undefined ? {} : { settings: options.settings }),
+    // Settings carry the user's --settings launch arg, whose `env` or
+    // `apiKeyHelper` can hold secrets, so only the key names are logged.
+    ...(typeof options.settings === "object"
+      ? { settingsKeys: Object.keys(options.settings) }
+      : {}),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     ...(options.includePartialMessages === true ? { includePartialMessages: true } : {}),
     ...(options.pathToClaudeCodeExecutable === undefined
@@ -800,6 +823,41 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
   }),
 );
 
+const decodeSettingsJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+/**
+ * Reads a `--settings` launch arg the way Claude Code does: inline JSON when
+ * the trimmed value starts with `{` and ends with `}`, otherwise a file path,
+ * here relative to the thread cwd. A missing or bad value fails the turn, as
+ * it fails the CLI, instead of starting a session without the user's settings.
+ */
+const readLaunchArgSettings = Effect.fn("readLaunchArgSettings")(function* (input: {
+  readonly value: string | null;
+  readonly cwd: string | null;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) {
+  const raw = input.value ?? "";
+  const value = raw.trim();
+  if (value === "") return yield* new ClaudeLaunchSettingsError({ reason: "missing" });
+  const text =
+    value.startsWith("{") && value.endsWith("}")
+      ? value
+      : yield* input.fileSystem
+          .readFileString(input.path.resolve(input.cwd ?? ".", expandHomePath(raw)))
+          .pipe(
+            Effect.mapError(
+              (cause) => new ClaudeLaunchSettingsError({ reason: "unreadable", cause }),
+            ),
+          );
+  const settings = yield* decodeSettingsJson(text).pipe(
+    Effect.mapError((cause) => new ClaudeLaunchSettingsError({ reason: "invalid", cause })),
+  );
+  return settings as ClaudeSdkSettings;
+});
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
@@ -814,7 +872,8 @@ export function makeClaudeQueryOptions(input: {
    */
   readonly attachmentsDir?: string;
   readonly settings?: ClaudeSettings;
-  readonly sdkSettings?: string | ClaudeSdkSettings;
+  /** The `--settings` launch arg, read by the caller. T3's own settings layer over it. */
+  readonly sdkSettings?: ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -832,6 +891,9 @@ export function makeClaudeQueryOptions(input: {
     "dangerously-skip-permissions": launchArgSkipPermissions,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  // The SDK replaces a --settings launch arg with options.settings, so the
+  // caller's parsed copy is merged below instead.
+  if (input.sdkSettings !== undefined) delete extraArgs.settings;
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
@@ -842,23 +904,15 @@ export function makeClaudeQueryOptions(input: {
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
-  const selectionSettings =
-    Object.keys(compiledSelection.settings).length === 0
-      ? undefined
-      : (compiledSelection.settings as ClaudeSdkSettings);
-  const querySettings =
-    selectionSettings === undefined
-      ? input.sdkSettings
-      : typeof input.sdkSettings === "object" && input.sdkSettings !== null
-        ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
-        : selectionSettings;
-  const effectiveQuerySettings =
-    input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
-      ? querySettings
-      : ({
-          ...(typeof querySettings === "object" && querySettings !== null ? querySettings : {}),
-          autoCompactWindow: Number(input.settings.autoCompactWindow),
-        } as ClaudeSdkSettings);
+  const t3Settings: ClaudeSdkSettings = {
+    ...compiledSelection.settings,
+    ...(input.settings?.autoCompactWindow === undefined ||
+    input.settings.autoCompactWindow.length === 0
+      ? {}
+      : { autoCompactWindow: Number(input.settings.autoCompactWindow) }),
+    ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
+  };
+  const querySettings: ClaudeSdkSettings = { ...input.sdkSettings, ...t3Settings };
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -882,19 +936,9 @@ export function makeClaudeQueryOptions(input: {
       ? { allowDangerouslySkipPermissions: true }
       : {}),
     ...(requestThinkingSummaries
-      ? {
-          thinking: { type: "adaptive" as const, display: "summarized" as const },
-          settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
-              : {
-                  ...effectiveQuerySettings,
-                  showThinkingSummaries: true,
-                },
-        }
-      : effectiveQuerySettings === undefined
-        ? {}
-        : { settings: effectiveQuerySettings }),
+      ? { thinking: { type: "adaptive" as const, display: "summarized" as const } }
+      : {}),
+    ...(Object.keys(querySettings).length === 0 ? {} : { settings: querySettings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.supportedDialogKinds === undefined
       ? {}
@@ -6909,6 +6953,22 @@ export function makeClaudeAdapterV2(
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
+          // Read before closing the live query, so a bad value leaves it
+          // intact. Like the CLI, the last of repeated --settings flags wins;
+          // a bare flag parses as null and fails rather than being dropped.
+          const launchArgSettings: string | null | undefined = parseCliArgs(
+            adapterOptions.settings.launchArgs,
+          ).flags.settings;
+          const sdkSettings =
+            launchArgSettings !== undefined
+              ? yield* readLaunchArgSettings({
+                  value: launchArgSettings,
+                  cwd: turnInput.runtimePolicy.cwd,
+                  fileSystem,
+                  path,
+                })
+              : undefined;
+
           // openQuery owns one live process. Closing it for another native
           // thread kills that sibling's CLI; it can never emit a roster clear,
           // so drop its process-scoped Waiting/wake state immediately. Closing
@@ -6942,6 +7002,7 @@ export function makeClaudeAdapterV2(
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
+            ...(sdkSettings === undefined ? {} : { sdkSettings }),
             environment: adapterOptions.environment,
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...mcpOverrides,

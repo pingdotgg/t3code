@@ -29,6 +29,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -60,6 +61,7 @@ import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
+  ProviderAdapterTurnStartError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2TurnInput,
@@ -230,6 +232,85 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal((options.settings as { autoCompactWindow?: number }).autoCompactWindow, 300_000);
     assert.equal(options.onUserDialog, onUserDialog);
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
+  });
+
+  it("layers T3 settings over the --settings launch arg", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-launch-settings",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--settings ignored.json" },
+      sdkSettings: {
+        skillOverrides: { "some-skill": "off" },
+        env: { FOO: "1" },
+        autoCompactWindow: 1,
+        showThinkingSummaries: false,
+      },
+    });
+    assert.deepEqual(options.settings, {
+      skillOverrides: { "some-skill": "off" },
+      env: { FOO: "1" },
+      autoCompactWindow: 300_000,
+      showThinkingSummaries: true,
+    });
+    assert.isUndefined(options.extraArgs?.["settings"]);
+  });
+
+  it("keeps the SDK settings unchanged without a --settings launch arg", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-thread-no-launch-settings",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+    });
+    // Recorded replay frames compare the JSON, so key order matters too.
+    assert.equal(
+      JSON.stringify(options.settings),
+      '{"autoCompactWindow":300000,"showThinkingSummaries":true}',
+    );
+  });
+
+  it("keeps the model's thinking switch authoritative over launch settings", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      },
+      nativeThreadId: "native-model-settings",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--settings ignored.json --verbose" },
+      sdkSettings: { alwaysThinkingEnabled: true, skillOverrides: { demo: "off" } },
+    });
+    assert.deepEqual(options.settings, {
+      alwaysThinkingEnabled: false,
+      skillOverrides: { demo: "off" },
+    });
+    assert.isUndefined(options.thinking);
+    assert.deepEqual(options.extraArgs, { verbose: null });
+  });
+
+  it("preserves user settings where T3 supplies no override", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-omitted-thinking",
+      resume: false,
+      cwd: "/workspace",
+      settings: {
+        ...DEFAULT_CLAUDE_SETTINGS,
+        launchArgs: "--settings ignored.json --thinking-display omitted",
+      },
+      sdkSettings: { showThinkingSummaries: false, autoCompactWindow: 200_000 },
+    });
+    assert.deepEqual(options.settings, {
+      showThinkingSummaries: false,
+      autoCompactWindow: 200_000,
+    });
+    assert.isUndefined(options.thinking);
+    assert.deepEqual(options.extraArgs, { "thinking-display": "omitted" });
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
@@ -809,6 +890,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       env: {
         ANTHROPIC_API_KEY: "secret",
       },
+      settings: { env: { ANTHROPIC_API_KEY: "secret launch setting" }, fastMode: true },
       extraArgs: {
         "append-system-prompt": "secret launch prompt",
       },
@@ -830,14 +912,14 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       permissionMode: "default",
       sessionId: "native-thread-1",
       cwd: "/workspace",
+      settingsKeys: ["env", "fastMode"],
       hasCanUseTool: true,
       hasEnvironment: true,
       hasExtraArgs: true,
     });
-    assert.notInclude(
-      JSON.stringify(ClaudeAdapterV2.loggedClaudeQueryOptions(options)),
-      "secret launch prompt",
-    );
+    const logged = JSON.stringify(ClaudeAdapterV2.loggedClaudeQueryOptions(options));
+    assert.notInclude(logged, "secret launch prompt");
+    assert.notInclude(logged, "secret launch setting");
   });
 });
 
@@ -1024,6 +1106,166 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           decision: "accept",
         });
         assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 --settings launch arg", () => {
+  const startTurnWithLaunchArgs = (launchArgs: string | ((cwd: string) => string)) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "user-settings.json"),
+        '{"skillOverrides":{"file-skill":"off"}}',
+      );
+      yield* fileSystem.writeFileString(path.join(cwd, "list.json"), "[]");
+      yield* fileSystem.writeFileString(path.join(cwd, "null.json"), "null");
+      yield* fileSystem.writeFileString(path.join(cwd, "invalid.json"), "{broken}");
+      yield* fileSystem.symlink(path.join(cwd, "user-settings.json"), path.join(cwd, "link.json"));
+      yield* fileSystem.copyFile(
+        path.join(cwd, "user-settings.json"),
+        path.join(cwd, "with space.json"),
+      );
+      // Claude Code reads a value as inline JSON only when it also ends in `}`.
+      yield* fileSystem.copyFile(
+        path.join(cwd, "user-settings.json"),
+        path.join(cwd, "{settings.json"),
+      );
+      let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+      const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs: typeof launchArgs === "string" ? launchArgs : launchArgs(cwd),
+        },
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem,
+        path,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-settings"),
+          open: (input) =>
+            Effect.sync(() => {
+              openedOptions = input.options;
+              return {
+                messages: Stream.never,
+                offer: () => Effect.void,
+                setModel: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              };
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        ...CLAUDE_TEST_RUNTIME_POLICY,
+        cwd,
+      });
+      const threadId = ThreadId.make("thread-claude-settings");
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-settings"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy,
+      });
+      const exit = yield* runtime
+        .startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-settings"),
+            text: "List your skills.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        )
+        .pipe(Effect.exit);
+      return { exit, openedOptions };
+    });
+
+  it.effect.each([
+    [`--settings '{"skillOverrides":{"inline-skill":"off"}}'`, "inline-skill"],
+    [`--settings '  {"skillOverrides":{"inline-skill":"off"}}  '`, "inline-skill"],
+    [`--settings='{"skillOverrides":{"inline-skill":"off"}}'`, "inline-skill"],
+    ["--settings user-settings.json", "file-skill"],
+    ["--settings link.json", "file-skill"],
+    ["--settings 'with space.json'", "file-skill"],
+    ["--settings '{settings.json'", "file-skill"],
+    ["--settings first.json --settings user-settings.json", "file-skill"],
+  ] as const)("merges %s under T3's settings", ([launchArgs, skill]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { exit, openedOptions } = yield* startTurnWithLaunchArgs(launchArgs);
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.deepEqual(openedOptions?.settings, {
+          skillOverrides: { [skill]: "off" },
+          showThinkingSummaries: true,
+        });
+        assert.isUndefined(openedOptions?.extraArgs?.["settings"]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each(["absolute", "home-relative"] as const)("reads a %s path", (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const { exit, openedOptions } = yield* startTurnWithLaunchArgs((cwd) => {
+          const file = path.join(cwd, "user-settings.json");
+          const value = kind === "absolute" ? file : `~/${path.relative(NodeOS.homedir(), file)}`;
+          return `--settings '${value}'`;
+        });
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.deepEqual(openedOptions?.settings, {
+          skillOverrides: { "file-skill": "off" },
+          showThinkingSummaries: true,
+        });
+        assert.isUndefined(openedOptions?.extraArgs?.["settings"]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    ["--settings '{not json}'", "invalid"],
+    ["--settings list.json", "invalid"],
+    ["--settings null.json", "invalid"],
+    ["--settings invalid.json", "invalid"],
+    ["--settings missing.json", "unreadable"],
+    ["--settings '{not json'", "unreadable"],
+    ["--settings", "missing"],
+    ["--settings ''", "missing"],
+    ["--settings --verbose", "missing"],
+    ["--settings user-settings.json --settings", "missing"],
+  ] as const)("fails the turn for %s", ([launchArgs, reason]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { exit, openedOptions } = yield* startTurnWithLaunchArgs(launchArgs);
+        assert.isUndefined(openedOptions);
+        if (!Exit.isFailure(exit)) return assert.fail("expected the turn to fail");
+        const failure = Cause.squash(exit.cause);
+        assert.instanceOf(failure, ProviderAdapterTurnStartError);
+        const error = failure.cause;
+        assert.instanceOf(error, ClaudeAdapterV2.ClaudeLaunchSettingsError);
+        assert.equal(error.reason, reason);
+        // The thread shows the fixed sentence, never the path or parser output.
+        const shown = makeProviderFailure({ cause: failure, class: "provider_error" }).message;
+        assert.equal(shown, error.message);
+        assert.include(shown, "--settings");
+        assert.notInclude(shown, ".json");
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
