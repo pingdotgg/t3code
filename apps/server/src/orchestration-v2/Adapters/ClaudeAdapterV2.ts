@@ -1739,6 +1739,13 @@ function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   );
 }
 
+// Claude opens every turn it runs with a root `init` frame. Outside a T3 turn
+// that turn is a wake, and `init` comes 20-110 ms after the notification that
+// caused it but seconds before its first output (model thinking time).
+function isClaudeTurnStartMessage(message: SDKMessage): boolean {
+  return message.type === "system" && message.subtype === "init";
+}
+
 function claudePendingBackgroundTasksFromRoster(
   roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
@@ -5095,12 +5102,14 @@ export function makeClaudeAdapterV2(
           // replay them to the turn that was still starting when they
           // arrived; the offer gate below keeps them from requesting a
           // continuation on their own.
+          const isWakeTurnStart = isClaudeTurnStartMessage(message);
           const isWakeEvidence =
             isPendingTaskNotification ||
             isPendingSubagentNotification ||
             isNestedSubagentNotification ||
             isKnownSubagentTaskStarted ||
             isNewSubagentTaskStarted ||
+            isWakeTurnStart ||
             message.type === "assistant" ||
             message.type === "user" ||
             message.type === "result" ||
@@ -5157,12 +5166,14 @@ export function makeClaudeAdapterV2(
           }
           // A terminal task notification can clear the Waiting roster without
           // Claude dequeuing it into a native model turn. Buffer it for replay,
-          // but do not open an opaque-task continuation until native user,
-          // assistant, or result output proves that Claude actually began the
-          // wake turn. Subagent notifications retain their existing immediate
-          // offer because their projected lifecycle owns the continuation.
-          // Only root output proves it: a background subagent keeps streaming
-          // its own frames while the root is idle.
+          // but do not open an opaque-task continuation until the turn's `init`,
+          // or native user, assistant, or result output, proves that Claude
+          // actually began the wake turn. `init` comes first, so the thread
+          // shows working while Claude thinks instead of looking finished.
+          // Subagent notifications retain their existing immediate offer
+          // because their projected lifecycle owns the continuation. Only
+          // root frames prove it: a background subagent keeps streaming its
+          // own frames while the root is idle.
           const buffered = (yield* Ref.get(wakeBuffers)).get(wakeInput.nativeThreadId);
           const hasBufferedNotification =
             buffered?.messages.some(
@@ -5175,6 +5186,7 @@ export function makeClaudeAdapterV2(
           if (
             !isPendingSubagentNotification &&
             !isNativeOpaqueWakeFrame &&
+            !isWakeTurnStart &&
             message.type !== "result"
           ) {
             return;
@@ -7135,8 +7147,13 @@ export function makeClaudeAdapterV2(
               yield* handleSdkMessage({ query: querySession.query, message: lastResult });
               return;
             }
+            // A drained `init` means Claude began the wake turn, so its output
+            // may still be on the way: stay open for it.
             const hasNativeWakeFrame = drained.some(
-              (entry) => entry.type === "user" || entry.type === "assistant",
+              (entry) =>
+                entry.type === "user" ||
+                entry.type === "assistant" ||
+                isClaudeTurnStartMessage(entry),
             );
             if (hasOpaqueTaskNotification && !hasNativeWakeFrame) {
               const completedAt = yield* DateTime.now;

@@ -2004,6 +2004,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     uuid: "00000000-0000-4000-8000-000000000107",
     text: WAKE_ASSISTANT_TEXT,
   });
+  // The CLI opens the wake turn with `init`, seconds before its first output.
+  const wakeTurnInit = claudeSdkFrame({
+    type: "system",
+    subtype: "init",
+    uuid: "00000000-0000-4000-8000-000000000110",
+    session_id: WAKE_NATIVE_SESSION,
+  });
   const wakeResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000104",
     result: WAKE_RESULT_TEXT,
@@ -4637,6 +4644,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.lengthOf(harness.continuationRequests, 1);
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("starts the wake run when Claude opens the wake turn, before its output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        yield* Queue.offer(harness.sdkMessages, turnOneResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+
+        yield* harness.offerAndWait(wakeNotification);
+        assert.lengthOf(harness.continuationRequests, 0);
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+
+        // The run attaches while Claude still thinks: only the notification
+        // and `init` are buffered, so the run waits for the turn's output.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
+            text: "Background task completed.",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        assert.lengthOf(harness.terminalEvents(), 1);
+
+        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(wakeResult);
+        yield* awaitUntil(() => harness.terminalEvents().length === 2, "wake run terminal");
+        assert.equal(harness.terminalEvents()[1]?.status, "completed");
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.isTrue(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
+          ),
+        );
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
