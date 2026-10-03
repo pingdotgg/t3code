@@ -43,6 +43,8 @@ export interface ConnectionCatalogEntry {
   readonly enabled: boolean;
   /** Discovery rejection stays visible while the saved connection is switched off. */
   readonly unsupportedReason?: string;
+  /** The rejection came from an outdated host, which can still be updated remotely. */
+  readonly serverUpdateRequired?: boolean;
 }
 
 export class BearerConnectionCredential extends Schema.TaggedClass<BearerConnectionCredential>()(

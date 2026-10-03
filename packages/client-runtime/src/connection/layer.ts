@@ -75,6 +75,8 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
     registryLayer,
     RelayEnvironmentDiscovery.layer,
     onboardingLayer,
+    // Exposed for updating hosts too old to connect through the driver.
+    ConnectionResolver.layer,
   );
   const connectionStartupLayer = Layer.effectDiscard(
     Effect.gen(function* () {
