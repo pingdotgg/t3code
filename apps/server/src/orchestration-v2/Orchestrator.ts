@@ -457,6 +457,26 @@ function withPullRequestWatch(
   return watch === undefined ? rest : { ...rest, watch };
 }
 
+/** A legacy single-PR link as a link entry. Re-linking a pull request keeps its watch. */
+function legacyPullRequestLink(
+  thread: OrchestrationV2AppThread,
+  linked: ThreadLinkedPullRequest,
+  now: DateTime.Utc,
+): ThreadPullRequestLink {
+  const key = legacyThreadPullRequestKey(linked);
+  return withPullRequestWatch(
+    {
+      ...key,
+      url: linked.url,
+      source: "manual",
+      linkedAt: DateTime.formatIso(now),
+      snapshot: null,
+      stack: null,
+    },
+    threadPullRequestsOf(thread).find((link) => threadPullRequestKeysEqual(link, key))?.watch,
+  );
+}
+
 function delegatedCompletionWakeDetail(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
   return taskIds.length === 1
@@ -2801,25 +2821,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         ),
                     ),
                     ...(command.linkedPullRequest
-                      ? [
-                          withPullRequestWatch(
-                            {
-                              ...legacyThreadPullRequestKey(command.linkedPullRequest),
-                              url: command.linkedPullRequest.url,
-                              source: "manual" as const,
-                              linkedAt: DateTime.formatIso(now),
-                              snapshot: null,
-                              stack: null,
-                            },
-                            // Re-linking the same pull request keeps its watch.
-                            threadPullRequestsOf(thread).find((link) =>
-                              threadPullRequestKeysEqual(
-                                link,
-                                legacyThreadPullRequestKey(command.linkedPullRequest!),
-                              ),
-                            )?.watch,
-                          ),
-                        ]
+                      ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
                       : []),
                   ],
                 }),
@@ -2977,6 +2979,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             pullRequests: links.map((link) =>
               link === existing ? withPullRequestWatch(link, watch) : link,
             ),
+            // A user or agent starting or stopping a watch is activity; recorded progress is not.
+            updatedAt: command.type === "thread.pull-request.watch" ? now : thread.updatedAt,
           };
         }
         case "thread.pull-request.sync":
@@ -3006,16 +3010,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         ),
                     ),
                     ...(command.linkedPullRequest
-                      ? [
-                          {
-                            ...legacyThreadPullRequestKey(command.linkedPullRequest),
-                            url: command.linkedPullRequest.url,
-                            source: "manual" as const,
-                            linkedAt: DateTime.formatIso(now),
-                            snapshot: null,
-                            stack: null,
-                          },
-                        ]
+                      ? [legacyPullRequestLink(thread, command.linkedPullRequest, now)]
                       : []),
                   ],
                 }),

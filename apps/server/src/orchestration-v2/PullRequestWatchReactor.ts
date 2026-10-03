@@ -14,6 +14,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -112,6 +113,18 @@ export const make = Effect.gen(function* () {
       });
     });
 
+  // A watch that cannot read its pull request ends with a wake saying so, rather than showing
+  // "Watching" while it learns nothing.
+  const giveUp = (target: WatchTarget) =>
+    record(target, null, {
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it could not read it from the host for ${READ_FAILURE_LIMIT} minutes. Check it yourself, and call watch_pull_request to watch it again.`,
+      notification: {
+        source: { kind: "monitor" },
+        outcome: "failed",
+        summary: `#${target.link.number}: stopped watching, could not read it`,
+      },
+    }).pipe(Effect.catch(() => record(target, null)));
+
   const check = Effect.fn("PullRequestWatchReactor.check")(function* (target: WatchTarget) {
     const { thread, link, watch } = target;
     const pullRequest = identityOf(link);
@@ -121,10 +134,29 @@ export const make = Effect.gen(function* () {
     if (thread.settledOverride === "settled" || thread.settledAt !== null) return;
 
     const reference = { projectId: thread.projectId, ...pullRequest };
-    const [detail, activity] = yield* Effect.all(
-      [pullRequests.detail({ ...reference, allowStale: false }), pullRequests.activity(reference)],
-      { concurrency: 2 },
+    const read = yield* Effect.exit(
+      Effect.all(
+        [
+          pullRequests.detail({ ...reference, allowStale: false }),
+          pullRequests.activity(reference),
+        ],
+        { concurrency: 2 },
+      ),
     );
+    // Only host reads count towards giving up; a refused wake is not the host's fault.
+    const key = failureKey(target);
+    if (Exit.isFailure(read)) {
+      if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
+      const failures = (readFailures.get(key) ?? 0) + 1;
+      readFailures.set(key, failures);
+      if (failures >= READ_FAILURE_LIMIT) {
+        readFailures.delete(key);
+        yield* giveUp(target);
+      }
+      return yield* Effect.failCause(read.cause);
+    }
+    readFailures.delete(key);
+    const [detail, activity] = read.value;
     if (detail.state !== "open") return yield* record(target, null);
 
     // A degraded read (GitHub's review thread query failed) is truncated with no long thread to
@@ -150,18 +182,6 @@ export const make = Effect.gen(function* () {
     if (!watchesEqual(report.next, watch)) yield* record(target, report.next);
   });
 
-  // A watch that cannot read its pull request ends with a wake saying so, rather than showing
-  // "Watching" while it learns nothing.
-  const giveUp = (target: WatchTarget) =>
-    record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it could not read it from the host for ${READ_FAILURE_LIMIT} minutes. Check it yourself, and call watch_pull_request to watch it again.`,
-      notification: {
-        source: { kind: "monitor" },
-        outcome: "failed",
-        summary: `#${target.link.number}: stopped watching, could not read it`,
-      },
-    }).pipe(Effect.catch(() => record(target, null)));
-
   const sweep = Effect.gen(function* () {
     const threads = yield* projections.getThreadsWithPullRequests();
     const targets = threads.flatMap((thread) =>
@@ -175,26 +195,12 @@ export const make = Effect.gen(function* () {
       targets,
       (target) =>
         check(target).pipe(
-          Effect.tap(() => Effect.sync(() => readFailures.delete(failureKey(target)))),
-          Effect.catchCause((cause) => {
-            const key = failureKey(target);
-            const failures = (readFailures.get(key) ?? 0) + 1;
-            readFailures.set(key, failures);
-            return logFailure("pull request watch check failed", {
+          Effect.catchCause(
+            logFailure("pull request watch check failed", {
               threadId: target.thread.id,
               pullRequest: threadPullRequestKeyOf(target.link),
-              failures,
-            })(cause).pipe(
-              Effect.andThen(
-                failures >= READ_FAILURE_LIMIT
-                  ? giveUp(target).pipe(
-                      Effect.tap(() => Effect.sync(() => readFailures.delete(key))),
-                      Effect.catchCause(logFailure("pull request watch stop failed", {})),
-                    )
-                  : Effect.void,
-              ),
-            );
-          }),
+            }),
+          ),
         ),
       { concurrency: 4, discard: true },
     );
