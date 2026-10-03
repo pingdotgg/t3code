@@ -301,6 +301,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  onUseCodexFollowUp: ((prompt: string) => void) | undefined;
   onRunShellCommand: ((command: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
@@ -442,6 +443,7 @@ interface MessagesTimelineProps {
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  onUseCodexFollowUp?: (prompt: string) => void;
   onRunShellCommand?: (command: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -515,6 +517,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   supportsConversationRollback,
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
+  onUseCodexFollowUp,
   onRunShellCommand,
   isRevertingCheckpoint,
   onImageExpand,
@@ -1150,6 +1153,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onImageExpand,
       onFileOpen,
       onUseArtifactTemplate,
+      onUseCodexFollowUp,
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
@@ -1183,6 +1187,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onImageExpand,
       onFileOpen,
       onUseArtifactTemplate,
+      onUseCodexFollowUp,
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
@@ -2492,6 +2497,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             skills={ctx.skills}
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onUseCodexFollowUp={ctx.onUseCodexFollowUp}
             onRunShellCommand={ctx.onRunShellCommand}
             onImageExpand={ctx.onImageExpand}
           />
@@ -4924,6 +4930,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
           }
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onUseCodexFollowUp={ctx.onUseCodexFollowUp}
           onImageExpand={ctx.onImageExpand}
           lineBreaks
         />

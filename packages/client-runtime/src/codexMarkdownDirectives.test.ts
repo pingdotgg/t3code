@@ -3,9 +3,12 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 
 import {
+  codexFollowUpFromHastProperties,
+  codexFollowUpPromptFromHref,
   remarkCodexDirectives,
   renderCodexDirectivesForCopy,
   renderCodexFileCitationsAsMarkdown,
+  renderCodexFollowUpsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "./codexMarkdownDirectives.js";
 import { parseMarkdownFileLink } from "./markdownLinks.js";
@@ -26,6 +29,8 @@ interface TestNode {
 }
 
 const FILE_CITATION = ':codex-file-citation{path="outputs/report.xlsx" purpose="output"}';
+const FOLLOW_UP =
+  ':codex-followup[Prepare print version]{prompt="Prepare the document for printing."}';
 const ARTIFACT_TEMPLATE =
   '::artifact-template{skill_name="artifact-template-hello-world" skill_directory="/Users/test/.codex/skills/artifact-template-hello-world" display_name="Hello World" artifact_kind="document"}';
 
@@ -70,6 +75,34 @@ describe("remarkCodexDirectives", () => {
     });
   });
 
+  it("renders a follow-up as a labelled span that carries its prompt", () => {
+    const markdown = `Next: ${FOLLOW_UP}`;
+    const followUp = parse(markdown).children?.[0]?.children?.[1];
+
+    expect(followUp).toMatchObject({
+      type: "codexFollowUp",
+      children: [{ type: "text", value: "Prepare print version" }],
+      data: {
+        hName: "span",
+        hProperties: {
+          dataCodexFollowUp: "true",
+          dataPrompt: "Prepare the document for printing.",
+        },
+      },
+      position: {
+        start: { offset: markdown.indexOf(FOLLOW_UP) },
+        end: { offset: markdown.length },
+      },
+    });
+  });
+
+  it("renders each follow-up on consecutive lines", () => {
+    const second = ':codex-followup[Summarize]{prompt="Summarize the changes."}';
+    const children = parse(`${FOLLOW_UP}\n${second}`).children?.[0]?.children ?? [];
+
+    expect(children.filter((child) => child.type === "codexFollowUp")).toHaveLength(2);
+  });
+
   it.each([
     "Meeting at 10:30",
     "Open src/main.ts:42",
@@ -78,6 +111,7 @@ describe("remarkCodexDirectives", () => {
     ":::note\ncontent\n:::",
     ':codex-file-citation-extra{path="outputs/report.xlsx"}',
     "::artifact-template-extra",
+    ':codex-followup-extra[Label]{prompt="Prompt"}',
   ])("does not change unrelated colon syntax: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
@@ -85,6 +119,11 @@ describe("remarkCodexDirectives", () => {
   it.each([
     ':codex-file-citation{purpose="output"}',
     '::artifact-template{skill_name="artifact-template-hello-world"}',
+    ":codex-followup[Label]",
+    ':codex-followup[Label]{prompt=""}',
+    ':codex-followup[Label]{prompt="   "}',
+    ':codex-followup[]{prompt="Prompt"}',
+    ':codex-followup{prompt="Prompt"}',
   ])("keeps malformed supported directives literal: %s", (markdown) => {
     expect(parse(markdown)).toEqual(parseOrdinaryMarkdown(markdown));
   });
@@ -157,11 +196,71 @@ describe("native Markdown adapters", () => {
   });
 });
 
+describe("follow-up adapters", () => {
+  it.each([
+    `\\${FOLLOW_UP}`,
+    `\`${FOLLOW_UP}\``,
+    `\`\`\`text\n${FOLLOW_UP}\n\`\`\``,
+    `[See ${FOLLOW_UP}](https://example.com)`,
+    ":codex-followup[Prepare print",
+    ':codex-followup[Prepare print version]{prompt="Prepare the',
+  ])("leaves excluded and incomplete follow-up syntax literal: %s", (markdown) => {
+    expect(renderCodexFollowUpsAsMarkdown(markdown, { actionable: true })).toBe(markdown);
+    expect(renderCodexDirectivesForCopy(markdown)).toBe(markdown);
+  });
+
+  it("renders an actionable follow-up as a link that reads back to its prompt", () => {
+    const markdown = renderCodexFollowUpsAsMarkdown(
+      ':codex-followup[Fix *all* [tests]]{prompt="Run tests (all of them) & fix > 1 failure"}',
+      { actionable: true },
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(link?.children).toEqual([
+      // Label Markdown is flattened to its text, then escaped so it stays literal.
+      expect.objectContaining({ type: "text", value: "Fix all [tests]" }),
+    ]);
+    expect(codexFollowUpPromptFromHref(link?.url ?? "")).toBe(
+      "Run tests (all of them) & fix > 1 failure",
+    );
+  });
+
+  it("renders a passive follow-up as its label", () => {
+    expect(renderCodexFollowUpsAsMarkdown(`Next: ${FOLLOW_UP}`, { actionable: false })).toBe(
+      "Next: Prepare print version",
+    );
+  });
+
+  it("ignores links that are not follow-ups", () => {
+    expect(codexFollowUpPromptFromHref("https://example.com")).toBeNull();
+    expect(codexFollowUpPromptFromHref("t3-follow-up:")).toBeNull();
+    expect(codexFollowUpPromptFromHref("t3-follow-up:%E0%A4%A")).toBeNull();
+  });
+
+  it("reads a follow-up back from sanitized element properties", () => {
+    expect(
+      codexFollowUpFromHastProperties(
+        { dataCodexFollowUp: "true", dataPrompt: "Prepare the document for printing." },
+        "Prepare print version",
+      ),
+    ).toEqual({ label: "Prepare print version", prompt: "Prepare the document for printing." });
+    expect(codexFollowUpFromHastProperties({ dataPrompt: "Prompt" }, "Label")).toBeNull();
+    expect(
+      codexFollowUpFromHastProperties({ dataCodexFollowUp: "true", dataPrompt: "" }, "Label"),
+    ).toBeNull();
+  });
+});
+
 describe("directive copy adapter", () => {
   it("copies the Markdown representations shown by citation chips and template cards", () => {
     expect(renderCodexDirectivesForCopy(`Created ${FILE_CITATION}.\n\n${ARTIFACT_TEMPLATE}`)).toBe(
       "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
     );
+  });
+
+  it("copies a follow-up as the label it shows", () => {
+    expect(renderCodexDirectivesForCopy(`Next: ${FOLLOW_UP}`)).toBe("Next: Prepare print version");
   });
 
   it("leaves excluded and malformed directive source unchanged", () => {

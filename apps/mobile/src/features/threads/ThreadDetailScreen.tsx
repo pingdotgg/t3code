@@ -27,6 +27,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   appendCodexArtifactTemplateUsePrompt,
+  appendComposerPromptOnce,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
@@ -980,10 +981,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerEditorRef.current?.blur();
   }, []);
 
-  const handleUseArtifactTemplate = useCallback(
-    (template: CodexArtifactTemplate) => {
+  const appendToDraft = useCallback(
+    (append: (currentDraft: string) => string) => {
       const currentDraft = draftMessageRef.current;
-      const nextDraft = appendCodexArtifactTemplateUsePrompt(currentDraft, template);
+      const nextDraft = append(currentDraft);
       if (nextDraft !== currentDraft) {
         draftMessageRef.current = nextDraft;
         props.onChangeDraftMessage(nextDraft);
@@ -994,6 +995,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       });
     },
     [props.onChangeDraftMessage],
+  );
+  const handleUseArtifactTemplate = useCallback(
+    (template: CodexArtifactTemplate) =>
+      appendToDraft((draft) => appendCodexArtifactTemplateUsePrompt(draft, template)),
+    [appendToDraft],
+  );
+  const handleUseCodexFollowUp = useCallback(
+    (prompt: string) => appendToDraft((draft) => appendComposerPromptOnce(draft, prompt)),
+    [appendToDraft],
   );
 
   const handleScrollToEnd = useCallback(() => {
@@ -1102,6 +1112,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onEndFollowEnabledChange={setEndFollowEnabled}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
+              onUseCodexFollowUp={handleUseCodexFollowUp}
             />
           </RenderErrorBoundary>
         </View>

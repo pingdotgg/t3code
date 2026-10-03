@@ -764,6 +764,72 @@ describe("ChatMarkdown artifact-template cards", () => {
   });
 });
 
+const FOLLOW_UP_DIRECTIVE =
+  ':codex-followup[Prepare print version]{prompt="Prepare the document for printing."}';
+
+describe("ChatMarkdown Codex follow-ups", () => {
+  it.each([true, false])(
+    "fills the composer with the prompt when a follow-up is chosen, parseRawHtml=%s",
+    async (parseRawHtml) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const onUseCodexFollowUp = vi.fn();
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              text={`Done.\n\n${FOLLOW_UP_DIRECTIVE}\n:codex-followup[Summarize]{prompt="Summarize it."}`}
+              parseRawHtml={parseRawHtml}
+              onUseCodexFollowUp={onUseCodexFollowUp}
+            />,
+          );
+        });
+        const followUps = renderer!.root.findAll(
+          (node) => node.type === "button" && node.props["data-chat-markdown-follow-up"] === true,
+        );
+        expect(followUps.map((button) => button.props["data-markdown-copy"])).toEqual([
+          "Prepare print version",
+          "Summarize",
+        ]);
+
+        await act(async () => {
+          followUps[0]!.props.onClick();
+        });
+        expect(onUseCodexFollowUp).toHaveBeenCalledExactlyOnceWith(
+          "Prepare the document for printing.",
+        );
+      } finally {
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("shows only the label outside a composer-backed timeline", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={`Next: ${FOLLOW_UP_DIRECTIVE}`} />,
+    );
+
+    expect(html).toContain("Prepare print version");
+    expect(html).not.toContain(":codex-followup");
+    expect(html).not.toContain("<button");
+  });
+
+  it("leaves follow-up examples inside code literal", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={`\`${FOLLOW_UP_DIRECTIVE}\``}
+        onUseCodexFollowUp={() => undefined}
+      />,
+    );
+
+    expect(html).toContain(":codex-followup");
+    expect(html).not.toContain("<button");
+  });
+});
+
 describe("ChatMarkdown heading levels", () => {
   it("exposes headings below the host heading without changing their tags", () => {
     const html = renderToStaticMarkup(
