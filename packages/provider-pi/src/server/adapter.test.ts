@@ -1069,10 +1069,7 @@ describe("PiAdapterV2", () => {
         message: "Ordering barrier",
       });
       yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "dynamic_tool" &&
-          event.turnItem.toolName === "notify",
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
       );
       assert.equal(runtime.providerSession.status, "running");
       fake.queueState({ isStreaming: true });
@@ -2368,9 +2365,17 @@ describe("PiAdapterV2", () => {
         type: "extension_ui_request",
         id: "ui-cmd",
         method: "notify",
-        message: "done",
+        message: "/op:status done\n\nTask: alpha",
         notifyType: "info",
       });
+      const notice = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+      );
+      assert.isTrue(
+        notice.type === "turn_item.updated" &&
+          notice.turnItem.type === "system_notice" &&
+          notice.turnItem.message === "/op:status done\n\nTask: alpha",
+      );
       yield* fake.emit({ type: "response", command: "prompt", success: true });
       // The adapter probes get_state (auto-acked idle by the fake), then
       // settles the turn as completed.
