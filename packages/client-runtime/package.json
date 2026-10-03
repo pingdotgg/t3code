@@ -219,6 +219,10 @@
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"
     },
+    "./state/outdatedServerUpdate": {
+      "types": "./src/state/outdatedServerUpdate.ts",
+      "default": "./src/state/outdatedServerUpdate.ts"
+    },
     "./state/session": {
       "types": "./src/state/session.ts",
       "default": "./src/state/session.ts"

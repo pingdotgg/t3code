@@ -14,13 +14,16 @@ export function orchestrationProtocolCompatibilityError(
   if (serverProtocolVersion === ORCHESTRATION_PROTOCOL_VERSION) {
     return null;
   }
-  return new ConnectionBlockedError({
-    reason: "unsupported",
-    detail:
-      serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
-        ? `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`
-        : `This client requires a newer server. Update T3 Code on ${descriptor.label} to connect.`,
-  });
+  return serverProtocolVersion > ORCHESTRATION_PROTOCOL_VERSION
+    ? new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: `This client is not supported by this server. Update your app or use a compatible release to connect to ${descriptor.label}.`,
+      })
+    : new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: `This client requires a newer server. Update T3 Code on ${descriptor.label} to connect.`,
+        serverUpdateRequired: true,
+      });
 }
 
 export function appendOrchestrationProtocol(socketUrl: string): string {
