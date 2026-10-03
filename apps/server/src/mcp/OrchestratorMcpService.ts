@@ -624,6 +624,10 @@ function threadDetail(
     pendingRequestCount: projection.runtimeRequests.filter(
       (request) => request.status === "pending",
     ).length,
+    queuedRunCount: projection.runs.filter((run) => run.status === "queued").length,
+    heldQueuedRunCount: projection.runs.filter(
+      (run) => run.status === "queued" && run.queueHeld === true,
+    ).length,
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
@@ -1068,9 +1072,11 @@ const make = Effect.gen(function* () {
             )
           : workState === "result_available"
             ? taskStatusForRun(progress.resultRun ?? childRun)
-            : taskStatusForRun(childRun) === "queued"
-              ? "queued"
-              : "running";
+            : progress.pendingRun !== undefined
+              ? taskStatusForRun(progress.pendingRun)
+              : taskStatusForRun(childRun) === "queued"
+                ? "queued"
+                : "running";
       const derivedResult =
         task.result !== null
           ? task.result
@@ -1521,29 +1527,35 @@ const make = Effect.gen(function* () {
         }
         const child = yield* loadProjection(current.childThreadId);
         const activeRun = ThreadManagementService.latestActiveRun(child);
-        if (activeRun === undefined) {
+        const queuedRuns = child.runs.filter((run) => run.status === "queued");
+        if (activeRun === undefined && queuedRuns.length === 0) {
           return yield* failure(
             "task_not_cancellable",
-            `Delegated task ${input.taskId} has no interruptible child run.`,
+            `Delegated task ${input.taskId} has no interruptible or queued child run.`,
           );
         }
+        // The orchestrator revalidates this bounded cohort under the child lock:
+        // queued work may have started, or active work may have ended meanwhile.
         yield* threadManagement
           .dispatch({
-            type: "run.interrupt",
+            type: "thread.runs.cancel",
             commandId: stableCommandId({
               scope,
               requestKey: key,
               operation: "cancel-task",
             }),
             threadId: current.childThreadId,
-            runId: activeRun.id,
+            runIds: [
+              ...(activeRun === undefined ? [] : [activeRun.id]),
+              ...queuedRuns.map((run) => run.id),
+            ],
             ...(input.reason === undefined ? {} : { reason: input.reason }),
           })
           .pipe(
             Effect.mapError((error) =>
               failure(
                 "task_not_cancellable",
-                `Unable to interrupt delegated task ${input.taskId}: ${errorMessage(error)}`,
+                `Unable to cancel delegated task ${input.taskId}: ${errorMessage(error)}`,
               ),
             ),
           );

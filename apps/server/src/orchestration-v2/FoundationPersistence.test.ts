@@ -2650,6 +2650,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
             { id: sessionId, driver: "codex", providerInstanceId, status: "running" },
           ],
           providerTurns: [{ providerThreadId, runAttemptId: attemptId, status: "running" }],
+          subagents: [],
         } as unknown as OrchestrationV2ThreadProjection;
         const recovery = yield* ProviderRuntimeRecovery.make.pipe(
           Effect.provide(

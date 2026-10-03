@@ -96,7 +96,7 @@ type PendingBackgroundWorkTurnItem = {
   readonly type: OrchestrationV2TurnItem["type"];
   readonly status: OrchestrationV2TurnItem["status"];
   readonly title: string | null;
-  /** When present and the run is rolled_back, the item is abandoned, not pending. */
+  /** Run ownership distinguishes abandoned foreground tools from live background work. */
   readonly runId?: OrchestrationV2Run["id"] | string | null;
   readonly nativeItemRef?: {
     readonly nativeId: string | null;
@@ -182,15 +182,22 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
   const rolledBackRunIds = new Set(
     (input.runs ?? []).filter((run) => run.status === "rolled_back").map((run) => String(run.id)),
   );
+  const abandonedToolRunIds = new Set(
+    (input.runs ?? [])
+      .filter((run) => ["failed", "interrupted", "cancelled"].includes(run.status))
+      .map((run) => String(run.id)),
+  );
   return input.turnItems.filter(
     (item) =>
       BACKGROUND_TURN_ITEM_TYPES.has(item.type) &&
       isOrchestrationV2WorkActive(item.status) &&
       !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input)) &&
-      // Null/absent run id stays eligible; only known rolled_back runs drop.
+      // A failed foreground MCP call cannot finish after its run has ended.
+      // Commands and native children can outlive the root; their state remains authoritative.
       (item.runId === undefined ||
         item.runId === null ||
-        !rolledBackRunIds.has(String(item.runId))),
+        (!rolledBackRunIds.has(String(item.runId)) &&
+          !(item.type === "dynamic_tool" && abandonedToolRunIds.has(String(item.runId))))),
   );
 }
 
@@ -204,7 +211,7 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
  * Gated on latest root run settlement. Dedupes by native task ID. Excludes
  * the roster while any interruptible foreground run remains active. Excludes
  * Grok persistent monitors (`dynamic_tool` input with `persistent: true`).
- * Excludes turn items whose run resolves to `rolled_back` (abandoned work);
+ * Excludes rolled-back items and foreground tools whose owner failed or stopped;
  * items with a null or absent run id stay eligible (matches SQL shell path).
  * Does not consult subagent entities (those double-count turn items).
  */
@@ -215,7 +222,7 @@ export function derivePendingBackgroundWork(input: {
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
   /**
-   * Run rows used to exclude items owned by rolled_back runs. Optional for
+   * Run rows used to exclude abandoned foreground tools. Optional for
    * callers that already filtered (SQL shell path); in-memory callers should
    * pass projection runs so policy cannot drift.
    */

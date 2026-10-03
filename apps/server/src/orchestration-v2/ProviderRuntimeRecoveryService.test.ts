@@ -147,6 +147,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
     providerThreads: [],
     runs: [],
     nodes: [],
+    subagents: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
@@ -198,6 +199,7 @@ it.effect("preserves async questions across startup and shutdown", () => {
     runs: [],
     nodes: [],
     turnItems: [],
+    subagents: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const commitCommand = vi.fn(() => Effect.die("an async question needs no process-loss write"));
   const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -247,6 +249,7 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
     providerThreads: [],
     runs: [],
     nodes: [],
+    subagents: [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
     Layer.provide(ServerSettings.layerTest()),
@@ -999,9 +1002,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "terminalizes a leftover nonpersistent dynamic_tool on a settled run after process loss",
-  () => {
+it.effect.each(["completed", "failed", "interrupted", "cancelled"] as const)(
+  "terminalizes a leftover nonpersistent dynamic_tool on a %s run after process loss",
+  (runStatus) => {
     const threadId = ThreadId.make("thread_recovery_orphan_wait");
     const settledRunId = RunId.make("run_recovery_orphan_wait_settled");
     const providerThreadId = ProviderThreadId.make("provider_thread_recovery_orphan_wait");
@@ -1030,7 +1033,7 @@ it.effect(
         },
       ],
       providerTurns: [],
-      runs: [{ id: settledRunId, status: "completed", providerInstanceId: codexInstanceId }],
+      runs: [{ id: settledRunId, status: runStatus, providerInstanceId: codexInstanceId }],
       attempts: [],
       nodes: [
         { id: orphanWaitNodeId, runId: settledRunId, status: "running", kind: "tool_call" },
@@ -1124,9 +1127,9 @@ it.effect(
   },
 );
 
-it.effect(
-  "terminalizes the linked subagent and node for a stale subagent item on a settled run",
-  () => {
+it.effect.each(["completed", "running", "waiting"] as const)(
+  "cancels native tasks on a %s parent run while preserving app-owned task ownership",
+  (runStatus) => {
     const threadId = ThreadId.make("thread_recovery_subagent");
     const settledRunId = RunId.make("run_recovery_subagent_settled");
     const providerThreadId = ProviderThreadId.make("provider_thread_recovery_subagent");
@@ -1135,6 +1138,18 @@ it.effect(
     const staleItemId = TurnItemId.make("turn_item_recovery_subagent_stale");
     const doneItemId = TurnItemId.make("turn_item_recovery_subagent_done");
     const claudeInstanceId = ProviderInstanceId.make("claude");
+    const appOwnedTasks = (["pending", "running", "waiting", "completed"] as const).map(
+      (status) => ({
+        id: NodeId.make(`node_recovery_app_owned_${status}`),
+        runId: settledRunId,
+        driver: ProviderDriverKind.make("claude"),
+        providerInstanceId: claudeInstanceId,
+        origin: "app_owned" as const,
+        childThreadId: ThreadId.make(`thread_recovery_app_owned_${status}`),
+        status,
+        result: status === "completed" ? "Published child result" : null,
+      }),
+    );
     let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
       null;
     const projection = {
@@ -1151,12 +1166,12 @@ it.effect(
         },
       ],
       providerTurns: [],
-      // Settled run: the stale-item loop owns it, not the nonterminal loop.
-      runs: [{ id: settledRunId, status: "completed", providerInstanceId: claudeInstanceId }],
+      runs: [{ id: settledRunId, status: runStatus, providerInstanceId: claudeInstanceId }],
       attempts: [],
       nodes: [
         { id: staleSubagentNodeId, runId: settledRunId, status: "running" },
         { id: doneSubagentNodeId, runId: settledRunId, status: "completed" },
+        ...appOwnedTasks.map((task) => ({ id: task.id, runId: settledRunId, status: task.status })),
       ],
       subagents: [
         {
@@ -1175,6 +1190,7 @@ it.effect(
           status: "completed",
           result: "done",
         },
+        ...appOwnedTasks,
       ],
       messages: [],
       turnItems: [
@@ -1188,6 +1204,16 @@ it.effect(
           subagentId: staleSubagentNodeId,
           providerInstanceId: claudeInstanceId,
         },
+        ...appOwnedTasks.map((task) => ({
+          id: TurnItemId.make(`turn_item_${task.id}`),
+          runId: settledRunId,
+          nodeId: task.id,
+          providerThreadId,
+          type: "subagent",
+          status: task.status === "completed" ? "running" : task.status,
+          subagentId: task.id,
+          providerInstanceId: claudeInstanceId,
+        })),
         {
           id: doneItemId,
           runId: settledRunId,
@@ -1229,6 +1255,20 @@ it.effect(
     return Effect.gen(function* () {
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
       const events = committedInput?.events ?? [];
+
+      // App-owned children recover from their own runs, including a held queue.
+      // Neither parent process loss nor a stale item may rewrite their results.
+      for (const task of appOwnedTasks) {
+        assert.isFalse(
+          events.some(
+            (event) =>
+              (event.type === "subagent.updated" && event.payload.id === task.id) ||
+              (event.type === "node.updated" && event.payload.id === task.id) ||
+              (event.type === "turn-item.updated" && event.payload.nodeId === task.id),
+          ),
+        );
+      }
+      assert.equal(appOwnedTasks[3]?.result, "Published child result");
 
       // Only the nonterminal subagent item is cancelled.
       const turnItemCancels = events.filter(

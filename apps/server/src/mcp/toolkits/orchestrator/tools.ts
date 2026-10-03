@@ -84,7 +84,7 @@ const TaskStatusTool = Tool.make("task_status", {
 
 const TaskCancelTool = Tool.make("task_cancel", {
   description:
-    "Request interruption of an active T3-owned delegated task and dispose its automatic parent delivery. For a terminal task, return its existing status and dispose delivery without interrupting later child-thread runs, even when task_status reports hasPendingChildRuns=true. Published task results remain available. Use t3_thread_interrupt for a later active run.",
+    "Cancel queued continuations and request interruption of an active, unpublished T3-owned delegated task, then dispose its automatic parent delivery. A queued-only task can be cancelled without a live provider run. For a terminal task, return its existing status and dispose delivery without interrupting later child-thread runs, even when task_status reports hasPendingChildRuns=true. Published task results remain available. Use t3_thread_interrupt for a later active run.",
   parameters: OrchestratorMcpTaskCancelInput,
   success: OrchestratorMcpTaskCancelResult,
   failure: OrchestratorMcpFailure,
@@ -173,7 +173,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
 
 const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
-    "Read durable state and a paginated timeline from a T3 thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
+    "Read durable state and a paginated timeline from a T3 thread in the calling project, or from a thread the user attached to this conversation as context. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. pendingRequestCount counts provider approval/input requests; queuedRunCount and heldQueuedRunCount report unstarted message runs independently of the latest run status. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units.",
   parameters: OrchestratorMcpThreadReadInput,
   success: OrchestratorMcpThreadReadResult,
   failure: OrchestratorMcpFailure,

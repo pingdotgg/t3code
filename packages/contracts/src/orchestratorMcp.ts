@@ -357,6 +357,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   runCount: NonNegativeInt,
   itemCount: NonNegativeInt,
   pendingRequestCount: NonNegativeInt,
+  queuedRunCount: Schema.optionalKey(NonNegativeInt),
+  heldQueuedRunCount: Schema.optionalKey(NonNegativeInt),
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),

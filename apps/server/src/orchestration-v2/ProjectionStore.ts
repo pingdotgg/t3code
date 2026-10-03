@@ -503,9 +503,7 @@ function needsRecovery(
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
         projection.thread.forkedFrom?.type === "node" &&
-        ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          projection.runs.at(-1)?.status ?? "idle",
-        ) &&
+        projection.runs.length > 0 &&
         !projection.contextTransfers.some(
           (transfer) =>
             transfer.type === "subagent_result" &&
@@ -3403,11 +3401,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                   AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
                   AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
-                  AND (
-                    SELECT status FROM orchestration_v2_projection_runs
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs
                     WHERE thread_id = child.thread_id
-                    ORDER BY ordinal DESC LIMIT 1
-                  ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_context_transfers
                     WHERE source_thread_id = child.thread_id
@@ -4959,10 +4956,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ON r.run_id = i.run_id
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
               AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
-              -- A rolled-back run's items are abandoned, not pending. Without
-              -- this the shell reports Waiting for work no one will finish,
-              -- matching the item_count query's exclusion above.
+              -- Foreground tools on failed/stopped runs cannot finish. Commands
+              -- and native children can outlive their root; keep those visible.
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              AND (i.type <> 'dynamic_tool' OR r.status IS NULL
+                OR r.status NOT IN ('failed', 'interrupted', 'cancelled'))
           `
         : sql<PayloadRow & { readonly thread_id: string }>`
             SELECT i.thread_id, i.payload_json
@@ -4972,6 +4970,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
               AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+              AND (i.type <> 'dynamic_tool' OR r.status IS NULL
+                OR r.status NOT IN ('failed', 'interrupted', 'cancelled'))
               AND i.thread_id IN ${sql.in(threadIds)}
           `;
 

@@ -224,66 +224,78 @@ it.effect("selects unfinished recovery work without reading settled thread histo
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it.effect("recovers terminal subagent results until their cross-thread transfer exists", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const sql = yield* SqlClient.SqlClient;
-    const now = yield* DateTime.now;
-    const parent = yield* createThread("subagent-parent");
-    const children: Array<ThreadId> = [];
-    for (const name of ["terminal", "archived", "deleted", "running"]) {
-      const child = yield* createThread(`subagent-${name}`, {
-        lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
-        forkedFrom: { type: "node", nodeId: NodeId.make(`node:${name}`) },
-        archivedAt: name === "archived" ? now : null,
-        deletedAt: name === "deleted" ? now : null,
+it.effect(
+  "recovers unpublished subagent lifecycle states until their cross-thread transfer exists",
+  () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const parent = yield* createThread("subagent-parent");
+      const children: Array<ThreadId> = [];
+      for (const name of ["terminal", "archived", "deleted", "running", "queued"]) {
+        const child = yield* createThread(`subagent-${name}`, {
+          lineage: {
+            parentThreadId: parent,
+            relationshipToParent: "subagent",
+            rootThreadId: parent,
+          },
+          forkedFrom: { type: "node", nodeId: NodeId.make(`node:${name}`) },
+          archivedAt: name === "archived" ? now : null,
+          deletedAt: name === "deleted" ? now : null,
+        });
+        yield* createRun(
+          child,
+          name === "running" ? "running" : name === "queued" ? "queued" : "completed",
+        );
+        children.push(child);
+      }
+      assert.deepEqual(
+        new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+        new Set(children.filter((_, index) => index !== 2)),
+      );
+      const completed = children[0]!;
+      const transferId = ContextTransferId.make("transfer:recovery:subagent-result");
+      yield* projections.apply({
+        id: EventId.make("event:recovery:subagent-result"),
+        type: "context-transfer.created",
+        threadId: parent,
+        occurredAt: now,
+        payload: {
+          id: transferId,
+          type: "subagent_result",
+          sourceThreadId: completed,
+          targetThreadId: parent,
+          sourcePoint: { threadId: completed },
+          basePoint: null,
+          sourceProviderInstanceId: providerInstanceId,
+          targetProviderInstanceId: providerInstanceId,
+          targetRunId: null,
+          status: "pending",
+          resolution: null,
+          createdBy: "system",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          consumedAt: null,
+        },
       });
-      yield* createRun(child, name === "running" ? "running" : "completed");
-      children.push(child);
-    }
-    assert.deepEqual(
-      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
-      new Set(children.slice(0, 2)),
-    );
-    const completed = children[0]!;
-    const transferId = ContextTransferId.make("transfer:recovery:subagent-result");
-    yield* projections.apply({
-      id: EventId.make("event:recovery:subagent-result"),
-      type: "context-transfer.created",
-      threadId: parent,
-      occurredAt: now,
-      payload: {
-        id: transferId,
-        type: "subagent_result",
-        sourceThreadId: completed,
-        targetThreadId: parent,
-        sourcePoint: { threadId: completed },
-        basePoint: null,
-        sourceProviderInstanceId: providerInstanceId,
-        targetProviderInstanceId: providerInstanceId,
-        targetRunId: null,
-        status: "pending",
-        resolution: null,
-        createdBy: "system",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: null,
-      },
-    });
-    const archivedChild = children[1];
-    assert.isDefined(archivedChild);
-    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [archivedChild]);
-    assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
-    yield* sql`
+      const archivedChild = children[1];
+      assert.isDefined(archivedChild);
+      assert.deepEqual(
+        new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+        new Set([archivedChild, children[3], children[4]]),
+      );
+      assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
+      yield* sql`
       UPDATE orchestration_v2_projection_context_transfers SET payload_json = '{}'
       WHERE context_transfer_id = ${transferId}
     `;
-    assert.deepEqual(
-      new Set(yield* projections.getUnreadableThreadIds()),
-      new Set([parent, completed]),
-    );
-  }).pipe(Effect.provide(TestLayer)),
+      assert.deepEqual(
+        new Set(yield* projections.getUnreadableThreadIds()),
+        new Set([parent, completed]),
+      );
+    }).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("includes shared sessions and provider-owned background rosters in recovery", () =>

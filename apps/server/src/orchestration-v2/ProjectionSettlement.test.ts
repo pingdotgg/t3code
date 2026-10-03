@@ -144,6 +144,37 @@ it.effect.each([
   ["sql", SqlLayer],
   ["memory", ProjectionStore.layerMemory],
 ] as const)(
+  "%s: excludes abandoned foreground tools from shells while retaining their history for recovery",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      for (const status of ["failed", "interrupted", "cancelled"] as const) {
+        const threadId = yield* createThread(`orphan-handoff-${status}`);
+        const failedRunId = yield* createRun(threadId, status);
+        yield* createItem(threadId, failedRunId, "running");
+        yield* createRun(threadId, "completed", 2);
+        yield* createRun(threadId, "completed", 3);
+        const allShells = yield* store.getShellSnapshot();
+        const scopedShell = yield* store.getThreadShell(threadId);
+        const candidates = yield* store.getSettlementCandidates(threadId);
+        assert.deepEqual(
+          allShells.threads.find((thread) => thread.id === threadId)?.pendingBackgroundTasks,
+          [],
+        );
+        assert.deepEqual(scopedShell?.pendingBackgroundTasks, []);
+        assert.deepEqual(candidates[0]?.pendingBackgroundTasks, []);
+        const history = yield* store.getThreadRecords(threadId, ["runs", "turnItems"]);
+        assert.equal(history.turnItems[0]?.status, "running");
+        assert.equal(history.runs.find((run) => run.id === failedRunId)?.status, status);
+        assert.include(yield* store.getRecoveryThreadIds("runtime"), threadId);
+      }
+    }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", SqlLayer],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
   "%s: discovers settlement work with the same activity and background semantics as the shell",
   ([, testLayer]) =>
     Effect.gen(function* () {
