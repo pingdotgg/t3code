@@ -50,6 +50,24 @@ describe("dedupeChecks", () => {
     ]);
   });
 
+  it("puts failed and cancelled checks first without reshuffling either group", () => {
+    const checks = dedupeChecks([
+      entry("lint", "success"),
+      entry("unit", "failure"),
+      entry("types", "pending"),
+      entry("integration", "cancelled"),
+      entry("format", "success"),
+    ]);
+
+    expect(checks.map((check) => [check.name, check.status])).toEqual([
+      ["unit", "failure"],
+      ["integration", "cancelled"],
+      ["lint", "success"],
+      ["types", "pending"],
+      ["format", "success"],
+    ]);
+  });
+
   it("loses a run that never said when it happened to one that did, whichever came first", () => {
     const undated = dedupeChecks([
       entry("build", "success", { at: "2026-08-11T16:00:00Z" }),
@@ -76,8 +94,8 @@ describe("dedupeChecks", () => {
     ]);
 
     expect(checks.map((check) => [check.name, check.status])).toEqual([
-      ["CI / build", "success"],
       ["Release / build", "failure"],
+      ["CI / build", "success"],
     ]);
   });
 
@@ -88,6 +106,6 @@ describe("dedupeChecks", () => {
       entry("build", "failure", { workflowName: "CI", at: "2026-08-11T16:00:00Z" }),
     ]);
 
-    expect(checks.map((check) => check.name)).toEqual(["build", "CI / build"]);
+    expect(checks.map((check) => check.name)).toEqual(["CI / build", "build"]);
   });
 });
