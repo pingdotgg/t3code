@@ -811,6 +811,170 @@ it.effect("prefers the live tab owner for new sessions without moving existing l
   ),
 );
 
+const discordTab = PreviewTabId.make("discord");
+
+const connectViewerHosts = (
+  broker: Effect.Success<typeof makeBroker>,
+  clientIds: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const connections = new Map<string, string>();
+    for (const clientId of clientIds) {
+      const requests = requestsFrom(yield* broker.connect(makeHost({ clientId })), (connectionId) =>
+        connections.set(clientId, connectionId),
+      );
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId,
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: clientId,
+        }),
+      ).pipe(Effect.forkScoped);
+    }
+    yield* Effect.yieldNow;
+    return (clientId: string, visible: boolean, focused: boolean, shownTab = discordTab) =>
+      broker.focusHost({
+        clientId,
+        environmentId: scope.environmentId,
+        connectionId: connections.get(clientId)!,
+        focused,
+        liveTabs: [{ threadId: scope.threadId, tabId: shownTab, visible }],
+      });
+  });
+
+it.effect("moves a pinned session to the client where the user is viewing its tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const report = yield* connectViewerHosts(broker, ["vm", "desktop"]);
+      const tabId = discordTab;
+
+      yield* report("desktop", false, false);
+      yield* report("vm", false, true);
+      expect(yield* broker.invoke<string>({ scope, tabId, operation: "open", input: {} })).toBe(
+        "vm",
+      );
+
+      yield* report("desktop", true, true, PreviewTabId.make("other-tab"));
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe("vm");
+
+      yield* report("desktop", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "desktop",
+      );
+
+      yield* report("vm", true, false);
+      yield* report("vm", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "click", input: {} })).toBe("vm");
+
+      yield* report("desktop", true, false);
+      yield* report("desktop", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "click", input: {} })).toBe(
+        "desktop",
+      );
+
+      yield* report("desktop", false, false);
+      yield* report("vm", false, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "evaluate", input: {} })).toBe(
+        "desktop",
+      );
+    }),
+  ),
+);
+
+it.effect("does not treat a newly connected viewer as the focused client", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const report = yield* connectViewerHosts(broker, ["vm", "desktop"]);
+      yield* report("desktop", false, false);
+      yield* report("vm", false, true);
+      expect(
+        yield* broker.invoke<string>({ scope, tabId: discordTab, operation: "open", input: {} }),
+      ).toBe("vm");
+      yield* report("desktop", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "desktop",
+      );
+
+      const reportLate = yield* connectViewerHosts(broker, ["late"]);
+      yield* reportLate("late", true, false);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "desktop",
+      );
+    }),
+  ),
+);
+
+it.effect("does not treat a focused client's tab update as new focus", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const report = yield* connectViewerHosts(broker, ["vm", "desktop"]);
+      yield* report("desktop", false, false);
+      yield* report("vm", false, true);
+      expect(
+        yield* broker.invoke<string>({ scope, tabId: discordTab, operation: "open", input: {} }),
+      ).toBe("vm");
+      yield* report("vm", true, true);
+      yield* report("desktop", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "desktop",
+      );
+
+      yield* report("vm", true, true);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "desktop",
+      );
+    }),
+  ),
+);
+
+it.effect("keeps a pinned session in place when no displaying client was focused", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const report = yield* connectViewerHosts(broker, ["early", "late"]);
+      expect(
+        yield* broker.invoke<string>({ scope, tabId: discordTab, operation: "open", input: {} }),
+      ).toBe("late");
+      yield* report("early", true, false);
+      yield* report("late", true, false);
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "late",
+      );
+    }),
+  ),
+);
+
+it.effect("keeps a pinned session in place for a request that targets another tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const report = yield* connectViewerHosts(broker, ["vm", "desktop"]);
+      const otherTab = PreviewTabId.make("other-tab");
+      yield* report("desktop", false, false);
+      yield* report("vm", false, true);
+      expect(
+        yield* broker.invoke<string>({ scope, tabId: discordTab, operation: "open", input: {} }),
+      ).toBe("vm");
+      yield* report("desktop", true, true, otherTab);
+      expect(
+        yield* broker.invoke<string>({
+          scope,
+          tabId: otherTab,
+          operation: "status",
+          input: {},
+          updateCurrentTab: false,
+        }),
+      ).toBe("vm");
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe("vm");
+    }),
+  ),
+);
+
 it.effect("prefers a focused host over unrelated extra capabilities for a new session", () =>
   Effect.scoped(
     Effect.gen(function* () {
