@@ -1,8 +1,11 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -97,8 +100,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = ElectronApp.of({
+const electronApp = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
       try: () => Electron.app.getVersion(),
@@ -208,4 +210,40 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  if (platform !== "linux") return electronApp;
+
+  return ElectronApp.of({
+    ...electronApp,
+    // app.relaunch() starts the new instance with the no_new_privs flag
+    // (electron/electron#41463). The flag is permanent, so that instance can
+    // never gain root through pkexec and every .deb update it installs fails.
+    // A plain spawn doesn't set it. Like app.relaunch(), the new instance
+    // starts once this process exits, so it can take the single-instance lock.
+    relaunch: (options) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* spawner.spawn(
+            ChildProcess.make(
+              "/bin/sh",
+              [
+                "-c",
+                'while kill -0 "$0" 2>/dev/null; do sleep 0.1; done; exec "$@"',
+                String(process.pid),
+                options.execPath ?? process.execPath,
+                ...(options.args ?? process.argv.slice(1)),
+              ],
+              { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+            ),
+          );
+          // Keeps the waiting shell alive when this scope closes.
+          yield* Effect.asVoid(handle.unref);
+        }),
+      ).pipe(Effect.catch(() => electronApp.relaunch(options))),
+  });
+});
+
+export const layer = Layer.effect(ElectronApp, make);

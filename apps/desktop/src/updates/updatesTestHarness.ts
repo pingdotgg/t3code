@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -94,10 +95,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
     }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
-    quitAndInstall: () =>
+    quitAndInstall: ({ isForceRunAfter }) =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
-        installSteps.push("quitAndInstall");
+        installSteps.push(isForceRunAfter ? "quitAndInstall" : "quitAndInstall(no-run)");
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
     on: (eventName, listener) =>
       Effect.acquireRelease(
@@ -110,6 +111,31 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
           }),
       ).pipe(Effect.asVoid),
   } satisfies ElectronUpdater.ElectronUpdater["Service"]);
+
+  const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
+    metadata: Effect.die("unexpected metadata read"),
+    name: Effect.succeed("T3 Code"),
+    systemLocale: Effect.succeed("en-US"),
+    whenReady: Effect.void,
+    quit: Effect.void,
+    exit: () => Effect.void,
+    relaunch: () =>
+      Effect.sync(() => {
+        installSteps.push("relaunch");
+      }),
+    setPath: () => Effect.void,
+    setName: () => Effect.void,
+    setAboutPanelOptions: () => Effect.void,
+    setAppUserModelId: () => Effect.void,
+    getAppMetrics: Effect.succeed([]),
+    setAsDefaultProtocolClient: () => Effect.succeed(true),
+    setDesktopName: () => Effect.void,
+    setDockIcon: () => Effect.void,
+    appendCommandLineSwitch: () => Effect.void,
+    onBeforeQuitForUpdate: () => Effect.void,
+    removeCommandLineSwitch: () => Effect.void,
+    on: () => Effect.void,
+  } satisfies ElectronApp.ElectronApp["Service"]);
 
   const windowLayer = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
@@ -241,6 +267,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(fileSystemLayer),
     Layer.provideMerge(updaterLayer),
+    Layer.provideMerge(electronAppLayer),
     Layer.provideMerge(windowLayer),
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
