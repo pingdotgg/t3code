@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { wordsOf } from "./HighlightedTokens";
+import { keyedLines, wordsOf } from "./HighlightedTokens";
 
 function tokensOf(...contents: string[]) {
   let offset = 0;
@@ -37,5 +37,29 @@ describe("wordsOf", () => {
     expect(
       typeof word === "string" ? null : word?.pieces.map((piece) => piece.token.content),
     ).toEqual(['"', "$HOME", '"']);
+  });
+});
+
+describe("keyedLines", () => {
+  it.each([
+    "git status\ngit diff",
+    "Get-ChildItem\r\nWrite-Output done\r\n",
+    "mixed\r\nendings\n\nlone \r stays",
+  ])("renders the same text as the source: %j", (code) => {
+    // Shiki splits lines on \r?\n and drops the ending from the tokens.
+    const lines = code.split(/\r?\n/u).map((line) => tokensOf(line));
+    const rendered = keyedLines(code, lines)
+      .map(({ tokens, ending }) => tokens.map((token) => token.content).join("") + ending)
+      .join("");
+    expect(rendered).toBe(code);
+  });
+
+  it("keys empty lines apart", () => {
+    const code = "a\r\n\r\n\r\nb";
+    const keys = keyedLines(
+      code,
+      code.split(/\r?\n/u).map((line) => tokensOf(line)),
+    ).map((line) => line.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
