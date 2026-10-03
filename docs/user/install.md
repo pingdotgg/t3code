@@ -95,7 +95,8 @@ command cannot reach the app, start or update the desktop app and try again.
 Install T3 Code from the
 [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or
 [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code).
-The phone connects to a server on another machine. Follow
+Nightly builds need the beta app instead. Get its links in **Settings → General → Mobile app** on
+a Nightly build. The phone connects to a server on another machine. Follow
 [remote access](./remote-access.md) to link it through T3 Connect or a pairing URL.
 
 If the app crashes during launch, open Settings → Diagnostics on the next launch
