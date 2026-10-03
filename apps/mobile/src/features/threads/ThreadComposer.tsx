@@ -21,6 +21,7 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import {
@@ -479,6 +480,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     return report !== null;
   }, [currentModelSelection.instanceId, onShowUsageLimits, props.serverConfig]);
 
+  const threadPullRequestLinks = useMemo(
+    () => visibleThreadPullRequests(props.selectedThread.pullRequests),
+    [props.selectedThread.pullRequests],
+  );
   const composerMenu = useComposerCommandMenu({
     draftMessage: props.draftMessage,
     ownerKey: composerOwnerKey,
@@ -490,6 +495,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ? (project?.id ?? null)
       : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
+    pullRequestLinks: threadPullRequestLinks,
     selectedProviderStatus,
     hasThread: true,
     hasCompactableConversation: props.hasCompactableConversation,

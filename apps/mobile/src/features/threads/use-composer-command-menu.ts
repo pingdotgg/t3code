@@ -4,6 +4,7 @@ import type {
   ProviderInteractionMode,
   ServerProvider,
   ThreadId,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -174,6 +175,7 @@ export function useComposerCommandMenu({
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
+  pullRequestLinks,
   selectedProviderStatus,
   hasThread,
   hasCompactableConversation,
@@ -193,6 +195,8 @@ export function useComposerCommandMenu({
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
+  /** Linked to the thread, so `#` can reach a pull request it opened in another repository. */
+  readonly pullRequestLinks?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
   readonly hasCompactableConversation: boolean;
@@ -317,6 +321,7 @@ export function useComposerCommandMenu({
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
     query: trigger?.kind === "pull-request" ? trigger.query : null,
+    ...(pullRequestLinks === undefined ? {} : { links: pullRequestLinks }),
   });
 
   const items = useMemo<ComposerCommandItem[]>(() => {
@@ -324,7 +329,7 @@ export function useComposerCommandMenu({
 
     if (trigger.kind === "pull-request") {
       return pullRequestSearch.entries.map((entry) => ({
-        id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
+        id: `pr:${entry.host ?? ""}:${entry.projectId}:${entry.repository}:${entry.number}`,
         type: "pull-request",
         pullRequest: {
           number: entry.number,
@@ -336,7 +341,11 @@ export function useComposerCommandMenu({
           isDraft: entry.isDraft,
         },
         label: `#${entry.number}`,
-        description: `${entry.isDraft ? "Draft" : entry.state} · ${entry.title}`,
+        description: `${entry.isDraft ? "Draft" : entry.state} · ${
+          entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase()
+            ? entry.title
+            : `${entry.repository} · ${entry.title}`
+        }`,
       }));
     }
 
@@ -491,6 +500,7 @@ export function useComposerCommandMenu({
     hasCompactableConversation,
     onUpdateInteractionMode,
     pathSearch.entries,
+    pullRequestRepository,
     pullRequestSearch.entries,
     projectCwd,
     selectedProviderStatus,
