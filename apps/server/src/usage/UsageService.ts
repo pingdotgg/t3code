@@ -172,6 +172,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((fileName) =>
+    path.join(config.stateDir, fileName),
+  );
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -386,9 +389,9 @@ export const make = Effect.gen(function* () {
           Effect.catchCause(() => Effect.succeed(null)),
         );
       let document = yield* readDocument(scanCachePath);
-      for (const fileName of LEGACY_SCAN_CACHE_FILE_NAMES) {
+      for (const legacyScanCachePath of legacyScanCachePaths) {
         if (document !== null) break;
-        document = yield* readDocument(path.join(config.stateDir, fileName));
+        document = yield* readDocument(legacyScanCachePath);
         cacheDirty = document !== null;
       }
       if (document === null) return;
@@ -464,10 +467,7 @@ export const make = Effect.gen(function* () {
       cached.provider === provider
     ) {
       return {
-        records:
-          cached.tailRecords.length === 0
-            ? cached.records
-            : [...cached.records, ...cached.tailRecords],
+        records: cachedFileRecords(cached),
         malformedRecords: cached.malformedRecords,
       };
     }
@@ -484,7 +484,7 @@ export const make = Effect.gen(function* () {
     // (size, mtime) would silently drop the file's usage until it changes.
     if (parsed === null)
       return {
-        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        records: cached?.provider === provider ? cachedFileRecords(cached) : [],
         malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
         failed: true,
       };
@@ -517,25 +517,19 @@ export const make = Effect.gen(function* () {
       }
     }
     const base = parsed.resumed && cached !== undefined ? cached.records : [];
-    const seen = new Set<string>();
-    const records = dedupeWithinFile([...base, ...parsed.records], seen);
-    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-
-    return {
-      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+    const entry = {
+      size,
+      mtimeMs,
+      provider,
+      records: dedupeWithinFile([...base, ...parsed.records]),
+      tailRecords: dedupeWithinFile(parsed.tailRecords),
       malformedRecords: parsed.malformedRecords,
-      update: {
-        entry: {
-          size,
-          mtimeMs,
-          provider,
-          records,
-          tailRecords,
-          malformedRecords: parsed.malformedRecords,
-          position: parsed.position,
-        },
-        replaces: cached,
-      },
+      position: parsed.position,
+    };
+    return {
+      records: cachedFileRecords(entry),
+      malformedRecords: parsed.malformedRecords,
+      update: { entry, replaces: cached },
     };
   });
 
@@ -749,7 +743,7 @@ export const make = Effect.gen(function* () {
           continue;
         retainedFiles.push({
           path: filePath,
-          records: [...entry.records, ...entry.tailRecords],
+          records: cachedFileRecords(entry),
           malformedRecords: entry.malformedRecords,
         });
       }

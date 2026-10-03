@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeZlib from "node:zlib";
 
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,7 +19,6 @@ import {
   ProviderInstanceId,
   UsageDay,
   type UsageSource,
-  type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -80,6 +79,7 @@ function claudeLine(
   outputTokens: number,
   model = "claude-fable-5",
   sessionId = "session-1",
+  thinkingTokens?: number,
 ): string {
   return `${JSON.stringify({
     type: "assistant",
@@ -2614,12 +2614,82 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("reconciles a growing transcript without committing its replaceable tail", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const committed = claudeLine(1, 100);
+      const tail = claudeLine(1, 160, "claude-fable-5", "session-1", 40).trimEnd();
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, tail));
+
+      const check = (summary: UsageSummary, output: number, thinking: number, records: number) => {
+        expect.soft(totalOutputTokens(summary)).toBe(output);
+        expect
+          .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0))
+          .toBe(thinking);
+        expect.soft(summary.buckets.reduce((sum, bucket) => sum + bucket.records, 0)).toBe(records);
+        expect
+          .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0))
+          .toBeCloseTo(records * 10 * 1e-5 + output * 5e-5, 12);
+      };
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+        }).pipe(Effect.scoped);
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-grow-test", home, settings })),
+      );
+
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              "\n" + claudeLine(1, 180, "claude-fable-5", "session-1", 60).trimEnd(),
+            ),
+          );
+          check(yield* service.readSummary(WINDOW), 380, 60, 2);
+        }).pipe(Effect.scoped);
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 380, 60, 2);
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              "\n" + claudeLine(1, 180, "claude-fable-5", "session-1", 80),
+            ),
+          );
+          check(yield* service.readSummary(WINDOW), 380, 80, 2);
+        }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-grow-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
       Effect.gen(function* () {
         const { transcript, settings, home } = yield* setup;
-        const large = claudeLine(1, 9900).replace(
+        const large = claudeLine(1, 9900, "claude-fable-5", "session-1", 3900).replace(
           '"message":',
           '"padding":' + encodeUnknownJsonString("x".repeat(9 * 1024 * 1024)) + ',"message":',
         );
@@ -2635,7 +2705,14 @@ describe("UsageService", () => {
           );
           const warm = yield* service.readSummary(WINDOW);
           assert.deepStrictEqual(warm.buckets, first.buckets);
-          yield* Effect.promise(() => NodeFSP.appendFile(transcript, large + claudeLine(2, 100)));
+          yield* Effect.promise(() =>
+            NodeFSP.appendFile(
+              transcript,
+              large +
+                claudeLine(1, 10000, "claude-fable-5", "session-1", 4000) +
+                claudeLine(2, 100, "claude-fable-5", "session-1", 30),
+            ),
+          );
           const appended = yield* service.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(appended), 10000);
           assert.strictEqual(
@@ -2768,7 +2845,7 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
           assert.strictEqual(
             yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
             legacy,
@@ -2893,6 +2970,106 @@ describe("UsageService", () => {
         ),
       );
     }).pipe(Effect.scoped),
+  );
+
+  it.live("upgrades live usage and retains deleted history from current, v5 and v4 caches", () =>
+    Effect.gen(function* () {
+      const { home, settings, transcript } = yield* setup;
+      const sessions = NodePath.join(home, "codex", "sessions");
+      const rollout = (sessionId: string, outputTokens: number) =>
+        [
+          { type: "session_meta", payload: { id: sessionId } },
+          { type: "turn_context", payload: { model: "gpt-6-astra" } },
+          {
+            type: "event_msg",
+            payload: {
+              type: "thread_settings_applied",
+              thread_settings: { service_tier: "ultrafast" },
+            },
+            {
+              type: "event_msg",
+              timestamp: "2026-08-01T10:00:00Z",
+              payload: {
+                type: "token_count",
+                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+              },
+            },
+          },
+        ]
+          .map((line) => encodeUnknownJsonString(line))
+          .join("\n") + "\n";
+      const live = NodePath.join(sessions, "live.jsonl");
+      const deleted = NodePath.join(sessions, "deleted.jsonl");
+      const legacyOnly = NodePath.join(sessions, "legacy-only.jsonl");
+      const newerOnly = NodePath.join(sessions, "newer-only.jsonl");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(sessions, { recursive: true });
+        await NodeFSP.writeFile(live, rollout("live", 10));
+        await NodeFSP.writeFile(deleted, rollout("deleted", 20));
+        await NodeFSP.writeFile(legacyOnly, rollout("legacy-only", 30));
+        await NodeFSP.writeFile(newerOnly, rollout("newer-only", 40));
+        await NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 100) + claudeLine(1, 160, "claude-fable-5", "session-1", 40).trimEnd(),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, SCAN_CACHE_FILE_NAME);
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+        const v5Path = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
+          const first = yield* UsageService.make;
+          yield* first.readSummary(WINDOW);
+          yield* first.awaitPersisted;
+
+          const legacy = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
+            };
+            for (const file of Object.values(document.files)) {
+              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
+              delete file.cs.speed;
+            }
+            const text = encodeUnknownJsonString({ ...document, version: 4 });
+            await NodeFSP.writeFile(legacyPath, text);
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(deleted);
+            return text;
+          });
+
+          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(summary), 30);
+          assert.strictEqual(
+            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            80,
+          );
+          assert.strictEqual(
+            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+            legacy,
+          );
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-v4-upgrade-test",
+              home,
+              settings,
+              ratesDocument: {
+                "gpt-6-astra": {
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 1,
+                  input_cost_per_token_ultrafast: 0,
+                  output_cost_per_token_ultrafast: 6,
+                },
+              },
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>

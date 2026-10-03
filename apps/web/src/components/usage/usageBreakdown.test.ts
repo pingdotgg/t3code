@@ -1,7 +1,7 @@
 import type { ModelTotals } from "@t3tools/shared/usageMerge";
 import { describe, expect, it } from "vite-plus/test";
 
-import { cacheHitRate, costPerMillionTokens } from "./usageBreakdown";
+import { cacheHitRate, costPerMillionTokens, tokenTypeSegments } from "./usageBreakdown";
 
 const model = (
   name: string,
@@ -26,6 +26,27 @@ const model = (
   costShare: 0,
   tokenShare: 0,
   ...overrides,
+});
+
+describe("token types", () => {
+  it.each([0, 40, 100])(
+    "splits %i thinking tokens out of output without changing the total",
+    (reasoningTokens) => {
+      const segments = tokenTypeSegments({
+        uncachedInputTokens: 200,
+        cachedInputTokens: 300,
+        cacheCreationTokens: 50,
+        outputTokens: 100,
+        reasoningTokens,
+      });
+
+      expect(segments.find((segment) => segment.label === "Output")?.value).toBe(
+        100 - reasoningTokens,
+      );
+      expect(segments.find((segment) => segment.label === "Thinking")?.value).toBe(reasoningTokens);
+      expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(650);
+    },
+  );
 });
 
 describe("model rates", () => {

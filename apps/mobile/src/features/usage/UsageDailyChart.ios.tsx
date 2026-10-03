@@ -4,7 +4,7 @@ import { frame } from "@expo/ui/swift-ui/modifiers";
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
 import { buildChartDays, type UsageChartMetric } from "./usageChartData";
-import { useProviderColors } from "./usageProviders";
+import { useProviderColors, useProviderThinkingColors } from "./usageProviders";
 
 export interface UsageDailyChartProps {
   readonly days: readonly string[];
@@ -15,12 +15,13 @@ export interface UsageDailyChartProps {
 
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
+  const thinkingColors = useProviderThinkingColors();
 
   const data: ChartDataPoint[] = buildChartDays(days, daily, metric).flatMap((day) =>
     day.values.map((entry) => ({
       x: day.day,
       y: entry.value,
-      color: colors[entry.provider],
+      color: entry.thinking ? thinkingColors[entry.provider] : colors[entry.provider],
     })),
   );
 
