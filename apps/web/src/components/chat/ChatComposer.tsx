@@ -320,6 +320,7 @@ import {
   getComposerSubmissionValidationMessage,
   submitComposerDraft,
 } from "./composerSubmission";
+import { commitAssistantCitationCommentDrafts } from "./assistantCitationCommentDrafts";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
@@ -2957,6 +2958,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [composerDraftTarget, setComposerDraftPrompt],
   );
+
+  // A question or an approval borrows the prompt editor, which unmounts the
+  // citation chips without dismissing an open comment. The unsaved comments are
+  // written onto their citations first, as a dismissal would have, so the chips
+  // come back with them and Send includes them.
+  const editorShowsPrompt = !isComposerApprovalState && !activePendingProgress;
+  useEffect(() => {
+    if (editorShowsPrompt) return;
+    const committed = commitAssistantCitationCommentDrafts(
+      promptRef.current,
+      composerDraftTargetKey,
+    );
+    if (committed === promptRef.current) return;
+    promptRef.current = committed;
+    setPrompt(committed);
+  }, [composerDraftTargetKey, editorShowsPrompt, promptRef, setPrompt]);
 
   const addComposerImage = useCallback(
     (image: ComposerImageAttachment) => addComposerDraftImages(attachmentDraftTarget, [image]),
@@ -7327,6 +7344,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollKeyUp={onPageScrollKeyUp}
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSend}
+                    citationDraftScope={composerTargetKey(composerDraftTarget)}
                     onPaste={onComposerPaste}
                     placeholder={
                       isComposerApprovalState

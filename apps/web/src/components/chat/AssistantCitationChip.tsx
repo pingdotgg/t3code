@@ -21,6 +21,11 @@ import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
+import {
+  clearAssistantCitationCommentDraft,
+  readAssistantCitationCommentDraft,
+  writeAssistantCitationCommentDraft,
+} from "./assistantCitationCommentDrafts";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -41,6 +46,8 @@ export function AssistantCitationChip({
     onSaveAndSend?: (comment: string) => boolean;
     /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
     onRestoreFocus?: () => void;
+    /** Where the unsaved comment is kept across a remount; the serialized citation is the fallback. */
+    draftKey?: string;
   };
 }) {
   const navigate = useNavigate();
@@ -52,17 +59,25 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  // The draft outlives this chip (see assistantCitationCommentDrafts), so an
+  // editor that comes back after the composer was borrowed for a question
+  // resumes it, and the dismissal rules see it as typed.
+  const draftKey = commentEditor?.draftKey ?? serializeAssistantCitation(citation);
   useEffect(() => {
-    if (!commentOpen) draftCommentRef.current = null;
-  }, [commentOpen]);
+    draftCommentRef.current = commentOpen ? readAssistantCitationCommentDraft(draftKey) : null;
+  }, [commentOpen, draftKey]);
   const settleDraftOnClose = (reason: string): boolean => {
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason,
       draft: draftCommentRef.current,
       savedComment: citation.comment,
     });
-    if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
-    return dismissal.kind !== "keep-open";
+    if (dismissal.kind === "keep-open") return false;
+    if (dismissal.kind === "commit" && !(commentEditor?.onSave(dismissal.comment) ?? true)) {
+      return false;
+    }
+    clearAssistantCitationCommentDraft(draftKey);
+    return true;
   };
   const onSourceUnavailable = useEffectEvent(() => {
     if (!sourceAnchor) return;
@@ -195,14 +210,17 @@ export function AssistantCitationChip({
               onPointerDown={(event) => event.stopPropagation()}
             >
               <AssistantCitationCommentEditor
-                key={serializeAssistantCitation(citation)}
+                key={draftKey}
                 citation={citation}
+                draft={readAssistantCitationCommentDraft(draftKey)}
                 inputRef={commentInputRef}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
+                  writeAssistantCitationCommentDraft(draftKey, comment);
                 }}
                 onSubmit={(comment) => {
                   if (!commentEditor.onSave(comment)) return false;
+                  clearAssistantCitationCommentDraft(draftKey);
                   commentEditor.onOpenChange(false);
                   return true;
                 }}
@@ -210,12 +228,14 @@ export function AssistantCitationChip({
                   ? {
                       onSubmitAndSend: (comment: string) => {
                         if (!commentEditor.onSaveAndSend?.(comment)) return false;
+                        clearAssistantCitationCommentDraft(draftKey);
                         commentEditor.onOpenChange(false);
                         return true;
                       },
                     }
                   : {})}
                 onCancel={() => {
+                  clearAssistantCitationCommentDraft(draftKey);
                   if (commentEditor.onCancel) {
                     commentEditor.onCancel();
                   } else {

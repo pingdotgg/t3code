@@ -68,6 +68,7 @@ import { basenameOfPath } from "~/pierre-icons";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { assistantCitationDraftKey } from "./chat/assistantCitationCommentDrafts";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
@@ -148,6 +149,8 @@ export interface ComposerPromptEditorProps {
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
   onCitationSubmitAndSend?: () => void;
+  /** Keeps this composer's unsaved citation comments apart from another thread's. */
+  citationDraftScope?: string;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -169,7 +172,8 @@ const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onSubmitAndSend: () => void;
-}>({ openComment: null, onOpenChange: () => {}, onSubmitAndSend: () => {} });
+  draftScope: string;
+}>({ openComment: null, onOpenChange: () => {}, onSubmitAndSend: () => {}, draftScope: "" });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
 
@@ -338,6 +342,20 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const commentContext = use(ComposerCitationCommentContext);
   const citation = node.attrs.citation as AssistantCitation;
   const citeKey = node.attrs.citeKey as string;
+  // Unsaved comments are keyed by the citation and its place among identical
+  // ones, which survives the rebuild a provider question causes; citeKey does not.
+  const draftKey = useMemo(() => {
+    const pos = typeof getPos === "function" ? getPos() : undefined;
+    const citationsBefore: Array<AssistantCitation> = [];
+    if (typeof pos === "number") {
+      editor.state.doc.nodesBetween(0, pos, (earlier) => {
+        if (earlier.type.name === "composer-citation") {
+          citationsBefore.push(earlier.attrs.citation as AssistantCitation);
+        }
+      });
+    }
+    return assistantCitationDraftKey(citation, citationsBefore, commentContext.draftScope);
+  }, [citation, commentContext.draftScope, editor.state.doc, getPos]);
   const commentTarget =
     commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
 
@@ -425,6 +443,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
             commentContext.onOpenChange(citeKey, open);
           },
           ...(commentTarget?.removeOnCancel ? { onCancel: onRemove } : {}),
+          draftKey,
           onSave: onSaveComment,
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
@@ -632,6 +651,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     onPageScrollKeyUp,
     onPageScrollRelease,
     onCitationSubmitAndSend,
+    citationDraftScope,
     onPaste,
     editorRef,
   } = props;
@@ -713,8 +733,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         });
       },
       onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
+      draftScope: citationDraftScope ?? "",
     }),
-    [onCitationSubmitAndSend, openCitation],
+    [citationDraftScope, onCitationSubmitAndSend, openCitation],
   );
 
   const handleEditorChange = useCallback((updated: TiptapEditor) => {
