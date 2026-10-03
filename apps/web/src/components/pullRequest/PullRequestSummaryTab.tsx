@@ -56,6 +56,10 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import {
+  PullRequestResolveThreadButton,
+  pullRequestThreadOpenedBy,
+} from "./PullRequestResolveThreadButton";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
@@ -196,6 +200,7 @@ function CollapsedComment({
   label,
   body,
   reactionBar,
+  resolveButton,
   detail,
   thread,
 }: {
@@ -205,6 +210,7 @@ function CollapsedComment({
   /** Null where the remark is nothing but its verdict, which a dismissal usually is. */
   body: string | null;
   reactionBar: ReactNode;
+  resolveButton: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestReviewThread | undefined;
 }) {
@@ -226,6 +232,7 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
+            {resolveButton}
             {reactionBar}
           </div>
           <CommentLocation comment={comment} thread={thread} />
@@ -637,6 +644,7 @@ export function PullRequestSummaryTab({
 
   const renderComment = (comment: PullRequestComment) => {
     const thread = threadByCommentId.get(comment.id);
+    const openedThread = pullRequestThreadOpenedBy(threadByCommentId, comment.id);
     const body = visibleBody(comment.body);
     const outcome = pullRequestReviewOutcome(comment.reviewState);
     // An approval is a verdict, not a finding: there is nothing in it to fix.
@@ -690,6 +698,16 @@ export function PullRequestSummaryTab({
               <HammerIcon className="size-3" />
               {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixFindingLabel}
             </Button>
+          ) : null}
+          {openedThread ? (
+            <PullRequestResolveThreadButton
+              environmentId={environmentId}
+              reference={reference}
+              detail={detail}
+              thread={openedThread}
+              className="-mt-1 shrink-0"
+              onRefresh={onRefresh}
+            />
           ) : null}
           {reactionBar}
         </div>
@@ -1020,6 +1038,10 @@ export function PullRequestSummaryTab({
                     <div className="space-y-2 pt-2">
                       {orderPullRequestComments(finishedComments, commentOrder).map((comment) => {
                         const thread = threadByCommentId.get(comment.id);
+                        const openedThread = pullRequestThreadOpenedBy(
+                          threadByCommentId,
+                          comment.id,
+                        );
                         return (
                           <CollapsedComment
                             key={comment.id}
@@ -1029,6 +1051,18 @@ export function PullRequestSummaryTab({
                             thread={thread}
                             label={thread?.isResolved ? "Resolved" : "Review dismissed"}
                             body={visibleBody(comment.body)}
+                            resolveButton={
+                              openedThread ? (
+                                <PullRequestResolveThreadButton
+                                  environmentId={environmentId}
+                                  reference={reference}
+                                  detail={detail}
+                                  thread={openedThread}
+                                  className="shrink-0"
+                                  onRefresh={onRefresh}
+                                />
+                              ) : null
+                            }
                             reactionBar={
                               <PullRequestReactionBar
                                 className="ml-auto justify-end"

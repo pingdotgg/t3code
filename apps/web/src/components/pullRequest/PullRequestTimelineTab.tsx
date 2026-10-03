@@ -38,6 +38,10 @@ import {
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
+import {
+  PullRequestResolveThreadButton,
+  pullRequestThreadOpenedBy,
+} from "./PullRequestResolveThreadButton";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import {
   PullRequestActorAvatar,
@@ -177,6 +181,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
 function ConversationCard({
   event,
   editable,
+  resolveButton,
   cwd,
   onOpen,
   reactions,
@@ -184,6 +189,7 @@ function ConversationCard({
   event: PullRequestTimelineEvent;
   /** The remark behind this entry, only where this reader may rewrite it. */
   editable: PullRequestComment | null;
+  resolveButton: ReactNode;
   cwd: string;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
@@ -239,6 +245,7 @@ function ConversationCard({
               onClick={() => setEditing(true)}
             />
           ) : null}
+          {resolveButton}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
@@ -293,12 +300,14 @@ function uniqueConversationActors(events: ReadonlyArray<PullRequestTimelineEvent
 function ConversationGroup({
   events,
   editable,
+  renderResolveButton,
   cwd,
   onOpen,
   reactions,
 }: {
   events: ReadonlyArray<PullRequestTimelineEvent>;
   editable: ReadonlyMap<string, PullRequestComment>;
+  renderResolveButton: (commentId: string) => ReactNode;
   cwd: string;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
@@ -352,6 +361,7 @@ function ConversationGroup({
                     key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
                     event={event}
                     editable={editable.get(event.id) ?? null}
+                    resolveButton={renderResolveButton(event.id)}
                     cwd={cwd}
                     onOpen={onOpen}
                     reactions={reactions}
@@ -570,6 +580,24 @@ export function PullRequestTimelineTab({
       .filter((comment) => canEditPullRequestComment(detail, comment))
       .map((comment) => [comment.id, comment] as const),
   );
+  const threadByCommentId = new Map(
+    detail.reviewThreads.flatMap((thread) =>
+      thread.comments.map((comment) => [comment.id, thread] as const),
+    ),
+  );
+  const renderResolveButton = (commentId: string) => {
+    const thread = pullRequestThreadOpenedBy(threadByCommentId, commentId);
+    return thread ? (
+      <PullRequestResolveThreadButton
+        environmentId={environmentId}
+        reference={reference}
+        detail={detail}
+        thread={thread}
+        className="-mt-1"
+        onRefresh={onRefresh}
+      />
+    ) : null;
+  };
   const orderedEvents = order === "newest" ? events : events.toReversed();
   const rows = groupPullRequestTimelineConversations(orderedEvents);
   const openOnHost = (url: string) => {
@@ -588,6 +616,7 @@ export function PullRequestTimelineTab({
                   key={`comments:${row.events[0]?.id ?? "empty"}`}
                   events={row.events}
                   editable={editable}
+                  renderResolveButton={renderResolveButton}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
                   reactions={reactions}
