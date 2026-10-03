@@ -16,7 +16,7 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -377,7 +377,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     cwd: string,
     skills?: ServerProvider["skills"],
   ) {
-    if (skills) discoveredSkills.set(cwd, skills);
+    if (skills) {
+      discoveredSkills.set(cwd, skills);
+      // A rescan replaces the stored entry's skills. Session callbacks and
+      // health checks republish that entry, so it must not keep old ones.
+      yield* SubscriptionRef.update(metadata, (state) =>
+        state.draft.workspaceSnapshots?.some((entry) => entry.cwd === cwd)
+          ? {
+              ...state,
+              draft: {
+                ...state.draft,
+                workspaceSnapshots: state.draft.workspaceSnapshots.map((entry) =>
+                  entry.cwd === cwd ? { ...entry, skills } : entry,
+                ),
+              },
+            }
+          : state,
+      );
+    }
     const snapshot = yield* getSnapshot;
     const workspace = snapshot.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
     const resolvedSkills = skills ?? workspace?.skills ?? discoveredSkills.get(cwd) ?? [];

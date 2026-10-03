@@ -18,8 +18,8 @@ import {
   ClaudeSettings,
   CodexSettings,
   type ProviderInstanceConfig,
-  USAGE_CONTRACT_VERSION,
   ProviderInstanceId,
+  USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
@@ -44,7 +44,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
@@ -130,7 +130,7 @@ const EMPTY_PRICING: UsagePricing = {
 };
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
-export const layerTest = Layer.succeed(
+const layerTest = Layer.succeed(
   UsageService,
   UsageService.of({
     readSummary: (input) =>
@@ -153,7 +153,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcessEnvironment;
@@ -271,10 +271,16 @@ export const make = Effect.gen(function* () {
     for (const driver of ["claudeAgent", "codex", "grok"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
-      const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
-        Object.values(settings.providerInstances).filter((instance) => instance.driver === driver);
+      const instances: Array<
+        Pick<ProviderInstanceConfig, "config" | "environment"> & { instanceId: ProviderInstanceId }
+      > = Object.entries(settings.providerInstances)
+        .filter(([, instance]) => instance.driver === driver)
+        .map(([id, instance]) => ({ ...instance, instanceId: ProviderInstanceId.make(id) }));
       if (!Object.hasOwn(settings.providerInstances, driver)) {
-        instances.push({ config: settings.providers[driver] });
+        instances.push({
+          config: settings.providers[driver],
+          instanceId: ProviderInstanceId.make(driver),
+        });
       }
       for (const instance of instances) {
         const environment = mergeProviderInstanceEnvironment(instance.environment, hostEnvironment);
@@ -283,12 +289,15 @@ export const make = Effect.gen(function* () {
         if (driver === "codex") {
           const decoded = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(decoded)) continue;
-          const config = decoded.value;
+          const codexConfig = decoded.value;
           const environmentHome = environment.CODEX_HOME?.trim();
           const layout = yield* resolveCodexHomeLayout(
-            !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome
-              ? { ...config, homePath: environmentHome }
-              : config,
+            codexConfig.setupMode !== "managed" &&
+              !codexConfig.homePath.trim() &&
+              !codexConfig.shadowHomePath.trim() &&
+              environmentHome
+              ? { ...codexConfig, homePath: environmentHome }
+              : codexConfig,
           );
           home = layout.sharedHomePath;
         } else if (driver === "claudeAgent") {

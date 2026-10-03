@@ -1,3 +1,4 @@
+import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
@@ -317,6 +318,7 @@ export function UsageRouteScreen() {
                   className="w-full ios:w-36"
                 />
               </View>
+              <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
               {merged.duplicateSources.length > 0 ? (
                 <Text className="text-sm text-foreground-muted">
                   Counted once across environments sharing a transcript directory:{" "}
@@ -455,7 +457,7 @@ function CursorEnableLimits({
         <ProviderIcon provider="cursor" size={18} />
         <Text className="text-base font-t3-medium text-foreground">Cursor</Text>
       </View>
-      <View className="items-start gap-3 rounded-[24px] border-continuous bg-card p-4">
+      <View className="items-start gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
         <Text className="text-xs text-foreground-muted">{CURSOR_KEYCHAIN_COPY}</Text>
         <View className="flex-row flex-wrap gap-2">
           {environments.map((environment) => (
@@ -489,7 +491,7 @@ function ChartCard(props: {
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
 
   return (
-    <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
+    <View className="gap-4 rounded-[24px] border-continuous bg-grouped-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
           {metric === "cost" ? "Raw token cost" : "Processed tokens"}

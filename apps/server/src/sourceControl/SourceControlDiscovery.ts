@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { detailFromCause, firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -66,7 +66,7 @@ export class SourceControlDiscovery extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
 

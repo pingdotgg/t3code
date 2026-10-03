@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import type {
   PullRequestContextMetadata,
+  ScopedThreadRef,
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -28,6 +29,13 @@ export type ComposerCommandItem =
       readonly type: "path";
       readonly path: string;
       readonly kind: "file" | "directory";
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "thread";
+      readonly thread: ScopedThreadRef;
       readonly label: string;
       readonly description: string;
     }
@@ -99,6 +107,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];
     case "path":
       return null;
+    case "thread":
+      return "text.bubble";
   }
 }
 

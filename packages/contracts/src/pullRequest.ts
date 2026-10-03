@@ -747,6 +747,8 @@ export const PullRequestSummary = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
+  stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
 
@@ -880,6 +882,12 @@ export const PullRequestDetail = Schema.Struct({
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
+
+export const PullRequestChecks = Schema.Struct({
+  state: PullRequestState,
+  checks: Schema.Array(PullRequestCheck),
+});
+export type PullRequestChecks = typeof PullRequestChecks.Type;
 
 /**
  * The slower, conversation-shaped half of a change request. It is read independently from the
@@ -1277,9 +1285,9 @@ const PROVIDER_REQUIREMENT: Partial<
   },
   bitbucket: {
     missing:
-      "Bitbucket needs API credentials on the server. Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.",
+      "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
     unauthenticated:
-      "Bitbucket rejected the configured credentials. Check T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
+      "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
   },
 };
 

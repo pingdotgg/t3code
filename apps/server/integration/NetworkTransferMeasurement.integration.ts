@@ -165,17 +165,6 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   };
 }
 
-export function transferDelta(
-  start: WebSocketTransferTotals,
-  end: WebSocketTransferTotals,
-): WebSocketTransferTotals {
-  return {
-    wireBytes: Math.max(0, end.wireBytes - start.wireBytes),
-    decodedBytes: Math.max(0, end.decodedBytes - start.decodedBytes),
-    messages: Math.max(0, end.messages - start.messages),
-  };
-}
-
 function countingWsRpcProtocolLayer(input: {
   readonly url: string;
   readonly cookie: string;

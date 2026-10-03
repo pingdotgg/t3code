@@ -4,6 +4,10 @@ import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -46,7 +50,86 @@ interface RecordedBatchBody {
   }>;
 }
 
+const SentBatch = Schema.fromJsonString(
+  Schema.Struct({
+    batch: Schema.Array(Schema.Struct({ uuid: Schema.String })),
+  }),
+);
+
+/**
+ * HTTP client that reads each batch, then fails as if the connection dropped
+ * before the response arrived. PostHog stores these batches, so the server
+ * must not send them forever.
+ */
+const acceptThenFailClient = (batches: Array<ReadonlyArray<{ readonly uuid: string }>>) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.gen(function* () {
+        if (request.body._tag === "Uint8Array") {
+          const body = yield* Schema.decodeEffect(SentBatch)(
+            new TextDecoder().decode(request.body.body),
+          ).pipe(Effect.orDie);
+          batches.push(body.batch);
+        }
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause: "connection reset" }),
+        });
+      }),
+    ),
+  );
+
+it("retryDelayMs doubles from 2s and stays under the 5 minute cap", () => {
+  assert.equal(AnalyticsService.retryDelayMs(1, 0), 1_000);
+  assert.equal(AnalyticsService.retryDelayMs(2, 0.999_999), 4_000);
+  assert.equal(AnalyticsService.retryDelayMs(30, 0), 150_000);
+  assert.equal(AnalyticsService.retryDelayMs(30, 0.999_999), 300_000);
+});
+
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+  it.effect("a batch that keeps failing is retried with backoff, then dropped", () =>
+    Effect.gen(function* () {
+      const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
+      const runtimeLayer = AnalyticsService.layer.pipe(
+        Layer.provideMerge(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
+        ),
+        Layer.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromUnknown({
+              T3CODE_TELEMETRY_ENABLED: true,
+              T3CODE_POSTHOG_KEY: "phc_test_key",
+              T3CODE_POSTHOG_HOST: "http://localhost",
+            }),
+          ),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "win32"),
+            Layer.succeed(HostProcessArchitecture, "x64"),
+            acceptThenFailClient(batches),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const analytics = yield* AnalyticsService.AnalyticsService;
+        for (let index = 0; index < 20; index += 1) {
+          yield* analytics.record("test.retry", { index });
+        }
+        // Before the fix this loop sent the batch about once a second.
+        for (let second = 0; second < 600; second += 1) {
+          yield* TestClock.adjust("1 second");
+        }
+      }).pipe(Effect.provide(runtimeLayer));
+
+      assert.equal(batches.length, 5);
+      const uuids = batches.map((batch) => batch.map((event) => event.uuid).join(","));
+      assert.equal(new Set(uuids).size, 1, "every retry carries the same uuids");
+      assert.equal(new Set(batches[0]?.map((event) => event.uuid)).size, 20);
+    }),
+  );
+
   it.effect("flush drains all buffered events across multiple batches", () =>
     Effect.gen(function* () {
       const capturedRequests: Array<RecordedBatchRequest> = [];
