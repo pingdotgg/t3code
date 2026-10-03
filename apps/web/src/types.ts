@@ -15,6 +15,7 @@ import type {
   TurnId,
   MessageId,
   MessageOrigin,
+  OrchestrationMessageContext,
   ProviderDriverKind,
   ProviderInstanceId,
   CheckpointRef,
@@ -59,6 +60,7 @@ export interface ChatMessage {
   text: string;
   attachments?: ChatAttachment[];
   origin?: MessageOrigin | undefined;
+  context?: OrchestrationMessageContext | undefined;
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;

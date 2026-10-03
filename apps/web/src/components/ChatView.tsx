@@ -16,6 +16,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadContextRecord,
+  type OrchestrationMessageContext,
   type ThreadId,
   type TurnDiffScope,
   type TurnId,
@@ -72,6 +73,7 @@ import {
   parseDiffRouteSearch,
 } from "../diffRouteSearch";
 import { collapseExpandedComposerCursor } from "../composer-logic";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -235,6 +237,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
   buildThreadContextForSend,
+  isComposerDraftCleared,
   canStartThreadTurn,
   createThreadPlanCatalogSelector,
   deriveComposerSendState,
@@ -3371,7 +3374,7 @@ function ChatViewBody(
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
-    } = sendCtx as typeof sendCtx & { threadContexts?: ThreadContextRecord[] };
+    } = sendCtx;
     const draftPromptForSend = promptRef.current;
     const draftThreadContextsForSend = [...composerThreadContexts];
     composerThreadContextsRef.current = [...composerThreadContexts];
@@ -3394,6 +3397,27 @@ function ChatViewBody(
       threadContextCount: composerThreadContexts.length,
     });
     const threadContextForSend = buildThreadContextForSend(promptForSend, composerThreadContexts);
+    const referencedContextIds = new Set(
+      collectThreadContextReferences(promptForSend).map((ref) => ref.contextId),
+    );
+    if (
+      referencedContextIds.size > 0 &&
+      (sendCtx.threadContextSupported !== true ||
+        referencedContextIds.size !== (threadContextForSend?.records.length ?? 0) ||
+        threadContextForSend?.records.some(
+          (record) => record.environmentId !== environmentId || record.threadId === activeThread.id,
+        ))
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Thread context is unavailable",
+          description:
+            "Update this server or remove the unavailable references and attach the threads again.",
+        }),
+      );
+      return;
+    }
     const piSessionCommand = ctxSelectedProvider === "pi" ? parsePiSessionCommand(trimmed) : null;
     if (piSessionCommand) {
       const composerHasNonPromptContent =
@@ -3528,10 +3552,31 @@ function ChatViewBody(
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
-      await onSubmitPlanFollowUp({
+      const sent = await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        context: threadContextForSend,
       });
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        !sent &&
+        (!currentDraft ||
+          (!currentDraft.prompt &&
+            currentDraft.images.length === 0 &&
+            currentDraft.threadContexts.length === 0))
+      ) {
+        setComposerDraftPrompt(composerDraftTarget, draftPromptForSend);
+        setComposerDraftThreadContexts(composerDraftTarget, draftThreadContextsForSend);
+        setComposerDraftTerminalContexts(composerDraftTarget, [...composerTerminalContexts]);
+        for (const annotation of composerPreviewAnnotations)
+          addComposerDraftPreviewAnnotation(composerDraftTarget, annotation);
+        promptRef.current = draftPromptForSend;
+        composerRef.current?.resetCursorState({
+          prompt: draftPromptForSend,
+          cursor: collapseExpandedComposerCursor(draftPromptForSend, draftPromptForSend.length),
+          detectTrigger: true,
+        });
+      }
       return;
     }
     if (!hasSendableContent) {
@@ -3699,6 +3744,7 @@ function ChatViewBody(
       id: messageIdForSend,
       role: "user",
       text: outgoingMessageText,
+      ...(threadContextForSend ? { context: threadContextForSend } : {}),
       ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
       createdAt: messageCreatedAt,
       streaming: false,
@@ -3837,12 +3883,21 @@ function ChatViewBody(
       }
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
+      const currentDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       if (
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerThreadContextsRef.current.length === 0
+        isComposerDraftCleared(
+          currentDraft
+            ? {
+                prompt: currentDraft.prompt,
+                imageCount: currentDraft.images.length,
+                terminalContextCount: currentDraft.terminalContexts.length,
+                threadContextCount: currentDraft.threadContexts.length,
+              }
+            : undefined,
+        ) &&
+        (currentDraft?.previewAnnotations.length ?? 0) === 0
       ) {
         usePendingTurnStore
           .getState()
@@ -3889,6 +3944,16 @@ function ChatViewBody(
     }
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx) return;
+    if (collectThreadContextReferences(promptRef.current).length > 0) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Queue thread context instead",
+          description: "Thread references are supported in queued messages, not steering commands.",
+        }),
+      );
+      return;
+    }
     const {
       images: composerImages,
       terminalContexts: composerTerminalContexts,
@@ -4012,7 +4077,7 @@ function ChatViewBody(
   };
 
   const onUpdateQueuedTurn = useCallback(
-    (queuedTurnId: QueuedTurnId, text: string) => {
+    (queuedTurnId: QueuedTurnId, text: string, context?: OrchestrationMessageContext) => {
       const api = readEnvironmentApi(environmentId);
       if (!api || !activeThreadId) return;
       void api.orchestration
@@ -4022,6 +4087,7 @@ function ChatViewBody(
           threadId: activeThreadId,
           queuedTurnId,
           text,
+          ...(context !== undefined ? { context } : {}),
           updatedAt: new Date().toISOString(),
         })
         .catch((err: unknown) => {
@@ -4222,9 +4288,11 @@ function ChatViewBody(
     async ({
       text,
       interactionMode: nextInteractionMode,
+      context,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      context?: OrchestrationMessageContext | undefined;
     }) => {
       const api = readEnvironmentApi(environmentId);
       if (
@@ -4241,17 +4309,17 @@ function ChatViewBody(
           sendInFlight: sendInFlightRef.current,
         })
       ) {
-        return;
+        return false;
       }
 
       const trimmed = text.trim();
       if (!trimmed) {
-        return;
+        return false;
       }
 
       const sendCtx = composerRef.current?.getSendContext();
       if (!sendCtx) {
-        return;
+        return false;
       }
       const {
         selectedProvider: ctxSelectedProvider,
@@ -4284,6 +4352,7 @@ function ChatViewBody(
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
+        ...(context ? { context } : {}),
         createdAt: messageCreatedAt,
         streaming: false,
       });
@@ -4314,6 +4383,7 @@ function ChatViewBody(
             role: "user",
             text: outgoingMessageText,
             attachments: [],
+            ...(context ? { context } : {}),
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: activeThread.title,
@@ -4337,6 +4407,7 @@ function ChatViewBody(
           setPlanSidebarOpen(true);
         }
         sendInFlightRef.current = false;
+        return true;
       } catch (err) {
         usePendingTurnStore
           .getState()
@@ -4347,6 +4418,7 @@ function ChatViewBody(
         );
         sendInFlightRef.current = false;
         resetLocalDispatch();
+        return false;
       }
     },
     [

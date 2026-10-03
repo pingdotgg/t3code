@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isProviderDriverKind,
   type OrchestrationMessageContext,
+  THREAD_CONTEXT_MAX_RECORDS,
   type OrchestrationThreadActivity,
   ProjectId,
   type ModelSelection,
@@ -356,10 +357,70 @@ export function buildThreadContextForSend(
     if (!referencedIds.has(key) || seen.has(key)) continue;
     seen.add(key);
     filtered.push(record);
-    if (filtered.length >= 32) break;
+    if (filtered.length >= THREAD_CONTEXT_MAX_RECORDS) break;
   }
   if (filtered.length === 0) return undefined;
   return { version: 1, records: filtered };
+}
+
+/** Records in `records` that `prompt` actually references. Only these are sendable. */
+export function countReferencedThreadContexts(
+  prompt: string,
+  records: ReadonlyArray<ThreadContextRecord>,
+): number {
+  if (records.length === 0) return 0;
+  const referencedIds = new Set(
+    collectThreadContextReferences(prompt).map((occurrence) => String(occurrence.contextId)),
+  );
+  if (referencedIds.size === 0) return 0;
+  let count = 0;
+  for (const record of records) {
+    if (referencedIds.has(String(record.contextId))) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Context envelope for `thread.queued-turn.update`. Referenced records are
+ * retained; when the edit removes the last reference but the queued turn
+ * already carries context, an explicit empty envelope clears the stale state
+ * instead of leaving it behind. Returns `undefined` only when neither the
+ * edit nor the previous turn carries context.
+ */
+export function buildThreadContextForQueueUpdate(input: {
+  text: string;
+  records: ReadonlyArray<ThreadContextRecord>;
+  previousRecords: ReadonlyArray<ThreadContextRecord>;
+}): OrchestrationMessageContext | undefined {
+  const retained = buildThreadContextForSend(input.text, input.records);
+  if (retained) return retained;
+  if (input.previousRecords.length === 0) return undefined;
+  return { version: 1, records: [] };
+}
+
+/**
+ * Synchronous retry guard: the failed send cleared the composer draft, so a
+ * restore is safe only when the draft is still empty. Reads the store draft
+ * directly instead of the mirrored refs, which lag behind the clear.
+ */
+export function isComposerDraftCleared(
+  draft:
+    | {
+        prompt: string;
+        imageCount: number;
+        terminalContextCount: number;
+        threadContextCount: number;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!draft) return true;
+  return (
+    draft.prompt.length === 0 &&
+    draft.imageCount === 0 &&
+    draft.terminalContextCount === 0 &&
+    draft.threadContextCount === 0
+  );
 }
 
 export function deriveComposerSendState(options: {

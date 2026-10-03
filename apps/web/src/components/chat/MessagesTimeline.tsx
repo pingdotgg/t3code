@@ -66,19 +66,21 @@ import { MessageCopyButton } from "./MessageCopyButton";
 import { ChildFollowUpReceipt } from "./ChildFollowUpPanel";
 import {
   collectReviewOutputMessageIds,
-  collectTimelineThreadContextLabels,
   computeStableMessagesTimelineRows,
   deriveDelegationOperationSummary,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   resolveExternalActionUrl,
-  selectTimelineThreadContextRecords,
+  selectTimelineThreadContextChips,
   shouldHandleInternalActionClick,
   stabilizeReadonlyStringSet,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import { ThreadContextChip } from "./ThreadContextChip";
+
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -128,6 +130,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 // non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
 // components (WorkingTimer, LiveElapsed) handle it.
 // ---------------------------------------------------------------------------
+
+const EMPTY_THREAD_CONTEXTS: ReadonlyArray<ThreadContextRecord> = [];
 
 interface TimelineRowSharedState {
   isWorking: boolean;
@@ -778,41 +782,13 @@ const TimelineRowContent = memo(function TimelineRowContent(props: { row: Timeli
                   rowId={row.id}
                   text={visibleText}
                   terminalContexts={terminalContexts}
+                  threadContexts={row.message.context?.records ?? EMPTY_THREAD_CONTEXTS}
                   collapsedLineLimit={resolveMessagePreviewLineLimit(
                     row.message.origin?.kind,
                     ctx.messagePreviewLineLimits,
                   )}
                   forceExpanded={ctx.activeChatFindRowId === row.id}
                 />
-                {(() => {
-                  const threadRecords = selectTimelineThreadContextRecords(
-                    row.message as {
-                      text: string;
-                      context?: { records?: ThreadContextRecord[] } | undefined;
-                    },
-                  );
-                  const threadLabels =
-                    threadRecords.length > 0
-                      ? threadRecords.map((record) => record.title || record.label)
-                      : collectTimelineThreadContextLabels(visibleText);
-                  if (threadLabels.length === 0) return null;
-                  return (
-                    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
-                      {threadLabels.map((label) => (
-                        <span
-                          key={label}
-                          className="inline-flex max-w-60 items-center gap-1 rounded-md border border-border/70 bg-muted/60 px-1.5 py-0.5 text-xs text-foreground"
-                          title={label}
-                        >
-                          <span aria-hidden="true" className="text-muted-foreground">
-                            #
-                          </span>
-                          <span className="truncate font-medium">{label}</span>
-                        </span>
-                      ))}
-                    </div>
-                  );
-                })()}
               </div>
             </div>
           );
@@ -1698,6 +1674,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   rowId: string;
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  threadContexts?: ReadonlyArray<ThreadContextRecord> | undefined;
   collapsedLineLimit: MessagePreviewLineCount;
   forceExpanded: boolean;
 }) {
@@ -1770,7 +1747,11 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
             style={{ height: `${props.collapsedLineLimit}lh` }}
           />
           <div ref={contentRef}>
-            <UserMessageBody text={props.text} terminalContexts={props.terminalContexts} />
+            <UserMessageBody
+              text={props.text}
+              terminalContexts={props.terminalContexts}
+              threadContexts={props.threadContexts}
+            />
           </div>
         </div>
       ) : null}
@@ -1795,6 +1776,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  threadContexts?: ReadonlyArray<ThreadContextRecord> | undefined;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -1817,7 +1799,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (matchIndex > cursor) {
           inlineNodes.push(
             <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {props.text.slice(cursor, matchIndex)}
+              <InlineThreadContextText
+                text={props.text.slice(cursor, matchIndex)}
+                records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+              />
             </span>,
           );
         }
@@ -1834,7 +1819,10 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (cursor < props.text.length) {
           inlineNodes.push(
             <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              {props.text.slice(cursor)}
+              <InlineThreadContextText
+                text={props.text.slice(cursor)}
+                records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+              />
             </span>,
           );
         }
@@ -1862,7 +1850,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     if (props.text.length > 0) {
-      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+      inlineNodes.push(
+        <InlineThreadContextText
+          key="user-message-terminal-context-inline-text"
+          text={props.text}
+          records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+        />,
+      );
     } else if (inlinePrefix.length === 0) {
       return null;
     }
@@ -1880,9 +1874,49 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
   return (
     <div className="chat-message-content whitespace-pre-wrap wrap-break-word text-foreground">
-      {props.text}
+      <InlineThreadContextText
+        text={props.text}
+        records={props.threadContexts ?? EMPTY_THREAD_CONTEXTS}
+      />
     </div>
   );
+});
+
+const InlineThreadContextText = memo(function InlineThreadContextText(props: {
+  text: string;
+  records: ReadonlyArray<ThreadContextRecord>;
+}) {
+  const occurrences = collectThreadContextReferences(props.text);
+  if (occurrences.length === 0) return props.text;
+  const chips = new Map(
+    selectTimelineThreadContextChips({ text: props.text, context: { records: props.records } }).map(
+      (chip) => [chip.key, chip],
+    ),
+  );
+  const records = new Map(props.records.map((record) => [record.contextId, record]));
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const occurrence of occurrences) {
+    nodes.push(props.text.slice(cursor, occurrence.start));
+    const record = records.get(occurrence.contextId);
+    const key = `${occurrence.contextId}:${occurrence.start}`;
+    nodes.push(
+      record ? (
+        <ThreadContextChip key={key} record={record} />
+      ) : (
+        <span
+          key={key}
+          className="inline-flex rounded border border-dashed border-border px-1 text-secondary-label"
+          title="Thread context is unavailable"
+        >
+          {chips.get(occurrence.contextId)?.title ?? occurrence.label}
+        </span>
+      ),
+    );
+    cursor = occurrence.end;
+  }
+  nodes.push(props.text.slice(cursor));
+  return <>{nodes}</>;
 });
 
 // ---------------------------------------------------------------------------

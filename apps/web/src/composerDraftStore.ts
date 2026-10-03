@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -715,6 +716,25 @@ export function normalizePersistedThreadContextRecords(value: unknown): ThreadCo
     if (out.length >= THREAD_CONTEXT_MAX_RECORDS) break;
   }
   return out;
+}
+
+/**
+ * Keep only records the prompt still references. Editor text edits (delete,
+ * cut) never drop the stored record — so native undo restores the binding —
+ * but persistence prunes the unreferenced remainder so reloads never keep
+ * stale invisible bindings.
+ */
+export function pruneUnreferencedThreadContextRecords(
+  prompt: string,
+  records: ReadonlyArray<ThreadContextRecord>,
+): ThreadContextRecord[] {
+  if (records.length === 0) return [];
+  if (!prompt.includes("t3-context://v1/thread/")) return [];
+  const referenced = new Set(
+    collectThreadContextReferences(prompt).map((occurrence) => String(occurrence.contextId)),
+  );
+  if (referenced.size === 0) return [];
+  return records.filter((record) => referenced.has(String(record.contextId)));
 }
 
 function normalizeProviderDriverKind(value: unknown): ProviderDriverKind | null {
@@ -1847,6 +1867,10 @@ function partializeComposerDraftStoreState(
     ) {
       continue;
     }
+    const persistedThreadContexts =
+      draft.threadContexts.length > 0
+        ? pruneUnreferencedThreadContextRecords(draft.prompt, draft.threadContexts)
+        : [];
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
       attachments: draft.persistedAttachments,
@@ -1871,7 +1895,7 @@ function partializeComposerDraftStoreState(
             })) as DeepMutable<PreviewAnnotationPayload[]>,
           }
         : {}),
-      ...(draft.threadContexts.length > 0 ? { threadContexts: [...draft.threadContexts] } : {}),
+      ...(persistedThreadContexts.length > 0 ? { threadContexts: persistedThreadContexts } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(
@@ -3155,7 +3179,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         },
         addThreadContexts: (threadRef, prompt, contexts) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
-          if (!threadKey || contexts.length === 0) return;
+          if (!threadKey) return;
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
             const seen = new Set(existing.threadContexts.map((entry) => String(entry.contextId)));

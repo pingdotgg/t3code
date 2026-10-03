@@ -10,28 +10,49 @@ import {
 import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
 import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
 
-export function collectTimelineThreadContextLabels(text: string): string[] {
+export interface TimelineThreadContextChip {
+  /** Context identity: stable React key and record binding, never the label. */
+  key: string;
+  title: string;
+  /** True when no record backs the reference: render as unavailable, never as a live thread. */
+  unavailable: boolean;
+}
+
+/**
+ * Chips for one timeline message, in first-reference order. Every inline
+ * reference resolves to its structured record (live title with label
+ * fallback) or is marked unavailable when the record is gone. Unreferenced
+ * records are never surfaced: they were never sent to the provider.
+ */
+export function selectTimelineThreadContextChips(message: {
+  text: string;
+  context?: { records?: ReadonlyArray<ThreadContextRecord> } | undefined;
+}): TimelineThreadContextChip[] {
+  const recordsById = new Map<string, ThreadContextRecord>();
+  for (const record of message.context?.records ?? []) {
+    const key = String(record.contextId);
+    if (!recordsById.has(key)) recordsById.set(key, record);
+  }
+  const chips: TimelineThreadContextChip[] = [];
   const seen = new Set<string>();
-  const labels: string[] = [];
-  for (const occurrence of collectThreadContextReferences(text)) {
+  for (const occurrence of collectThreadContextReferences(message.text)) {
     const key = String(occurrence.contextId);
     if (seen.has(key)) continue;
     seen.add(key);
-    labels.push(occurrence.label);
+    const record = recordsById.get(key);
+    if (!record) {
+      chips.push({ key, title: occurrence.label, unavailable: true });
+      continue;
+    }
+    const title =
+      record.title?.trim().length > 0
+        ? record.title
+        : record.label?.trim().length > 0
+          ? record.label
+          : occurrence.label;
+    chips.push({ key, title, unavailable: false });
   }
-  return labels;
-}
-
-export function selectTimelineThreadContextRecords(message: {
-  text: string;
-  context?: { records?: ReadonlyArray<ThreadContextRecord> } | undefined;
-}): ThreadContextRecord[] {
-  const inlineIds = new Set(
-    collectThreadContextReferences(message.text).map((occurrence) => String(occurrence.contextId)),
-  );
-  const records = message.context?.records ?? [];
-  if (inlineIds.size === 0) return [...records];
-  return records.filter((record) => inlineIds.has(String(record.contextId)));
+  return chips;
 }
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
