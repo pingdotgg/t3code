@@ -35,7 +35,7 @@ import {
   formatModelSelectionEffort,
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { formatModelSlugName } from "@t3tools/shared/model";
+import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
@@ -760,8 +760,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const providerSubagentProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
   );
+  // Providers can report a dated id or alias (claude-haiku-4-5-20251001).
+  const providerSubagentModelSlug = providerSubagentProvider
+    ? resolveSelectableModel(
+        providerSubagentProvider.driver,
+        props.selectedThread.modelSelection.model,
+        providerSubagentProvider.models,
+      )
+    : null;
   const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
-    (model) => model.slug === props.selectedThread.modelSelection.model,
+    (model) => model.slug === providerSubagentModelSlug,
   );
   const workspaceContentWidth = useWorkspaceContentWidth();
   // Clearing animated width can retain the unfolded width after Android resumes folded.
