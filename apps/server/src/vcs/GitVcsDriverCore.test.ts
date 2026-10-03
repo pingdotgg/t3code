@@ -4047,3 +4047,32 @@ describe("Windows long path configuration", () => {
     }
   });
 });
+
+describe("pull request head refs", () => {
+  it.effect.each([
+    { name: "a host's own head ref", headRef: "refs/merge-requests/42/head" },
+    { name: "refs/pull by default", headRef: undefined },
+  ])("fetches pull request heads from $name without moving the checkout", ({ headRef }) =>
+    Effect.gen(function* () {
+      const remote = yield* makeTmpDir();
+      yield* initRepoWithCommit(remote);
+      yield* writeTextFile(remote, "mr-head.txt", "remote head\n");
+      yield* git(remote, ["add", "mr-head.txt"]);
+      yield* git(remote, ["commit", "-m", "MR head"]);
+      const head = yield* git(remote, ["rev-parse", "HEAD"]);
+      yield* git(remote, ["update-ref", headRef ?? "refs/pull/42/head", head]);
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      const original = yield* git(cwd, ["rev-parse", "HEAD"]);
+      assert.notStrictEqual(original, head);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* driver.fetchPullRequestBranch({ cwd, prNumber: 42, branch: "pr-42", headRef });
+      assert.strictEqual(yield* git(cwd, ["rev-parse", "pr-42"]), head);
+      assert.strictEqual(yield* git(cwd, ["rev-parse", "HEAD"]), original);
+      const result = yield* driver.fetchPullRequestHeadCommit({ cwd, prNumber: 42, headRef });
+      assert.strictEqual(result.commitSha, head);
+      assert.strictEqual(yield* git(cwd, ["rev-parse", "HEAD"]), original);
+    }).pipe(Effect.provide(layerTest)),
+  );
+});

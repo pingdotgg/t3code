@@ -215,11 +215,15 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  /** The remote ref holding the head; `refs/pull/<prNumber>/head` when absent. */
+  headRef?: string | undefined;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
   prNumber: number;
+  /** The remote ref holding the head; `refs/pull/<prNumber>/head` when absent. */
+  headRef?: string | undefined;
 }
 
 export interface GitResolveCommitInput {
@@ -357,7 +361,7 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
+    /** Fetches the pull request's head ref without writing a branch. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;
