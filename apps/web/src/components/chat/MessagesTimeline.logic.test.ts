@@ -4625,6 +4625,22 @@ it("keeps the working header in place across worktree setup handoff", () => {
   expect(handoffRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
   expect(handoffRows[2]).toMatchObject({ kind: "worktree-setup", embedded: false });
 
+  // A clean finish before the turn is live keeps that same layout, so the card
+  // does not jump above the header in the gap before the run starts.
+  const settledRows = deriveMessagesTimelineRows({
+    timelineEntries: [userEntry],
+    isWorking: true,
+    activeTurnStartedAt: "2026-01-01T00:00:00Z",
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    worktreeSetup: {
+      ...snapshot,
+      phase: "done",
+      stages: [stage("setup-script", "done"), stage("agent", "done")],
+    },
+  });
+  expect(settledRows.map((row) => row.kind)).toEqual(["message", "working", "worktree-setup"]);
+
   // A script that already finished has nothing left to show once the turn is live.
   const finishedRows = deriveMessagesTimelineRows({
     timelineEntries: [userEntry],
