@@ -1464,6 +1464,22 @@ export function composerTargetKey(target: ScopedThreadRef | DraftId): string {
 }
 
 /**
+ * Composer editor undo identity. A route's own draft keys by the route thread,
+ * so a promoted draft keeps its history. Only a queued-message edit retargets
+ * the composer to another draft, and it gets its own history.
+ */
+export function composerUndoHistoryKey(input: {
+  routeThreadRef: ScopedThreadRef;
+  routeDraftId: DraftId | null;
+  composerDraftTarget: ScopedThreadRef | DraftId;
+}): string {
+  const editsQueuedMessage =
+    typeof input.composerDraftTarget === "string" &&
+    input.composerDraftTarget !== input.routeDraftId;
+  return composerTargetKey(editsQueuedMessage ? input.composerDraftTarget : input.routeThreadRef);
+}
+
+/**
  * Legacy persisted data may still be keyed by a raw `ThreadId`. This helper is
  * intentionally migration-only so live code cannot accidentally accept that
  * incomplete identity.

@@ -113,6 +113,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  composerUndoHistoryKey,
   hydrateImagesFromPersisted,
   useComposerDraftStore,
   useComposerThreadDraft,
@@ -7342,7 +7343,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           )
                         : undefined
                     }
-                    historyScopeKey={composerTargetKey(questionAttachmentTarget ?? routeThreadRef)}
+                    historyScopeKey={
+                      questionAttachmentTarget
+                        ? composerTargetKey(questionAttachmentTarget)
+                        : composerUndoHistoryKey({
+                            routeThreadRef,
+                            routeDraftId: draftId,
+                            composerDraftTarget,
+                          })
+                    }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
