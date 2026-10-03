@@ -126,9 +126,14 @@ export const make = Effect.gen(function* () {
   const iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
 
   const writeDesktopEntry = Effect.gen(function* () {
-    // Inside the mounted AppImage, process.execPath points at a transient
-    // /tmp/.mount_* path — the handler must launch the AppImage itself.
-    const execTarget = Option.getOrElse(environment.appImagePath, () => process.execPath);
+    // Distribution packages run the app on a shared Electron, so process.execPath
+    // is that Electron rather than their launcher. Inside the mounted AppImage,
+    // process.execPath points at a transient /tmp/.mount_* path — the handler
+    // must launch the AppImage itself.
+    const execTarget = environment.desktopLauncherPath.pipe(
+      Option.orElse(() => environment.appImagePath),
+      Option.getOrElse(() => process.execPath),
+    );
     const content = renderUrlHandlerDesktopEntry({
       displayName: environment.displayName,
       execTarget,
