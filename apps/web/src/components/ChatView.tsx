@@ -1513,7 +1513,7 @@ export default function ChatView(props: ChatViewProps) {
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, markThreadUnread } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -2795,7 +2795,11 @@ export default function ChatView(props: ChatViewProps) {
       activeThreadLocalLastVisitedAt,
     );
     const lastVisitedAt = effectiveLastVisitedAt ? Date.parse(effectiveLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
+    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) {
+      // An already-read mount must also suppress a fresh visit after marking unread.
+      lastDispatchedVisitRef.current = `${routeThreadKey}:${serverThread.updatedAt}`;
+      return;
+    }
 
     if (serverThread.lastVisitedAt !== undefined) {
       // Server-tracked visited state: record the watermark server-side so it
@@ -2834,6 +2838,9 @@ export default function ChatView(props: ChatViewProps) {
       return () => clearTimeout(timer);
     }
 
+    const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
+    if (lastDispatchedVisitRef.current === dispatchKey) return;
+    lastDispatchedVisitRef.current = dispatchKey;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
       serverThread.updatedAt,
@@ -7435,6 +7442,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.markUnread") {
+        if (!isServerThread || !activeThreadRef || !activeLatestRun?.completedAt) return;
+        event.preventDefault();
+        event.stopPropagation();
+        markThreadUnread(activeThreadRef);
+        return;
+      }
+
       if (command === "terminal.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -7607,6 +7622,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef,
     activeThreadPinned,
     activeThreadSettled,
+    activeLatestRun?.completedAt,
+    markThreadUnread,
     canInterruptRunningThread,
     terminalUiState.terminalOpen,
     terminalUiState.activeTerminalId,
