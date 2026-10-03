@@ -3843,6 +3843,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  OR node.node_id IN (
+                    SELECT request.node_id FROM orchestration_v2_projection_runtime_requests AS request
+                    WHERE request.thread_id = ${threadId} AND request.status = 'pending'
+                      AND json_extract(request.payload_json, '$.responseCapability.type') <> 'message'
+                  )
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
             `,
@@ -3963,6 +3968,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                   )
                   OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  OR (
+                    item.type IN ('approval_request', 'user_input_request')
+                    AND json_extract(item.payload_json, '$.requestId') IN (
+                      SELECT request.runtime_request_id
+                      FROM orchestration_v2_projection_runtime_requests AS request
+                      WHERE request.thread_id = ${threadId} AND request.status = 'pending'
+                        AND json_extract(request.payload_json, '$.responseCapability.type') <> 'message'
+                    )
+                  )
                   OR (
                     item.run_id IS NULL
                     AND item.node_id IN (

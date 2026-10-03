@@ -180,6 +180,117 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect.each([
+  { trigger: "startup", requestType: "approval_request", runStatus: null },
+  { trigger: "startup", requestType: "user_input_request", runStatus: null },
+  { trigger: "shutdown", requestType: "approval_request", runStatus: null },
+  { trigger: "shutdown", requestType: "user_input_request", runStatus: null },
+  { trigger: "startup", requestType: "approval_request", runStatus: "running" },
+  { trigger: "startup", requestType: "approval_request", runStatus: "completed" },
+] as const)(
+  "closes $requestType transcript entities on $trigger with run status $runStatus",
+  ({ trigger, requestType, runStatus }) => {
+    const threadId = ThreadId.make(`thread_recovery_${trigger}_${requestType}`);
+    const requestId = RuntimeRequestId.make("request_runless");
+    const nodeId = NodeId.make("node_runless");
+    const itemId = TurnItemId.make("item_runless");
+    const terminalItemId = TurnItemId.make("item_already_terminal");
+    const messageNodeId = NodeId.make("node_message");
+    const runId = runStatus === null ? null : RunId.make("run_recovery_request");
+    let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+      null;
+    const projection = {
+      thread: { id: threadId },
+      runtimeRequests: [
+        { id: requestId, nodeId, status: "pending", responseCapability: { type: "live" } },
+        {
+          id: RuntimeRequestId.make("request_message"),
+          nodeId: messageNodeId,
+          status: "pending",
+          responseCapability: { type: "message" },
+        },
+      ],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runs:
+        runStatus === null
+          ? []
+          : [
+              {
+                id: runId,
+                status: runStatus,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              },
+            ],
+      attempts: [],
+      subagents: [],
+      messages: [],
+      nodes: [
+        { id: nodeId, runId, kind: requestType, status: "waiting" },
+        { id: messageNodeId, runId, kind: "user_input_request", status: "waiting" },
+      ],
+      turnItems: [
+        { id: itemId, runId, nodeId, type: requestType, requestId, status: "waiting" },
+        {
+          id: terminalItemId,
+          runId,
+          nodeId,
+          type: requestType,
+          requestId,
+          status: "completed",
+        },
+        {
+          id: TurnItemId.make("item_message"),
+          runId,
+          nodeId: messageNodeId,
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("request_message"),
+          status: "waiting",
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committedInput = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const summary =
+        yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(trigger);
+      assert.equal(summary.closedRequests, 1);
+      const events = committedInput?.events ?? [];
+      assert.equal(events.length, runStatus === "running" ? 4 : 3);
+      const requestEvent = events.find((event) => event.type === "runtime-request.updated");
+      assert.equal(requestEvent?.payload.status, trigger === "startup" ? "expired" : "cancelled");
+      const nodeEvent = events.find((event) => event.type === "node.updated");
+      const itemEvent = events.find((event) => event.type === "turn-item.updated");
+      assert.equal(nodeEvent?.payload.id, nodeId);
+      assert.equal(nodeEvent?.payload.status, "cancelled");
+      assert.isNotNull(nodeEvent?.payload.completedAt);
+      assert.equal(itemEvent?.payload.id, itemId);
+      assert.equal(itemEvent?.payload.status, "cancelled");
+      assert.isNotNull(itemEvent?.payload.completedAt);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("preserves async questions across startup and shutdown", () => {
   const threadId = ThreadId.make("async-recovery-thread");
   const nodeId = NodeId.make("async-recovery-node");

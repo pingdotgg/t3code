@@ -567,6 +567,50 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      // Session-scoped requests may have no run. Close their transcript
+      // entities too, unless run/background recovery already closed them.
+      const terminalizedNodeIds = new Set(
+        events.flatMap((event) => (event.type === "node.updated" ? [event.payload.id] : [])),
+      );
+      for (const request of requests) {
+        const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+        if (
+          node !== undefined &&
+          isNonterminalNodeStatus(node.status) &&
+          !terminalizedNodeIds.has(node.id)
+        ) {
+          terminalizedNodeIds.add(node.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "node.updated",
+            threadId: projection.thread.id,
+            ...(node.runId === null ? {} : { runId: node.runId }),
+            nodeId: node.id,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        }
+        for (const item of projection.turnItems ?? []) {
+          if (
+            (item.type !== "approval_request" && item.type !== "user_input_request") ||
+            item.requestId !== request.id ||
+            !isNonterminalTurnItemStatus(item.status) ||
+            cancelledStaleItemIds.has(item.id)
+          ) {
+            continue;
+          }
+          cancelledStaleItemIds.add(item.id);
+          events.push({
+            id: yield* allocateEventId(),
+            type: "turn-item.updated",
+            threadId: projection.thread.id,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          });
+        }
+      }
       // All provider processes are gone on startup/shutdown: clear any
       // persisted Waiting roster (including idle threads from settled roots)
       // and idle active threads without resurrecting active status.

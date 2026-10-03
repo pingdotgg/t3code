@@ -22,6 +22,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -336,6 +337,202 @@ it.effect("keeps other database work runnable while discovering compaction candi
       }
     }),
   ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect.each([
+  { trigger: "startup", runStatus: null },
+  { trigger: "shutdown", runStatus: null },
+  { trigger: "startup", runStatus: "completed" },
+  { trigger: "shutdown", runStatus: "completed" },
+] as const)(
+  "recovers request transcripts through SQLite on $trigger with run status $runStatus",
+  ({ trigger, runStatus }) =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:request-transcript:${trigger}:${runStatus}`);
+      const runId = runStatus === null ? null : RunId.make(`run:${threadId}`);
+      const events: Array<OrchestrationV2DomainEvent> = [
+        threadCreatedEvent({
+          id: `event:${threadId}:thread`,
+          thread: makeThread(threadId, now),
+          now,
+        }),
+      ];
+      if (runId !== null) {
+        events.push({
+          id: EventId.make(`event:${threadId}:run`),
+          type: "run.created",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${threadId}`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      }
+      for (const kind of ["approval", "question", "durable-question"] as const) {
+        const requestId = RuntimeRequestId.make(`request:${threadId}:${kind}`);
+        const nodeId = NodeId.make(`node:${threadId}:${kind}`);
+        const itemType = kind === "approval" ? "approval_request" : "user_input_request";
+        const itemBase = {
+          id: TurnItemId.make(`item:${threadId}:${kind}`),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: events.length,
+          status: "waiting" as const,
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          requestId,
+        };
+        const item: OrchestrationV2TurnItem =
+          kind === "approval"
+            ? {
+                ...itemBase,
+                type: "approval_request",
+                requestKind: "command",
+                prompt: "Run command?",
+              }
+            : { ...itemBase, type: "user_input_request", questions: [] };
+        events.push(
+          {
+            id: EventId.make(`event:${nodeId}`),
+            type: "node.updated",
+            threadId,
+            nodeId,
+            occurredAt: now,
+            payload: {
+              id: nodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId: nodeId,
+              kind: itemType,
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${requestId}`),
+            type: "runtime-request.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: requestId,
+              nodeId,
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: kind === "approval" ? "command" : "user_input",
+              status: "pending",
+              responseCapability:
+                kind === "durable-question"
+                  ? { type: "message" }
+                  : {
+                      type: "live",
+                      providerSessionId: ProviderSessionId.make(`session:${threadId}`),
+                    },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          },
+          {
+            id: EventId.make(`event:${item.id}`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: item,
+          },
+        );
+        if (kind === "approval") {
+          events.push({
+            id: EventId.make(`event:${item.id}:terminal`),
+            type: "turn-item.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...item,
+              id: TurnItemId.make(`item:${threadId}:terminal`),
+              status: "completed",
+              completedAt: now,
+            },
+          });
+        }
+      }
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make(`command:${threadId}:seed`),
+        threadId,
+        commandType: "foundation.request-transcript",
+        acceptedAt: now,
+        events,
+        effects: [],
+      });
+      const selected = yield* projections.getRuntimeRecoveryProjection(threadId);
+      assert.sameMembers(
+        selected.nodes.map((node) => node.id),
+        [NodeId.make(`node:${threadId}:approval`), NodeId.make(`node:${threadId}:question`)],
+      );
+      assert.sameMembers(
+        selected.turnItems.map((item) => item.id),
+        [
+          TurnItemId.make(`item:${threadId}:approval`),
+          TurnItemId.make(`item:${threadId}:question`),
+        ],
+      );
+      const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
+      assert.equal((yield* recovery.reconcile(trigger)).closedRequests, 2);
+      const final = yield* projections.getThreadProjection(threadId);
+      for (const kind of ["approval", "question", "durable-question"] as const) {
+        const durable = kind === "durable-question";
+        assert.equal(
+          final.runtimeRequests.find((request) => request.id === `request:${threadId}:${kind}`)
+            ?.status,
+          durable ? "pending" : trigger === "startup" ? "expired" : "cancelled",
+        );
+        assert.equal(
+          final.nodes.find((node) => node.id === `node:${threadId}:${kind}`)?.status,
+          durable ? "waiting" : "cancelled",
+        );
+        assert.equal(
+          final.turnItems.find((item) => item.id === `item:${threadId}:${kind}`)?.status,
+          durable ? "waiting" : "cancelled",
+        );
+      }
+      assert.equal(
+        final.turnItems.find((item) => item.id === `item:${threadId}:terminal`)?.status,
+        "completed",
+      );
+    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
 );
 
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
