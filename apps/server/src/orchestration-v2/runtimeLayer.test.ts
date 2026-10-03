@@ -2800,6 +2800,124 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("starts a wake's work clock from the run that ran before it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-wake-work-start-thread");
+      const messageId = (key: string) => MessageId.make(`runtime-layer-wake-work-start-${key}`);
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-wake-work-start-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-wake-work-start-project"),
+        title: "Wake work start",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const dispatch = (key: string, wake: boolean) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: wake ? "agent" : "user",
+          creationSource: wake ? "provider" : "web",
+          ...(wake
+            ? {
+                notification: {
+                  source: { kind: "background_task" as const },
+                  outcome: "updated" as const,
+                  summary: "Background activity updated",
+                },
+              }
+            : {}),
+          commandId: CommandId.make(`runtime-layer-wake-work-start-${key}`),
+          threadId,
+          messageId: messageId(key),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode:
+            key === "prompt" ? { type: "start_immediately" } : { type: "queue_after_active" },
+        });
+      const runFor = (key: string) =>
+        Effect.map(orchestrator.getThreadProjection(threadId), ({ runs }) => {
+          const run = runs.find((candidate) => candidate.userMessageId === messageId(key));
+          assert.isDefined(run);
+          return run;
+        });
+      yield* dispatch("prompt", false);
+      yield* dispatch("queued", false);
+      yield* dispatch("early-wake", true);
+      // The early wake now runs ahead of the older queued prompt, as a
+      // delegated result does when it jumps the queue.
+      yield* orchestrator.dispatch({
+        type: "queued-run.reorder",
+        commandId: CommandId.make("runtime-layer-wake-work-start-reorder"),
+        threadId,
+        runId: (yield* runFor("queued")).id,
+        beforeRunId: null,
+      });
+      yield* dispatch("late-wake", true);
+      // A queued wake has no clock yet: what runs before it is still unknown.
+      assert.isUndefined((yield* runFor("early-wake")).workStartedAt);
+
+      const startedRunIds = yield* Queue.unbounded<RunId>();
+      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+      yield* eventSink.stream({ threadId, afterSequence }).pipe(
+        Stream.runForEach((stored) =>
+          stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+            ? Queue.offer(startedRunIds, stored.event.payload.id)
+            : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const now = yield* DateTime.now;
+      // Runs start and settle the way the provider would report them.
+      const settle = (key: string, startedAt: DateTime.Utc) =>
+        Effect.gen(function* () {
+          const run = yield* runFor(key);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`runtime-layer-wake-work-start-${key}-completed`),
+                type: "run.updated",
+                threadId,
+                runId: run.id,
+                ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: startedAt,
+                payload: { ...run, status: "completed", startedAt, completedAt: startedAt },
+              },
+            ],
+          });
+        });
+      const millis = (value: DateTime.Utc | undefined) =>
+        value === undefined ? undefined : DateTime.toEpochMillis(value);
+
+      yield* settle("prompt", now);
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("early-wake")).id);
+      assert.equal(millis((yield* runFor("early-wake")).workStartedAt), millis(now));
+
+      yield* settle("early-wake", DateTime.add(now, { seconds: 1 }));
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("queued")).id);
+      assert.isUndefined((yield* runFor("queued")).workStartedAt);
+
+      // The queued prompt starts long after it was requested; the wake after it
+      // counts from that start, not from the request.
+      const queuedStartedAt = DateTime.add(now, { minutes: 10 });
+      yield* settle("queued", queuedStartedAt);
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("late-wake")).id);
+      assert.equal(millis((yield* runFor("late-wake")).workStartedAt), millis(queuedStartedAt));
+    }),
+  );
+
   it.effect.each(["usage_limit", "provider_error"] as const)(
     "handles a queued message after a %s failure",
     (failureClass) =>

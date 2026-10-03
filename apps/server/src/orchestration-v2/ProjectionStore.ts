@@ -48,6 +48,7 @@ import {
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
+  orchestrationV2RunWorkStartedAt,
   RunId,
   CheckpointScopeId,
   ThreadId,
@@ -1368,7 +1369,8 @@ export function threadShellFromProjection(
     latestRunCompletedAt: latestRun?.completedAt ?? null,
     activeRunId: activeRun?.id ?? null,
     activityRunStatus: activityRun?.status ?? null,
-    activityRunStartedAt: activityRun?.startedAt ?? activityRun?.requestedAt ?? null,
+    activityRunStartedAt:
+      activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
@@ -4782,7 +4784,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS activity_run_status,
               (
-                SELECT COALESCE(json_extract(r.payload_json, '$.startedAt'), r.requested_at)
+                -- Mirrors orchestrationV2RunWorkStartedAt.
+                SELECT COALESCE(
+                  json_extract(r.payload_json, '$.workStartedAt'),
+                  json_extract(r.payload_json, '$.startedAt'),
+                  r.requested_at
+                )
                 FROM orchestration_v2_projection_runs r
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')

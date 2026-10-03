@@ -96,6 +96,19 @@ describe("thread execution presentation", () => {
     ).toMatchObject({ status: "running", lastError: null, lastErrorClass: null });
   });
 
+  it("counts a wake run's activity from the start of the work it continues", () => {
+    const workStartedAt = DateTime.makeUnsafe("2026-07-28T09:20:00.000Z");
+    const wake = { ...run("wake", 2, "running"), workStartedAt };
+    expect(
+      deriveThreadRuntime({ ...v2Projection, runs: [run("prompt", 1, "completed"), wake] })
+        ?.activityStartedAt,
+    ).toBe("2026-07-28T09:20:00.000Z");
+    expect(
+      deriveThreadRuntime({ ...v2Projection, runs: [run("prompt", 1, "running")] })
+        ?.activityStartedAt,
+    ).toBe("2026-07-28T10:00:00.000Z");
+  });
+
   it("keeps a subscription limit visible while later messages stay queued", () => {
     const failed = {
       ...run("limited", 1, "failed"),
