@@ -8,7 +8,6 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -188,15 +187,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
-      const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
-        .dispatch({
-          type,
+        .configureModelSelection({
+          projectId: thread.projectId,
           threadId: thread.id,
           commandId: yield* newCommandId(),
           modelSelection: input.modelSelection,
+          createdBy: "agent",
+          creationSource: "mcp",
         })
-        .pipe(Effect.mapError(dispatchFailure));
+        .pipe(Effect.mapError(unavailable));
       return { sequence: result.sequence };
     }),
   ),
