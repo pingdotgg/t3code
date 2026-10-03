@@ -196,6 +196,38 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reads clone URLs on the given host before the checkout's", () => {
+    const paths: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "https://github.com/acme/web.git"]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            paths.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "acme/web",
+              html_url: `https://${input.host}/acme/web`,
+              ssh_url: `git@${input.host}:acme/web.git`,
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const cloneUrls = yield* gh.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "GitHub.Enterprise.test",
+      });
+      yield* gh.getRepositoryCloneUrls({ cwd: "/repo", repository: "acme/web" });
+      assert.strictEqual(cloneUrls.url, "https://github.enterprise.test/acme/web");
+      assert.deepStrictEqual(paths, [
+        "github.enterprise.test repos/acme/web",
+        "github.com repos/acme/web",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("names a missing repository rather than a pull request", () => {
     const { layer } = harness({
       remotes: remotesOutput(["origin", "git@github.com:acme/gone.git"]),
