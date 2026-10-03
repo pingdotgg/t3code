@@ -110,6 +110,10 @@ export const ANTIGRAVITY_PERSONAL_AUTH: AntigravityAuthConfig = {
 };
 
 /** True for the two methods that open a Google sign-in page. */
+export function antigravityTokenPath(path: Path.Path, profileDirectory: string): string {
+  return path.join(path.resolve(profileDirectory), "antigravity-acp", "acp_token.json");
+}
+
 export function antigravityAuthUsesBrowser(authMethod: AntigravityAuthMethod): boolean {
   return authMethod === "oauth-personal" || authMethod === "oauth-business";
 }
@@ -354,7 +358,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     platform,
     geminiHome,
     acpDirectory,
-    tokenPath: path.join(acpDirectory, "acp_token.json"),
+    tokenPath: antigravityTokenPath(path, geminiHome),
     tempDirectory,
     browserCommand,
   };
