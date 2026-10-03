@@ -13,6 +13,7 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -1331,6 +1332,15 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const targetLocks = new Map<string, Semaphore.Semaphore>();
   const authSecrets = new Map<string, string>();
 
+  // Setup belongs to both the caller and the manager: either can cancel it.
+  // Propagate the exit after releasing the fiber to avoid reentrant interruption during shutdown.
+  const runInManagerScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.forkIn(effect, managerScope),
+      Fiber.await,
+      Fiber.interrupt,
+    ).pipe(Effect.flatMap((exit) => exit));
+
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
     key: string,
@@ -1497,107 +1507,122 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(input.runner),
       key: input.key,
     });
-    const remoteLaunch = yield* runWithSshAuth({
-      key: input.key,
-      target: input.resolvedTarget,
-      operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
-    });
-    const remotePort = remoteLaunch.remotePort;
-    yield* Effect.logDebug("ssh.environment.remotePort.ready", {
-      ...sshTargetLogFields(input.resolvedTarget),
-      key: input.key,
-      remotePort,
-      remoteServerKind: remoteLaunch.remoteServerKind,
-    });
-    const localPort = yield* reserveLocalTunnelPort();
-    const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
-    const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
-    yield* Effect.logDebug("ssh.environment.localPort.reserved", {
-      ...sshTargetLogFields(input.resolvedTarget),
-      key: input.key,
-      localPort,
-      remotePort,
-    });
-    const entryScope = yield* Scope.make("sequential");
-    const tunnelEntry = yield* runWithSshAuth({
-      key: input.key,
-      target: input.resolvedTarget,
-      operation: (authOptions) =>
-        startSshTunnel({
-          key: input.key,
-          resolvedTarget: input.resolvedTarget,
-          remotePort,
-          localPort,
-          httpBaseUrl,
-          wsBaseUrl,
-          authOptions,
-          remoteServerKind: remoteLaunch.remoteServerKind,
-        }).pipe(Effect.provideService(Scope.Scope, entryScope)),
-    }).pipe(
-      Effect.onExit((exit) =>
-        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
-      ),
+    return yield* Effect.acquireUseRelease(
+      Scope.make("sequential"),
+      (entryScope) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
+            const fileSystemService = yield* FileSystem.FileSystem;
+            const pathService = yield* Path.Path;
+            const stopRemote = Effect.gen(function* () {
+              const authSecret = authSecrets.get(input.key) ?? null;
+              yield* stopRemoteServer(
+                input.resolvedTarget,
+                authSecret === null
+                  ? { batchMode: "yes", interactiveAuth: false }
+                  : { authSecret, batchMode: "no", interactiveAuth: true },
+              );
+            }).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
+              Effect.provideService(FileSystem.FileSystem, fileSystemService),
+              Effect.provideService(Path.Path, pathService),
+            );
+            const remoteLaunch = yield* restore(
+              runWithSshAuth({
+                key: input.key,
+                target: input.resolvedTarget,
+                operation: (authOptions) =>
+                  launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
+              }),
+            );
+            const remotePort = remoteLaunch.remotePort;
+            yield* Effect.logDebug("ssh.environment.remotePort.ready", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              key: input.key,
+              remotePort,
+              remoteServerKind: remoteLaunch.remoteServerKind,
+            });
+            let cleanupTransferred = false;
+            yield* Scope.addFinalizer(
+              entryScope,
+              Effect.suspend(() =>
+                !cleanupTransferred && remoteLaunch.remoteServerKind === "managed"
+                  ? stopRemote.pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            );
+            const localPort = yield* restore(reserveLocalTunnelPort());
+            const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
+            const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
+            yield* Effect.logDebug("ssh.environment.localPort.reserved", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              key: input.key,
+              localPort,
+              remotePort,
+            });
+            const tunnelEntry = yield* restore(
+              runWithSshAuth({
+                key: input.key,
+                target: input.resolvedTarget,
+                operation: (authOptions) =>
+                  startSshTunnel({
+                    key: input.key,
+                    resolvedTarget: input.resolvedTarget,
+                    remotePort,
+                    localPort,
+                    httpBaseUrl,
+                    wsBaseUrl,
+                    authOptions,
+                    remoteServerKind: remoteLaunch.remoteServerKind,
+                  }).pipe(Effect.provideService(Scope.Scope, entryScope)),
+              }),
+            );
+            tunnels.set(input.key, tunnelEntry);
+            yield* Scope.addFinalizer(
+              entryScope,
+              Effect.gen(function* () {
+                const ownsRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
+                if (ownsRemote) {
+                  tunnels.delete(tunnelEntry.key);
+                }
+                yield* tunnelEntry.process
+                  .kill({
+                    killSignal: "SIGTERM",
+                    forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
+                  })
+                  .pipe(Effect.ignore);
+                if (!ownsRemote) {
+                  return;
+                }
+                yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
+                  ...sshTargetLogFields(tunnelEntry.target),
+                  key: tunnelEntry.key,
+                  localPort: tunnelEntry.localPort,
+                  remotePort: tunnelEntry.remotePort,
+                });
+                yield* stopRemote;
+                yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
+                  ...sshTargetLogFields(tunnelEntry.target),
+                  key: tunnelEntry.key,
+                  localPort: tunnelEntry.localPort,
+                  remotePort: tunnelEntry.remotePort,
+                });
+              }).pipe(Effect.ignore),
+            );
+            cleanupTransferred = true;
+            yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
+              ...sshTargetLogFields(input.resolvedTarget),
+              key: input.key,
+              localPort,
+              remotePort,
+            });
+            return tunnelEntry;
+          }),
+        ),
+      (entryScope, exit) =>
+        Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, exit).pipe(Effect.ignore),
     );
-    tunnels.set(input.key, tunnelEntry);
-    const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const fileSystemService = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
-    yield* Scope.addFinalizer(
-      entryScope,
-      Effect.gen(function* () {
-        const stopRemote = tunnels.get(tunnelEntry.key) === tunnelEntry;
-        if (stopRemote) {
-          tunnels.delete(tunnelEntry.key);
-        }
-        yield* tunnelEntry.process
-          .kill({
-            killSignal: "SIGTERM",
-            forceKillAfter: TUNNEL_SHUTDOWN_TIMEOUT_MS,
-          })
-          .pipe(Effect.ignore);
-        if (!stopRemote) {
-          return;
-        }
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.start", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-        const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-        yield* stopRemoteServer(
-          tunnelEntry.target,
-          authSecret === null
-            ? {
-                batchMode: "yes",
-                interactiveAuth: false,
-              }
-            : {
-                authSecret,
-                batchMode: "no",
-                interactiveAuth: true,
-              },
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
-          Effect.provideService(FileSystem.FileSystem, fileSystemService),
-          Effect.provideService(Path.Path, pathService),
-        );
-        yield* Effect.logDebug("ssh.environment.tunnel.finalizer.succeeded", {
-          ...sshTargetLogFields(tunnelEntry.target),
-          key: tunnelEntry.key,
-          localPort: tunnelEntry.localPort,
-          remotePort: tunnelEntry.remotePort,
-        });
-      }).pipe(Effect.ignore),
-    );
-    yield* Effect.logDebug("ssh.environment.tunnel.create.succeeded", {
-      ...sshTargetLogFields(input.resolvedTarget),
-      key: input.key,
-      localPort,
-      remotePort,
-    });
-    return tunnelEntry;
   });
 
   const ensureTunnelEntry = Effect.fn("ssh/tunnel.ensureTunnelEntry")(function* (
@@ -1756,7 +1781,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  return SshEnvironmentManager.of({
+    ensureEnvironment: (target, requestOptions) =>
+      runInManagerScope(ensureEnvironment(target, requestOptions)),
+    // Disconnect owns remote cleanup after removing the tunnel from the manager.
+    disconnectEnvironment,
+  });
 });
 
 /**
