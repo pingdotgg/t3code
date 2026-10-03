@@ -1,6 +1,7 @@
 import { use, useMemo, type CSSProperties } from "react";
 
 import { resolveDiffThemeName } from "../../lib/diffRendering";
+import type { EmbeddedScript } from "../../lib/embeddedScripts";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 
 interface SyntaxToken {
@@ -9,6 +10,10 @@ interface SyntaxToken {
   readonly color?: string;
   readonly fontStyle?: number;
 }
+
+type TokenLines = ReadonlyArray<ReadonlyArray<SyntaxToken>>;
+
+const NO_EMBEDDED_SCRIPTS: ReadonlyArray<EmbeddedScript> = [];
 
 function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
   const fontStyle = token.fontStyle ?? 0;
@@ -24,29 +29,34 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
  * Colors `code` inside the caller's `<pre>` without changing its text, so
  * selection and copy match the plain version. Suspends while the grammar
  * loads; wrap it in Suspense with the plain text as the fallback.
- * `wordClassName` goes on each whitespace-separated word.
+ * `wordClassName` goes on each whitespace-separated word. `embedded`
+ * scripts are colored with their own grammar inside `code`.
  */
 export function HighlightedTokens({
   code,
   language,
+  embedded = NO_EMBEDDED_SCRIPTS,
   theme,
   wordClassName,
 }: {
   code: string;
   language: string;
+  embedded?: ReadonlyArray<EmbeddedScript>;
   theme: "light" | "dark";
   wordClassName?: string;
 }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  const lines = useMemo(
-    () =>
-      keyedLines(
-        code,
-        highlighter.codeToTokens(code, { lang: language, theme: resolveDiffThemeName(theme) })
-          .tokens,
-      ),
-    [code, highlighter, language, theme],
-  );
+  // Every grammar loads into the same shared highlighter.
+  for (const script of embedded) use(getSyntaxHighlighterPromise(script.language));
+  const lines = useMemo(() => {
+    const themeName = resolveDiffThemeName(theme);
+    const tokenize = (text: string, lang: string) =>
+      highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
+    return keyedLines(
+      code,
+      withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
+    );
+  }, [code, embedded, highlighter, language, theme]);
 
   return lines.map(({ key, tokens, ending }) => (
     <span key={key}>
@@ -72,6 +82,72 @@ export function HighlightedTokens({
       {ending}
     </span>
   ));
+}
+
+/**
+ * Recolors each embedded script's span of `code` with its own grammar,
+ * outermost first so nested scripts win. A script whose grammar is missing
+ * keeps the colors around it.
+ */
+export function withEmbeddedScripts(
+  code: string,
+  lines: TokenLines,
+  embedded: ReadonlyArray<EmbeddedScript>,
+  tokenize: (text: string, language: string) => TokenLines,
+): TokenLines {
+  if (embedded.length === 0) return lines;
+  const styles = Array.from<SyntaxToken | undefined>({ length: code.length });
+  for (const token of lines.flat()) {
+    styles.fill(token, token.offset, token.offset + token.content.length);
+  }
+  for (const script of embedded) {
+    let scriptLines: TokenLines;
+    try {
+      scriptLines = tokenize(script.text, script.language);
+    } catch {
+      continue;
+    }
+    for (const token of scriptLines.flat()) {
+      if (token.content === "") continue;
+      const last = token.offset + token.content.length - 1;
+      styles.fill(token, script.starts[token.offset], script.ends[last]);
+    }
+  }
+  return restyledLines(code, styles);
+}
+
+/** Splits `code` into lines of tokens, one per run of characters sharing a style. */
+function restyledLines(
+  code: string,
+  styles: ReadonlyArray<SyntaxToken | undefined>,
+): SyntaxToken[][] {
+  const lines: SyntaxToken[][] = [];
+  let start = 0;
+  for (const lineBreak of [...code.matchAll(/\r?\n/gu), undefined]) {
+    const end = lineBreak?.index ?? code.length;
+    const tokens: SyntaxToken[] = [];
+    for (let index = start; index < end;) {
+      const style = styles[index];
+      let next = index + 1;
+      while (
+        next < end &&
+        styles[next]?.color === style?.color &&
+        styles[next]?.fontStyle === style?.fontStyle
+      ) {
+        next += 1;
+      }
+      tokens.push({
+        content: code.slice(index, next),
+        offset: index,
+        ...(style?.color ? { color: style.color } : {}),
+        ...(style?.fontStyle ? { fontStyle: style.fontStyle } : {}),
+      });
+      index = next;
+    }
+    lines.push(tokens);
+    if (lineBreak) start = lineBreak.index + lineBreak[0].length;
+  }
+  return lines;
 }
 
 /**
