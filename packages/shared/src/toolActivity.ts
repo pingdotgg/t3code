@@ -71,7 +71,12 @@ export function claudeAgentMessage(
       ? "*"
       : (asTrimmedString(record.to) ?? asTrimmedString(record.recipient));
   const summary = asTrimmedString(record.summary);
-  const message = asTrimmedString(body);
+  // Kept as written: leading indentation is Markdown (an indented code block).
+  const message = asTrimmedString(body) === undefined ? undefined : body;
+  const firstLine = message
+    ?.split("\n")
+    .find((line) => line.trim() !== "")
+    ?.trim();
   return {
     to,
     summary,
@@ -79,7 +84,7 @@ export function claudeAgentMessage(
     preview:
       summary ??
       // Strip a leading Markdown heading marker; the body renders as Markdown.
-      asTrimmedString(message?.split("\n", 1)[0]?.replace(/^#{1,6}\s+/u, "")),
+      asTrimmedString(firstLine?.replace(/^#{1,6}\s+/u, "")),
     notifyWhenIdle: record.notify_when_idle === true,
   };
 }

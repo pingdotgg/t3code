@@ -162,6 +162,13 @@ describe("toolActivity", () => {
     expect(
       claudeAgentMessage("SendMessage", { to: "main", message: "## Status\nAll green." })?.preview,
     ).toBe("Status");
+    // The body keeps its Markdown indentation; the preview skips to the first text.
+    const indented = claudeAgentMessage("SendMessage", { to: "main", message: "\n    npm test\n" });
+    expect(indented?.message).toBe("\n    npm test\n");
+    expect(indented?.preview).toBe("npm test");
+    expect(
+      claudeAgentMessage("SendMessage", { to: "main", message: "  " })?.message,
+    ).toBeUndefined();
     expect(claudeAgentMessage("Read", input)).toBeUndefined();
     // Structured protocol messages keep the generic tool view.
     expect(
