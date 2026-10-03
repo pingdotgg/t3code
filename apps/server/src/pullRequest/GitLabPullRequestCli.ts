@@ -33,6 +33,7 @@ import {
   decodeMergeRequestListJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
+  decodePipelineJobsJson,
   decodeProjectMergeCapabilitiesJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
@@ -240,6 +241,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly number: number;
+      /** Read the head pipeline's jobs as its checks, which only the detail page shows. */
+      readonly includeJobs?: boolean;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
@@ -915,6 +918,63 @@ export const make = Effect.gen(function* () {
     );
 
   /**
+   * One page each of a pipeline's jobs and of its trigger jobs, which GitLab lists apart. The
+   * pipeline is addressed in its own project: on a merge request from a fork that is the fork,
+   * and the target project answers 404 for it.
+   */
+  const pipelineJobs = (input: {
+    readonly cwd: string;
+    readonly pipeline: { readonly id: number; readonly projectId: number };
+  }) =>
+    Effect.forEach(
+      ["jobs", "bridges"],
+      (kind) =>
+        api({
+          cwd: input.cwd,
+          path: `projects/${input.pipeline.projectId}/pipelines/${input.pipeline.id}/${kind}?${query(
+            [["per_page", String(MAX_PAGE_SIZE)]],
+          )}`,
+        }),
+      { concurrency: 2 },
+    ).pipe(
+      Effect.flatMap((results) => {
+        const decoded = decodePipelineJobsJson(results.map((result) => result.stdout.trim()));
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "listPipelineJobs",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
+
+  /**
+   * The head pipeline's jobs in place of the pipeline itself, so a failure names the job that
+   * failed. The pipeline stays the one check wherever its jobs cannot stand for all of it: a
+   * failed read, a full page that may have left the failed job out, a row that could not be
+   * read and may have been the failed job, or a pipeline that has not created any jobs yet.
+   */
+  const withPipelineJobs =
+    (cwd: string) =>
+    (detail: GitLabMergeRequestDetail): Effect.Effect<GitLabMergeRequestDetail> =>
+      detail.headPipeline === undefined
+        ? Effect.succeed(detail)
+        : pipelineJobs({ cwd, pipeline: detail.headPipeline }).pipe(
+            Effect.map(({ checks, rawCounts }) =>
+              checks.length === 0 ||
+              rawCounts.some((count) => count >= MAX_PAGE_SIZE) ||
+              rawCounts.reduce((total, count) => total + count, 0) !== checks.length
+                ? detail
+                : { ...detail, checks },
+            ),
+            Effect.orElseSucceed(() => detail),
+          );
+
+  /**
    * The merge request itself, which several calls need for different parts of it: the detail for
    * everything, and the reviewer paths for the ids GitLab writes a reviewer set with.
    */
@@ -922,6 +982,7 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly repository: string;
     readonly number: number;
+    readonly includeJobs?: boolean;
   }): Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
@@ -933,16 +994,19 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap((result) => {
         const decoded = decodeMergeRequestDetailJson(result.stdout.trim());
-        return Result.isSuccess(decoded)
-          ? Effect.succeed(decoded.success)
-          : Effect.fail(
-              new GitLabMergeRequestReadError({
-                command: "glab",
-                cwd: input.cwd,
-                operation: "getMergeRequestDetail",
-                cause: decoded.failure,
-              }),
-            );
+        if (!Result.isSuccess(decoded)) {
+          return Effect.fail(
+            new GitLabMergeRequestReadError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "getMergeRequestDetail",
+              cause: decoded.failure,
+            }),
+          );
+        }
+        return input.includeJobs === true
+          ? withPipelineJobs(input.cwd)(decoded.success)
+          : Effect.succeed(decoded.success);
       }),
     );
 

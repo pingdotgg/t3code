@@ -38,6 +38,9 @@ const RawUserSchema = Schema.Struct({
 });
 
 const RawPipelineSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Int)),
+  /** The project the pipeline ran in, which on a merge request from a fork is the fork. */
+  project_id: Schema.optional(Schema.NullOr(Schema.Int)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   web_url: Schema.optional(Schema.NullOr(Schema.String)),
   source: Schema.optional(Schema.NullOr(Schema.String)),
@@ -92,6 +95,17 @@ const RawMergeRequestSchema = Schema.Struct({
    * single merge request — a list never carries it, however it is asked for.
    */
   diverged_commits_count: Schema.optional(Schema.NullOr(Schema.Int)),
+});
+
+const RawJobSchema = Schema.Struct({
+  id: Schema.Int,
+  name: Schema.String,
+  stage: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  web_url: Schema.optional(Schema.NullOr(Schema.String)),
+  allow_failure: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** Only a trigger job has one: the child or multi-project pipeline it started. */
+  downstream_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
 });
 
 const RawNoteSchema = Schema.Struct({
@@ -226,7 +240,10 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
+  /** The head pipeline as one check; its jobs replace it where they can be read. */
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  /** The head pipeline, which is what its jobs are read by. */
+  readonly headPipeline?: { readonly id: number; readonly projectId: number };
   /** False only where GitLab said so; an answer without the field leaves merging permitted. */
   readonly viewerCanMerge: boolean;
   /** The reviewers as GitLab addresses them, which is what writing the set back takes. */
@@ -320,8 +337,8 @@ function toPipelineStatus(value: string | null | undefined): PullRequestCheckSta
 }
 
 /**
- * GitLab has no per-job check list on a merge request, so its pipeline is reported as the one
- * check. The jobs behind it stay one click away through the pipeline URL.
+ * The merge request itself names only its head pipeline, so that is its one check until the
+ * pipeline's jobs are read on their own.
  */
 function toChecks(
   raw: Schema.Schema.Type<typeof RawMergeRequestSchema>,
@@ -381,6 +398,9 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       return actor === null ? [] : [actor];
     }),
     checks: toChecks(raw),
+    ...(raw.head_pipeline?.id == null || raw.head_pipeline.project_id == null
+      ? {}
+      : { headPipeline: { id: raw.head_pipeline.id, projectId: raw.head_pipeline.project_id } }),
     viewerCanMerge: raw.user?.can_merge !== false,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
@@ -396,6 +416,7 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeMergeRequestEntry = Schema.decodeUnknownExit(RawMergeRequestSchema);
 const decodeMergeRequest = decodeJsonResult(RawMergeRequestSchema);
+const decodeJobEntry = Schema.decodeUnknownExit(RawJobSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeUserEntry = Schema.decodeUnknownExit(RawUserSchema);
 const decodeCommitEntry = Schema.decodeUnknownExit(RawCommitSchema);
@@ -450,6 +471,49 @@ export function decodeMergeRequestDetailJson(
   return Result.isSuccess(decoded)
     ? Result.succeed(toDetail(decoded.success))
     : Result.fail(decoded.failure);
+}
+
+/**
+ * A pipeline's jobs as one check each, in the order the pipeline runs them. GitLab lists the jobs
+ * that run a script and the ones that trigger another pipeline on two endpoints, so both pages are
+ * read together. A trigger job reports the pipeline it started rather than itself: unless it was
+ * told to wait on that pipeline, it succeeds the moment the pipeline exists. A job allowed to
+ * fail that failed does not fail the pipeline, so it reads as neutral, the way GitLab shows it.
+ */
+export function decodePipelineJobsJson(pages: ReadonlyArray<string>): Result.Result<
+  {
+    readonly checks: ReadonlyArray<PullRequestCheck>;
+    /** Rows GitLab returned on each page, counted before decoding, so none can hide a next page. */
+    readonly rawCounts: ReadonlyArray<number>;
+  },
+  DecodeFailure
+> {
+  const jobs: Array<Schema.Schema.Type<typeof RawJobSchema>> = [];
+  const rawCounts: number[] = [];
+  for (const page of pages) {
+    const decoded = decodeUnknownList(page);
+    if (!Result.isSuccess(decoded)) {
+      return Result.fail(decoded.failure);
+    }
+    rawCounts.push(decoded.success.length);
+    for (const entry of decoded.success) {
+      const job = decodeJobEntry(entry);
+      if (Exit.isSuccess(job) && trimmed(job.value.name) !== null) jobs.push(job.value);
+    }
+  }
+  // GitLab lists jobs newest first, and a later stage's jobs are created after an earlier one's.
+  const checks = jobs
+    .toSorted((left, right) => left.id - right.id)
+    .map((job): PullRequestCheck => {
+      const status = toPipelineStatus(job.downstream_pipeline?.status ?? job.status);
+      return {
+        name: job.name.trim(),
+        status: status === "failure" && job.allow_failure === true ? "neutral" : status,
+        description: trimmed(job.stage),
+        url: trimmed(job.downstream_pipeline?.web_url) ?? trimmed(job.web_url),
+      };
+    });
+  return Result.succeed({ checks, rawCounts });
 }
 
 export function decodeViewerJson(raw: string): Result.Result<string | null, DecodeFailure> {
