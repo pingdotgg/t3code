@@ -58,12 +58,17 @@ export function EnvironmentRow({
     <div
       className={cn(
         "grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-2.5 sm:px-4",
-        dimmed && "opacity-60",
         className,
       )}
     >
-      <EnvironmentMachineIcon aria-hidden kind={kind} className="size-4 text-muted-foreground" />
-      <div className="min-w-0">
+      {/* Dim only the identity so a switched-off row's controls stay readable
+          and distinct from disabled ones. */}
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={kind}
+        className={cn("size-4 text-muted-foreground", dimmed && "opacity-60")}
+      />
+      <div className={cn("min-w-0", dimmed && "opacity-60")}>
         <p className="truncate text-sm font-medium text-foreground">{label}</p>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
         {below}
