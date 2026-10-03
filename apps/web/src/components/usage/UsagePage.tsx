@@ -721,15 +721,16 @@ export function UsagePage() {
                             return (
                               <tr
                                 key={key}
-                                className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50"
+                                className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
                               >
                                 <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
                                 <td className="py-2.5 text-left whitespace-normal">
-                                  {/* The button's overlay makes the whole row open the model. */}
+                                  {/* The button's overlay makes the whole row open the model.
+                                      Focus shows as the row's hover fill, not a ring. */}
                                   <button
                                     type="button"
                                     onClick={() => setSelectedModelKey(key)}
-                                    className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring"
+                                    className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0"
                                   >
                                     <ProviderMark provider={model.provider} className="size-3.5" />
                                     {model.model}
