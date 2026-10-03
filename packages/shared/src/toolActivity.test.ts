@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  claudeSkillInvocation,
   classifyToolActivity,
   collectToolFilePaths,
   deriveToolActivityPresentation,
+  dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
   mergeToolActivityData,
@@ -119,5 +121,15 @@ describe("toolActivity", () => {
     expect(
       mergeToolActivityData({ rawInput: { path: "src/a.ts" } }, { rawInput: { startLine: 4 } }),
     ).toEqual({ rawInput: { path: "src/a.ts", startLine: 4 } });
+  });
+
+  it("titles Claude skill calls with the skill they load", () => {
+    expect(dynamicToolTitle("Skill", { skill: "full-send" })).toBe("Skill: full-send");
+    expect(claudeSkillInvocation("Skill", { skill: "claude-api", args: " pricing " })).toEqual({
+      name: "claude-api",
+      args: "pricing",
+    });
+    expect(dynamicToolTitle("Skill", { skill: " " })).toBeUndefined();
+    expect(dynamicToolTitle("Read", { skill: "full-send" })).toBeUndefined();
   });
 });

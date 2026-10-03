@@ -2771,7 +2771,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer))),
   );
 
-  it.effect("retains image preview paths on Claude Read tool completion", () =>
+  it.effect("titles Claude reads, searches, and skills on tool completion", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       const now = yield* DateTime.now;
@@ -2789,6 +2789,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         { id: "image", name: "Read", input: { file_path: " /workspace/reference.png " } },
         { id: "text", name: "Read", input: { file_path: "/workspace/README.md" } },
         { id: "search", name: "Grep", input: { pattern: "TODO", path: "/workspace/src" } },
+        { id: "skill", name: "Skill", input: { skill: "full-send" } },
         {
           id: "write",
           name: "Write",
@@ -2858,6 +2859,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(
         items.find((item) => item.nativeItemRef?.nativeId === "search")?.title,
         "Searched TODO in src",
+      );
+      assert.equal(
+        items.find((item) => item.nativeItemRef?.nativeId === "skill")?.title,
+        "Skill: full-send",
       );
       for (const item of items.filter((item) => item.nativeItemRef?.nativeId !== "image"))
         assert.notProperty(item, "viewedImagePath");
