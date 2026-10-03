@@ -22,6 +22,11 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
+import {
+  ReleasePackageManifestError,
+  releasePackageFiles,
+  updateReleasePackageVersions,
+} from "./update-release-package-versions.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
@@ -42,6 +47,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -279,6 +285,15 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedError<Invalid
       inputLength: configuredPort.length,
       cause,
     });
+  }
+}
+
+export class DesktopBuildManifestRestoreError extends Schema.TaggedError<DesktopBuildManifestRestoreError>()(
+  "DesktopBuildManifestRestoreError",
+  { failures: Schema.Array(ReleasePackageManifestError) },
+) {
+  override get message(): string {
+    return `Failed to restore release manifests: ${this.failures.map((failure) => failure.filePath).join(", ")}`;
   }
 }
 
@@ -1720,6 +1735,99 @@ const runCommand = Effect.fn("runCommand")(function* (
     });
   }
 });
+
+export class DesktopBuildAlreadyRunningError extends Schema.TaggedError<DesktopBuildAlreadyRunningError>()(
+  "DesktopBuildAlreadyRunningError",
+  { lockPath: Schema.String },
+) {
+  override get message(): string {
+    return `Another desktop build owns '${this.lockPath}'. Wait for it to finish. If a build was killed, remove this lock only after confirming no desktop build is running.`;
+  }
+}
+
+const withDesktopBuildLock = <A, E, R>(repoRoot: string, build: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const lockPath = path.join(repoRoot, ".desktop-build.lock");
+    return yield* Effect.acquireUseRelease(
+      fs
+        .makeDirectory(lockPath)
+        .pipe(
+          Effect.mapError((error) =>
+            error.reason._tag === "AlreadyExists"
+              ? new DesktopBuildAlreadyRunningError({ lockPath })
+              : error,
+          ),
+        ),
+      () => build,
+      (_, exit) =>
+        fs
+          .remove(lockPath, { recursive: true })
+          .pipe(
+            Effect.catch((error) =>
+              Exit.isFailure(exit) ? Effect.logError(error) : Effect.fail(error),
+            ),
+          ),
+    );
+  });
+
+// The artifact entry point holds the checkout lock through staging/packaging,
+// so it calls this implementation without reacquiring its own lock.
+const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(function* (
+  repoRoot: string,
+  appVersion: string,
+  verbose: boolean,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+  yield* Effect.acquireUseRelease(
+    Effect.forEach(releasePackageFiles, (relativePath) => {
+      const filePath = path.join(repoRoot, relativePath);
+      return fs.readFileString(filePath).pipe(Effect.map((contents) => ({ filePath, contents })));
+    }),
+    () =>
+      Effect.gen(function* () {
+        yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
+        yield* runCommand(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: repoRoot,
+            shell: spawnCommand.shell,
+            env: { APP_VERSION: appVersion },
+            extendEnv: true,
+          }),
+          { label: "vp run build:desktop", verbose },
+        );
+      }),
+    (originals, exit) =>
+      Effect.gen(function* () {
+        const [failures] = yield* Effect.partition(originals, ({ filePath, contents }) =>
+          fs
+            .writeFileString(filePath, contents)
+            .pipe(
+              Effect.mapError(
+                (cause) => new ReleasePackageManifestError({ operation: "write", filePath, cause }),
+              ),
+            ),
+        );
+        if (failures.length === 0) return;
+        const error = new DesktopBuildManifestRestoreError({ failures });
+        if (Exit.isFailure(exit)) {
+          // Keep the build/alignment failure catchable while reporting every
+          // manifest the caller may need to restore manually.
+          yield* Effect.logError(error);
+        } else {
+          return yield* error;
+        }
+      }),
+  );
+});
+
+export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(
+  (repoRoot: string, appVersion: string, verbose: boolean) =>
+    withDesktopBuildLock(repoRoot, buildDesktopBundlesUnlocked(repoRoot, appVersion, verbose)),
+);
 
 const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
   command: ChildProcess.Command,
@@ -3376,7 +3484,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   return { packagedAppDir, fileCount, unpackedFiles } as const;
 });
 
-const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(function* (
   options: ResolvedBuildOptions,
 ) {
   const repoRoot = yield* RepoRoot;
@@ -3471,14 +3579,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
-    yield* runCommand(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        cwd: repoRoot,
-        shell: spawnCommand.shell,
-      }),
-      { label: "vp run build:desktop", verbose: options.verbose },
-    );
+    yield* buildDesktopBundlesUnlocked(repoRoot, appVersion, options.verbose);
   }
 
   const requiredBuildInputs = [
@@ -3925,6 +4026,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log("[desktop-artifact] Done. Artifacts:").pipe(
     Effect.annotateLogs({ artifacts: copiedArtifacts }),
   );
+});
+
+const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
+  options: ResolvedBuildOptions,
+) {
+  const repoRoot = yield* RepoRoot;
+  return yield* withDesktopBuildLock(repoRoot, buildDesktopArtifactUnlocked(options));
 });
 
 const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
