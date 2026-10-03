@@ -345,6 +345,36 @@ it.effect.each([
 it.effect.each([
   ["sql", SqlLayer],
   ["memory", ProjectionStore.layerMemory],
+] as const)("%s: lists only active threads that watch a pull request", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const watch = {
+      startedAt: DateTime.formatIso(old),
+      headSha: null,
+      checks: null,
+      remarksThrough: DateTime.formatIso(old),
+      conflicting: false,
+      wakes: 0,
+    };
+    yield* createThread("unwatched-link", { pullRequests: [pullRequestLink(1)] });
+    yield* createThread("archived-watch", {
+      archivedAt: old,
+      pullRequests: [{ ...pullRequestLink(2), watch }],
+    });
+    const watching = yield* createThread("watched-link", {
+      pullRequests: [pullRequestLink(3), { ...pullRequestLink(4), watch }],
+    });
+
+    assert.deepEqual(
+      (yield* store.getThreadsWatchingPullRequests()).map((thread) => thread.id),
+      [watching],
+    );
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect.each([
+  ["sql", SqlLayer],
+  ["memory", ProjectionStore.layerMemory],
 ] as const)("%s: an unsettled-only shell read skips settled threads", ([, testLayer]) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;

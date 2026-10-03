@@ -8,7 +8,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   CommonActions,
   StackActions,
@@ -40,6 +40,8 @@ import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
+import { threadEnvironment } from "../../../state/threads";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
@@ -72,6 +74,40 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         supportsLinkedPrSnapshots ? (selectedThread?.pullRequests ?? []) : [],
       ),
     [selectedThread?.pullRequests, supportsLinkedPrSnapshots],
+  );
+  const supportsWatch =
+    selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequestWatch ===
+    true;
+  const watchPullRequest = useAtomCommand(threadEnvironment.watchPullRequest);
+  // Long-press on a linked pull request starts or stops waking the agent on its changes.
+  const confirmWatchToggle = useCallback(
+    (link: ThreadPullRequestLink) => {
+      const watching = link.watch !== undefined;
+      Alert.alert(
+        watching ? `Stop watching #${link.number}?` : `Watch #${link.number}?`,
+        watching
+          ? "The agent will no longer wake for this pull request."
+          : "The agent wakes when checks finish, someone comments, or the branch conflicts.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: watching ? "Stop watching" : "Watch",
+            onPress: () =>
+              void watchPullRequest({
+                environmentId,
+                input: {
+                  threadId,
+                  host: link.host,
+                  repository: link.repository,
+                  number: link.number,
+                  watching: !watching,
+                },
+              }),
+          },
+        ],
+      );
+    },
+    [environmentId, threadId, watchPullRequest],
   );
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -339,7 +375,12 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
                   <SheetListRow
                     icon="arrow.triangle.pull"
                     title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
-                    subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}`}
+                    subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}${link.watch === undefined ? "" : " · Watching"}`}
+                    onLongPress={
+                      supportsWatch && (link.snapshot === null || link.snapshot.state === "open")
+                        ? () => confirmWatchToggle(link)
+                        : undefined
+                    }
                     onPress={() => {
                       void tryOpenExternalUrl(link.url, "pull-request").then((opened) => {
                         if (!opened)

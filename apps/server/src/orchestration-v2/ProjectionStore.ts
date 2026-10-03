@@ -355,6 +355,11 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  /** Active threads with at least one watched pull request link. */
+  readonly getThreadsWatchingPullRequests: () => Effect.Effect<
+    ReadonlyArray<ProjectionThreadPullRequests>,
+    ProjectionStoreV2Error
+  >;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -5133,6 +5138,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const decodeThreadPullRequests = (rows: ReadonlyArray<PayloadRow>) =>
+      Effect.forEach(rows, (row) =>
+        decodeThreadPayload(row.payload_json).pipe(
+          Effect.map((thread): ProjectionThreadPullRequests => ({
+            id: thread.id,
+            projectId: thread.projectId,
+            settledOverride: thread.settledOverride,
+            settledAt: thread.settledAt,
+            pullRequests: thread.pullRequests ?? [],
+          })),
+        ),
+      );
+
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (
       threadId,
     ) =>
@@ -5145,18 +5163,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_array_length(payload_json, '$.pullRequests') > 0
           ORDER BY updated_at ASC, thread_id ASC
         `;
-        return yield* Effect.forEach(rows, (row) =>
-          decodeThreadPayload(row.payload_json).pipe(
-            Effect.map((thread): ProjectionThreadPullRequests => ({
-              id: thread.id,
-              projectId: thread.projectId,
-              settledOverride: thread.settledOverride,
-              settledAt: thread.settledAt,
-              pullRequests: thread.pullRequests ?? [],
-            })),
-          ),
-        );
+        return yield* decodeThreadPullRequests(rows);
       }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+
+    // The text match skips the JSON walk for the many threads that watch nothing.
+    const getThreadsWatchingPullRequests: ProjectionStoreV2Shape["getThreadsWatchingPullRequests"] =
+      () =>
+        Effect.gen(function* () {
+          const rows = yield* sql<PayloadRow>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_threads
+            WHERE deleted_at IS NULL
+              AND instr(payload_json, '"watch":') > 0
+              AND json_extract(payload_json, '$.archivedAt') IS NULL
+              AND EXISTS (
+                SELECT 1 FROM json_each(payload_json, '$.pullRequests')
+                WHERE json_extract(value, '$.watch') IS NOT NULL
+              )
+            ORDER BY updated_at ASC, thread_id ASC
+          `;
+          return yield* decodeThreadPullRequests(rows);
+        }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
     const shellThreadStateFromRow = (input: {
       readonly row: ShellThreadRow;
@@ -5456,6 +5483,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
+      getThreadsWatchingPullRequests,
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
@@ -5585,6 +5613,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 left.id.localeCompare(right.id),
             );
         }),
+      getThreadsWatchingPullRequests: () =>
+        service
+          .getThreadsWithPullRequests()
+          .pipe(
+            Effect.map((threads) =>
+              threads.filter((thread) =>
+                (thread.pullRequests ?? []).some((link) => link.watch !== undefined),
+              ),
+            ),
+          ),
       getThreadsWithPullRequests: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>

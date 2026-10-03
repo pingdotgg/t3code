@@ -88,12 +88,14 @@ export function SheetListRow(props: {
   readonly subtitle?: string | null;
   readonly disabled?: boolean;
   readonly onPress: () => void;
+  readonly onLongPress?: (() => void) | undefined;
 }) {
   return (
     <Pressable
       className="flex-row items-center py-3 disabled:opacity-[0.45] android:min-h-16 android:gap-4 android:px-4 android:active:bg-subtle ios:gap-3 ios:px-1"
       disabled={props.disabled}
       onPress={props.onPress}
+      onLongPress={props.onLongPress}
     >
       <View className="items-center justify-center android:size-6 ios:bg-subtle ios:h-9 ios:w-9 ios:rounded-full">
         <SymbolView
