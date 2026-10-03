@@ -163,6 +163,14 @@ export function assertClaudeBackgroundSubagentLifecycleOutput(
   assert.equal(agentA?.model, AGENT_A_OBSERVED_MODEL);
   // The resume re-attributes Agent A to the run that sent the SendMessage.
   assert.equal(agentA?.runId, projection.runs[4]?.id);
+  // The SendMessage names Agent A instead of its raw agent id.
+  const sendMessages = projection.turnItems.flatMap((item) =>
+    item.type === "dynamic_tool" && item.toolName === "SendMessage" ? [item] : [],
+  );
+  assert.deepEqual(
+    sendMessages.map((item) => [item.title, item.status]),
+    [["Message to Agent A", "completed"]],
+  );
 
   // Agent A re-opened (completed, then running again) before it completed.
   const agentAStatuses = result.domainEvents.flatMap((event) =>

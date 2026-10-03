@@ -2,6 +2,8 @@ import * as NodeCrypto from "node:crypto";
 
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
+  claudeAgentMessage,
+  claudeAgentMessageTitle,
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
@@ -1862,6 +1864,27 @@ function claudeNativeToolOutputValue(output: ClaudeNativeToolOutput): unknown | 
 function claudeNativeToolOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   return typeof value === "string" ? value : value === undefined ? "" : jsonStringifyForTool(value);
+}
+
+// SendMessage reports a refused delivery (an unknown or stopped recipient)
+// as `success: false` in an ordinary, non-error tool result.
+function isClaudeAgentMessageRefused(toolName: string, output: ClaudeNativeToolOutput): boolean {
+  if (toolName !== "SendMessage") return false;
+  const value = claudeNativeToolOutputValue(output);
+  const [block] = Array.isArray(value) ? value : [];
+  let result: unknown = value;
+  if (
+    typeof block === "object" &&
+    block !== null &&
+    typeof Reflect.get(block, "text") === "string"
+  ) {
+    try {
+      result = JSON.parse(Reflect.get(block, "text"));
+    } catch {
+      return false;
+    }
+  }
+  return typeof result === "object" && result !== null && Reflect.get(result, "success") === false;
 }
 
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
@@ -3773,7 +3796,8 @@ export function makeClaudeAdapterV2(
                 : (searchTitle ??
                   dynamicToolTitle(input.toolName, nativeToolInput) ??
                   input.presentation?.title ??
-                  null),
+                  claudeAgentMessageTitle(input.toolName, nativeToolInput) ??
+                  (input.toolName === "ListAgents" ? "Listed agents" : null)),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,
@@ -4503,6 +4527,27 @@ export function makeClaudeAdapterV2(
           return registered ?? context.subagentsByToolUseId.get(toolUseId);
         });
 
+        // A SendMessage addressed to a subagent this session launched is
+        // titled with that subagent's name. Clients only see the raw id.
+        const agentMessagePresentation = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          toolName: string,
+          toolInput: ClaudeNativeToolInput,
+        ) {
+          const to = claudeAgentMessage(toolName, claudeNativeToolInputValue(toolInput))?.to;
+          if (to === undefined) return undefined;
+          const recipient =
+            context.subagentsByTaskId.get(to) ?? (yield* Ref.get(sessionSubagentsByTaskId)).get(to);
+          const name = recipient?.task.title?.trim();
+          if (!name) return undefined;
+          const title = claudeAgentMessageTitle(
+            toolName,
+            claudeNativeToolInputValue(toolInput),
+            name,
+          );
+          return title === undefined ? undefined : { title };
+        });
+
         const ensureToolCallStarted = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
@@ -4511,14 +4556,17 @@ export function makeClaudeAdapterV2(
           readonly parentToolUseId: string | null;
           readonly presentation?: ClaudeToolPresentation | undefined;
         }) {
+          const presentation =
+            input.presentation ??
+            (yield* agentMessagePresentation(input.context, input.toolName, input.toolInput));
           const existing = input.context.toolCalls.get(input.nativeItemId);
           if (existing !== undefined) {
             // The permission callback can start a call before its assistant
             // frame arrives with the tool's display name and icon.
-            if (input.presentation === undefined || existing.presentation !== undefined) {
+            if (presentation === undefined || existing.presentation !== undefined) {
               return existing;
             }
-            const presented = { ...existing, presentation: input.presentation };
+            const presented = { ...existing, presentation };
             input.context.toolCalls.set(input.nativeItemId, presented);
             const updatedAt = yield* DateTime.now;
             yield* emitToolCallArtifacts(
@@ -4537,7 +4585,7 @@ export function makeClaudeAdapterV2(
                 status: "running",
                 startedAt: presented.startedAt,
                 updatedAt,
-                presentation: input.presentation,
+                presentation,
               }),
             );
             return presented;
@@ -4567,7 +4615,7 @@ export function makeClaudeAdapterV2(
             parentNodeId,
             ordinal,
             startedAt,
-            ...(input.presentation === undefined ? {} : { presentation: input.presentation }),
+            ...(presentation === undefined ? {} : { presentation }),
           };
           input.context.toolCalls.set(input.nativeItemId, toolCall);
           yield* emitToolCallArtifacts(
@@ -4586,7 +4634,7 @@ export function makeClaudeAdapterV2(
               status: "running",
               startedAt,
               updatedAt: startedAt,
-              presentation: input.presentation,
+              presentation,
             }),
           );
           return toolCall;
@@ -6072,7 +6120,11 @@ export function makeClaudeAdapterV2(
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
               output,
-              status: isClaudeToolResultError(toolResult) ? "failed" : "completed",
+              status:
+                isClaudeToolResultError(toolResult) ||
+                isClaudeAgentMessageRefused(toolCall.toolName, output)
+                  ? "failed"
+                  : "completed",
               startedAt: toolCall.startedAt,
               updatedAt: completedAt,
               presentation: toolCall.presentation,

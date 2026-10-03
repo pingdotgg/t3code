@@ -18,7 +18,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, isClaudeAgentMessageItem } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -95,6 +95,7 @@ export type ToolGroupAction =
   | "device"
   | "code-search"
   | "search"
+  | "message"
   | "other"
   | "update";
 
@@ -440,6 +441,12 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
       : typeof data.toolName === "string"
         ? data.toolName
         : entry.toolTitle;
+  if (
+    entry.structuredPayload?.type === "dynamic_tool" &&
+    isClaudeAgentMessageItem(toolName, entry.structuredPayload.input)
+  ) {
+    return "message";
+  }
   const classified = classifyToolActivity({
     itemType:
       entry.itemType === "command_execution" ||
@@ -567,6 +574,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Searched the web ${count} ${count === 1 ? "time" : "times"}`;
     case "code-search":
       return `Searched code ${count} ${count === 1 ? "time" : "times"}`;
+    case "message":
+      return `Sent ${count} ${count === 1 ? "message" : "messages"}`;
     case "other":
       return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
     case "update":

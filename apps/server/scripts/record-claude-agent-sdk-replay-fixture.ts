@@ -70,6 +70,7 @@ import {
 import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_monitor_wake/input.ts";
 import { CLAUDE_NESTED_BACKGROUND_SUBAGENT_WAKE_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_background_subagent_wake/input.ts";
 import { CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/input.ts";
+import { CLAUDE_AGENT_MESSAGE_REFUSED_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_agent_message_refused/input.ts";
 import { CLAUDE_MCP_TOOL_PRESENTATION_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_mcp_tool_presentation/input.ts";
 import { CLAUDE_BACKGROUND_TASK_INTERRUPT_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/input.ts";
 import { CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/input.ts";
@@ -259,6 +260,14 @@ const CLAUDE_RECORDINGS = {
   claude_mcp_tool_presentation: {
     prompts: [CLAUDE_MCP_TOOL_PRESENTATION_PROMPT],
     defaultTranscriptFile: "fixtures/claude_mcp_tool_presentation/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
+  // SendMessage refuses an unknown recipient with `success: false` in an
+  // ordinary tool result.
+  claude_agent_message_refused: {
+    prompts: [CLAUDE_AGENT_MESSAGE_REFUSED_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_agent_message_refused/claude_transcript.ndjson",
     queryMode: "streaming",
     enableTools: true,
   },
