@@ -3511,6 +3511,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("rosters an artifact live-updates watcher as a monitor, not a subagent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const taskId = "artifact-watch-1";
+        const description = "live updates for artifact https://claude.ai/artifact/abc";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-artifact-watch"),
+            text: "Publish the report.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: taskId,
+            tool_use_id: "toolu_artifact_1",
+            description,
+            task_type: "monitor_ws",
+            uuid: "00000000-0000-4000-8000-000000000901",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000902", result: "Published." }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        assert.deepEqual(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+          [{ taskId, kind: "monitor", description }],
+        );
+        assert.isFalse(harness.events.some((event) => event.type === "subagent.updated"));
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("stops background work after the turn settled", () =>
     Effect.scoped(
       Effect.gen(function* () {

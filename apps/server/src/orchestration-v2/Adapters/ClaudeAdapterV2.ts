@@ -1715,11 +1715,16 @@ function commandInputFromClaudeTool(toolName: string, input: ClaudeNativeToolInp
 // Opaque non-subagent background work admitted onto the Waiting roster, by
 // Claude SDK `task_type`, and the kind the roster names it by. Subagents
 // project through the normal subagent lifecycle and must not be
-// double-counted when background_tasks_changed includes them.
+// double-counted when background_tasks_changed includes them. monitor_ws is
+// the websocket watch Claude Code arms for a published artifact; it runs no
+// model, so it is a monitor, not a subagent.
 const CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS: ReadonlyMap<
   string,
   Exclude<OrchestrationV2PendingBackgroundTask["kind"], "subagent">
-> = new Map([["local_bash", "command"]]);
+> = new Map([
+  ["local_bash", "command"],
+  ["monitor_ws", "monitor"],
+]);
 
 function isClaudeOpaqueBackgroundTaskType(taskType: string | null | undefined): boolean {
   return typeof taskType === "string" && CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.has(taskType);
