@@ -169,4 +169,84 @@ describe("preview IPC methods", () => {
       }),
     ).toThrow();
   });
+
+  effectIt.effect("resolves failures that have a public automation tag instead of rejecting", () =>
+    Effect.gen(function* () {
+      const locator = "role=button[[";
+      const manager = PreviewManager.PreviewManager.of({
+        automationWaitFor: (_tabId: string, input: { readonly text?: string }) =>
+          input.text === "Ready"
+            ? Effect.void
+            : Effect.fail(
+                new PreviewManager.PreviewAutomationTimeoutError({
+                  tabId: "tab-1",
+                  timeoutMs: 2_000,
+                }),
+              ),
+        automationScroll: () =>
+          Effect.fail(
+            new PreviewManager.PreviewAutomationInvalidSelectorError({
+              operation: "scroll",
+              tabId: "tab-1",
+              selectorKind: "locator",
+              selectorLength: locator.length,
+              reasonLength: 16,
+              cause: { invalidSelector: true, message: "Unexpected token" },
+            }),
+          ),
+        automationType: (_tabId: string, input: { readonly selector?: string }) =>
+          Effect.fail(
+            input.selector === undefined
+              ? new PreviewManager.PreviewAutomationTargetNotEditableError({
+                  tabId: "tab-1",
+                  selectorKind: "focused-element",
+                })
+              : new PreviewManager.PreviewAutomationTargetNotFoundError({
+                  operation: "type",
+                  tabId: "tab-1",
+                  selectorKind: "selector",
+                  selectorLength: input.selector.length,
+                }),
+          ),
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+      const provide = Effect.provideService(PreviewManager.PreviewManager, manager);
+
+      expect(
+        yield* PreviewIpc.automationWaitFor
+          .handler({ tabId: "tab-1", input: { text: "Ready" } })
+          .pipe(provide),
+      ).toBeUndefined();
+      expect(
+        yield* PreviewIpc.automationWaitFor
+          .handler({ tabId: "tab-1", input: { text: "Missing", timeoutMs: 2_000 } })
+          .pipe(provide),
+      ).toEqual({ _tag: "PreviewAutomationTimeoutError", timeoutMs: 2_000 });
+      expect(
+        yield* PreviewIpc.automationScroll
+          .handler({ tabId: "tab-1", input: { locator, deltaY: 100 } })
+          .pipe(provide),
+      ).toEqual({
+        _tag: "PreviewAutomationInvalidSelectorError",
+        selectorKind: "locator",
+        selectorLength: locator.length,
+      });
+      expect(
+        yield* PreviewIpc.automationType
+          .handler({ tabId: "tab-1", input: { text: "hello" } })
+          .pipe(provide),
+      ).toEqual({
+        _tag: "PreviewAutomationTargetNotEditableError",
+        selectorKind: "focused-element",
+      });
+      // Target-not-found has no public response tag, so it still rejects.
+      const notFound = yield* PreviewIpc.automationType
+        .handler({ tabId: "tab-1", input: { selector: "#field", text: "hello" } })
+        .pipe(provide, Effect.exit);
+      expect(Exit.isFailure(notFound)).toBe(true);
+      if (Exit.isSuccess(notFound)) return;
+      expect(Option.getOrUndefined(Cause.findErrorOption(notFound.cause))).toBeInstanceOf(
+        PreviewManager.PreviewAutomationTargetNotFoundError,
+      );
+    }),
+  );
 });

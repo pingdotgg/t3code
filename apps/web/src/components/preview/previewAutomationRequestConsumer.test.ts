@@ -324,6 +324,56 @@ describe("previewAutomationRequestConsumer", () => {
     });
   });
 
+  it("maps typed failures the desktop resolves over IPC to the public response tags", () => {
+    const serialize = (cause: unknown, operation: PreviewAutomationRequest["operation"]) =>
+      serializePreviewAutomationError(cause, {
+        requestId: "request-desktop",
+        operation,
+        environmentId,
+        threadId,
+        tabId,
+      });
+
+    expect(
+      serialize({ _tag: "PreviewAutomationTimeoutError", timeoutMs: 2_000 }, "waitFor"),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTimeoutError",
+      detail: { operation: "waitFor", tabId: "tab-1", timeoutMs: 2_000 },
+    });
+    expect(
+      serialize(
+        {
+          _tag: "PreviewAutomationInvalidSelectorError",
+          selectorKind: "locator",
+          selectorLength: 9,
+        },
+        "scroll",
+      ),
+    ).toMatchObject({
+      _tag: "PreviewAutomationInvalidSelectorError",
+      detail: { operation: "scroll", selectorKind: "locator", selectorLength: 9 },
+    });
+    expect(
+      serialize(
+        { _tag: "PreviewAutomationTargetNotEditableError", selectorKind: "focused-element" },
+        "type",
+      ),
+    ).toMatchObject({
+      _tag: "PreviewAutomationTargetNotEditableError",
+      detail: { operation: "type", selectorKind: "focused-element" },
+    });
+    // A rejected `ipcRenderer.invoke` keeps only the message, and a malformed
+    // failure cannot be trusted, so both stay untyped.
+    for (const cause of [
+      new Error("Preview condition did not match within 2000ms in tab tab-1"),
+      { _tag: "PreviewAutomationTimeoutError" },
+    ]) {
+      expect(serialize(cause, "waitFor")).toMatchObject({
+        _tag: "PreviewAutomationExecutionError",
+      });
+    }
+  });
+
   it("correlates unexpected failures without exposing cause details", () => {
     const cause = new Error("private bridge token: preview-secret");
     const context = {

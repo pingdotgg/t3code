@@ -1463,6 +1463,40 @@ it.effect("rejects a routed action when its generation is evicted before deliver
   ),
 );
 
+it.effect("reports a host waitFor timeout against the caller deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            _tag: "PreviewAutomationTimeoutError",
+            message: `Preview automation waitFor request ${request.requestId} timed out after 2000ms.`,
+            detail: { operation: "waitFor", timeoutMs: 2_000 },
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "waitFor",
+          input: { text: "Missing", timeoutMs: 2_000 },
+          timeoutMs: 2_000,
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toBe("Preview automation waitFor timed out after 2000ms.");
+    }),
+  ),
+);
+
 it.effect("keeps a host that responds with an operation timeout", () =>
   Effect.scoped(
     Effect.gen(function* () {

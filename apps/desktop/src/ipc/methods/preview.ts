@@ -3,6 +3,7 @@ import {
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
   DesktopPreviewAutomationEvaluateInputSchema,
+  DesktopPreviewAutomationFailureSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
   DesktopPreviewAutomationStatusSchema,
@@ -422,14 +423,37 @@ export const automationClick = DesktopIpc.makeIpcMethod({
   }),
 });
 
+/**
+ * Returns the failures the server classifies by tag as a typed result, because
+ * a rejected `ipcRenderer.invoke` keeps only the error message.
+ */
+const resolveAutomationFailures = <R>(
+  effect: Effect.Effect<void, PreviewManager.PreviewManagerError, R>,
+) =>
+  effect.pipe(
+    Effect.as(undefined),
+    Effect.catchTags({
+      PreviewAutomationTimeoutError: ({ timeoutMs }) =>
+        Effect.succeed({ _tag: "PreviewAutomationTimeoutError", timeoutMs } as const),
+      PreviewAutomationInvalidSelectorError: (error) =>
+        Effect.succeed({ _tag: "PreviewAutomationInvalidSelectorError", ...error.detail } as const),
+      PreviewAutomationTargetNotEditableError: ({ selectorKind, selectorLength }) =>
+        Effect.succeed({
+          _tag: "PreviewAutomationTargetNotEditableError",
+          selectorKind,
+          ...(selectorLength === undefined ? {} : { selectorLength }),
+        } as const),
+    }),
+  );
+
 export const automationType = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL,
   payload: DesktopPreviewAutomationTypeInputSchema,
-  result: Schema.Void,
+  result: Schema.UndefinedOr(DesktopPreviewAutomationFailureSchema),
   handler: Effect.fn("desktop.ipc.preview.automationType")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.automationType(tabId, input);
-  }),
+  }, resolveAutomationFailures),
 });
 
 export const automationPress = DesktopIpc.makeIpcMethod({
@@ -445,11 +469,11 @@ export const automationPress = DesktopIpc.makeIpcMethod({
 export const automationScroll = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_SCROLL_CHANNEL,
   payload: DesktopPreviewAutomationScrollInputSchema,
-  result: Schema.Void,
+  result: Schema.UndefinedOr(DesktopPreviewAutomationFailureSchema),
   handler: Effect.fn("desktop.ipc.preview.automationScroll")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.automationScroll(tabId, input);
-  }),
+  }, resolveAutomationFailures),
 });
 
 export const automationEvaluate = DesktopIpc.makeIpcMethod({
@@ -465,11 +489,11 @@ export const automationEvaluate = DesktopIpc.makeIpcMethod({
 export const automationWaitFor = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_WAIT_FOR_CHANNEL,
   payload: DesktopPreviewAutomationWaitForInputSchema,
-  result: Schema.Void,
+  result: Schema.UndefinedOr(DesktopPreviewAutomationFailureSchema),
   handler: Effect.fn("desktop.ipc.preview.automationWaitFor")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.automationWaitFor(tabId, input);
-  }),
+  }, resolveAutomationFailures),
 });
 
 export const saveRecording = DesktopIpc.makeIpcMethod({

@@ -1114,6 +1114,31 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+const DesktopPreviewAutomationSelectorFields = {
+  selectorKind: Schema.Literals(["focused-element", "locator", "selector"]),
+  selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+};
+
+/**
+ * A typed automation failure that main resolves with instead of rejecting.
+ * `ipcRenderer.invoke` keeps only a rejection's message (electron#24427), so the
+ * tag and fields the server classifies have to cross IPC as a result.
+ */
+export const DesktopPreviewAutomationFailureSchema = Schema.Union([
+  Schema.TaggedStruct("PreviewAutomationTimeoutError", {
+    timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.TaggedStruct(
+    "PreviewAutomationInvalidSelectorError",
+    DesktopPreviewAutomationSelectorFields,
+  ),
+  Schema.TaggedStruct(
+    "PreviewAutomationTargetNotEditableError",
+    DesktopPreviewAutomationSelectorFields,
+  ),
+]);
+export type DesktopPreviewAutomationFailure = typeof DesktopPreviewAutomationFailureSchema.Type;
+
 /**
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
@@ -1341,11 +1366,20 @@ export interface DesktopPreviewBridge {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
     click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
-    type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
+    type: (
+      tabId: string,
+      input: PreviewAutomationTypeInput,
+    ) => Promise<DesktopPreviewAutomationFailure | undefined>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
-    scroll: (tabId: string, input: PreviewAutomationScrollInput) => Promise<void>;
+    scroll: (
+      tabId: string,
+      input: PreviewAutomationScrollInput,
+    ) => Promise<DesktopPreviewAutomationFailure | undefined>;
     evaluate: (tabId: string, input: PreviewAutomationEvaluateInput) => Promise<unknown>;
-    waitFor: (tabId: string, input: PreviewAutomationWaitForInput) => Promise<void>;
+    waitFor: (
+      tabId: string,
+      input: PreviewAutomationWaitForInput,
+    ) => Promise<DesktopPreviewAutomationFailure | undefined>;
   };
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;

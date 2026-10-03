@@ -696,10 +696,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "type": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.type(
+            const failure = await ready.bridge.automation.type(
               ready.runtimeTabId,
               request.input as Parameters<typeof ready.bridge.automation.type>[1],
             );
+            if (failure) throw failure;
+            return;
           }
           case "press": {
             const ready = await requireReadyTab();
@@ -710,10 +712,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "scroll": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.scroll(
+            const failure = await ready.bridge.automation.scroll(
               ready.runtimeTabId,
               request.input as Parameters<typeof ready.bridge.automation.scroll>[1],
             );
+            if (failure) throw failure;
+            return;
           }
           case "evaluate": {
             const ready = await requireReadyTab();
@@ -724,10 +728,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "waitFor": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.waitFor(
+            const failure = await ready.bridge.automation.waitFor(
               ready.runtimeTabId,
               request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
             );
+            if (failure) throw failure;
+            return;
           }
           case "recordingStart": {
             const ready = await requireReadyTab();
