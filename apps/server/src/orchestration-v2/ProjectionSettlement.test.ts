@@ -247,7 +247,7 @@ it.effect.each([
           forkedFrom: null,
           createdAt: old,
           updatedAt: old,
-          pendingBackgroundTasks: [{ taskId: "running-task", kind: "command" }],
+          pendingBackgroundTasks: [{ taskId: "running-task", kind: "subagent" }],
         },
       });
       const candidates = yield* store.getSettlementCandidates();
