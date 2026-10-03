@@ -6,6 +6,7 @@ import {
   markThreadUnread,
   markThreadVisited,
   parsePersistedState,
+  removeThreadUiState,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
@@ -54,6 +55,27 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
+  });
+
+  it("removes all per-thread ui state for a deleted thread", () => {
+    const threadId = ThreadId.make("thread-1");
+    const otherId = ThreadId.make("thread-2");
+    const state = makeUiState({
+      threadLastVisitedAtById: {
+        [threadId]: "2026-02-25T12:30:00.000Z",
+        [otherId]: "2026-02-25T12:31:00.000Z",
+      },
+      threadChangedFilesExpandedById: {
+        [threadId]: { "turn-1": false },
+        [otherId]: { "turn-1": false },
+      },
+    });
+
+    const next = removeThreadUiState(state, threadId);
+    expect(next.threadLastVisitedAtById).toEqual({ [otherId]: "2026-02-25T12:31:00.000Z" });
+    expect(next.threadChangedFilesExpandedById).toEqual({ [otherId]: { "turn-1": false } });
+    // No-op (same reference) when the thread has no state.
+    expect(removeThreadUiState(next, threadId)).toBe(next);
   });
 
   it("resolves project expansion from logical, physical, and legacy preference keys", () => {

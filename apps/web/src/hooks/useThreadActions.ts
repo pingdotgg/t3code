@@ -17,6 +17,10 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useDiffPanelStore } from "../diffPanelStore";
+import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
+import { removePreviewThread } from "../previewStateStore";
+import { useRightPanelStore } from "../rightPanelStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -191,6 +195,24 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
       }),
     );
   }
+}
+
+/**
+ * Prune per-thread client state that would otherwise accumulate forever.
+ *
+ * These stores keep one entry per thread (preview atom, right-panel surfaces,
+ * diff-panel selection, floating mini player, visited/expanded ui state) that
+ * was never cleaned up on deletion — a long-lived tab leaked one entry per
+ * thread ever visited, persisted to localStorage. The zustand cleanup functions
+ * already existed but had no callers; this wires them into deletion.
+ */
+function clearPerThreadClientState(ref: ScopedThreadRef): void {
+  removePreviewThread(ref);
+  useRightPanelStore.getState().removeThread(ref);
+  useDiffPanelStore.getState().removeThread(ref);
+  usePreviewMiniPlayerStore.getState().removeThread(ref);
+  // uiStateStore is keyed by the scoped thread key (see markThreadVisited).
+  useUiStateStore.getState().removeThread(scopedThreadKey(ref));
 }
 
 /**
@@ -421,6 +443,10 @@ export function useThreadActions() {
         });
         if (result._tag === "Success") {
           refreshArchivedThreadsForEnvironment(target.environmentId);
+          releaseComposerDraftUploads(target);
+          clearComposerDraftForThread(target);
+          clearTerminalUiState(target);
+          clearPerThreadClientState(target);
         }
         return result;
       }
@@ -524,6 +550,7 @@ export function useThreadActions() {
         threadRef,
       );
       clearTerminalUiState(threadRef);
+      clearPerThreadClientState(threadRef);
 
       if (shouldNavigateToFallback) {
         const fallbackThread = fallbackThreadId
