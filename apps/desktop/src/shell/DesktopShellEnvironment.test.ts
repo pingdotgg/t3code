@@ -299,6 +299,33 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("marks only login-shell probes as resolving the environment", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/opt/homebrew/bin/nu",
+        PATH: "/usr/bin",
+      };
+      const probeOptions = new Map<string, ChildProcess.CommandOptions>();
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          probeOptions.set(command.command, command.options);
+          return command.command === "/bin/launchctl" ? "/opt/homebrew/bin:/usr/bin" : "";
+        },
+      });
+
+      for (const shell of ["/opt/homebrew/bin/nu", "/bin/zsh"]) {
+        assert.deepEqual(probeOptions.get(shell)?.env, { T3CODE_RESOLVING_ENVIRONMENT: "1" });
+        assert.isTrue(probeOptions.get(shell)?.extendEnv);
+      }
+      assert.isUndefined(probeOptions.get("/bin/launchctl")?.env);
+      assert.notProperty(env, "T3CODE_RESOLVING_ENVIRONMENT");
+    }),
+  );
+
   it.effect("loads PowerShell profile environment on Windows", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -307,12 +334,14 @@ describe("DesktopShellEnvironment", () => {
         LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
         USERPROFILE: "C:\\Users\\testuser",
       };
+      const probeOptions: ChildProcess.CommandOptions[] = [];
 
       yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          probeOptions.push(command.options);
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -345,6 +374,12 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+      assert.equal(probeOptions.length, 2);
+      for (const options of probeOptions) {
+        assert.deepEqual(options.env, { T3CODE_RESOLVING_ENVIRONMENT: "1" });
+        assert.isTrue(options.extendEnv);
+      }
+      assert.notProperty(env, "T3CODE_RESOLVING_ENVIRONMENT");
     }),
   );
 

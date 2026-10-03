@@ -19,6 +19,7 @@ import {
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
+  RESOLVING_ENVIRONMENT_ENV_NAME,
   resolveCommandPath,
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
@@ -67,7 +68,7 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
-    expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+    expect(options).toMatchObject({ encoding: "utf8", timeout: 5000 });
   });
 });
 
@@ -151,6 +152,30 @@ describe("readEnvironmentFromLoginShell", () => {
     });
   });
 
+  it("marks only the probe environment as resolving the environment", () => {
+    vi.stubEnv("PATH", "/usr/bin");
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number; env?: NodeJS.ProcessEnv },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
+
+    try {
+      expect(readEnvironmentFromLoginShell("/bin/zsh", ["PATH"], execFile)).toEqual({
+        PATH: "/a:/b",
+      });
+      expect(execFile.mock.calls[0]?.[2].env).toMatchObject({
+        PATH: "/usr/bin",
+        [RESOLVING_ENVIRONMENT_ENV_NAME]: "1",
+      });
+      expect(process.env[RESOLVING_ENVIRONMENT_ENV_NAME]).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("preserves surrounding whitespace in captured values", () => {
     const execFile = vi.fn<
       (
@@ -216,7 +241,11 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile).toHaveBeenCalledWith(
       "pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
+      expect.objectContaining({
+        encoding: "utf8",
+        timeout: 5000,
+        env: expect.objectContaining({ [RESOLVING_ENVIRONMENT_ENV_NAME]: "1" }),
+      }),
     );
   });
 
@@ -252,7 +281,11 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(execFile).toHaveBeenCalledWith(
       "pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
+      expect.objectContaining({
+        encoding: "utf8",
+        timeout: 5000,
+        env: expect.objectContaining({ [RESOLVING_ENVIRONMENT_ENV_NAME]: "1" }),
+      }),
     );
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
   });
@@ -274,14 +307,18 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
       PATH: "C:\\Tools",
     });
-    expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
+      "pwsh.exe",
+      expect.any(Array),
+      expect.objectContaining({ encoding: "utf8", timeout: 5000 }),
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "powershell.exe",
+      expect.any(Array),
+      expect.objectContaining({ encoding: "utf8", timeout: 5000 }),
+    );
   });
 });
 
