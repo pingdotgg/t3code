@@ -201,6 +201,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  /** Waits for, or stops waiting for, the background commands the thread runs. */
+  readonly onSetBackgroundWorkHeld: (held: boolean) => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   /** Whether the model picker may offer providers other than this thread's. */
@@ -439,6 +441,25 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  // A command is not held by default, because a dev server can run for hours
+  // after the agent is done. Holding one keeps the thread in Working.
+  const backgroundCommandHold =
+    props.serverConfig?.environment.capabilities.threadBackgroundWorkHold === true
+      ? (pendingBackgroundWork?.commandHold ?? null)
+      : null;
+  const confirmBackgroundCommandHold = () => {
+    if (backgroundCommandHold === "wait") {
+      Alert.alert("Wait for this command?", "The thread stays in Working until it finishes.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Wait", onPress: () => props.onSetBackgroundWorkHeld(true) },
+      ]);
+    } else if (backgroundCommandHold === "release") {
+      Alert.alert("Stop waiting?", "The command keeps running, and the thread shows as done.", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Don't wait", onPress: () => props.onSetBackgroundWorkHeld(false) },
+      ]);
+    }
+  };
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
@@ -480,6 +501,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           .map((item) => item.label)
           .join(", ")}`,
         waiting: pendingBackgroundWork.waiting,
+        onPress: backgroundCommandHold === null ? null : confirmBackgroundCommandHold,
       };
     }
     return null;

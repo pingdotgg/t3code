@@ -342,6 +342,10 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const setBackgroundWorkHeld = useAtomCommand(
+    threadEnvironment.setBackgroundWorkHeld,
+    "wait for background commands",
+  );
   const loadEarlierHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
     reportFailure: false,
@@ -685,6 +689,16 @@ function ThreadRouteContent(
       },
     });
   }, [composer.interruptibleRunId, interruptThreadTurn, selectedThread]);
+  const handleSetBackgroundWorkHeld = useCallback(
+    (held: boolean) => {
+      if (!selectedThread) return;
+      void setBackgroundWorkHeld({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id, held },
+      });
+    },
+    [selectedThread, setBackgroundWorkHeld],
+  );
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
@@ -1066,6 +1080,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          onSetBackgroundWorkHeld={handleSetBackgroundWorkHeld}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}

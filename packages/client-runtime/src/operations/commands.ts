@@ -469,6 +469,21 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
   });
 });
 
+export interface SetThreadBackgroundWorkHeldInput extends ThreadCommandInput {
+  readonly held: boolean;
+}
+/** Waits for, or stops waiting for, the background commands the thread runs now. */
+export const setThreadBackgroundWorkHeld = Effect.fn(
+  "EnvironmentCommands.setThreadBackgroundWorkHeld",
+)(function* (input: SetThreadBackgroundWorkHeldInput) {
+  return yield* dispatch({
+    type: "thread.background-work.hold",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    held: input.held,
+  });
+});
+
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,
 ) {

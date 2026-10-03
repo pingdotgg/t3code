@@ -50,6 +50,7 @@ import {
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
+  collectBackgroundWork,
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -363,6 +364,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
+    case "thread.background-work.hold":
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
@@ -7820,6 +7822,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  // Holding reads background work without the settled-run gate: an agent holds
+  // the command it just started before its own turn settles.
+  const dispatchBackgroundWorkHold = (
+    command: Extract<OrchestrationV2Command, { readonly type: "thread.background-work.hold" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "providerThreads", "turnItems"],
+        {
+          turnItemTypes: ["command_execution"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
+      );
+      const { thread } = projection;
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
+      const commandTaskIds = collectBackgroundWork({
+        providerThreads: projection.providerThreads,
+        turnItems: projection.turnItems,
+        activeProviderThreadId: thread.activeProviderThreadId,
+        runs: projection.runs,
+      }).flatMap((task) => (task.kind === "command" ? [task.taskId] : []));
+      // Its own tag, so the MCP tool can tell this apart from an outage.
+      if (command.held && commandTaskIds.length === 0) {
+        return yield* new OrchestratorCommandRejectedError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has no background commands running.`,
+        });
+      }
+      const { heldBackgroundTaskIds: _released, ...released } = thread;
+      const updatedThread = command.held
+        ? { ...thread, heldBackgroundTaskIds: commandTaskIds }
+        : released;
+      // Not thread activity, like a visit: updatedAt stays.
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.background-work-held",
+        threadId: command.threadId,
+        providerInstanceId: updatedThread.providerInstanceId,
+        occurredAt: yield* DateTime.now,
+        payload: updatedThread,
+      });
+    });
+
   const dispatchBackgroundWorkSettle = (
     command: Extract<
       OrchestrationV2InternalCommand,
@@ -9409,6 +9465,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.background-work.settle":
         yield* dispatchBackgroundWorkSettle(command, events);
+        break;
+      case "thread.background-work.hold":
+        yield* dispatchBackgroundWorkHold(command, events);
         break;
       case "thread.fork":
         yield* dispatchThreadFork(command, events);

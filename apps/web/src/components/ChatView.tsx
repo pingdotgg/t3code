@@ -1561,6 +1561,9 @@ export default function ChatView(props: ChatViewProps) {
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
+  const setThreadBackgroundWorkHeld = useAtomCommand(threadEnvironment.setBackgroundWorkHeld, {
+    reportFailure: false,
+  });
   const loadEarlierThreadHistory = useAtomCommand(threadEnvironment.loadEarlierHistory, {
     label: "load earlier thread history",
     reportFailure: false,
@@ -3496,6 +3499,7 @@ export default function ChatView(props: ChatViewProps) {
         turnItems: serverProjection.turnItems,
         activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
         runs: serverProjection.runs,
+        heldTaskIds: serverProjection.thread.heldBackgroundTaskIds,
       }),
     ];
   }, [serverProjection]);
@@ -6622,6 +6626,8 @@ export default function ChatView(props: ChatViewProps) {
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
+  const supportsBackgroundWorkHold =
+    serverConfig?.environment.capabilities.threadBackgroundWorkHold === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
   const activeThreadSnoozed =
     activeThreadShell !== null &&
@@ -6888,6 +6894,31 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
   }, [activeThread, environmentId, interruptThreadTurn, setThreadError]);
+  // Waiting for a command keeps the thread in Working until it ends, like a
+  // subagent. Commands are not held by default, because a dev server can run
+  // for hours after the agent is done.
+  const [holdingBackgroundWorkKey, setHoldingBackgroundWorkKey] = useState<string | null>(null);
+  const isHoldingBackgroundWork = holdingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
+  const handleSetBackgroundWorkHeld = useCallback(
+    async (held: boolean) => {
+      if (!activeThread) return;
+      const requestKey = `${environmentId}:${activeThread.id}`;
+      setHoldingBackgroundWorkKey(requestKey);
+      const result = await setThreadBackgroundWorkHeld({
+        environmentId,
+        input: { threadId: activeThread.id, held },
+      });
+      setHoldingBackgroundWorkKey((current) => (current === requestKey ? null : current));
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to change background work waiting.",
+        );
+      }
+    },
+    [activeThread, environmentId, setThreadBackgroundWorkHeld, setThreadError],
+  );
   const onOpenRelatedThread = useCallback(
     (threadId: ThreadId) => {
       void navigate({
@@ -6943,22 +6974,42 @@ export default function ChatView(props: ChatViewProps) {
               );
             }),
       actions: (
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={isStoppingBackgroundWork}
-          onClick={() => void handleStopBackgroundWork()}
-        >
-          {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
-        </Button>
+        <>
+          {supportsBackgroundWorkHold && presentation.commandHold !== null ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={isHoldingBackgroundWork}
+              title={
+                presentation.commandHold === "wait"
+                  ? "Keep this thread in Working until the command finishes"
+                  : "Treat the command as left running, like a dev server"
+              }
+              onClick={() => void handleSetBackgroundWorkHeld(presentation.commandHold === "wait")}
+            >
+              {presentation.commandHold === "wait" ? "Wait" : "Don't wait"}
+            </Button>
+          ) : null}
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={isStoppingBackgroundWork}
+            onClick={() => void handleStopBackgroundWork()}
+          >
+            {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
+          </Button>
+        </>
       ),
     };
   }, [
     activeBackgroundTasks,
     activeThread,
+    handleSetBackgroundWorkHeld,
     handleStopBackgroundWork,
+    isHoldingBackgroundWork,
     isStoppingBackgroundWork,
     onOpenRelatedThread,
+    supportsBackgroundWorkHold,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the

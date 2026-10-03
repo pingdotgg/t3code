@@ -123,6 +123,16 @@ const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
+const WaitForBackgroundCommandsTool = Tool.make("wait_for_background_commands", {
+  ...commandTool,
+  description:
+    "Keep this thread in the user's Working list until the background commands it runs now finish. Call it right after you start a background command that you will continue from when it exits, such as a build, test run, or benchmark. Without it, T3 Code treats a background command as one you leave running, such as a dev server, and shows the thread as done when your turn ends. Commands you start later are not included. Pass wait=false to stop waiting.",
+  parameters: Schema.Struct({ wait: Schema.optional(Schema.Boolean) }),
+})
+  .annotate(Tool.Title, "Wait for background commands")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const requestTarget = { threadId: Schema.optional(ThreadId), requestId: RuntimeRequestId };
 const question = Schema.Struct({
   id: Schema.String,
@@ -276,4 +286,5 @@ export const ThreadToolkit = Toolkit.make(
   QueueCancelTool,
   QueueReorderTool,
   QueuePromoteTool,
+  WaitForBackgroundCommandsTool,
 );

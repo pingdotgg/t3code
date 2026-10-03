@@ -41,6 +41,7 @@ import {
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
   type SetThreadAutoSettleInput,
+  type SetThreadBackgroundWorkHeldInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -76,6 +77,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadBackgroundWorkHeld,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -120,6 +122,7 @@ export type {
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
   SetThreadAutoSettleInput,
+  SetThreadBackgroundWorkHeldInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -215,6 +218,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
+    setBackgroundWorkHeld: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-background-work-held",
+      execute: (input: SetThreadBackgroundWorkHeldInput) => setThreadBackgroundWorkHeld(input),
       scheduler,
       concurrency,
     }),
@@ -447,6 +456,15 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: optimistic.wrap(commands.setAutoSettle, (thread, input, now) => ({
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+    })),
+    // Commands started after the hold are not held; the server event corrects this.
+    setBackgroundWorkHeld: optimistic.wrap(commands.setBackgroundWorkHeld, (thread, input) => ({
+      ...thread,
+      pendingBackgroundTasks: (thread.pendingBackgroundTasks ?? []).map((task) => {
+        if (task.kind !== "command") return task;
+        const { held: _held, ...released } = task;
+        return input.held ? { ...released, held: true } : released;
+      }),
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

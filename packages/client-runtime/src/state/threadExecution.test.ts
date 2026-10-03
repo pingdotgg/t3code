@@ -521,6 +521,7 @@ describe("presentPendingBackgroundWork", () => {
       title: "Waiting on subagent Luna Window Properties",
       items: [{ taskId: "luna", kind: "subagent", label: "Luna Window Properties", childThreadId }],
       waiting: true,
+      commandHold: null,
     });
   });
 
@@ -574,6 +575,25 @@ describe("presentPendingBackgroundWork", () => {
         { taskId: "b", kind: "monitor", description: "Watch PR checks" },
       ]),
     ).toMatchObject({ title: "Waiting on 1 command and 1 monitor", waiting: true });
+  });
+
+  it("offers to wait for a command, then to stop waiting while any command is held", () => {
+    const bench = { taskId: "bench", kind: "command" as const, description: "Run benchmarks" };
+    const dev = { taskId: "dev", kind: "command" as const, description: "vp run dev" };
+    expect(presentPendingBackgroundWork([bench])).toMatchObject({
+      title: "Running: Run benchmarks",
+      waiting: false,
+      commandHold: "wait",
+    });
+    expect(presentPendingBackgroundWork([{ ...bench, held: true }])).toMatchObject({
+      title: "Waiting on command Run benchmarks",
+      waiting: true,
+      commandHold: "release",
+    });
+    expect(presentPendingBackgroundWork([{ ...bench, held: true }, dev])).toMatchObject({
+      title: "Waiting on 2 commands",
+      commandHold: "release",
+    });
   });
 
   it("groups work by kind, subagents first, and keeps each name", () => {

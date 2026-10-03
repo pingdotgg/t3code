@@ -28,6 +28,7 @@ export type T3McpToolSummaryAction =
   | "thread-search"
   | "thread-transfers"
   | "thread-organize"
+  | "background-wait"
   | "thread-update"
   | "queue-list"
   | "queue-read"
@@ -256,6 +257,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
   t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
   t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
+  // One tool both waits and stops waiting (wait: false), so the labels stay neutral.
+  wait_for_background_commands: tool(
+    ["Update", "Updating", "Updated", "background command waiting"],
+    "background-wait",
+  ),
   t3_thread_update: tool(["Update", "Updating", "Updated", "T3 thread metadata"], "thread-update"),
   t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
   t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),

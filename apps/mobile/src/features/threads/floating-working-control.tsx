@@ -152,14 +152,16 @@ export function FloatingWorkingControl(props: {
   }
 
   // The queue, agents, and reconnect labels have separate tap targets.
-  const statusInteractive = props.status?.kind === "connection";
+  const statusInteractive =
+    props.status?.kind === "connection" ||
+    (props.status?.kind === "background" && props.status.onPress !== null);
   const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasDevicePreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
     props.status !== null ? (
       <View
-        pointerEvents={props.status.kind === "connection" ? "box-none" : "none"}
+        pointerEvents={statusInteractive ? "box-none" : "none"}
         className="h-11 items-center justify-center"
       >
         <Animated.View className="h-11" style={capsuleSizerStyle} />
@@ -390,6 +392,9 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="background"
         accessibilityLabel={props.status.accessibilityLabel}
+        {...(props.status.onPress === null
+          ? {}
+          : { accessibilityRole: "button" as const, onPress: props.status.onPress })}
         className="gap-2"
         onLayout={props.onLayout}
       >

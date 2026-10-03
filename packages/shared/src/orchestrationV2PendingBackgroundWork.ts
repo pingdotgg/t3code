@@ -63,20 +63,28 @@ export function turnItemUpdateCanEndBackgroundWork(
  * Whether background work left behind by a completed root run holds back its
  * completion alert (desktop/web notification and the mobile push). Commands,
  * such as dev servers and other long-lived shells, do not: the agent is done
- * and may leave them running for hours. Subagents and monitors do, because
- * they wake the agent and it continues (#13625). Work the adapter cannot name,
- * including kinds this build does not know, holds as the conservative choice.
+ * and may leave them running for hours. A command someone chose to wait for
+ * (`held`, see thread.background-work.hold) does, such as a long benchmark.
+ * Subagents and monitors do, because they wake the agent and it continues
+ * (#13625). Work the adapter cannot name, including kinds this build does not
+ * know, holds as the conservative choice.
  */
 export function backgroundWorkHoldsCompletion(
-  tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind">>,
+  tasks: ReadonlyArray<{
+    readonly kind: PendingBackgroundWorkTask["kind"];
+    readonly held?: boolean | undefined;
+  }>,
 ): boolean {
-  return tasks.some((task) => backgroundWorkKindHoldsCompletion(task.kind));
+  return tasks.some((task) => backgroundWorkTaskHoldsCompletion(task));
 }
 
-function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {
-  switch (kind) {
+function backgroundWorkTaskHoldsCompletion(task: {
+  readonly kind: PendingBackgroundWorkTask["kind"];
+  readonly held?: boolean | undefined;
+}): boolean {
+  switch (task.kind) {
     case "command":
-      return false;
+      return task.held === true;
     case "subagent":
     case "monitor":
     case "background_task":
@@ -194,46 +202,35 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
   );
 }
 
-/**
- * Derive one normalized pending-background-work list for post-settlement UI.
- *
- * Sources:
- * - Provider-thread roster (Claude SDK background tasks)
- * - Active command_execution / dynamic_tool / subagent turn items
- *
- * Gated on latest root run settlement. Dedupes by native task ID. Excludes
- * the roster while any interruptible foreground run remains active. Excludes
- * Grok persistent monitors (`dynamic_tool` input with `persistent: true`).
- * Excludes turn items whose run resolves to `rolled_back` (abandoned work);
- * items with a null or absent run id stay eligible (matches SQL shell path).
- * Does not consult subagent entities (those double-count turn items).
- */
-export function derivePendingBackgroundWork(input: {
-  readonly latestRun: PendingBackgroundWorkRun | null | undefined;
+type BackgroundWorkSources = {
   readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
   readonly activeProviderThreadId?: string | null;
-  readonly hasActiveRun?: boolean;
   /**
    * Run rows used to exclude items owned by rolled_back runs. Optional for
    * callers that already filtered (SQL shell path); in-memory callers should
    * pass projection runs so policy cannot drift.
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
-}): ReadonlyArray<PendingBackgroundWorkTask> {
-  const hasActiveRun =
-    input.hasActiveRun ??
-    input.runs?.some(
-      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
-    ) ??
-    false;
-  if (hasActiveRun) {
-    return [];
-  }
-  if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
-    return [];
-  }
+};
 
+/**
+ * Every piece of background work a thread names, without the settled-run gate.
+ *
+ * Sources:
+ * - Provider-thread roster (Claude SDK background tasks)
+ * - Active command_execution / dynamic_tool / subagent turn items
+ *
+ * Dedupes by native task ID. Excludes Grok persistent monitors (`dynamic_tool`
+ * input with `persistent: true`). Excludes turn items whose run resolves to
+ * `rolled_back` (abandoned work); items with a null or absent run id stay
+ * eligible (matches SQL shell path). Does not consult subagent entities (those
+ * double-count turn items). Holding commands reads this directly, because an
+ * agent holds its command before its own turn settles.
+ */
+export function collectBackgroundWork(
+  input: BackgroundWorkSources,
+): ReadonlyArray<PendingBackgroundWorkTask> {
   const byTaskId = new Map<string, PendingBackgroundWorkTask>();
 
   const providerThreads =
@@ -265,4 +262,40 @@ export function derivePendingBackgroundWork(input: {
   }
 
   return Array.from(byTaskId.values());
+}
+
+/**
+ * Derive one normalized pending-background-work list for post-settlement UI:
+ * `collectBackgroundWork`, gated on latest root run settlement. Excludes the
+ * roster while any interruptible foreground run remains active. Commands in
+ * `heldTaskIds` (the thread's `heldBackgroundTaskIds`) come back `held`.
+ */
+export function derivePendingBackgroundWork(
+  input: BackgroundWorkSources & {
+    readonly latestRun: PendingBackgroundWorkRun | null | undefined;
+    readonly hasActiveRun?: boolean;
+    readonly heldTaskIds?: ReadonlyArray<string> | undefined;
+  },
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  const hasActiveRun =
+    input.hasActiveRun ??
+    input.runs?.some(
+      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
+    ) ??
+    false;
+  if (hasActiveRun) {
+    return [];
+  }
+  if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
+    return [];
+  }
+
+  const tasks = collectBackgroundWork(input);
+  if (input.heldTaskIds === undefined || input.heldTaskIds.length === 0) {
+    return tasks;
+  }
+  const heldTaskIds = new Set(input.heldTaskIds);
+  return tasks.map((task) =>
+    task.kind === "command" && heldTaskIds.has(task.taskId) ? { ...task, held: true } : task,
+  );
 }

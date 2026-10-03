@@ -163,7 +163,8 @@ function terminalRunStatus(status: OrchestrationV2RunStatus): boolean {
 // Park runtime at idle when the post-settlement background roster holds the
 // run's completion, so #4415 waiting-presentation Waiting (session.idle) can
 // consume CTM runtime. Only work that wakes the agent holds it: commands it
-// left running, such as a dev server, present the run's own status (#14872).
+// left running, such as a dev server, present the run's own status (#14872),
+// unless someone chose to wait for them.
 // The server suppresses the roster while an interruptible activity run exists,
 // so a remaining roster is stronger than checkpoint-oriented waiting.
 // latestRun keeps the latest run's status for history presentation.

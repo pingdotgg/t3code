@@ -119,6 +119,15 @@ answer. Pinned threads stay in the pinned section.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag to reorder it. Your saved order returns when you turn it off.
 
+### Wait for a background command
+
+A command the agent leaves running in the background, such as a dev server, does not count as
+work: when the turn ends, the thread shows as finished. If the agent will continue after the
+command exits, such as after a long build or benchmark, press **Wait** on the command's bar above
+the composer. On mobile, tap the status above the composer. The thread then counts as working, and
+its completion alert waits, until the command ends. **Don't wait** undoes this. Agents can also
+wait for a command they start.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

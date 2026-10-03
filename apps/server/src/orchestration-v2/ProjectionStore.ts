@@ -662,9 +662,11 @@ export function applyToProjection(
         thread: event.payload,
       };
     // Visited tracking is read state, not activity: skip the updatedAt bump so
-    // viewing a thread does not surface it as recently active.
+    // viewing a thread does not surface it as recently active. Holding
+    // background work is not activity either.
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.background-work-held":
       return {
         ...projection,
         thread: event.payload,
@@ -1334,6 +1336,7 @@ export function threadShellFromProjection(
     turnItems: projection.turnItems,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     runs: projection.runs,
+    heldTaskIds: projection.thread.heldBackgroundTaskIds,
   });
   return {
     createdBy: projection.thread.createdBy,
@@ -1672,6 +1675,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.snoozed":
           case "thread.unsnoozed":
           case "thread.auto-settle-set":
+          case "thread.background-work-held":
           case "thread.pinned":
           case "thread.unpinned":
           case "thread.pin-reordered":
@@ -2504,6 +2508,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.snoozed" &&
           event.type !== "thread.unsnoozed" &&
           event.type !== "thread.auto-settle-set" &&
+          event.type !== "thread.background-work-held" &&
           event.type !== "thread.pinned" &&
           event.type !== "thread.unpinned" &&
           event.type !== "thread.pin-reordered" &&
@@ -5125,6 +5130,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
                     activeProviderThreadId: thread.activeProviderThreadId,
                     hasActiveRun: false,
+                    heldTaskIds: thread.heldBackgroundTaskIds,
                   }),
                 } satisfies ProjectionSettlementCandidate;
               }),
@@ -5243,6 +5249,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
             activeProviderThreadId: thread.activeProviderThreadId,
             hasActiveRun: row.active_run_id !== null,
+            heldTaskIds: thread.heldBackgroundTaskIds,
           }),
         ];
         return {

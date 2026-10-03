@@ -20,7 +20,7 @@ const state = vi.hoisted(() => ({
   turnError: false,
   limited: false,
   subagent: false,
-  background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
+  background: [] as Array<{ taskId: string; kind: "command" | "monitor"; held?: boolean }>,
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -262,6 +262,19 @@ describe("thread notifications", () => {
     expect(state.add).toHaveBeenLastCalledWith(
       expect.objectContaining({ title: "Thread completed" }),
     );
+  });
+
+  it("alerts again when a command someone waits for ends without a new turn", async () => {
+    await render();
+    state.background = [{ taskId: "bench", kind: "command" }];
+    await complete();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.background = [{ taskId: "bench", kind: "command", held: true }];
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.background = [];
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(2);
   });
 
   it("keeps background desktop alerts when in-app notifications are disabled", async () => {

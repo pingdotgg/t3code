@@ -245,6 +245,7 @@ export function deriveThreadRuntime(
       turnItems: projection.turnItems,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
+      heldTaskIds: projection.thread.heldBackgroundTaskIds,
     }),
   );
   return {
@@ -308,10 +309,16 @@ export interface PendingBackgroundWorkPresentation {
   readonly title: string;
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   /**
-   * True when the work will wake the agent (subagents, monitors). False when
-   * only commands remain, such as a dev server: the agent is done.
+   * True when the work will wake the agent (subagents, monitors, held
+   * commands). False when only unheld commands remain, such as a dev server:
+   * the agent is done.
    */
   readonly waiting: boolean;
+  /**
+   * What the Wait control offers: "release" while any command is held, so it
+   * matches a "Waiting on" title, else "wait". Null when no command runs.
+   */
+  readonly commandHold: "wait" | "release" | null;
 }
 
 function joinWithAnd(parts: ReadonlyArray<string>): string {
@@ -325,6 +332,9 @@ export function presentPendingBackgroundWork(
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
   const waiting = backgroundWorkHoldsCompletion(tasks);
+  const commands = tasks.filter((task) => task.kind === "command");
+  const commandHold =
+    commands.length === 0 ? null : commands.some((task) => task.held === true) ? "release" : "wait";
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
@@ -358,7 +368,7 @@ export function presentPendingBackgroundWork(
       : named
         ? `Running: ${only.label}`
         : `Running a ${noun}`;
-    return { title, items, waiting };
+    return { title, items, waiting, commandHold };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
@@ -366,7 +376,12 @@ export function presentPendingBackgroundWork(
     const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
     return `${count} ${count === 1 ? singular : plural}`;
   });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  return {
+    title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`,
+    items,
+    waiting,
+    commandHold,
+  };
 }
 
 /** The thread a notification row opens: that of the one subagent or delegated task it reports. */

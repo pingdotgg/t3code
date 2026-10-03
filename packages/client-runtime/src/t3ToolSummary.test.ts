@@ -28,6 +28,15 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Created 1 thread");
   });
 
+  it("names a release as the opposite of a wait for background commands", () => {
+    expect(summarizeT3ToolCalls("background-wait", [completed({})]).label).toBe(
+      "Set the thread to wait for background commands",
+    );
+    expect(summarizeT3ToolCalls("background-wait", [completed({ wait: false })]).label).toBe(
+      "Stopped waiting for background commands",
+    );
+  });
+
   it.each([
     ["queue-read", "Read 1 queued message"],
     ["queue-edit", "Edited 1 queued message"],

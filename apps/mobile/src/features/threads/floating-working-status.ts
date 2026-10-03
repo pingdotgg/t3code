@@ -10,12 +10,15 @@ export type FloatingWorkingStatus =
   | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
   // The turn settled while background work it started still runs. `waiting`
-  // is false when only commands remain, such as a dev server: the agent is done.
+  // is false when only unheld commands remain, such as a dev server: the agent
+  // is done.
+  // `onPress` offers to wait, or stop waiting, for those commands.
   | {
       readonly kind: "background";
       readonly label: string;
       readonly accessibilityLabel: string;
       readonly waiting: boolean;
+      readonly onPress: (() => void) | null;
     }
   // A task whose thread the server has not created yet: the worktree may
   // still be checking out, so there is no turn to time.

@@ -125,13 +125,17 @@ function EnvironmentNotifications({
           ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
       const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
-      // Commands left running (a dev server) read as ready; subagents and monitors wait.
+      // Commands left running (a dev server) read as ready; subagents, monitors,
+      // and commands someone waits for wait. Waiting re-arms the alert, so a
+      // completion that already alerted alerts again when the held work ends.
       const completion =
-        status === "ready" &&
-        thread.latestRun?.status === "completed" &&
-        Number.isFinite(completedAt)
-          ? completedAt
-          : (prior?.completion ?? null);
+        status === "waiting"
+          ? null
+          : status === "ready" &&
+              thread.latestRun?.status === "completed" &&
+              Number.isFinite(completedAt)
+            ? completedAt
+            : (prior?.completion ?? null);
       next.set(thread.id, { attention, completion });
       if (!prior || thread.archivedAt !== null) continue;
       const kind =

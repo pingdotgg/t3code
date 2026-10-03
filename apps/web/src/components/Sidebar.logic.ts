@@ -914,7 +914,8 @@ export function resolveThreadRowClassName(input: {
 // (runtime status "idle") is the agent stopped with background work that will
 // wake it (subagents, monitors): not the user's turn yet, so it renders grey
 // like working, not as a false Done. Commands it left running, such as a dev
-// server, do not hold the thread; it reads as ready.
+// server, do not hold the thread; it reads as ready. A command someone chose to
+// wait for (thread.background-work.hold) holds it like a subagent.
 // Unread completion is tracked separately: it describes whether a ready
 // thread needs attention, not what the thread is currently doing.
 export type SidebarThreadStatus =
