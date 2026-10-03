@@ -91,6 +91,7 @@ import {
 } from "./previewAutomationTarget";
 import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
 import { runPreviewClickKeepingHostFocus } from "./previewClickFocus";
+import { runPreviewTabKeepingHostFocus } from "./previewTabFocus";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
@@ -703,10 +704,15 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "press": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.press(
-              ready.runtimeTabId,
-              request.input as Parameters<typeof ready.bridge.automation.press>[1],
-            );
+            const input = request.input as Parameters<typeof ready.bridge.automation.press>[1];
+            const press = () => ready.bridge.automation.press(ready.runtimeTabId, input);
+            return await (input.key === "Tab"
+              ? runPreviewTabKeepingHostFocus(press, (relinquish) =>
+                  ready.bridge.onStateChange((runtimeTabId, state) => {
+                    if (state.controller === "human") relinquish(runtimeTabId);
+                  }),
+                )
+              : press());
           }
           case "scroll": {
             const ready = await requireReadyTab();
