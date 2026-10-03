@@ -298,10 +298,12 @@ export const layer: Layer.Layer<
             return;
           }
 
-          yield* checkpointStore.captureCheckpoint({
-            cwd: input.scope.cwd,
-            checkpointRef,
-          });
+          yield* checkpointStore
+            .captureCheckpoint({
+              cwd: input.scope.cwd,
+              checkpointRef,
+            })
+            .pipe(Effect.catchTag("VcsUnsupportedOperationError", () => Effect.void));
         }),
       ).pipe(
         Effect.mapError(
@@ -408,23 +410,26 @@ export const layer: Layer.Layer<
             });
           }
 
-          const captured = yield* checkpointStore
+          const captureStatus = yield* checkpointStore
             .captureCheckpoint({
               cwd: input.scope.cwd,
               checkpointRef,
             })
             .pipe(
-              Effect.as(true),
+              Effect.as("ready" as const),
+              Effect.catchTag("VcsUnsupportedOperationError", () =>
+                Effect.succeed("missing" as const),
+              ),
               Effect.catch((cause) =>
                 Effect.logWarning("orchestration V2 checkpoint capture failed", {
                   scopeId: input.scope.id,
                   checkpointRef,
                   cause: String(cause),
-                }).pipe(Effect.as(false)),
+                }).pipe(Effect.as("error" as const)),
               ),
             );
 
-          if (!captured) {
+          if (captureStatus !== "ready") {
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
@@ -434,7 +439,7 @@ export const layer: Layer.Layer<
               ordinalWithinScope: input.ordinalWithinScope,
               appRunOrdinal: input.appRunOrdinal,
               ref: checkpointRef,
-              status: "error",
+              status: captureStatus,
               files: [],
               capturedAt: input.capturedAt,
             });

@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationV2CheckpointScope,
   VcsProcessTimeoutError,
+  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -101,3 +102,53 @@ it.effect.each([false, true, "interrupt"] as const)(
     }).pipe(Effect.provide(testLayer));
   },
 );
+
+it.effect("marks a checkpoint missing when the workspace cannot be checkpointed", () => {
+  const scope: OrchestrationV2CheckpointScope = {
+    id: CheckpointScopeId.make("checkpoint-scope:unsupported"),
+    threadId: ThreadId.make("thread:unsupported"),
+    runId: RunId.make("run:unsupported:1"),
+    nodeId: NodeId.make("node:unsupported:1"),
+    parentScopeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:unsupported"),
+    kind: "root_run",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: true,
+    cwd: "/repo/ignored",
+    createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+  };
+  const testLayer = CheckpointService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          isGitRepository: () => Effect.succeed(true),
+          hasCheckpointRef: () => Effect.succeed(false),
+          captureCheckpoint: () =>
+            Effect.fail(
+              new VcsUnsupportedOperationError({
+                operation: "test.capture",
+                kind: "git",
+                detail: "The workspace directory is ignored by its Git repository.",
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+    const checkpoint = yield* checkpoints.capture({
+      scope,
+      ordinalWithinScope: 1,
+      runId: scope.runId!,
+      nodeId: scope.nodeId!,
+      appRunOrdinal: 1,
+      capturedAt: scope.createdAt,
+    });
+
+    assert.equal(checkpoint.status, "missing");
+  }).pipe(Effect.provide(testLayer));
+});

@@ -245,6 +245,98 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("checkpoint capture skips a workspace its parent repository ignores", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-ignored-" });
+    let stageAttempts = 0;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("add")) stageAttempts++;
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd: parent, args });
+    yield* git(["init"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    yield* fileSystem.writeFileString(
+      path.join(parent, ".gitignore"),
+      "*\n!.gitignore\n!keep/\n!keep/**\n",
+    );
+    yield* fileSystem.makeDirectory(path.join(parent, "keep"));
+    yield* fileSystem.writeFileString(path.join(parent, "keep", "file.txt"), "v1\n");
+    yield* fileSystem.makeDirectory(path.join(parent, "ignored"));
+    yield* fileSystem.writeFileString(path.join(parent, "ignored", "file.txt"), "secret\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    stageAttempts = 0;
+    const ignoredRef = CheckpointRef.make("refs/t3/checkpoints/ignored");
+
+    const ignored = yield* Effect.result(
+      driver.checkpoints.captureCheckpoint({
+        cwd: path.join(parent, "ignored"),
+        checkpointRef: ignoredRef,
+      }),
+    );
+
+    assert.strictEqual(ignored._tag, "Failure");
+    if (ignored._tag === "Failure") {
+      assert.strictEqual(ignored.failure._tag, "VcsUnsupportedOperationError");
+    }
+    assert.strictEqual(stageAttempts, 0);
+    assert.isFalse(
+      yield* driver.checkpoints.hasCheckpointRef({ cwd: parent, checkpointRef: ignoredRef }),
+    );
+
+    const keepRef = CheckpointRef.make("refs/t3/checkpoints/keep");
+    yield* fileSystem.writeFileString(path.join(parent, "keep", "file.txt"), "v2\n");
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd: path.join(parent, "keep"),
+      checkpointRef: keepRef,
+    });
+    assert.strictEqual((yield* git(["show", `${keepRef}:keep/file.txt`])).stdout, "v2\n");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint capture stages tracked edits in a directory ignored later", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const parent = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-ignored-later-",
+    });
+    const git = (args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "checkpoint-test", cwd: parent, args });
+    yield* git(["init"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    const cwd = path.join(parent, "sub");
+    yield* fileSystem.makeDirectory(cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "v1\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    yield* fileSystem.writeFileString(path.join(parent, ".gitignore"), "sub/\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "v2\n");
+    yield* fileSystem.writeFileString(path.join(cwd, "new.txt"), "ignored\n");
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/ignored-later");
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual(
+      (yield* git(["ls-tree", "-r", "--name-only", checkpointRef, "--", "sub"])).stdout,
+      "sub/tracked.txt\n",
+    );
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:sub/tracked.txt`])).stdout, "v2\n");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint recovery refuses excessive candidates before probing", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1178,7 +1270,8 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
                     ? ".git\n"
                     : "";
               return {
-                exitCode: ChildProcessSpawner.ExitCode(0),
+                // Like real Git, check-ignore exits 1 when the workspace is not ignored.
+                exitCode: ChildProcessSpawner.ExitCode(input.args.includes("check-ignore") ? 1 : 0),
                 stdout,
                 stderr: "",
                 stdoutTruncated: false,
