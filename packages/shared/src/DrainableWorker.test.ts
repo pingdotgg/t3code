@@ -2,6 +2,8 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 
 import { makeDrainableWorker } from "./DrainableWorker.ts";
 
@@ -53,5 +55,23 @@ describe("makeDrainableWorker", () => {
         expect(processed).toEqual(["first", "second"]);
       }),
     ),
+  );
+
+  it.live("drain does not hang on work enqueued after the worker shut down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const worker = yield* makeDrainableWorker((_item: string) => Effect.void).pipe(
+        Scope.provide(scope),
+      );
+
+      yield* Scope.close(scope, Exit.void);
+
+      // The queue is shut down: the offer drops the item and reports false.
+      // The dropped item must not count toward drain, or drain hangs forever.
+      yield* worker.enqueue("late");
+
+      const drained = yield* worker.drain.pipe(Effect.timeout("2 seconds"), Effect.as("drained"));
+      expect(drained).toBe("drained");
+    }),
   );
 });

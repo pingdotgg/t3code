@@ -60,9 +60,12 @@ export const makeDrainableWorker = <A, E, R>(
       Effect.tx,
     );
 
-    const enqueue = (element: A): Effect.Effect<boolean, never, never> =>
+    const enqueue: DrainableWorker<A>["enqueue"] = (element: A) =>
       TxQueue.offer(queue, element).pipe(
-        Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
+        // A shut-down queue drops the item and reports false; only track
+        // items that were actually accepted or drain() can hang forever.
+        Effect.tap((offered) => (offered ? TxRef.update(outstanding, (n) => n + 1) : Effect.void)),
+        Effect.asVoid,
         Effect.tx,
       );
 
