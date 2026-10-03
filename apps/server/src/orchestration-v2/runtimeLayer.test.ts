@@ -3772,9 +3772,11 @@ it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
 
       const firstProjection = yield* orchestrator.getThreadProjection(threadId);
       const firstSnoozedAt = firstProjection.thread.snoozedAt;
-      const firstUpdatedAt = firstProjection.thread.updatedAt;
       assert.isNotNull(firstSnoozedAt);
 
+      // Repeating a calendar preset sends the same wake time. It must still
+      // restamp snoozedAt, or a failure that woke the thread keeps it awake.
+      yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
@@ -3786,8 +3788,11 @@ it.layer(SharedApplicationDataPlaneTestLayer)("snooze projection", (it) => {
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
       assert.isDefined(thread);
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
-      assert.deepEqual(thread.snoozedAt, firstSnoozedAt);
-      assert.deepEqual(thread.updatedAt, firstUpdatedAt);
+      assert.equal(
+        DateTime.toEpochMillis(thread.snoozedAt!),
+        DateTime.toEpochMillis(firstSnoozedAt!) + 1_000,
+      );
+      assert.deepEqual(thread.updatedAt, thread.snoozedAt);
 
       yield* orchestrator.dispatch({
         type: "message.dispatch",

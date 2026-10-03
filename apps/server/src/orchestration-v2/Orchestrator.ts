@@ -2673,17 +2673,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.snooze": {
-          const sameWakeTime =
-            thread.snoozedUntil != null &&
-            snoozedUntil !== null &&
-            DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil);
-          const existingSnoozedAt = sameWakeTime ? (thread.snoozedAt ?? null) : null;
+          // Always restamp, even for the same wake time: a re-snooze after a
+          // failure or completion woke the thread means "I saw it, not now".
+          // Retries are deduplicated by commandId before reaching here.
           return {
             ...thread,
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
-            snoozedAt: existingSnoozedAt ?? now,
-            updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
+            snoozedAt: now,
+            updatedAt: now,
           };
         }
         case "thread.unsnooze": {
