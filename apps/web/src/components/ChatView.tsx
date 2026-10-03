@@ -521,6 +521,7 @@ import {
   revokeUserMessagePreviewUrls,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
+  codexFollowUpPromptToAppend,
   waitForStartedServerThread,
   shouldRefocusComposerOnWindowFocus,
 } from "./ChatView.logic";
@@ -4336,13 +4337,12 @@ export default function ChatView(props: ChatViewProps) {
       focusComposer();
     });
   }, [focusComposer]);
-  const useArtifactTemplate = useCallback(
-    (template: CodexArtifactTemplate) => {
+  const appendToComposer = useCallback(
+    (promptToAppend: (currentDraft: string) => string | null) => {
       const composer = composerRef.current;
       if (!composer) return;
 
-      const currentDraft = composer.getSendContext().prompt;
-      const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
+      const prompt = promptToAppend(composer.getSendContext().prompt);
       if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
         toastManager.add({
           type: "error",
@@ -4354,6 +4354,18 @@ export default function ChatView(props: ChatViewProps) {
       scheduleComposerFocus();
     },
     [composerRef, scheduleComposerFocus],
+  );
+  const useArtifactTemplate = useCallback(
+    (template: CodexArtifactTemplate) =>
+      appendToComposer((currentDraft) =>
+        codexArtifactTemplatePromptToAppend(currentDraft, template),
+      ),
+    [appendToComposer],
+  );
+  const useCodexFollowUp = useCallback(
+    (prompt: string) =>
+      appendToComposer((currentDraft) => codexFollowUpPromptToAppend(currentDraft, prompt)),
+    [appendToComposer],
   );
   const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
     reportFailure: false,
@@ -10724,7 +10736,11 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
                 {...(!paintOnlyDisplayedTimeline
-                  ? { onUseArtifactTemplate: useArtifactTemplate }
+                  ? {
+                      onUseArtifactTemplate: useArtifactTemplate,
+                      // Provider subagent threads have no composer to fill.
+                      ...(composerMounted ? { onUseCodexFollowUp: useCodexFollowUp } : {}),
+                    }
                   : {})}
                 isRevertingCheckpoint={isRevertingCheckpoint}
                 onImageExpand={onExpandTimelineImage}

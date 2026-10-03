@@ -36,6 +36,7 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import {
   appendCodexArtifactTemplateUsePrompt,
+  appendComposerPromptOnce,
   codexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -209,6 +210,11 @@ export function codexArtifactTemplatePromptToAppend(
   return appendCodexArtifactTemplateUsePrompt(currentDraft, template) === currentDraft
     ? null
     : codexArtifactTemplateUsePrompt(template);
+}
+
+/** The text a Codex follow-up adds to the composer, or null when the draft already ends with it. */
+export function codexFollowUpPromptToAppend(currentDraft: string, prompt: string): string | null {
+  return appendComposerPromptOnce(currentDraft, prompt) === currentDraft ? null : prompt;
 }
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);

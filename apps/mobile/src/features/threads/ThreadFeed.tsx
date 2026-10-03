@@ -44,7 +44,9 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
+  codexFollowUpPromptFromHref,
   renderCodexFileCitationsAsMarkdown,
+  renderCodexFollowUpsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -294,6 +296,8 @@ export interface ThreadFeedProps {
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  /** Appends a Codex follow-up's prompt to the draft; without it follow-ups are plain text. */
+  readonly onUseCodexFollowUp?: (prompt: string) => void;
 }
 
 async function waitForThreadShell(
@@ -885,6 +889,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  /** Follow-ups render as links that `onLinkPress` turns into a draft; otherwise as labels. */
+  readonly followUpsActionable?: boolean | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
@@ -905,7 +911,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    const markdown = renderCodexFollowUpsAsMarkdown(
+      renderCodexFileCitationsAsMarkdown(segment.markdown),
+      { actionable: props.followUpsActionable === true },
+    );
     return hasNativeSelectableMarkdownText() ? (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}
@@ -1220,11 +1229,13 @@ function useMarkdownStyles(
             <NativeText
               className="underline"
               onPress={
-                linkHref
-                  ? () => {
-                      void tryOpenExternalUrl(linkHref, "markdown-link");
-                    }
-                  : undefined
+                linkHref && codexFollowUpPromptFromHref(linkHref) !== null
+                  ? () => onLinkPress(linkHref)
+                  : linkHref
+                    ? () => {
+                        void tryOpenExternalUrl(linkHref, "markdown-link");
+                      }
+                    : undefined
               }
               style={{ color: markdownLinkColor }}
             >
@@ -1487,6 +1498,7 @@ function renderFeedEntry(
     ThreadFeedProps,
     | "environmentId"
     | "onUseArtifactTemplate"
+    | "onUseCodexFollowUp"
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
@@ -1843,6 +1855,7 @@ function renderFeedEntry(
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
+              followUpsActionable={props.onUseCodexFollowUp !== undefined}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
             />
@@ -2226,6 +2239,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
+      const followUpPrompt = codexFollowUpPromptFromHref(href);
+      if (followUpPrompt !== null) {
+        const useFollowUp = props.onUseCodexFollowUp;
+        if (useFollowUp) {
+          void Haptics.selectionAsync();
+          useFollowUp(followUpPrompt);
+        }
+        return;
+      }
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
         const relativePath = resolveWorkspaceRelativeFilePath(
@@ -2314,7 +2336,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void tryOpenExternalUrl(presentation.href, "markdown-link");
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
+    [
+      props.environmentId,
+      props.onUseCodexFollowUp,
+      props.threadId,
+      props.workspaceRoot,
+      navigation,
+    ],
   );
   const markdownLinkHandlers = useMemo<MarkdownLinkHandlers>(
     () => ({
@@ -2903,6 +2931,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
+            onUseCodexFollowUp: props.onUseCodexFollowUp,
             threadId: props.threadId,
             copiedRowId,
             expandedWorkRows,
@@ -2975,6 +3004,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onToggleWorkRow,
       props.environmentId,
       props.onUseArtifactTemplate,
+      props.onUseCodexFollowUp,
       props.threadId,
       props.threadTitle,
       props.skills,

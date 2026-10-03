@@ -55,6 +55,7 @@ import {
   timelineHasEphemeralPreviewUrls,
   scheduleEnvironmentReconnectWarning,
   codexArtifactTemplatePromptToAppend,
+  codexFollowUpPromptToAppend,
   shouldDockDraftHeroForSubmission,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldRefocusComposerOnWindowFocus,
@@ -964,6 +965,14 @@ describe("artifact template composer insertion", () => {
     const prompt = "Create a document using this $artifact-template-hello-world about…";
 
     expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
+
+describe("Codex follow-up composer insertion", () => {
+  it("adds the prompt once, keeping the existing draft", () => {
+    expect(codexFollowUpPromptToAppend("", "Summarize it.")).toBe("Summarize it.");
+    expect(codexFollowUpPromptToAppend("Also,", "Summarize it.")).toBe("Summarize it.");
+    expect(codexFollowUpPromptToAppend("Also, Summarize it.", "Summarize it.")).toBeNull();
   });
 });
 

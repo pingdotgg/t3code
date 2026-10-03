@@ -119,7 +119,11 @@ export function appendCodexArtifactTemplateUsePrompt(
   draft: string,
   template: CodexArtifactTemplate,
 ): string {
-  const prompt = codexArtifactTemplateUsePrompt(template);
+  return appendComposerPromptOnce(draft, codexArtifactTemplateUsePrompt(template));
+}
+
+/** Appends a prompt to a composer draft unless the draft already ends with it. */
+export function appendComposerPromptOnce(draft: string, prompt: string): string {
   const trimmedDraft = draft.trimEnd();
   const promptStart = trimmedDraft.length - prompt.length;
   const alreadyEndsWithPrompt =

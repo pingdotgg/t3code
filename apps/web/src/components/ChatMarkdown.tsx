@@ -8,6 +8,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
+  CornerDownRightIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
   GlobeIcon,
@@ -95,6 +96,9 @@ import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
+  CODEX_FOLLOW_UP_HAST_PROPERTIES,
+  codexFollowUpFromHastProperties,
+  type CodexFollowUp,
   remarkCodexDirectives,
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
@@ -218,6 +222,8 @@ interface ChatMarkdownProps {
   parseRawHtml?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  /** Append a Codex follow-up's prompt to the composer; without it a follow-up is plain text. */
+  onUseCodexFollowUp?: ((prompt: string) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
@@ -335,6 +341,33 @@ function CodexArtifactTemplateCard(props: {
         </Button>
       ) : null}
     </div>
+  );
+}
+
+function CodexFollowUpChip(props: {
+  readonly followUp: CodexFollowUp;
+  readonly onUse?: ((prompt: string) => void) | undefined;
+}) {
+  if (!props.onUse) {
+    return (
+      <span data-chat-markdown-follow-up data-markdown-copy={props.followUp.label}>
+        {props.followUp.label}
+      </span>
+    );
+  }
+
+  const onUse = props.onUse;
+  return (
+    <button
+      type="button"
+      data-chat-markdown-follow-up
+      data-markdown-copy={props.followUp.label}
+      className="mx-0.5 my-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-card/60 px-1.5 py-0.5 text-left align-baseline text-sm leading-snug text-foreground shadow-xs transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-foreground"
+      onClick={() => onUse(props.followUp.prompt)}
+    >
+      <CornerDownRightIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0">{props.followUp.label}</span>
+    </button>
   );
 }
 
@@ -475,6 +508,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
+    span: [...(defaultSchema.attributes?.span ?? []), ...CODEX_FOLLOW_UP_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
     img: [
       ...(defaultSchema.attributes?.img ?? []),
@@ -2330,6 +2364,7 @@ function useChatMarkdownState({
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
+  onUseCodexFollowUp,
   onRunShellCommand,
   imageBaseDir,
   onImageExpand,
@@ -2737,6 +2772,7 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
+      onUseCodexFollowUp,
       onRunShellCommand,
       openChangeRequestLink,
       openDeferredMarkdownLink,
@@ -2768,6 +2804,7 @@ function useChatMarkdownState({
       markdownFileLinkMetaByHref,
       onTaskListChange,
       onUseArtifactTemplate,
+      onUseCodexFollowUp,
       onRunShellCommand,
       openChangeRequestLink,
       openDeferredMarkdownLink,
@@ -2834,6 +2871,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
     return <div {...props}>{children}</div>;
+  },
+  span: function MarkdownSpan({ node, children, ...props }) {
+    const { onUseCodexFollowUp } = use(ChatMarkdownRendererContext);
+    const followUp = codexFollowUpFromHastProperties(node?.properties, hastPlainTextDeep(node));
+    if (followUp) {
+      return <CodexFollowUpChip followUp={followUp} onUse={onUseCodexFollowUp} />;
+    }
+    return <span {...props}>{children}</span>;
   },
   p: function MarkdownParagraph({ node: _node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);

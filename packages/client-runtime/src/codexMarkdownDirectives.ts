@@ -20,7 +20,9 @@ const COLON = 58;
 const DASH = 45;
 const UNDERSCORE = 95;
 const CODEX_FILE_CITATION_NAME = "codex-file-citation";
+const CODEX_FOLLOW_UP_NAME = "codex-followup";
 const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
+const CODEX_FOLLOW_UP_HREF_PREFIX = "t3-follow-up:";
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataCodexArtifactTemplate",
@@ -30,6 +32,14 @@ export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
   "dataSkillDirectory",
   "dataSkillName",
 ] as const;
+
+export const CODEX_FOLLOW_UP_HAST_PROPERTIES = ["dataCodexFollowUp", "dataPrompt"] as const;
+
+/** A suggested next message: the label is shown, the prompt goes to the composer. */
+export interface CodexFollowUp {
+  readonly label: string;
+  readonly prompt: string;
+}
 
 interface MarkdownPosition {
   readonly start: { readonly offset?: number };
@@ -46,6 +56,7 @@ interface MarkdownAstNode {
   data?: {
     codexArtifactTemplate?: CodexArtifactTemplate;
     codexFileCitationMarkdown?: string;
+    codexFollowUp?: CodexFollowUp;
     hName?: string;
     hProperties?: Record<string, unknown>;
   };
@@ -132,7 +143,10 @@ function codexDirectiveSyntax(): Extension {
 
   return {
     text: {
-      [COLON]: restrictedDirective(textDirective, 1, CODEX_FILE_CITATION_NAME),
+      [COLON]: [
+        restrictedDirective(textDirective, 1, CODEX_FILE_CITATION_NAME),
+        restrictedDirective(textDirective, 1, CODEX_FOLLOW_UP_NAME),
+      ],
     },
     flow: {
       [COLON]: restrictedDirective(leafDirective, 2, CODEX_ARTIFACT_TEMPLATE_NAME),
@@ -199,6 +213,38 @@ function renderFileCitation(node: MarkdownAstNode, source: string, insideLink: b
   delete node.value;
 }
 
+function plainText(node: MarkdownAstNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(plainText).join("");
+}
+
+function resolveCodexFollowUp(node: MarkdownAstNode): CodexFollowUp | null {
+  const label = plainText(node).replace(/\s+/g, " ").trim();
+  const prompt = node.attributes?.prompt?.trim();
+  return label && prompt ? { label, prompt } : null;
+}
+
+function renderFollowUp(node: MarkdownAstNode, source: string, insideLink: boolean): void {
+  const followUp = resolveCodexFollowUp(node);
+  // A follow-up becomes a button, and a button cannot sit inside a link.
+  if (!followUp || insideLink) {
+    restoreTextDirective(node, source);
+    return;
+  }
+
+  node.type = "codexFollowUp";
+  node.children = [{ type: "text", value: followUp.label }];
+  node.data = {
+    codexFollowUp: followUp,
+    hName: "span",
+    hProperties: { dataCodexFollowUp: "true", dataPrompt: followUp.prompt },
+  };
+  delete node.name;
+  delete node.attributes;
+  delete node.value;
+  delete node.url;
+}
+
 function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   const template = resolveCodexArtifactTemplate(node.attributes);
   if (!template) {
@@ -231,6 +277,10 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
     renderFileCitation(node, source, insideLink);
     return;
   }
+  if (node.type === "textDirective" && node.name === CODEX_FOLLOW_UP_NAME) {
+    renderFollowUp(node, source, insideLink);
+    return;
+  }
   if (node.type === "leafDirective" && node.name === CODEX_ARTIFACT_TEMPLATE_NAME) {
     renderArtifactTemplate(node, source);
     return;
@@ -242,7 +292,7 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 }
 
-/** Adds grammar only for the two directives emitted by Codex, then renders them as mdast. */
+/** Adds grammar only for the directives emitted by Codex, then renders them as mdast. */
 function attachCodexDirectives(this: Processor) {
   const data = this.data();
   const micromarkExtensions = data.micromarkExtensions ?? (data.micromarkExtensions = []);
@@ -270,6 +320,7 @@ interface DirectiveMatch {
   readonly end: number;
   readonly markdown?: string;
   readonly template?: CodexArtifactTemplate;
+  readonly followUp?: CodexFollowUp;
 }
 
 function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[]): void {
@@ -282,6 +333,10 @@ function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[
     }
     if (node.data?.codexArtifactTemplate !== undefined) {
       matches.push({ start, end, template: node.data.codexArtifactTemplate });
+      return;
+    }
+    if (node.data?.codexFollowUp !== undefined) {
+      matches.push({ start, end, followUp: node.data.codexFollowUp });
       return;
     }
   }
@@ -315,6 +370,7 @@ export function renderCodexFileCitationsAsMarkdown(markdown: string): string {
 export function renderCodexDirectivesForCopy(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
+    !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`) &&
     !markdown.includes(`::${CODEX_ARTIFACT_TEMPLATE_NAME}`)
   ) {
     return markdown;
@@ -322,9 +378,46 @@ export function renderCodexDirectivesForCopy(markdown: string): string {
 
   return renderDirectiveMatches(markdown, (match) => {
     if (match.markdown !== undefined) return match.markdown;
+    if (match.followUp !== undefined) return match.followUp.label;
     if (match.template === undefined) return undefined;
     return `${match.template.displayName} (${codexArtifactTemplatePresentationLabel(match.template.artifactKind)})`;
   });
+}
+
+// Enough to keep a label literal inside link text; a label is a short phrase, not a block.
+const MARKDOWN_TEXT_SPECIAL_CHARACTERS = /[\\`*_[\]~]/g;
+
+function escapeMarkdownText(text: string): string {
+  return text.replace(MARKDOWN_TEXT_SPECIAL_CHARACTERS, (character) => `\\${character}`);
+}
+
+/**
+ * Native renderers cannot host a button inside Markdown text, so a follow-up becomes a link
+ * that `codexFollowUpPromptFromHref` reads back. Without `actionable` it is only its label.
+ */
+export function renderCodexFollowUpsAsMarkdown(
+  markdown: string,
+  options: { readonly actionable: boolean },
+): string {
+  if (!markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`)) return markdown;
+
+  return renderDirectiveMatches(markdown, (match) => {
+    if (match.followUp === undefined) return undefined;
+    const label = escapeMarkdownText(match.followUp.label);
+    if (!options.actionable) return label;
+    return `[${label}](<${CODEX_FOLLOW_UP_HREF_PREFIX}${encodeURIComponent(match.followUp.prompt)}>)`;
+  });
+}
+
+/** Reads the prompt back from a link made by `renderCodexFollowUpsAsMarkdown`. */
+export function codexFollowUpPromptFromHref(href: string): string | null {
+  if (!href.startsWith(CODEX_FOLLOW_UP_HREF_PREFIX)) return null;
+  try {
+    const prompt = decodeURIComponent(href.slice(CODEX_FOLLOW_UP_HREF_PREFIX.length)).trim();
+    return prompt || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Native renderers split cards out because they cannot host a view inside Markdown text. */
@@ -385,4 +478,14 @@ export function artifactTemplateFromHastProperties(
     skill_directory: stringProperty("dataSkillDirectory"),
     skill_name: stringProperty("dataSkillName"),
   });
+}
+
+export function codexFollowUpFromHastProperties(
+  properties: Readonly<Record<string, unknown>> | null | undefined,
+  label: string,
+): CodexFollowUp | null {
+  if (properties?.dataCodexFollowUp !== "true") return null;
+  const prompt = typeof properties.dataPrompt === "string" ? properties.dataPrompt.trim() : "";
+  const trimmedLabel = label.trim();
+  return prompt && trimmedLabel ? { label: trimmedLabel, prompt } : null;
 }
