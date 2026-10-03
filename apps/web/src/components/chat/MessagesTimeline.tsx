@@ -468,6 +468,11 @@ interface MessagesTimelineProps {
    */
   liveFollowEnabled: boolean;
   /**
+   * Reads ChatView's live-follow latch. A navigation gesture releases it
+   * synchronously, before `liveFollowEnabled` re-renders.
+   */
+  isLiveFollowLatched: () => boolean;
+  /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
    */
@@ -535,6 +540,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onIsAtEndChange,
   onContentOverflowChange,
   liveFollowEnabled,
+  isLiveFollowLatched,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
@@ -1024,7 +1030,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // DOM geometry includes the header and the virtualizer's layout adjustment.
           offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
           scrollOffset: element.scrollTop,
-          atEnd: isAtEnd,
+          // While live-following, a gap to the end is the follow scroll
+          // trailing streamed output, not a reading position to restore.
+          // Anchored end space holds the first send near the top instead of
+          // following, so its gap is a real position. The latch covers a
+          // gesture that released follow before this render caught up.
+          atEnd: isAtEnd || (liveFollowEnabled && isLiveFollowLatched() && !anchoredEndSpace),
           disclosures: {
             runs: paintedExpandedRunIds,
             workGroups: paintedExpandedWorkGroupIds,
@@ -1083,6 +1094,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     workGroupViewState,
     rows,
     listIdentityKey,
+    liveFollowEnabled,
+    isLiveFollowLatched,
+    anchoredEndSpace,
     restoringThreadPosition,
     listRef,
     minimapItems,
