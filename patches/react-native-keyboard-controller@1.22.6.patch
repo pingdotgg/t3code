@@ -187,7 +187,7 @@ index 6481228..0dc5dd1 100644
      padding,
      currentHeight,
 diff --git a/lib/commonjs/components/KeyboardChatScrollView/useExtraContentPadding/index.js b/lib/commonjs/components/KeyboardChatScrollView/useExtraContentPadding/index.js
-index 0215bef..bf95336 100644
+index 0215bef..5307446 100644
 --- a/lib/commonjs/components/KeyboardChatScrollView/useExtraContentPadding/index.js
 +++ b/lib/commonjs/components/KeyboardChatScrollView/useExtraContentPadding/index.js
 @@ -32,6 +32,8 @@ function useExtraContentPadding(options) {
@@ -199,7 +199,23 @@ index 0215bef..bf95336 100644
      scroll,
      layout,
      size,
-@@ -71,8 +73,8 @@ function useExtraContentPadding(options) {
+@@ -51,8 +53,13 @@ function useExtraContentPadding(options) {
+       // otherwise the native ScrollView clamps to the old range.
+       requestAnimationFrame(() => {
+         // check that view is still mounted and ref is actual
+-        // otherwise it may lead to a crash
+-        if (!scrollViewRef()) {
++        // otherwise it may lead to a crash. Reanimated 4.7+ passes the
++        // ref to the UI runtime as a shareable holding the node in `.value`.
++        const node =
++          typeof scrollViewRef === "function"
++            ? scrollViewRef()
++            : scrollViewRef.value;
++        if (!node) {
+           return;
+         }
+         (0, _reactNativeReanimated.scrollTo)(scrollViewRef, 0, target, false);
+@@ -71,8 +78,8 @@ function useExtraContentPadding(options) {
      }
  
      // Compute effective delta considering blankSpace floor
@@ -210,7 +226,7 @@ index 0215bef..bf95336 100644
      const effectiveDelta = currentTotal - previousTotal;
      if (effectiveDelta === 0) {
        // blankSpace absorbed the change
-@@ -91,13 +93,11 @@ function useExtraContentPadding(options) {
+@@ -91,13 +98,11 @@ function useExtraContentPadding(options) {
        const target = Math.max(scroll.value - effectiveDelta, -currentTotal);
        scrollToTarget(target);
      } else {
@@ -430,7 +446,7 @@ index 043b973..df5a408 100644
      padding,
      currentHeight,
 diff --git a/lib/module/components/KeyboardChatScrollView/useExtraContentPadding/index.js b/lib/module/components/KeyboardChatScrollView/useExtraContentPadding/index.js
-index 5a9b91d..bcd2f2c 100644
+index 5a9b91d..a11bfdb 100644
 --- a/lib/module/components/KeyboardChatScrollView/useExtraContentPadding/index.js
 +++ b/lib/module/components/KeyboardChatScrollView/useExtraContentPadding/index.js
 @@ -26,6 +26,8 @@ function useExtraContentPadding(options) {
@@ -442,7 +458,23 @@ index 5a9b91d..bcd2f2c 100644
      scroll,
      layout,
      size,
-@@ -65,8 +67,8 @@ function useExtraContentPadding(options) {
+@@ -45,8 +47,13 @@ function useExtraContentPadding(options) {
+       // otherwise the native ScrollView clamps to the old range.
+       requestAnimationFrame(() => {
+         // check that view is still mounted and ref is actual
+-        // otherwise it may lead to a crash
+-        if (!scrollViewRef()) {
++        // otherwise it may lead to a crash. Reanimated 4.7+ passes the
++        // ref to the UI runtime as a shareable holding the node in `.value`.
++        const node =
++          typeof scrollViewRef === "function"
++            ? scrollViewRef()
++            : scrollViewRef.value;
++        if (!node) {
+           return;
+         }
+         scrollTo(scrollViewRef, 0, target, false);
+@@ -65,8 +72,8 @@ function useExtraContentPadding(options) {
      }
  
      // Compute effective delta considering blankSpace floor
@@ -453,7 +485,7 @@ index 5a9b91d..bcd2f2c 100644
      const effectiveDelta = currentTotal - previousTotal;
      if (effectiveDelta === 0) {
        // blankSpace absorbed the change
-@@ -85,14 +87,12 @@ function useExtraContentPadding(options) {
+@@ -85,14 +92,12 @@ function useExtraContentPadding(options) {
        const target = Math.max(scroll.value - effectiveDelta, -currentTotal);
        scrollToTarget(target);
      } else {
@@ -823,7 +855,7 @@ index f89b7c8..02e0e19 100644
  
  type UseChatKeyboardReturn = {
 diff --git a/src/components/KeyboardChatScrollView/useExtraContentPadding/index.ts b/src/components/KeyboardChatScrollView/useExtraContentPadding/index.ts
-index de7d6f7..fef2ad9 100644
+index de7d6f7..631cdfb 100644
 --- a/src/components/KeyboardChatScrollView/useExtraContentPadding/index.ts
 +++ b/src/components/KeyboardChatScrollView/useExtraContentPadding/index.ts
 @@ -17,6 +17,10 @@ type UseExtraContentPaddingOptions = {
@@ -846,7 +878,23 @@ index de7d6f7..fef2ad9 100644
      scroll,
      layout,
      size,
-@@ -100,14 +106,12 @@ function useExtraContentPadding(options: UseExtraContentPaddingOptions): void {
+@@ -73,8 +79,13 @@ function useExtraContentPadding(options: UseExtraContentPaddingOptions): void {
+         // otherwise the native ScrollView clamps to the old range.
+         requestAnimationFrame(() => {
+           // check that view is still mounted and ref is actual
+-          // otherwise it may lead to a crash
+-          if (!scrollViewRef()) {
++          // otherwise it may lead to a crash. Reanimated 4.7+ passes the
++          // ref to the UI runtime as a shareable holding the node in `.value`.
++          const node =
++            typeof scrollViewRef === "function"
++              ? scrollViewRef()
++              : (scrollViewRef as unknown as { value: unknown }).value;
++          if (!node) {
+             return;
+           }
+           scrollTo(scrollViewRef, 0, target, false);
+@@ -100,14 +111,12 @@ function useExtraContentPadding(options: UseExtraContentPaddingOptions): void {
        }
  
        // Compute effective delta considering blankSpace floor
@@ -867,7 +915,7 @@ index de7d6f7..fef2ad9 100644
        const effectiveDelta = currentTotal - previousTotal;
  
        if (effectiveDelta === 0) {
-@@ -140,22 +144,28 @@ function useExtraContentPadding(options: UseExtraContentPaddingOptions): void {
+@@ -140,22 +149,28 @@ function useExtraContentPadding(options: UseExtraContentPaddingOptions): void {
  
          scrollToTarget(target);
        } else {

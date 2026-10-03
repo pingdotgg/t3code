@@ -8,7 +8,7 @@ import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 
-import { MobileStorage } from "../../persistence/mobile-storage";
+import * as MobileStorage from "../../persistence/mobile-storage";
 
 import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
 
@@ -76,8 +76,8 @@ function cloudClientLayer() {
   return Layer.mergeAll(
     httpClientLayer,
     Layer.succeed(
-      MobileStorage,
-      MobileStorage.of({
+      MobileStorage.MobileStorage,
+      MobileStorage.MobileStorage.of({
         loadSavedConnections: Effect.succeed([]),
         saveConnection: () => Effect.void,
         clearSavedConnection: () => Effect.void,
@@ -104,7 +104,7 @@ const withCloudServices = <A, E>(
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
-    | MobileStorage
+    | MobileStorage.MobileStorage
   >,
 ) => effect.pipe(Effect.provide(cloudClientLayer()));
 

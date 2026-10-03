@@ -1,13 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
 it.effect("isolates provider bindings and preserves opaque credentials", () =>
   Effect.gen(function* () {
     const data = new Map<string, Uint8Array>();
-    const secretStore = ServerSecretStore.of({
+    const secretStore = ServerSecretStore.ServerSecretStore.of({
       get: (name) => Effect.sync(() => Option.fromUndefinedOr(data.get(name))),
       set: (name, value) =>
         Effect.sync(() => {
@@ -21,13 +21,13 @@ it.effect("isolates provider bindings and preserves opaque credentials", () =>
       getOrCreateRandom: () => Effect.die("unused"),
     });
     const a = yield* ProviderCredentialStore.make("cursor", "../../personal").pipe(
-      Effect.provideService(ServerSecretStore, secretStore),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
     );
     const b = yield* ProviderCredentialStore.make("cursor", "work").pipe(
-      Effect.provideService(ServerSecretStore, secretStore),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
     );
     const c = yield* ProviderCredentialStore.make("other", "../../personal").pipe(
-      Effect.provideService(ServerSecretStore, secretStore),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
     );
     const bytes = Uint8Array.from([0, 255, 128, 1]);
     yield* a.set(bytes);
@@ -36,11 +36,11 @@ it.effect("isolates provider bindings and preserves opaque credentials", () =>
     assert.isTrue(Option.isNone(yield* c.get));
     assert.isFalse(a.binding.key.includes("/"));
     const long = yield* ProviderCredentialStore.make("a".repeat(64), "b".repeat(64)).pipe(
-      Effect.provideService(ServerSecretStore, secretStore),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
     );
     assert.isBelow(long.binding.key.length, 255);
     const delimiter = yield* ProviderCredentialStore.make("cur", "sor../../personal").pipe(
-      Effect.provideService(ServerSecretStore, secretStore),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
     );
     assert.notStrictEqual(delimiter.binding.key, a.binding.key);
     yield* a.remove;

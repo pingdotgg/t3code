@@ -26,6 +26,7 @@ import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
+  uniformMobileSetting,
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 
@@ -84,7 +85,12 @@ function AutoSettleSettingsRows() {
     return null;
   }
 
-  const writeToAll = (patch: Partial<AutoSettleSettings>) => {
+  const writeToAll = (
+    patch: Partial<AutoSettleSettings> & {
+      autoResumeLimitedThreads?: boolean;
+      snoozeLimitedThreads?: boolean;
+    },
+  ) => {
     if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
@@ -161,6 +167,24 @@ function AutoSettleSettingsRows() {
           pending={pendingWrites > 0}
           onClear={clearProjectOverrides}
         />
+      ) : null}
+      {!projectSelected ? (
+        <SettingsSection title="Usage limits">
+          <SettingsSwitchRow
+            icon="clock"
+            label="Auto-resume limited threads"
+            value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
+          />
+          <SettingsSwitchRow
+            icon="clock"
+            label="Snooze limited threads"
+            value={uniformMobileSetting(displayTargets, "snoozeLimitedThreads")}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
+          />
+        </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">
         <SettingsSwitchRow
