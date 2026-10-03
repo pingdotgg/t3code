@@ -566,6 +566,13 @@ describe("mergeUsage", () => {
                 costSource: "unpriced",
                 unpricedRecords: 5,
               }),
+              // Reported cost on one record, no rates for the other four.
+              bucket({
+                provider: "codex",
+                model: "partly-reported",
+                costUsd: 0,
+                unpricedRecords: 4,
+              }),
             ],
             [
               { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
@@ -596,6 +603,7 @@ describe("mergeUsage", () => {
     expect(merged.models.map(({ model, unpricedTokens }) => [model, unpricedTokens])).toEqual([
       ["claude-fable-5", 0],
       ["unknown-model", 1160],
+      ["partly-reported", 928],
     ]);
   });
 

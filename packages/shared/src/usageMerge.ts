@@ -45,7 +45,10 @@ export interface ModelTotals {
    * `costUsd`. When it equals `records` the cost is unknown, not zero.
    */
   readonly unpricedRecords: number;
-  /** Tokens from cells with no known rates, which a custom price would cover. */
+  /**
+   * Tokens with no known rates, which a custom price would cover. A cell that
+   * mixes these with reported costs counts its tokens by record share.
+   */
   readonly unpricedTokens: number;
   readonly costShare: number;
 }
@@ -515,7 +518,9 @@ export function mergeUsage(
       };
       model.records += bucket.records;
       model.unpricedRecords += bucket.unpricedRecords;
-      if (bucket.costSource === "unpriced") model.unpricedTokens += tokens;
+      if (bucket.records > 0) {
+        model.unpricedTokens += (tokens * bucket.unpricedRecords) / bucket.records;
+      }
       modelAccumulator.set(modelKey, model);
 
       const day = dailyAccumulator.get(bucket.day) ?? {

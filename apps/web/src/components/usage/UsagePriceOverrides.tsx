@@ -108,8 +108,13 @@ export function UsagePriceOverrides({
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),
   );
+  // A model that already has a custom price somewhere is edited in its existing row.
   const [drafts, setDrafts] = useState<readonly UsagePriceDraft[]>(() =>
-    initialModel === undefined
+    initialModel === undefined ||
+    selected.some(
+      (environment) =>
+        environment.prices !== null && Object.hasOwn(environment.prices, initialModel),
+    )
       ? []
       : [{ id: "new:initial", model: initialModel, isNew: true, values: {} }],
   );
