@@ -4,7 +4,11 @@ import { Checkbox as CheckboxPrimitive } from "@base-ui/react/checkbox";
 
 import { cn } from "~/lib/utils";
 
-function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
+function Checkbox({
+  className,
+  variant = "default",
+  ...props
+}: CheckboxPrimitive.Root.Props & { variant?: "default" | "accent" }) {
   return (
     <CheckboxPrimitive.Root
       className={cn(
@@ -15,7 +19,12 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
       {...props}
     >
       <CheckboxPrimitive.Indicator
-        className="-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground"
+        className={cn(
+          "-inset-px absolute flex items-center justify-center rounded-[.25rem] data-unchecked:hidden data-indeterminate:text-foreground",
+          variant === "accent"
+            ? "text-[var(--app-theme-accent-foreground,var(--primary-foreground))] data-checked:bg-[var(--app-theme-accent,var(--primary))]"
+            : "text-primary-foreground data-checked:bg-primary",
+        )}
         data-slot="checkbox-indicator"
         render={(props, state) => (
           <span {...props}>

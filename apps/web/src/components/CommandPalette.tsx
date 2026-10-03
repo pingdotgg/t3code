@@ -121,6 +121,7 @@ import {
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
+  normalizeProjectPathForComparison,
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
@@ -718,6 +719,14 @@ function OpenCommandPaletteDialog(props: {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const updateServerSettings = useAtomCommand(serverEnvironment.updateSettings);
+  const [isSavingDefaultDirectory, setIsSavingDefaultDirectory] = useState(false);
+  const [savedDefaultDirectory, setSavedDefaultDirectory] = useState<{
+    environmentId: EnvironmentId;
+    path: string;
+    resolvedPath: string;
+    previous: string;
+  } | null>(null);
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1087,6 +1096,14 @@ function OpenCommandPaletteDialog(props: {
   );
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
+  const defaultDirectory = browseEnvironment?.serverConfig?.settings.addProjectBaseDirectory ?? "";
+  const isSavedDefaultDirectory =
+    savedDefaultDirectory !== null &&
+    savedDefaultDirectory.environmentId === browseEnvironmentId &&
+    normalizeProjectPathForComparison(savedDefaultDirectory.path) ===
+      normalizeProjectPathForComparison(browseDirectoryPath) &&
+    normalizeProjectPathForComparison(savedDefaultDirectory.resolvedPath) ===
+      normalizeProjectPathForComparison(defaultDirectory);
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = useCallback(
     (environmentId: EnvironmentId | null): string => {
@@ -1156,6 +1173,17 @@ function OpenCommandPaletteDialog(props: {
   );
   const browseResult = browseQuery.data;
   const isBrowsePending = browseQuery.isPending;
+  const showMakeDefault =
+    isBrowsing &&
+    addProjectEnvironmentId !== null &&
+    !isRemoteProjectCloneFlow &&
+    newProjectFlow === null &&
+    !isExplicitRelativeProjectPath(query.trim()) &&
+    (isSavedDefaultDirectory ||
+      (normalizeProjectPathForComparison(defaultDirectory.trim() || "~") !==
+        normalizeProjectPathForComparison(browseDirectoryPath) &&
+        normalizeProjectPathForComparison(defaultDirectory) !==
+          normalizeProjectPathForComparison(browseResult?.parentPath ?? browseDirectoryPath)));
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } = useMemo(
     () =>
@@ -3394,6 +3422,46 @@ function OpenCommandPaletteDialog(props: {
       showBackHint={isSubmenu}
       value={query}
     >
+      {showMakeDefault ? (
+        <div className="px-4 pt-3">
+          <label className="flex w-fit items-center gap-2 text-sm">
+            <Checkbox
+              variant="accent"
+              checked={isSavedDefaultDirectory}
+              disabled={
+                isSavingDefaultDirectory || isBrowsePending || !browseResult || !!browseQuery.error
+              }
+              onCheckedChange={(checked) => {
+                if (!browseEnvironmentId || isSavingDefaultDirectory || !browseResult) return;
+                const previous = isSavedDefaultDirectory
+                  ? savedDefaultDirectory.previous
+                  : defaultDirectory;
+                const environmentId = browseEnvironmentId;
+                const path = browseDirectoryPath;
+                const resolvedPath = browseResult.parentPath;
+                setIsSavingDefaultDirectory(true);
+                void updateServerSettings({
+                  environmentId,
+                  input: {
+                    patch: {
+                      addProjectBaseDirectory: checked ? browseResult.parentPath : previous,
+                    },
+                  },
+                })
+                  .then((result) => {
+                    if (result._tag === "Success") {
+                      setSavedDefaultDirectory(
+                        checked ? { environmentId, path, resolvedPath, previous } : null,
+                      );
+                    }
+                  })
+                  .finally(() => setIsSavingDefaultDirectory(false));
+              }}
+            />
+            Make default
+          </label>
+        </div>
+      ) : null}
       {newProjectPathPreview !== null ? (
         <div className="p-2 pb-0">
           <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
