@@ -567,6 +567,33 @@ export const make = Effect.gen(function* () {
           });
         }
       }
+      // Native-child provider turns are runless. Cancel them from the original
+      // nonterminal roots even if a background item already cancelled the node.
+      const runlessRootNodeIds = new Set(
+        projection.nodes.flatMap((node) =>
+          node.kind === "root_turn" && node.runId === null && isNonterminalNodeStatus(node.status)
+            ? [node.id]
+            : [],
+        ),
+      );
+      for (const providerTurn of projection.providerTurns) {
+        if (
+          providerTurn.runAttemptId !== null ||
+          !runlessRootNodeIds.has(providerTurn.nodeId) ||
+          (providerTurn.status !== "pending" && providerTurn.status !== "running")
+        ) {
+          continue;
+        }
+        events.push({
+          id: yield* allocateEventId(),
+          type: "provider-turn.updated",
+          threadId: projection.thread.id,
+          nodeId: providerTurn.nodeId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...providerTurn, status: "cancelled", completedAt: now },
+        });
+      }
       // All provider processes are gone on startup/shutdown: clear any
       // persisted Waiting roster (including idle threads from settled roots)
       // and idle active threads without resurrecting active status.
