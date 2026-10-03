@@ -3,15 +3,27 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import * as Cause from "effect/Cause";
 
-const mocks = vi.hoisted(() => ({
-  importThreads: vi.fn(),
-  createProject: vi.fn(),
-  complete: vi.fn(),
-  refresh: vi.fn(),
-  toast: vi.fn(),
-  projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
-}));
+const mocks = vi.hoisted(() => {
+  const environment = {
+    environmentId: "test-env",
+    label: "Computer",
+    entry: { enabled: true },
+    connection: { phase: "connected" },
+  };
+  return {
+    environment,
+    environments: [environment],
+    setEnabled: vi.fn(),
+    importThreads: vi.fn(),
+    createProject: vi.fn(),
+    complete: vi.fn(),
+    refresh: vi.fn(),
+    toast: vi.fn(),
+    projects: [] as Array<{ id: string; environmentId: string; workspaceRoot: string }>,
+  };
+});
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "create" } }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -20,24 +32,19 @@ vi.mock("../../state/use-atom-command", () => ({
       ? mocks.importThreads
       : command === "create"
         ? mocks.createProject
-        : mocks.refresh,
+        : command === "setEnabled"
+          ? mocks.setEnabled
+          : mocks.refresh,
 }));
 vi.mock("../../onboarding/firstRun", () => ({ useCompleteOnboarding: () => mocks.complete }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
   readProjects: () => mocks.projects,
 }));
-vi.mock("../../state/environments", () => {
-  const environment = {
-    environmentId: "test-env",
-    label: "Computer",
-    connection: { phase: "connected" },
-  };
-  return {
-    useEnvironments: () => ({ environments: [environment] }),
-    usePrimaryEnvironment: () => environment,
-  };
-});
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: mocks.environments }),
+  usePrimaryEnvironment: () => mocks.environments[0],
+}));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     providersValueAtom: () => [],
@@ -70,6 +77,7 @@ vi.mock("../../onboarding/useProjectScans", () => ({
   ],
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
+vi.mock("../../connection/catalog", () => ({ environmentCatalog: { setEnabled: "setEnabled" } }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
 vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({ useT3ConnectAuthPrompt: vi.fn() }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
@@ -93,6 +101,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.environments = [mocks.environment];
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -122,13 +131,56 @@ afterEach(async () => {
   container.remove();
 });
 
-async function click(label: string) {
-  const button = [...document.querySelectorAll("button")].find(
+async function click(label: string, scope: ParentNode = document) {
+  const button = [...scope.querySelectorAll("button")].find(
     (element) => element.textContent?.trim() === label,
   );
   expect(button, `button ${label}`).toBeDefined();
   await act(async () => button!.click());
 }
+
+it("keeps a failed Turn on error on its Off row without changing selection", async () => {
+  mocks.environments = ["Computer", "Other computer"].map((label, index) => ({
+    environmentId: `off-env-${index}`,
+    label,
+    entry: { enabled: false },
+    connection: { phase: "disconnected" },
+  }));
+  mocks.setEnabled.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(new Error("Could not enable Computer")),
+  });
+  await act(async () => root.render(<WelcomeWizard localAvailable onDone={vi.fn()} />));
+
+  const rows = [...document.querySelectorAll("fieldset label")];
+  expect(rows).toHaveLength(2);
+  const [failedRow, otherRow] = rows;
+  expect(failedRow!.textContent).toContain("Computer");
+  expect(otherRow!.textContent).toContain("Other computer");
+  const continueButton = [...document.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Continue",
+  );
+  for (const row of rows) {
+    expect(row.querySelector('[role="checkbox"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(row.textContent).toContain("Off");
+  }
+  expect(continueButton?.disabled).toBe(true);
+
+  await click("Turn on", failedRow!);
+
+  expect(mocks.setEnabled).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "off-env-0",
+    enabled: true,
+  });
+  expect(failedRow!.querySelector('[role="alert"]')?.textContent).toBe("Could not enable Computer");
+  expect(otherRow!.querySelector('[role="alert"]')).toBeNull();
+  expect(otherRow!.textContent).not.toContain("Could not enable Computer");
+  for (const row of rows) {
+    expect(row.querySelector('[role="checkbox"]')?.getAttribute("aria-checked")).toBe("true");
+    expect(row.textContent).toContain("Off");
+  }
+  expect(continueButton?.disabled).toBe(true);
+});
 
 it("enters the workspace after a partial import and warns after navigation finishes", async () => {
   let finishNavigation = () => {};
