@@ -33,6 +33,7 @@ import type {
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { truncate } from "@t3tools/shared/String";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
@@ -2304,6 +2305,9 @@ function terminalResultError(
   }
 }
 
+// The CLI's API error text can embed a whole upstream response.
+const MAX_CLAUDE_API_ERROR_CHARS = 500;
+
 function isOverloadedResult(result: SDKResultMessage): boolean {
   return result.subtype === "success" && result.api_error_status === 529;
 }
@@ -2449,7 +2453,7 @@ function providerFailureFromResult(
   const structuredError = isOverloadedResult(message)
     ? "Claude API is overloaded (529). Try again shortly."
     : message.subtype === "success" && message.api_error_status === 429
-      ? "Claude API rate limit reached. Try again later."
+      ? (failureHint ?? "Claude API rate limit reached. Try again later.")
       : terminalResultError(message.terminal_reason, failureHint);
   if (message.subtype !== "success") {
     return makeProviderFailure({
@@ -2661,6 +2665,7 @@ interface ActiveClaudeTurnContext {
   readonly rejectedRateLimitTypes: Set<string>;
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
+  latestAssistantErrorText: string | undefined;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -5589,6 +5594,15 @@ export function makeClaudeAdapterV2(
             context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
+              // The CLI names an API failure ("API Error: 400 ...") in the text
+              // of the assistant message that carries `error`.
+              context.latestAssistantErrorText =
+                message.error === undefined
+                  ? undefined
+                  : truncate(
+                      textFromClaudeContent(message.message.content),
+                      MAX_CLAUDE_API_ERROR_CHARS,
+                    ) || undefined;
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
                   configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
@@ -6290,11 +6304,22 @@ export function makeClaudeAdapterV2(
               (message.terminal_reason == null ||
                 message.terminal_reason === "api_error" ||
                 message.terminal_reason === "blocking_limit");
+            // The CLI's own error text names the cause; a failed success result
+            // also carries it in `result`. Only a rejected usage window outranks
+            // it, so a 429 that rejected no window reports what the API said.
+            const apiErrorText =
+              usageLimited || message.terminal_reason === "api_error"
+                ? (context.latestAssistantErrorText ??
+                  (message.subtype === "success" && message.is_error
+                    ? truncate(message.result, MAX_CLAUDE_API_ERROR_CHARS) || undefined
+                    : undefined))
+                : undefined;
             const failureHint =
               context.authenticationFailureMessage ??
-              (usageLimited
+              (usageLimited &&
+              (context.rejectedRateLimitTypes.size > 0 || apiErrorText === undefined)
                 ? "Claude usage limit reached. Send the message again once the limit resets."
-                : undefined);
+                : apiErrorText);
             const resetTimes = Array.from(context.rateLimitResetTimes.values());
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
@@ -7111,6 +7136,7 @@ export function makeClaudeAdapterV2(
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
+              latestAssistantErrorText: undefined,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),

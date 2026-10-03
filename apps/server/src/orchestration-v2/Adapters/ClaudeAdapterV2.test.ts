@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 
 import type {
   Query as ClaudeQuery,
+  SDKAssistantMessageError,
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
@@ -1928,7 +1929,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeAssistantErrorFrame = (input: {
     readonly uuid: string;
-    readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
+    readonly error: SDKAssistantMessageError | undefined;
+    readonly text?: string;
     readonly parentToolUseId?: string | null;
   }) =>
     claudeSdkFrame({
@@ -1938,7 +1940,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
-        content: [{ type: "text", text: "Claude could not complete this request." }],
+        content: [{ type: "text", text: input.text ?? "Claude could not complete this request." }],
         stop_reason: null,
         stop_sequence: null,
         usage: {
@@ -2635,13 +2637,91 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(terminal.status, "failed");
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, expectedLimit ? "usage_limit" : "provider_error");
+      // With no rejected usage window, the CLI's own text names the failure.
       assert.equal(
         terminal.failure.message,
-        expectedLimit
-          ? "Claude usage limit reached. Send the message again once the limit resets."
-          : "Claude gave up after repeated API errors.",
+        expectedLimit ? "Claude could not complete this request." : "API Error",
       );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each<{
+    readonly name: string;
+    readonly error: SDKAssistantMessageError | undefined;
+    readonly result: string;
+    readonly apiErrorStatus?: number;
+    readonly expected: string;
+  }>([
+    {
+      name: "a refused request",
+      error: "invalid_request",
+      result: "API Error: 400 example refusal",
+      expected: "API Error: 400 example refusal",
+    },
+    {
+      name: "a 429 that rejected no usage window",
+      error: "rate_limit",
+      result: "API Error: Request rejected (429) · rate_limit_error: example rate limit",
+      apiErrorStatus: 429,
+      expected: "API Error: Request rejected (429) · rate_limit_error: example rate limit",
+    },
+    {
+      name: "an overlong API error",
+      error: "server_error",
+      result: `API Error: 500 ${"x".repeat(600)}`,
+      expected: `API Error: 500 ${"x".repeat(485)}...`,
+    },
+    {
+      name: "an API error named only in the result",
+      error: undefined,
+      result: "API Error: 500 example failure",
+      expected: "API Error: 500 example failure",
+    },
+    {
+      name: "an API error without text",
+      error: undefined,
+      result: "",
+      expected: "Claude gave up after repeated API errors.",
+    },
+  ])(
+    "reports the CLI's API error text after $name",
+    ({ name, error, result, apiErrorStatus, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-api-error-${name}`),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000640",
+            error,
+            text: error === undefined ? "Working on it." : result,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000641",
+            result,
+            isError: true,
+            terminalReason: "api_error",
+            ...(apiErrorStatus === undefined ? {} : { apiErrorStatus }),
+          }),
+        );
+
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.message, expected);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect.each([429, 401, 529])(
