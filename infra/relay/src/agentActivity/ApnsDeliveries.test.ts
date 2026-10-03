@@ -230,6 +230,7 @@ function makeLayer(input: {
         Layer.succeed(LiveActivities.LiveActivities, {
           register: () => Effect.void,
           listTargets: () => Effect.succeed(input.currentTargets ?? [target]),
+          listIdleArmedTargets: () => Effect.succeed([]),
           markStartQueued: (queued) =>
             Effect.sync(() => {
               input.queuedStarts?.push(queued);
@@ -914,6 +915,63 @@ describe("ApnsDeliveries", () => {
       });
       expect(error.cause).toMatchObject({ _tag: "SchemaError" });
     }).pipe(Effect.provide(makeLayer({ attempts })));
+  });
+
+  describe("a queued contentless end while the user has live work", () => {
+    const signedEnd = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload: makeApnsDeliveryJobPayload({
+        kind: "live_activity_end",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "activity-token",
+        aggregate: null,
+        createdAt: "1970-01-01T00:00:00.000Z",
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: "job-end-1",
+      }),
+    });
+    // Returns the recorded attempt reason for one queued end.
+    const processEnd = (
+      currentTarget: LiveActivities.TargetRow,
+      activityStates?: ReadonlyArray<RelayAgentActivityState>,
+    ) => {
+      const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+      return ApnsDeliveries.ApnsDeliveries.pipe(
+        Effect.flatMap((deliveries) => deliveries.processSignedJob(signedEnd)),
+        Effect.map(() => attempts.map((attempt) => attempt.apnsReason)),
+        Effect.provide(
+          makeLayer({
+            attempts,
+            currentTargets: [currentTarget],
+            ...(activityStates ? { activityStates } : {}),
+          }),
+        ),
+      );
+    };
+
+    // The end was decided while nothing ran; the new work owns the card now.
+    it.effect("is skipped", () =>
+      Effect.gen(function* () {
+        expect(yield* processEnd(target)).toEqual(["Stale APNs end job skipped."]);
+      }),
+    );
+
+    it.effect("is skipped when that work already finished inside the display window", () =>
+      Effect.gen(function* () {
+        expect(yield* processEnd(target, [{ ...state, phase: "completed" }])).toEqual([
+          "Stale APNs end job skipped.",
+        ]);
+      }),
+    );
+
+    it.effect("still goes out when the device turned Live Activities off", () =>
+      Effect.gen(function* () {
+        const reasons = yield* processEnd({ ...target, preferences_json: disabledPreferences });
+        // The test relay's fake key fails at JWT signing, after the stale checks.
+        expect(reasons).toEqual(["Failed to sign APNs JWT for key key-id."]);
+      }),
+    );
   });
 
   it.effect("skips a queued start when the user no longer has live work", () => {

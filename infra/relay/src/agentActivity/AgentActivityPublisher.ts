@@ -1,4 +1,7 @@
-import { makeAggregateState } from "./agentActivityAggregate.ts";
+import {
+  makeAggregateState,
+  TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
+} from "./agentActivityAggregate.ts";
 export {
   makeAggregateState,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
@@ -44,6 +47,11 @@ export class AgentActivityPublisher extends Context.Service<
       readonly userId: string;
       readonly deviceId: string;
     }) => Effect.Effect<RelayDeliveryResult | null, AgentActivityPublishError>;
+    /** Ends armed iOS cards whose finished rows have outlived the display window. Run by the cron. */
+    readonly endIdleLiveActivities: Effect.Effect<
+      void,
+      LiveActivities.LiveActivityIdleTargetListPersistenceError
+    >;
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
@@ -143,6 +151,52 @@ export const make = Effect.gen(function* () {
         replay: true,
       });
     }),
+    // A card only hears from the relay when an environment publishes or the app
+    // re-registers, so one left showing Done rows would keep them for hours.
+    // Cards with live work again are left to their own publish.
+    endIdleLiveActivities: Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const idleTargets = yield* liveActivities.listIdleArmedTargets({
+        deliveredBefore: DateTime.formatIso(
+          DateTime.subtract(now, { milliseconds: TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS }),
+        ),
+      });
+      yield* Effect.annotateCurrentSpan({ "relay.live_activities.idle_count": idleTargets.length });
+      yield* Effect.forEach(
+        idleTargets,
+        (idle) =>
+          Effect.gen(function* () {
+            const { activeStates, targets } = yield* Effect.all(
+              {
+                activeStates: rows.listForUser({ userId: idle.user_id }),
+                targets: liveActivities.listTargets({ userId: idle.user_id }),
+              },
+              { concurrency: 2 },
+            );
+            const target = targets.find((row) => row.device_id === idle.device_id);
+            const aggregate = makeAggregateState({
+              activeStates,
+              terminalState: null,
+              nowMs: now.epochMilliseconds,
+            });
+            if (target === undefined || aggregate !== null) return;
+            yield* apnsDeliveries.sendForTarget({
+              target,
+              aggregate: null,
+              nowMs: now.epochMilliseconds,
+              replay: true,
+            });
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to end idle live activity", {
+                deviceId: idle.device_id,
+                error,
+              }),
+            ),
+          ),
+        { concurrency: 4, discard: true },
+      );
+    }).pipe(Effect.withSpan("relay.agent_activity_publisher.end_idle_live_activities")),
     publish: Effect.fn("relay.agent_activity_publisher.publish")(function* (input) {
       yield* Effect.annotateCurrentSpan({
         "relay.environment_id": input.environmentId,

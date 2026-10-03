@@ -356,8 +356,16 @@ export const ApiLive = Api.make(
                 : Effect.logWarning("Failed to clean up inactive managed tunnels", { cause }),
             ),
           ),
+          AgentActivityPublisher.AgentActivityPublisher.pipe(
+            Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("Failed to end idle Live Activities", { cause }),
+            ),
+          ),
         ],
-        { concurrency: 2, discard: true },
+        { concurrency: 3, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
         // Export cron spans to Axiom like HTTP spans; the scope flushes them before the run ends.
