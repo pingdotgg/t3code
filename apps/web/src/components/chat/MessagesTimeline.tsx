@@ -147,6 +147,7 @@ import type {
 } from "@t3tools/contracts";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
@@ -2148,7 +2149,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       ctx.onImageExpand(preview);
                     }}
                   >
-                    <img
+                    <AttachmentImage
+                      name={image.name}
+                      mimeType={image.mimeType}
                       src={image.previewUrl}
                       alt={image.name}
                       className="block size-full object-cover"
