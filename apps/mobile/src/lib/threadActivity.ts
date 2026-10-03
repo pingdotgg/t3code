@@ -973,12 +973,13 @@ export function failedFeedRunIds(
 
 /**
  * A prompt without a run (a provider-native subagent, or a turn imported from
- * V1) folds its response like a run; `isWorking` keeps its latest response open.
+ * V1) folds its response like a run. `runlessWorkActive` keeps the latest
+ * runless response open; V2 work must not reopen imported turns.
  */
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
-  isWorking: boolean,
+  runlessWorkActive: boolean,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const firstAssistantMessageIdByRun = new Map<RunId, string>();
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
@@ -1039,7 +1040,7 @@ function deriveThreadFeedRunFolds(
   for (const [runId, group] of groupsByRunId) {
     if (
       runId === activeRunId ||
-      (isWorking && runId === runlessKey) ||
+      (runlessWorkActive && runId === runlessKey) ||
       interruptedRunIds.has(runId) ||
       failedRunIds.has(runId) ||
       group.entries.some((entry) => entry.type === "message" && entry.message.streaming)
@@ -1162,7 +1163,11 @@ export function deriveThreadFeedPresentation(
   const activeTailGroup = sourceFeed.at(-1);
   const activeRunId = unsettledRunId(latestRun);
   const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
-  const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun, isWorking);
+  const foldsByAnchorId = deriveThreadFeedRunFolds(
+    sourceFeed,
+    latestRun,
+    isWorking && runlessWorkActive,
+  );
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedRunIds.has(fold.runId)) {

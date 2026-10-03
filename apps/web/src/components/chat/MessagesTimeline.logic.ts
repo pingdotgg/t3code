@@ -859,7 +859,8 @@ function deriveTurnFolds(input: {
   terminalAssistantMessageIds: ReadonlySet<string>;
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
-  isWorking: boolean;
+  /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
+  runlessWorkActive: boolean;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
   for (const entry of input.timelineEntries) {
@@ -948,7 +949,7 @@ function deriveTurnFolds(input: {
       input.unfoldedRunIds.has(runId) ||
       interruptedRunIds.has(runId) ||
       runlessFailedKeys.has(runId) ||
-      (input.isWorking && runId === runlessKey)
+      (input.runlessWorkActive && runId === runlessKey)
     ) {
       continue;
     }
@@ -1237,12 +1238,13 @@ export function deriveMessagesTimelineRows(input: {
     unsettledRunId,
     isWorking: input.isWorking,
   });
+  const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
-    isWorking: input.isWorking,
+    runlessWorkActive,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1260,7 +1262,6 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
-  const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
   const runIdIsActiveResponse = (runId: RunId | null | undefined) =>
     runId == null ? runlessWorkActive : activeVisualResponseRunIds.has(runId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>

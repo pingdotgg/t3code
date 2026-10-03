@@ -1091,38 +1091,54 @@ describe("buildThreadFeed", () => {
       id: TurnItemId.make(id),
       runId: null,
     });
-    const feed = buildThreadFeed(
-      [
-        imported(userMessage("2026-06-20T00:00:00.000Z"), "imported-prompt"),
-        imported(
-          { ...assistantMessage("2026-06-20T00:00:02.000Z"), messageId: MessageId.make("update") },
-          "imported-update",
+    const presented = (start: OrchestrationV2TurnItem) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(
+          [
+            imported(userMessage("2026-06-20T00:00:00.000Z"), "imported-prompt"),
+            imported(
+              {
+                ...assistantMessage("2026-06-20T00:00:02.000Z"),
+                messageId: MessageId.make("update"),
+              },
+              "imported-update",
+            ),
+            imported(command("2026-06-20T00:00:04.000Z"), "imported-ls"),
+            imported(
+              {
+                ...assistantMessage("2026-06-20T00:00:08.000Z"),
+                messageId: MessageId.make("answer"),
+              },
+              "imported-answer",
+            ),
+            start,
+          ].map((item, position) => projected(item, position)),
         ),
-        imported(command("2026-06-20T00:00:04.000Z"), "imported-ls"),
-        imported(
-          { ...assistantMessage("2026-06-20T00:00:08.000Z"), messageId: MessageId.make("answer") },
-          "imported-answer",
-        ),
-        {
-          ...userMessage("2026-06-20T00:01:00.000Z"),
-          id: TurnItemId.make("new-prompt"),
-          messageId: MessageId.make("new-prompt"),
-        },
-      ].map((item, position) => projected(item, position)),
-    );
+        { runId, status: "running", startedAt: "2026-06-20T00:01:00.000Z", completedAt: null },
+        new Set(),
+        new Set(),
+        "2026-06-20T00:01:00.000Z",
+      )
+        .slice(0, 4)
+        .map((entry) => (entry.type === "message" ? entry.message.role : entry.type));
 
-    const presented = deriveThreadFeedPresentation(
-      feed,
-      { runId, status: "running", startedAt: "2026-06-20T00:01:00.000Z", completedAt: null },
-      new Set(),
-      new Set(),
-      "2026-06-20T00:01:00.000Z",
-    );
+    // A sent prompt and an automatic wake both start V2 work below the import.
     expect(
-      presented
-        .slice(0, 5)
-        .map((entry) => (entry.type === "message" ? entry.message.role : entry.type)),
-    ).toEqual(["user", "assistant", "run-fold", "assistant", "user"]);
+      presented({
+        ...userMessage("2026-06-20T00:01:00.000Z"),
+        id: TurnItemId.make("new-prompt"),
+        messageId: MessageId.make("new-prompt"),
+      }),
+    ).toEqual(["user", "assistant", "run-fold", "assistant"]);
+    expect(
+      presented({
+        ...base("wake", "2026-06-20T00:01:00.000Z", 4),
+        type: "notification",
+        source: { kind: "background_task" },
+        outcome: "completed",
+        summary: "Background task finished",
+      }),
+    ).toEqual(["user", "assistant", "run-fold", "assistant"]);
   });
 
   it("keeps a provider-native subagent's runless tool call live while it works", () => {
@@ -1156,9 +1172,10 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
 
-  it("keeps a runless tail settled while a normal thread waits for its sent run", () => {
+  it("keeps a runless tail folded while a normal thread waits for its sent run", () => {
     // Right after a send the local clock runs before the server creates the
-    // run, and the latest run may still be queued: neither is runless work.
+    // run, and the latest run may still be queued: neither is runless work,
+    // so the settled tail must not reopen and shift the feed.
     const startedAt = "2026-06-20T00:00:05.000Z";
     const feed = buildThreadFeed([
       projected({ ...userMessage(), runId: null }, 0),
@@ -1175,9 +1192,7 @@ describe("buildThreadFeed", () => {
         new Set(),
         startedAt,
       );
-      const toggle = presented.find((entry) => entry.type === "work-toggle");
-      expect(toggle).toMatchObject({ live: false, shimmer: false });
-      expect(presented.at(-1)?.type).toBe("thinking");
+      expect(presented.map((entry) => entry.type)).toEqual(["message", "run-fold", "thinking"]);
     }
   });
 
