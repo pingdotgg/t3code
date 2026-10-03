@@ -18,6 +18,8 @@ import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import { OpenLive } from "./open.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { GitActivityLedgerLive } from "./persistence/Layers/GitActivityLedger.ts";
+import { ProjectionThreadPullRequestRepositoryLive } from "./persistence/Layers/ProjectionThreadPullRequests.ts";
 import { ServerLifecycleEventsLive } from "./serverLifecycleEvents.ts";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
@@ -271,6 +273,9 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 export const PersistenceLayerLive = PullRequestCreationIntentRepositoryLive.pipe(
   Layer.provideMerge(CollaborativeAcceptanceRepositoryLive),
+  Layer.provideMerge(
+    GitActivityLedgerLive.pipe(Layer.provideMerge(ProjectionThreadPullRequestRepositoryLive)),
+  ),
   Layer.provideMerge(SqlitePersistenceLayerLive),
 );
 

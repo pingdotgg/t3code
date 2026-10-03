@@ -12,7 +12,11 @@ const COOKIE_HEADER_PATTERN = /(\b(?:set-cookie|cookie)\s*:\s*)([^"'\r\n`]+)/giu
 const COOKIE_PAIR_PATTERN =
   /(^|[;,\s]+)([A-Za-z0-9_.-]+)(=)(?:"([^"]*)"|'([^']*)'|([^\s;,"']+))/giu;
 const SECRET_COOKIE_NAME = /(?:session|auth|token|csrf|xsrf|sid|secret|credential|api[_-]?key)/iu;
+const URL_USERINFO_PATTERN = /\b(https?:\/\/)[^/\s@]+@/giu;
+const GIT_HTTP_EXTRAHEADER_PATTERN = /(\bhttp\.extraheader(?:=|\s+))[\s\S]*$/giu;
 const INLINE_SECRET_PATTERNS = [
+  URL_USERINFO_PATTERN,
+  GIT_HTTP_EXTRAHEADER_PATTERN,
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/giu,
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})\b/giu,
   SECRET_ASSIGNMENT_PATTERN,
@@ -67,6 +71,12 @@ function redactValue(value: unknown, parentKey?: string): RedactedValue {
       pattern.lastIndex = 0;
       result = result.replace(pattern, (...matches: Array<string | number | undefined>) => {
         redacted = true;
+        if (pattern === URL_USERINFO_PATTERN) {
+          return `${matches[1] ?? ""}[REDACTED]@`;
+        }
+        if (pattern === GIT_HTTP_EXTRAHEADER_PATTERN) {
+          return `${matches[1] ?? ""}${REDACTED_VALUE}`;
+        }
         if (pattern === SECRET_ASSIGNMENT_PATTERN) {
           return `${matches[1] ?? ""}${matches[2] ?? ""}${REDACTED_VALUE}${matches[4] ?? ""}`;
         }

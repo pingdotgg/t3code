@@ -24,6 +24,7 @@ import {
   type DiscoveredLocalServer,
   type DiscoveredLocalServerList,
   type GitActionProgressEvent,
+  GitActivityLogError,
   type GitManagerServiceError,
   GitHubCliError,
   GitHubApiUsageError,
@@ -113,6 +114,7 @@ import { DiffStateQuery } from "./diffState/Services/DiffStateQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { loadAuthAccessSnapshot } from "./auth/authAccessSnapshot.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
+import { GitActivityLedger } from "./persistence/Services/GitActivityLedger.ts";
 import { CheckoutCoordinator } from "./git/CheckoutCoordinator.ts";
 import { GitHubCli } from "./git/Services/GitHubCli.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
@@ -308,6 +310,7 @@ const makeWsRpcLayer = (
       const open = yield* Open;
       const gitManager = yield* GitManager;
       const git = yield* GitCore;
+      const gitActivityLedger = yield* Effect.serviceOption(GitActivityLedger);
       const checkoutCoordinator = yield* CheckoutCoordinator;
       const gitHubCli = yield* Effect.serviceOption(GitHubCli);
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
@@ -2671,6 +2674,18 @@ const makeWsRpcLayer = (
                   refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
               }),
             ),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitLog]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitLog,
+            Option.match(gitActivityLedger, {
+              onNone: () =>
+                Effect.fail(
+                  new GitActivityLogError({ message: "The Git activity ledger is unavailable." }),
+                ),
+              onSome: (ledger) => ledger.list(input),
+            }),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) => {
