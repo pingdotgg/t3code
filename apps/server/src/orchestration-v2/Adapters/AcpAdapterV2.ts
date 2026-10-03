@@ -30,6 +30,7 @@ import {
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -208,6 +209,39 @@ export interface AcpAdapterV2ExtensionContext {
   readonly captureProposedPlan: (input: { readonly planMarkdown: string }) => Effect.Effect<void>;
   /** Last markdown captured for the active turn, as the exit-gate fallback. */
   readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
+}
+
+export function acpPromptResponseTurnTokenUsage(
+  usage: EffectAcpSchema.Usage | null | undefined,
+  previous: EffectAcpSchema.Usage | null,
+  hasSubagents: boolean,
+  terminalStatus: OrchestrationV2ProviderTurn["status"],
+): TurnTokenUsage {
+  // ACP reports session-wide counters. A resumed session, missing response, or
+  // counter reset leaves no trustworthy baseline for this individual turn.
+  if (
+    usage == null ||
+    previous === null ||
+    usage.inputTokens < previous.inputTokens ||
+    usage.outputTokens < previous.outputTokens
+  ) {
+    return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
+  }
+  const delta = (current: number | null | undefined, before: number | null | undefined) =>
+    current == null || before == null || current < before ? undefined : current - before;
+  const cachedInputTokens = delta(usage.cachedReadTokens, previous.cachedReadTokens);
+  const cacheCreationTokens = delta(usage.cachedWriteTokens, previous.cachedWriteTokens);
+  const reasoningTokens = delta(usage.thoughtTokens, previous.thoughtTokens);
+  return {
+    usageScope: "main_agent",
+    usageStatus: terminalStatus === "completed" ? "complete" : "partial",
+    hasSubagents,
+    inputTokens: usage.inputTokens - previous.inputTokens,
+    outputTokens: usage.outputTokens - previous.outputTokens,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
 }
 
 export interface AcpAdapterV2Flavor {
@@ -511,6 +545,7 @@ export interface AcpAdapterV2Options {
      * by exactly that on this receipt.
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
@@ -1167,6 +1202,8 @@ interface ActiveAcpTurn {
    * complete this; settled-soft classification ORs it with `promptSettled`.
    */
   readonly promptWireSettled: Deferred.Deferred<void, never>;
+  promptUsage: EffectAcpSchema.Usage | undefined;
+  promptUsageBaseline: EffectAcpSchema.Usage | null;
   backgroundFinalizeGeneration: number;
 }
 
@@ -1599,6 +1636,9 @@ export function makeAcpAdapterV2(
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
+        );
+        const promptUsageBySessionId = yield* Ref.make(
+          new Map<string, EffectAcpSchema.Usage | null>(),
         );
         const nativeMetadataBySessionId = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThreadNativeMetadata>(),
@@ -6071,6 +6111,19 @@ export function makeAcpAdapterV2(
             });
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
+        if (started.sessionId !== input.initialNativeThreadId) {
+          // A new ACP session starts at zero; a loaded one has unknown history.
+          yield* Ref.update(promptUsageBySessionId, (current) =>
+            new Map(current).set(started.sessionId, {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cachedReadTokens: 0,
+              cachedWriteTokens: 0,
+              thoughtTokens: 0,
+            }),
+          );
+        }
         rememberTerminalEnvironment(started.sessionId, input.threadId);
         const capabilities = negotiatedCapabilities(flavor.capabilities, started);
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
@@ -6102,6 +6155,10 @@ export function makeAcpAdapterV2(
                   driver,
                   detail: `ACP driver cannot load or resume session ${sessionId}`,
                 });
+          // Loading a session does not establish continuity with its last prompt here.
+          yield* Ref.update(promptUsageBySessionId, (current) =>
+            new Map(current).set(activated.sessionId, null),
+          );
           rememberTerminalEnvironment(activated.sessionId, threadId);
           return activated;
         });
@@ -6344,6 +6401,12 @@ export function makeAcpAdapterV2(
           status,
           startedAt: context.startedAt,
           completedAt,
+          turnTokenUsage: acpPromptResponseTurnTokenUsage(
+            context.promptUsage,
+            context.promptUsageBaseline,
+            context.subagents.size > 0,
+            status,
+          ),
         });
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
@@ -6408,6 +6471,12 @@ export function makeAcpAdapterV2(
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          if (context.promptUsage === undefined) {
+            // A cancelled/failed prompt with no response may have spent tokens.
+            yield* Ref.update(promptUsageBySessionId, (current) =>
+              new Map(current).set(context.nativeThreadId, null),
+            );
+          }
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
@@ -6689,6 +6758,7 @@ export function makeAcpAdapterV2(
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
+          yield* Ref.set(promptUsageBySessionId, new Map());
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
@@ -6857,6 +6927,8 @@ export function makeAcpAdapterV2(
               promptSettled: false,
               promptSettledStatus: null,
               promptWireSettled,
+              promptUsage: undefined,
+              promptUsageBaseline: null,
               backgroundFinalizeGeneration: 0,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
@@ -6999,9 +7071,22 @@ export function makeAcpAdapterV2(
               // Wire settlement precedes the completion callback's permit request so
               // settled-soft classification can observe the native return even when
               // the completion fiber has not yet set promptSettled under the permit.
-              Effect.tap(() =>
-                Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+              Effect.tap((result) =>
+                Ref.modify(promptUsageBySessionId, (current) => {
+                  if (context.finalized) return [undefined, current];
+                  context.promptUsage = result.usage ?? undefined;
+                  context.promptUsageBaseline = current.get(requestedSessionId) ?? null;
+                  return [
+                    undefined,
+                    new Map(current).set(requestedSessionId, result.usage ?? null),
+                  ];
+                }).pipe(
+                  Effect.andThen(
+                    Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+                  ),
+                ),
               ),
+              Effect.tap(() => options.testHooks?.afterPromptWireSettled?.() ?? Effect.void),
               Effect.flatMap((result) =>
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
@@ -7669,6 +7754,9 @@ export function makeAcpAdapterV2(
                       sessionId,
                       acpMcpActivation(snapshotInput.providerThread.appThreadId, self),
                     );
+                    yield* Ref.update(promptUsageBySessionId, (current) =>
+                      new Map(current).set(activated.sessionId, null),
+                    );
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       snapshotInput.providerThread.appThreadId,
@@ -7741,6 +7829,22 @@ export function makeAcpAdapterV2(
                         yield* Ref.set(activeSessionSetup, candidate);
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
+                        yield* Ref.set(
+                          promptUsageBySessionId,
+                          new Map([
+                            [
+                              candidate.sessionId,
+                              {
+                                inputTokens: 0,
+                                outputTokens: 0,
+                                totalTokens: 0,
+                                cachedReadTokens: 0,
+                                cachedWriteTokens: 0,
+                                thoughtTokens: 0,
+                              },
+                            ],
+                          ]),
+                        );
                         yield* Ref.set(promptInstructionStates, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
@@ -7831,6 +7935,9 @@ export function makeAcpAdapterV2(
                   const forked = yield* runtime.forkSession(
                     sourceSessionId,
                     acpMcpActivation(forkInput.targetThreadId, self),
+                  );
+                  yield* Ref.update(promptUsageBySessionId, (current) =>
+                    new Map(current).set(forked.sessionId, null),
                   );
                   rememberTerminalEnvironment(forked.sessionId, forkInput.targetThreadId);
                   yield* Ref.set(activeSessionId, forked.sessionId);

@@ -74,6 +74,7 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import {
   AcpProviderCapabilitiesV2,
+  acpPromptResponseTurnTokenUsage,
   acpProviderItemNativeId,
   acpScopedNativeId,
   acpCarryoverTerminalShouldClearContinuation,
@@ -107,6 +108,95 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const testLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer, serverConfigLayer);
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+describe("acpPromptResponseTurnTokenUsage", () => {
+  it("projects ACP prompt usage into complete main-agent turn usage", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        {
+          inputTokens: 60,
+          outputTokens: 15,
+          totalTokens: 75,
+          cachedReadTokens: 40,
+          cachedWriteTokens: 1,
+          thoughtTokens: 4,
+        },
+        {
+          inputTokens: 20,
+          outputTokens: 5,
+          totalTokens: 25,
+          cachedReadTokens: 10,
+          cachedWriteTokens: 0,
+          thoughtTokens: 1,
+        },
+        true,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: true,
+        inputTokens: 40,
+        outputTokens: 10,
+        cachedInputTokens: 30,
+        cacheCreationTokens: 1,
+        reasoningTokens: 3,
+      },
+    );
+  });
+
+  it("returns unavailable usage when ACP omits prompt usage", () => {
+    assert.deepEqual(acpPromptResponseTurnTokenUsage(undefined, null, false, "failed"), {
+      usageScope: "main_agent",
+      usageStatus: "unavailable",
+      hasSubagents: false,
+    });
+  });
+
+  it("marks observed usage partial when the turn does not complete", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        false,
+        "interrupted",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        hasSubagents: false,
+        inputTokens: 20,
+        outputTokens: 5,
+      },
+    );
+  });
+
+  it("does not attribute resumed session totals or counter resets to one turn", () => {
+    const current = { inputTokens: 60, outputTokens: 15, totalTokens: 75 };
+    const unavailable = {
+      usageScope: "main_agent",
+      usageStatus: "unavailable",
+      hasSubagents: false,
+    };
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(current, null, false, "completed"),
+      unavailable,
+    );
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        current,
+        {
+          inputTokens: 90,
+          outputTokens: 15,
+          totalTokens: 105,
+        },
+        false,
+        "completed",
+      ),
+      unavailable,
+    );
+  });
+});
 
 describe("acpProjectedCommandExitCode", () => {
   const successOutput = { type: "Bash", exit_code: 0 };
@@ -604,6 +694,338 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  it.live(
+    "projects session usage deltas without attributing missing responses to later turns",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make("acp-test-prompt-usage");
+        const threadId = ThreadId.make("thread-acp-prompt-usage");
+        let promptOrdinal = 0;
+        const promptUsages = [
+          { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+          { inputTokens: 90, outputTokens: 22, totalTokens: 112 },
+          undefined,
+          { inputTokens: 130, outputTokens: 30, totalTokens: 160 },
+          { inputTokens: 150, outputTokens: 40, totalTokens: 190 },
+        ];
+        const adapter = makeAcpAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          fileSystem: yield* FileSystem.FileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          serverConfig: yield* ServerConfig.ServerConfig,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                prompt: () => {
+                  promptOrdinal += 1;
+                  return Effect.succeed({
+                    stopReason: "end_turn" as const,
+                    usage: promptUsages[promptOrdinal - 1] ?? null,
+                  });
+                },
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-usage"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const expected = [
+          { inputTokens: 60, outputTokens: 15 },
+          { inputTokens: 30, outputTokens: 7 },
+          null,
+          null,
+          { inputTokens: 20, outputTokens: 10 },
+        ];
+        for (const ordinal of [1, 2, 3, 4, 5]) {
+          const expectedUsage = expected[ordinal - 1];
+          if (expectedUsage === undefined) return yield* Effect.die("Missing usage expectation");
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          const completed = events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.deepEqual(
+            completed?.type === "provider_turn.updated"
+              ? completed.providerTurn.turnTokenUsage
+              : null,
+            expectedUsage === null
+              ? { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false }
+              : {
+                  usageScope: "main_agent",
+                  usageStatus: "complete",
+                  hasSubagents: false,
+                  ...expectedUsage,
+                },
+          );
+        }
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("does not subtract pre-restart usage from a resumed runtime's counters", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-usage-restart");
+      const threadId = ThreadId.make("thread-acp-usage-restart");
+      const wireSettled = yield* Deferred.make<void>();
+      const releaseCompletion = yield* Deferred.make<void>();
+      let promptOrdinal = 0;
+      const usages = [
+        { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+        { inputTokens: 90, outputTokens: 20, totalTokens: 110 },
+        { inputTokens: 110, outputTokens: 25, totalTokens: 135 },
+      ];
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          afterPromptWireSettled: () =>
+            promptOrdinal === 1
+              ? Deferred.succeed(wireSettled, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseCompletion)),
+                )
+              : Effect.void,
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          restartRuntimeAfterInterrupt: true,
+          terminateRuntimeProcessGroupOnInterrupt: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            ownDetachedProcessGroup: true,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => {
+                const usage = usages[promptOrdinal++];
+                if (usage === undefined) return Effect.die("Unexpected prompt");
+                return Effect.succeed({ stopReason: "end_turn" as const, usage });
+              },
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-usage-restart"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+      );
+      yield* Deferred.await(wireSettled);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      yield* runtime.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
+      const interrupted = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+      );
+      assert.deepEqual(
+        interrupted?.type === "provider_turn.updated"
+          ? interrupted.providerTurn.turnTokenUsage
+          : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "partial",
+          hasSubagents: false,
+          inputTokens: 60,
+          outputTokens: 15,
+        },
+      );
+      yield* Deferred.succeed(releaseCompletion, undefined);
+      for (const [ordinal, expected] of [
+        [2, { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false }],
+        [
+          3,
+          {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 20,
+            outputTokens: 5,
+          },
+        ],
+      ] as const) {
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+        );
+        const completed = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        ).find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.deepEqual(
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : null,
+          expected,
+        );
+      }
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
+      const threadId = ThreadId.make("thread-acp-prompt-usage-stop");
+      const wireSettled = yield* Deferred.make<void>();
+      const releaseCompletion = yield* Deferred.make<void>();
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          afterPromptWireSettled: () =>
+            Deferred.succeed(wireSettled, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCompletion)),
+            ),
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          preserveRuntimeOnSettledInterrupt: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.succeed({
+                  stopReason: "end_turn" as const,
+                  usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-usage-stop"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Deferred.await(wireSettled);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      yield* runtime.interruptTurn({ providerThread, providerTurnId });
+      const completed = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+      );
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "partial",
+          hasSubagents: false,
+          inputTokens: 60,
+          outputTokens: 15,
+        },
+      );
+      yield* Deferred.succeed(releaseCompletion, undefined);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
     (outcome) =>
