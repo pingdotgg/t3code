@@ -4,7 +4,7 @@ import {
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
 
-const lane = { padding: 20, minChatWidth: 640 };
+const lane = { margin: 96, minChatWidth: 640 };
 const resolve = (width: number, height: number, previewY: number | null = null) =>
   resolveThreadDetailsCardLayout({
     container: { width, height },
@@ -15,24 +15,24 @@ const resolve = (width: number, height: number, previewY: number | null = null) 
 describe("workspace card", () => {
   it("pins to the top right at a fixed width", () => {
     expect(resolve(1600, 900)).toEqual({
-      x: 1276,
+      x: 1308,
       y: 12,
-      width: 312,
+      width: 280,
       height: 876,
     });
-    expect(resolve(1344, 900)).toMatchObject({ x: 1020, width: 312 });
+    expect(resolve(1344, 900)).toMatchObject({ x: 1052, width: 280 });
   });
-  it("hides when a readable chat lane cannot fit beside it", () => {
-    expect(resolve(1016, 900)).toMatchObject({ x: 692 });
-    expect(resolve(1015, 900)).toBeNull();
+  it("hides when a readable chat lane and its margins cannot fit beside it", () => {
+    expect(resolve(1124, 900)).toMatchObject({ x: 832 });
+    expect(resolve(1123, 900)).toBeNull();
   });
   it("keeps the card at the top right while the preview is freely dragged vertically", () => {
     for (const y of [12, 170, 250, 400, 648]) {
-      expect(resolve(1600, 900, y)).toEqual({ x: 1276, y: 12, width: 312, height: 876 });
+      expect(resolve(1600, 900, y)).toEqual({ x: 1308, y: 12, width: 280, height: 876 });
     }
   });
   it("keeps full height while a preview stays clear of the card", () => {
-    expect(resolve(1344, 900, 600)).toMatchObject({ width: 312, height: 876 });
+    expect(resolve(1344, 900, 600)).toMatchObject({ width: 280, height: 876 });
     expect(
       resolveThreadDetailsCardLayout({
         container: { width: 1600, height: 900 },
@@ -54,7 +54,7 @@ describe("card content fitting", () => {
   it("does not fold in response to a drag while the full card can be kept clear", () => {
     for (const y of [12, 170, 225, 240, 340, 380, 611]) {
       const placement = place(y)!;
-      expect(placement).toMatchObject({ x: 1260, y: 12, height: 964 });
+      expect(placement).toMatchObject({ x: 1292, y: 12, height: 964 });
       expect(resolveThreadDetailsCardDensity(placement.height, { full: 327, compact: 182 })).toBe(
         "full",
       );

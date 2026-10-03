@@ -20,14 +20,15 @@ export function resolveThreadDetailsCardLayout({
   overlapsDetailsCard = false,
 }: {
   container: { width: number; height: number };
-  lane: { padding: number; minChatWidth: number };
+  lane: { margin: number; minChatWidth: number };
   frame: PreviewMiniPlayerFrame | null;
   overlapsDetailsCard?: boolean;
 }) {
   const gap = 12;
-  const width = 312;
+  // Keep in sync with --thread-details-panel-width, which sizes the popover.
+  const width = 280;
   const x = container.width - width - gap;
-  if (x - gap - lane.padding * 2 < lane.minChatWidth) return null;
+  if (x - lane.margin * 2 < lane.minChatWidth) return null;
   // Resizing consumes the height above the player. Dragging first tries to
   // clear the full card and folds it only when there is no readable placement.
   const height =

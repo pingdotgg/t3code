@@ -8,7 +8,11 @@ import {
   type CSSProperties,
 } from "react";
 import { ChatCanvasContext } from "./ChatCanvasContext";
-import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
+import {
+  resolveChatCanvasLayout,
+  resolveDockedChatMargin,
+  type ChatCanvasPreview,
+} from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
 
 /**
@@ -99,7 +103,10 @@ export function ChatCanvas({
     const container = { width: measurements.width, height: measurements.height };
     return {
       container,
-      lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
+      lane: {
+        margin: resolveDockedChatMargin(measurements),
+        minChatWidth: measurements.minChatWidth,
+      },
       layout: resolveChatCanvasLayout({ ...measurements, container, preview, detailsCard }),
       previewKey: preview?.key ?? null,
       reportPreview,

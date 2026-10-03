@@ -19,9 +19,28 @@ export interface ChatCanvasPreview {
 }
 
 const GAP = 12;
-// The workspace card floats in the right margin only while the centered chat
-// stays this far from it. Closer than this, the card looks stuck to the chat.
-const DETAILS_CARD_FLOAT_CLEARANCE = 96;
+// Space between chat and the workspace card. The card floats in the right
+// margin while the centered chat clears it by this much. Closer than this, the
+// card docks and chat keeps this space on both sides.
+const DETAILS_CARD_CLEARANCE = 96;
+
+/**
+ * Space on each side of chat while the workspace card is docked. Chat gives up
+ * width before this space. It never exceeds the centered margin, so a
+ * full-width chat stays full width.
+ */
+export function resolveDockedChatMargin({
+  width,
+  padding,
+  maxChatWidth,
+}: {
+  width: number;
+  padding: number;
+  maxChatWidth: number;
+}) {
+  const centeredWidth = Math.max(0, Math.min(maxChatWidth, width - padding * 2));
+  return Math.min(DETAILS_CARD_CLEARANCE, (width - centeredWidth) / 2);
+}
 
 /** Pure geometry shared by the conversation, composer, workspace card, and floating preview. */
 export function resolveChatCanvasLayout({
@@ -44,18 +63,21 @@ export function resolveChatCanvasLayout({
   const centeredWidth = Math.max(0, Math.min(maxChatWidth, container.width - padding * 2));
   // Without that clearance the card docks like a sidebar, and chat centers in
   // the space to its left.
-  const laneRight =
-    detailsCard &&
-    (container.width + centeredWidth) / 2 + DETAILS_CARD_FLOAT_CLEARANCE > detailsCard.left
-      ? detailsCard.left - GAP
-      : container.width;
-  const normalWidth = Math.max(0, Math.min(maxChatWidth, laneRight - padding * 2));
+  const docked =
+    detailsCard !== null &&
+    (container.width + centeredWidth) / 2 + DETAILS_CARD_CLEARANCE > detailsCard.left;
+  const laneRight = docked ? detailsCard.left : container.width;
+  const margin = docked
+    ? resolveDockedChatMargin({ width: container.width, padding, maxChatWidth })
+    : padding;
+  const normalWidth = Math.max(0, Math.min(maxChatWidth, laneRight - margin * 2));
   const normalLeft = (laneRight - normalWidth) / 2;
+  // The lane CSS adds `padding` on each side, so the insets carry the rest.
   let chat = {
     left: normalLeft,
     width: normalWidth,
-    insetStart: 0,
-    insetEnd: container.width - laneRight,
+    insetStart: margin - padding,
+    insetEnd: container.width - laneRight + margin - padding,
   };
   let frame: PreviewMiniPlayerFrame | null = null;
   let overlapsChat = false;

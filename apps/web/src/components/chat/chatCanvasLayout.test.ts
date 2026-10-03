@@ -214,7 +214,7 @@ describe("chat canvas layout", () => {
       const density = (result: ReturnType<typeof layout>) => {
         const card = resolveThreadDetailsCardLayout({
           container,
-          lane: { padding: 20, minChatWidth: 640 },
+          lane: { margin: 96, minChatWidth: 640 },
           frame: result.frame,
           overlapsDetailsCard: result.overlapsDetailsCard,
         });
@@ -258,33 +258,41 @@ describe("chat canvas layout", () => {
 });
 
 describe("workspace card docking", () => {
-  const withCard = (width: number, player: ChatCanvasPreview | null = null) =>
+  const withCard = (width: number, player: ChatCanvasPreview | null = null, maxChatWidth = 736) =>
     resolveChatCanvasLayout({
       container: { width, height: 900 },
-      maxChatWidth: 736,
+      maxChatWidth,
       composerHeight: 180,
-      detailsCard: { left: width - 324, right: width - 12, bottom: 400 },
+      detailsCard: { left: width - 292, right: width - 12, bottom: 400 },
       preview: player,
     });
   it("floats the card while the centered chat stays clear of it", () => {
-    expect(withCard(1576).chat).toEqual({ left: 420, width: 736, insetStart: 0, insetEnd: 0 });
+    expect(withCard(1512).chat).toEqual({ left: 388, width: 736, insetStart: 0, insetEnd: 0 });
   });
   it("docks the card and centers chat beside it once the margin is tight", () => {
-    expect(withCard(1575).chat).toEqual({
-      left: 251.5,
+    expect(withCard(1511).chat).toEqual({
+      left: 241.5,
       width: 736,
-      insetStart: 0,
-      insetEnd: 336,
+      insetStart: 76,
+      insetEnd: 368,
     });
-    expect(withCard(1411).chat).toMatchObject({ left: 169.5, width: 736 });
+    expect(withCard(1411).chat).toMatchObject({ left: 191.5, width: 736 });
   });
-  it("shrinks docked chat down to its readable width", () => {
-    expect(withCard(1100).chat).toEqual({ left: 20, width: 724, insetStart: 0, insetEnd: 336 });
-    expect(withCard(1016).chat).toMatchObject({ left: 20, width: 640 });
+  it("narrows docked chat before giving up the space beside it", () => {
+    expect(withCard(1147).chat).toEqual({ left: 96, width: 663, insetStart: 76, insetEnd: 368 });
+    expect(withCard(1124).chat).toMatchObject({ left: 96, width: 640 });
+  });
+  it("keeps a full-width chat at its normal padding beside the card", () => {
+    expect(withCard(1147, null, 10_000).chat).toEqual({
+      left: 20,
+      width: 815,
+      insetStart: 0,
+      insetEnd: 292,
+    });
   });
   it("keeps docked chat in place when a new preview opens below the card", () => {
     expect(withCard(1411, preview)).toEqual({
-      chat: { left: 169.5, width: 736, insetStart: 0, insetEnd: 336 },
+      chat: { left: 191.5, width: 736, insetStart: 76, insetEnd: 368 },
       frame: { x: 1079, y: 688, width: 320, height: 200 },
       overlapsChat: false,
       overlapsDetailsCard: false,
