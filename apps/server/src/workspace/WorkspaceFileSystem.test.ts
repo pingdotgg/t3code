@@ -426,6 +426,13 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           "B",
         ),
       ).toEqual({ alreadyReplaced: false });
+      expect(
+        WorkspaceFileSystem.replaceFileLines(
+          "NEW\nbar\nDIFF\n",
+          { startLine: 1, endLine: 3, expected: "foo\nbar\nbaz" },
+          "NEW",
+        ),
+      ).toEqual({ alreadyReplaced: false });
     });
   });
 });
