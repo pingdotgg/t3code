@@ -110,6 +110,8 @@ export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_RECORDING_FRAME_CHANNEL = "desktop:preview-recording-frame";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
+export const PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL = "desktop:preview-set-forwarded-shortcuts";
+export const PREVIEW_SHORTCUT_CHANNEL = "desktop:preview-shortcut";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 

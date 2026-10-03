@@ -34,6 +34,19 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
+export const RIGHT_PANEL_JUMP_KEYBINDING_COMMANDS = [
+  "rightPanel.jump.1",
+  "rightPanel.jump.2",
+  "rightPanel.jump.3",
+  "rightPanel.jump.4",
+  "rightPanel.jump.5",
+  "rightPanel.jump.6",
+  "rightPanel.jump.7",
+  "rightPanel.jump.8",
+  "rightPanel.jump.9",
+] as const;
+export type RightPanelJumpKeybindingCommand = (typeof RIGHT_PANEL_JUMP_KEYBINDING_COMMANDS)[number];
+
 const THREAD_KEYBINDING_COMMANDS = [
   "thread.stop",
   "thread.steerQueuedMessage",
@@ -69,14 +82,29 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "threadPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.close",
+  "rightPanel.newTab",
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
+  ...RIGHT_PANEL_JUMP_KEYBINDING_COMMANDS,
+  "rightPanel.newTerminal",
+  "rightPanel.openFiles",
+  "rightPanel.openPullRequest",
+  "rightPanel.openPullRequests",
+  "rightPanel.openDevice",
   "pullRequest.copyNumber",
   "diff.toggle",
   "preview.toggle",
   "preview.refresh",
+  "preview.hardRefresh",
+  "preview.back",
+  "preview.forward",
   "preview.focusUrl",
   "preview.zoomIn",
   "preview.zoomOut",
   "preview.resetZoom",
+  "preview.pickElement",
+  "preview.devTools",
+  "preview.toggleDeviceToolbar",
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",

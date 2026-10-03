@@ -128,6 +128,8 @@ function PreviewPanelShellFrame(
             }
           : undefined
       }
+      // A collapsing panel must not keep focus while it animates out.
+      inert={collapsible && !open}
       data-preview-panel-mode={props.mode}
       data-preview-panel-maximized={maximized ? "true" : "false"}
     >

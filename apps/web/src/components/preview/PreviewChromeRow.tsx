@@ -21,6 +21,8 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/in
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import { consumePreviewUrlFocus } from "./previewActionBus";
+
 interface Props {
   url: string;
   loading: boolean;
@@ -30,6 +32,8 @@ interface Props {
   inputDisabled?: boolean | undefined;
   /** Bumping this value re-focuses and selects the URL input. */
   focusUrlNonce?: number | undefined;
+  /** Showing tab, whose pending address-bar focus request this row honors. */
+  pendingFocusTabId?: string | null | undefined;
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
@@ -74,6 +78,7 @@ export function PreviewChromeRow({
   refreshDisabled,
   inputDisabled,
   focusUrlNonce,
+  pendingFocusTabId,
   onBack,
   onForward,
   onRefresh,
@@ -93,6 +98,7 @@ export function PreviewChromeRow({
   leadingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const toolbarRef = useRef<HTMLFormElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
 
@@ -101,21 +107,32 @@ export function PreviewChromeRow({
     const node = inputRef.current;
     if (!node) return;
     node.focus();
+    node.select();
   }, [focusUrlNonce]);
+
+  useEffect(() => {
+    if (pendingFocusTabId && consumePreviewUrlFocus(pendingFocusTabId)) inputRef.current?.focus();
+  }, [pendingFocusTabId]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
     const next = draft.trim();
     if (next.length === 0) return;
     onSubmit(next);
-    inputRef.current?.blur();
+    toolbarRef.current?.focus({ preventScroll: true });
   };
 
   return (
     <div className="relative">
+      {/*
+        Focusable so Enter and Escape can leave the address bar without
+        leaving the panel, where its shortcuts still apply.
+      */}
       <form
+        ref={toolbarRef}
+        tabIndex={-1}
         onSubmit={submit}
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 outline-none shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
@@ -195,7 +212,7 @@ export function PreviewChromeRow({
                     if (event.key === "Escape") {
                       event.preventDefault();
                       setDraft(url);
-                      inputRef.current?.blur();
+                      toolbarRef.current?.focus({ preventScroll: true });
                     }
                   }}
                   placeholder="Search or enter URL"

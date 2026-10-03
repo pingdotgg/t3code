@@ -9,9 +9,9 @@ import {
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingWhenExpression,
+  shortcutKeyFromEvent,
 } from "@t3tools/shared/keybindings";
 
-import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
@@ -311,13 +311,21 @@ export function buildKeybindingCommandOptions(
   return [...commands].toSorted((left, right) => compareCommands(left, right, commandLabel));
 }
 
+const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
+  "composer.sendAlternate": "Composer: Opposite Queue or Steer Action",
+  "composer.sendBackground": "Composer: Start in Background",
+  "composer.sendAndNewThread": "Composer: Send and Start New Thread",
+  "thread.steerQueuedMessage": "Queue: Send First Queued Message as Steer",
+  "thread.editQueuedMessage": "Queue: Edit Last Queued Message",
+  "thread.copyReference": "Pull Request: Copy Link or Thread ID",
+  "preview.focusUrl": "Browser: Focus Address Bar",
+  "preview.devTools": "Browser: Open DevTools",
+  "rightPanel.openPullRequests": "Right Panel: Open Linked Pull Requests",
+};
+
 export function commandLabel(command: KeybindingCommand): string {
-  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
-  if (command === "composer.sendBackground") return "Composer: Start in Background";
-  if (command === "composer.sendAndNewThread") return "Composer: Send and Start New Thread";
-  if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message as Steer";
-  if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
-  if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread ID";
+  const label = COMMAND_LABELS[command];
+  if (label) return label;
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);
@@ -326,7 +334,12 @@ export function commandLabel(command: KeybindingCommand): string {
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }
-  return raw.split(".").map(titleCaseCommandSegment).join(": ");
+  // `preview.*` IDs predate the product calling it the browser.
+  const [group = "", ...rest] = raw.split(".");
+  return [
+    group === "preview" ? "Browser" : titleCaseCommandSegment(group),
+    ...rest.map(titleCaseCommandSegment),
+  ].join(": ");
 }
 
 function titleCaseCommandSegment(segment: string): string {

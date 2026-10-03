@@ -7,6 +7,7 @@ import {
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
   type ResolvedKeybindingRule,
   type ResolvedKeybindingsConfig,
+  RIGHT_PANEL_JUMP_KEYBINDING_COMMANDS,
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 
@@ -94,6 +95,35 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command,
     when: "modelPickerOpen && isDesktop",
   })),
+  // A terminal tab from a terminal, a browser tab from anywhere else in a thread.
+  { key: "mod+t", command: "rightPanel.newTab" },
+  // The right panel behaves like a browser window while it has focus. These
+  // sit after the global rules they shadow (thread traversal and jumps,
+  // navigation history, copy reference, model picker) so they win there.
+  { key: "mod+shift+r", command: "preview.hardRefresh", when: "previewFocus && previewOpen" },
+  { key: "mod+[", command: "preview.back", when: "previewFocus && previewOpen" },
+  { key: "mod+]", command: "preview.forward", when: "previewFocus && previewOpen" },
+  { key: "mod+shift+c", command: "preview.pickElement", when: "previewFocus && previewOpen" },
+  { key: "mod+alt+i", command: "preview.devTools", when: "previewFocus && previewOpen" },
+  {
+    key: "mod+shift+m",
+    command: "preview.toggleDeviceToolbar",
+    when: "previewFocus && previewOpen",
+  },
+  { key: "ctrl+tab", command: "rightPanel.nextTab", when: "previewFocus" },
+  { key: "ctrl+shift+tab", command: "rightPanel.previousTab", when: "previewFocus" },
+  { key: "mod+shift+]", command: "rightPanel.nextTab", when: "previewFocus" },
+  { key: "mod+shift+[", command: "rightPanel.previousTab", when: "previewFocus" },
+  ...RIGHT_PANEL_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+    when: "previewFocus && isDesktop",
+  })),
+  { key: "mod+alt+shift+`", command: "rightPanel.newTerminal", when: "!terminalFocus" },
+  { key: "mod+alt+shift+f", command: "rightPanel.openFiles", when: "!terminalFocus" },
+  { key: "mod+alt+shift+p", command: "rightPanel.openPullRequest", when: "!terminalFocus" },
+  { key: "mod+alt+shift+l", command: "rightPanel.openPullRequests", when: "!terminalFocus" },
+  { key: "mod+alt+shift+m", command: "rightPanel.openDevice", when: "!terminalFocus" },
   { key: "c", command: "usage.cost", when: "usagePageOpen" },
   { key: "t", command: "usage.tokens", when: "usagePageOpen" },
   { key: "l", command: "usage.limits", when: "usagePageOpen" },
@@ -102,6 +132,69 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+3", command: "usage.period.month", when: "usagePageOpen" },
   { key: "mod+shift+4", command: "usage.period.quarter", when: "usagePageOpen" },
 ];
+
+/** Physical punctuation and digit keys, for layouts and modifiers that change `key`. */
+const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
+  Backquote: "`",
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Comma: ",",
+  Digit0: "0",
+  Digit1: "1",
+  Digit2: "2",
+  Digit3: "3",
+  Digit4: "4",
+  Digit5: "5",
+  Digit6: "6",
+  Digit7: "7",
+  Digit8: "8",
+  Digit9: "9",
+  Equal: "=",
+  Minus: "-",
+  Period: ".",
+  Quote: "'",
+  Semicolon: ";",
+  Slash: "/",
+};
+
+interface ShortcutKeyEvent {
+  readonly key: string;
+  readonly code?: string | undefined;
+}
+
+export function normalizeShortcutEventKey(key: string): string {
+  const normalized = key.toLowerCase();
+  if (normalized === "esc") return "escape";
+  return normalized;
+}
+
+export function shortcutKeyFromEvent(event: ShortcutKeyEvent): string {
+  const layoutKey = normalizeShortcutEventKey(event.key);
+  if (/^[a-z]$/.test(layoutKey)) return layoutKey;
+  const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
+  return physicalKey ?? layoutKey;
+}
+
+/**
+ * Keys a press can match. Shared by the renderer and the desktop shell, which
+ * matches presses inside preview pages, so both read keys the same way.
+ */
+export function shortcutKeysFromEvent(event: ShortcutKeyEvent): Set<string> {
+  const layoutKey = normalizeShortcutEventKey(event.key);
+  const keys = new Set([layoutKey]);
+  // The physical-position fallback exists for layouts that type non-Latin
+  // letters (Cyrillic, Greek) and for Option-modified symbols on macOS.
+  // When the layout already produces a Latin letter, match on it alone;
+  // otherwise a remapped physical key triggers shortcuts for two different
+  // letters at once and shadows system shortcuts on non-QWERTY layouts.
+  const letterCode = event.code?.match(/^Key([A-Z])$/)?.[1];
+  if (letterCode && !/^[a-z]$/.test(layoutKey)) {
+    keys.add(letterCode.toLowerCase());
+  }
+  keys.add(shortcutKeyFromEvent(event));
+  return keys;
+}
 
 function normalizeKeyToken(token: string): string {
   if (token === "space") return " ";

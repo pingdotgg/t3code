@@ -137,7 +137,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
     });
   };
 
-  if (!snapshot) return null;
+  if (!snapshot || snapshot.navStatus._tag === "Idle") return null;
 
   return (
     <MiniPlayerShell

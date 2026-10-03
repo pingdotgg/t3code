@@ -276,7 +276,11 @@ import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
 import { WizardPopup } from "./ui/wizard";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  resolveShortcutCommand,
+  rightPanelTabTarget,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -5767,7 +5771,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(
     () =>
       subscribePreviewAction((action) => {
-        if (action === "toggle-panel") togglePreviewPanel();
+        if (action === "preview.toggle") togglePreviewPanel();
       }),
     [togglePreviewPanel],
   );
@@ -6352,7 +6356,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
 
   // Tabbing back into the app lands focus wherever it last was, often the right panel or the
-  // body. Put it in the composer unless something that takes typing already holds it. The
+  // body. Preserve deliberate panel focus as well as fields that take typing. The
   // drawer terminal owns keyboard input while it is open, so it opts out here; a right panel
   // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
   // returning to the app does not raise the keyboard.
@@ -7349,6 +7353,13 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   useEffect(() => {
+    const rightPanelSurfaceOpeners = new Map<KeybindingCommand, () => void>([
+      ["rightPanel.newTerminal", addTerminalSurface],
+      ["rightPanel.openFiles", addFilesSurface],
+      ["rightPanel.openPullRequest", addPullRequestSurface],
+      ["rightPanel.openPullRequests", addPullRequestsSurface],
+      ["rightPanel.openDevice", addDeviceSurface],
+    ]);
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
@@ -7463,6 +7474,51 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
+        return;
+      }
+
+      const panelTab = rightPanelTabTarget(
+        rightPanelState.surfaces,
+        activeRightPanelSurface?.id ?? null,
+        command,
+      );
+      if (panelTab) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (panelTab.id !== activeRightPanelSurface?.id) activateRightPanelSurface(panelTab);
+        // The outgoing surface may unmount with focus inside it; keep focus in
+        // the panel so the next tab shortcut still applies. Terminals take
+        // focus themselves.
+        if (panelTab.kind !== "terminal") {
+          window.requestAnimationFrame(() => {
+            document
+              .querySelector<HTMLElement>(`[data-right-panel-tab="${CSS.escape(panelTab.id)}"]`)
+              ?.focus();
+          });
+        }
+        return;
+      }
+
+      // Like a terminal app inside a terminal, like a browser everywhere else.
+      // Without either, the chord keeps its native meaning.
+      if (
+        command === "rightPanel.newTab" &&
+        (terminalFocusOwner !== null || isPreviewSupportedInRuntime())
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (terminalFocusOwner === "right-panel") addTerminalSurface();
+        else if (terminalFocusOwner !== null) createNewTerminal();
+        else createBrowserSurface();
+        return;
+      }
+
+      const openRightPanelSurface = rightPanelSurfaceOpeners.get(command);
+      if (openRightPanelSurface) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) openRightPanelSurface();
         return;
       }
 
@@ -7603,7 +7659,14 @@ export default function ChatView(props: ChatViewProps) {
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
+    activateRightPanelSurface,
+    addDeviceSurface,
+    addFilesSurface,
+    addPullRequestSurface,
+    addPullRequestsSurface,
     addTerminalSurface,
+    createBrowserSurface,
+    rightPanelState.surfaces,
     activeThreadRef,
     activeThreadPinned,
     activeThreadSettled,

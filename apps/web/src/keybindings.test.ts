@@ -18,6 +18,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  previewForwardedShortcuts,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -25,6 +26,7 @@ import {
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
   resolveShortcutCommand,
+  rightPanelTabTarget,
   shouldShowThreadJumpHintsForModifiers,
   shortcutLabelForCommand,
   terminalDeleteShortcutData,
@@ -1512,5 +1514,101 @@ describe("Usage shortcuts", () => {
         platform: "Linux",
       }),
     );
+  });
+});
+
+describe("right panel shortcuts", () => {
+  const panelContext = { previewFocus: true, previewOpen: true, isDesktop: true, isWeb: false };
+
+  it.each([
+    ...Array.from({ length: 9 }, (_, index) => ({
+      input: { key: `${index + 1}`, code: `Digit${index + 1}`, metaKey: true },
+      command: `rightPanel.jump.${index + 1}`,
+    })),
+    {
+      input: { key: "[", code: "BracketLeft", metaKey: true, shiftKey: true },
+      command: "rightPanel.previousTab",
+    },
+    {
+      input: { key: "]", code: "BracketRight", metaKey: true, shiftKey: true },
+      command: "rightPanel.nextTab",
+    },
+    { input: { key: "Tab", ctrlKey: true }, command: "rightPanel.nextTab" },
+    { input: { key: "Tab", ctrlKey: true, shiftKey: true }, command: "rightPanel.previousTab" },
+  ])("keeps $command out of chat navigation while the panel is focused", ({ input, command }) => {
+    const resolved = resolveShortcutCommand(event(input), DEFAULT_RESOLVED_KEYBINDINGS, {
+      platform: "MacIntel",
+      // Sidebar navigation needs panel focus even for non-browser panel tabs.
+      context: { previewFocus: true, isDesktop: true, isWeb: false },
+    });
+    assert.strictEqual(resolved, command);
+    assert.isNull(threadJumpIndexFromCommand(resolved ?? ""));
+    assert.isNull(threadTraversalDirectionFromCommand(resolved));
+  });
+
+  it("acts like a browser only while the panel has focus", () => {
+    const resolve = (overrides: Partial<ShortcutEventLike>, context = panelContext) =>
+      resolveShortcutCommand(event({ metaKey: true, ...overrides }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context,
+      });
+    assert.strictEqual(resolve({ key: "l" }), "preview.focusUrl");
+    assert.strictEqual(resolve({ key: "[", code: "BracketLeft" }), "preview.back");
+    // Typing in the composer leaves the browser and chat shortcuts alone.
+    const composerContext = {
+      ...panelContext,
+      previewFocus: false,
+      composerFocus: true,
+      editableFocus: true,
+    };
+    assert.isNull(resolve({ key: "l" }, composerContext));
+    assert.strictEqual(
+      resolve({ key: "[", code: "BracketLeft" }, composerContext),
+      "navigation.back",
+    );
+    assert.strictEqual(resolve({ key: "1", code: "Digit1" }, composerContext), "thread.jump.1");
+  });
+
+  it("keeps page navigation off panel tabs that are not browsers", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "[", code: "BracketLeft", metaKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { ...panelContext, previewOpen: false } },
+      ),
+      "navigation.back",
+    );
+  });
+
+  it("wraps tab traversal and jumps to the last tab with 9", () => {
+    const tabs = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    assert.strictEqual(rightPanelTabTarget(tabs, "c", "rightPanel.nextTab")?.id, "a");
+    assert.strictEqual(rightPanelTabTarget(tabs, "a", "rightPanel.previousTab")?.id, "c");
+    assert.strictEqual(rightPanelTabTarget(tabs, null, "rightPanel.previousTab")?.id, "c");
+    assert.strictEqual(rightPanelTabTarget(tabs, "a", "rightPanel.jump.2")?.id, "b");
+    assert.strictEqual(rightPanelTabTarget(tabs, "a", "rightPanel.jump.9")?.id, "c");
+    assert.isNull(rightPanelTabTarget(tabs, "a", "rightPanel.jump.5"));
+    assert.isNull(rightPanelTabTarget([], null, "rightPanel.nextTab"));
+  });
+
+  it("takes only browser-window chords from a focused page", () => {
+    const forwarded = previewForwardedShortcuts(DEFAULT_RESOLVED_KEYBINDINGS, "MacIntel");
+    const has = (key: string, modifiers: { shiftKey?: boolean; altKey?: boolean } = {}) =>
+      forwarded.some(
+        (shortcut) =>
+          shortcut.key === key &&
+          shortcut.metaKey &&
+          shortcut.shiftKey === (modifiers.shiftKey ?? false) &&
+          shortcut.altKey === (modifiers.altKey ?? false),
+      );
+    assert.isTrue(has("l"));
+    assert.isTrue(has("t"));
+    assert.isTrue(has("w"));
+    assert.isTrue(has("["));
+    assert.isTrue(forwarded.some((shortcut) => shortcut.key === "tab" && shortcut.ctrlKey));
+    // Panel toggles, surface openers, and other app shortcuts stay with the page.
+    assert.isFalse(has("k"));
+    assert.isFalse(has("j", { shiftKey: true }));
+    assert.isFalse(has("f", { shiftKey: true, altKey: true }));
   });
 });

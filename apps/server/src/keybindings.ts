@@ -144,6 +144,45 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
   return leftContext === rightContext;
 }
 
+/**
+ * A binding recorded on a non-Latin layout stores that layout's letter, but
+ * presses also match the physical Latin letter. Without the layout, any
+ * non-Latin letter may share a key with any Latin one.
+ */
+function canShareKey(left: string, right: string): boolean {
+  if (left === right) return true;
+  const isLatinLetter = (key: string) => /^[a-z]$/.test(key);
+  const isOtherLetter = (key: string) => /^\p{L}$/u.test(key) && !isLatinLetter(key);
+  return (
+    (isLatinLetter(left) && isOtherLetter(right)) || (isOtherLetter(left) && isLatinLetter(right))
+  );
+}
+
+/**
+ * Whether two rules can fire on the same key press on some platform, whatever
+ * their `when`. `mod` is Command on macOS and Control elsewhere.
+ */
+function canShareChord(left: KeybindingRule, right: KeybindingRule): boolean {
+  const leftShortcut = parseKeybindingShortcut(left.key);
+  const rightShortcut = parseKeybindingShortcut(right.key);
+  if (!leftShortcut || !rightShortcut) return false;
+  if (
+    !canShareKey(leftShortcut.key, rightShortcut.key) ||
+    leftShortcut.shiftKey !== rightShortcut.shiftKey ||
+    leftShortcut.altKey !== rightShortcut.altKey
+  ) {
+    return false;
+  }
+  return [true, false].some((isMac) => {
+    const meta = (shortcut: KeybindingShortcut) => shortcut.metaKey || (shortcut.modKey && isMac);
+    const ctrl = (shortcut: KeybindingShortcut) => shortcut.ctrlKey || (shortcut.modKey && !isMac);
+    return meta(leftShortcut) === meta(rightShortcut) && ctrl(leftShortcut) === ctrl(rightShortcut);
+  });
+}
+
+const isDefaultKeybindingRule = (rule: KeybindingRule) =>
+  DEFAULT_KEYBINDINGS.some((defaultRule) => isSameKeybindingRule(rule, defaultRule));
+
 function keybindingRuleFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule {
   return input.when === undefined
     ? { key: input.key, command: input.command }
@@ -543,8 +582,12 @@ const make = Effect.gen(function* () {
         if (existingCommands.has(defaultRule.command)) {
           continue;
         }
-        const conflictingEntry = customConfig.find((entry) =>
-          hasSameShortcutContext(entry, defaultRule),
+        // A chord the user bound themselves stays theirs: appending the new
+        // default after it would make the default win wherever both apply.
+        const conflictingEntry = customConfig.find(
+          (entry) =>
+            hasSameShortcutContext(entry, defaultRule) ||
+            (!isDefaultKeybindingRule(entry) && canShareChord(entry, defaultRule)),
         );
         if (conflictingEntry) {
           shortcutConflictWarnings.push({
@@ -574,7 +617,7 @@ const make = Effect.gen(function* () {
           conflictingCommand: conflict.conflictingCommand,
           key: conflict.key,
           when: conflict.when,
-          reason: "shortcut context already used by existing rule",
+          reason: "shortcut already used by existing rule",
         });
       }
       if (missingDefaults.length > 0) {
