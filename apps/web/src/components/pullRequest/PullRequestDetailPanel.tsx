@@ -8,6 +8,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  GitCommandError,
   type PullRequestAction,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
@@ -16,6 +17,7 @@ import {
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
@@ -243,6 +245,8 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
  */
 const UPDATE_BRANCH_REBASE_FAILURE_HINT =
   "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.";
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "summary", label: "Summary" },
@@ -1241,13 +1245,16 @@ export function PullRequestDetailPanel({
     if (prepared._tag === "Failure") {
       setHandoff(null);
       // The server says what to do about it — that the branch is already checked out in the main
-      // repository, say — and that sentence is the only way out of the failure.
-      const detailMessage =
-        prepareThread.error instanceof Error ? prepareThread.error.message : null;
+      // repository, say — and that sentence is the only way out of the failure. A failed git
+      // command's message also names the server's project directory, so only its detail is shown.
+      const failure = squashAtomCommandFailure(prepared);
       toastManager.update(toastId, {
         type: "error",
         title: "Could not prepare the pull request checkout",
-        ...(detailMessage ? { description: detailMessage } : {}),
+        description: readableFailure(
+          isGitCommandError(failure) ? failure.detail : failure,
+          "Check that the branch still exists and is not checked out elsewhere, then try again.",
+        ),
       });
       return;
     }
