@@ -6,7 +6,7 @@ import {
   resolveChatPaneRenderMode,
   resolveChatSplitDropPlacement,
   shouldSyncFocusedLeafToRoute,
-} from "./ChatSplitArea";
+} from "./ChatSplitArea.logic";
 
 describe("resolveChatSplitDropPlacement", () => {
   const rect = { left: 10, top: 20, width: 200, height: 100 };

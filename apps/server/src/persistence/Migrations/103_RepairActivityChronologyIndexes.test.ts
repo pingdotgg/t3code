@@ -28,6 +28,9 @@ it.effect("repairs skipped chronology indexes above the existing migration high-
       [113, "ProjectionCheckpointTransitionFiles"],
       [114, "RepairThreadContextHistory"],
       [115, "GitActivityLedger"],
+      [116, "CollaborativeAcceptancePullRequestLookup"],
+      [117, "PendingPullRequestFeedbackIndex"],
+      [118, "QueueHoldAndShutdownMarker"],
     ]);
     yield* repair;
     assert.deepStrictEqual(yield* runMigrations(), []);

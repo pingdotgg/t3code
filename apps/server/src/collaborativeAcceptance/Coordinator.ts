@@ -55,7 +55,10 @@ import {
   completeExchange,
   startExchange,
 } from "./domain.ts";
-import { selectCurrentAcceptanceCase } from "./caseLookup.ts";
+import {
+  selectCurrentAcceptanceCase,
+  selectCurrentAcceptanceCaseForPullRequest,
+} from "./caseLookup.ts";
 import { isCompleteAcceptanceAuthority } from "./authority.ts";
 import { makeAcceptanceCaseMutation } from "./CaseMutation.ts";
 import { CollaborativeAcceptanceRepository } from "../persistence/Services/CollaborativeAcceptance.ts";
@@ -526,7 +529,7 @@ const makeCoordinator = Effect.gen(function* () {
     CollaborativeAcceptanceCaseLookupResult,
     CollaborativeAcceptanceCaseLookupError
   > =>
-    repository.listAll().pipe(
+    repository.listByPullRequest(input.pullRequest).pipe(
       Effect.mapError(
         () =>
           new CollaborativeAcceptanceCaseLookupError({
@@ -535,9 +538,8 @@ const makeCoordinator = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((records) => {
-        const selection = selectCurrentAcceptanceCase({
+        const selection = selectCurrentAcceptanceCaseForPullRequest({
           records,
-          threadId: input.threadId,
           pullRequest: input.pullRequest,
         });
         switch (selection._tag) {

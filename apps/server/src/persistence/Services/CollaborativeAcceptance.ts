@@ -9,6 +9,7 @@ import {
   CollaborativeAcceptanceProviderEvidence,
   CollaborativeAcceptanceProjection,
   CollaborativeAcceptanceRecord,
+  type PullRequestRef,
 } from "@t3tools/contracts";
 import { Context, Effect, Option, Schema } from "effect";
 
@@ -38,6 +39,12 @@ export interface CollaborativeAcceptanceRepositoryShape {
   readonly listByParentThreadId: (input: {
     readonly parentThreadId: string;
   }) => Effect.Effect<
+    ReadonlyArray<CollaborativeAcceptanceRecord>,
+    CollaborativeAcceptanceRepositoryError
+  >;
+  readonly listByPullRequest: (
+    input: PullRequestRef,
+  ) => Effect.Effect<
     ReadonlyArray<CollaborativeAcceptanceRecord>,
     CollaborativeAcceptanceRepositoryError
   >;

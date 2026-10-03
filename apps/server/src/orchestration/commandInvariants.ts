@@ -10,6 +10,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+export { nextQueuePosition } from "@t3tools/shared/queuedTurnOrder";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -269,8 +270,21 @@ export function threadHasPendingInteraction(thread: OrchestrationThread): boolea
   );
 }
 
+/**
+ * A held queue is never ready: crash recovery holds it so no queued prompt
+ * fires unprompted, and only an explicit release clears that. Every admission
+ * path goes through this predicate so the hold cannot be bypassed.
+ */
+export function threadQueueIsHeld(thread: OrchestrationThread): boolean {
+  return thread.queueHeldAt != null;
+}
+
 export function isThreadReadyForQueuedDispatch(thread: OrchestrationThread): boolean {
-  return !threadHasInFlightTurn(thread) && !threadHasPendingInteraction(thread);
+  return (
+    !threadQueueIsHeld(thread) &&
+    !threadHasInFlightTurn(thread) &&
+    !threadHasPendingInteraction(thread)
+  );
 }
 
 export function findQueuedTurnById(

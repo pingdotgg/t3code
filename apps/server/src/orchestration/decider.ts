@@ -25,10 +25,12 @@ import {
   listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
+  findThreadById,
   requireWritableProjectForThread,
   requireThread,
   requireThreadAbsent,
   requireThreadNotArchived,
+  nextQueuePosition,
   requireQueuedTurn,
   requireThreadReadyForTurnStart,
   requireThreadWithInFlightTurn,
@@ -279,6 +281,7 @@ function collaborationQueueEvent(
   >["delivery"],
   origin: NonNullable<OrchestrationQueuedTurn["origin"]>,
   createdAt: string,
+  queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>,
 ): PlannedOrchestrationEvent {
   return {
     ...withEventBase({
@@ -294,6 +297,10 @@ function collaborationQueueEvent(
         id: delivery.queuedTurnId,
         threadId,
         message: delivery.message,
+        // Assigned here too, not only on the enqueue command path: a turn
+        // created without a position sorts after every positioned turn, so a
+        // later PR-monitor message could overtake a collaboration request.
+        queuePosition: nextQueuePosition(queuedTurns),
         ...(delivery.modelSelection !== undefined
           ? { modelSelection: delivery.modelSelection }
           : {}),
@@ -2121,6 +2128,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               exchangeId: request.exchangeId,
             },
             command.createdAt,
+            recipient.queuedTurns ?? [],
           ),
         );
       }
@@ -2194,6 +2202,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             exchangeId: request.exchangeId,
           },
           command.createdAt,
+          findThreadById(readModel, request.senderThreadId)?.queuedTurns ?? [],
         ),
       ];
       return events;
@@ -3013,6 +3022,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurn: {
             ...command.continuation,
             origin: { ...handoffOrigin, role: "continuation" },
+            queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
           },
         },
       });
@@ -3466,6 +3476,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         ...(origin !== undefined ? { origin } : {}),
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
+        // Appending must never reorder the existing queue: the new turn takes
+        // the next position rather than sorting by its own creation time.
+        queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
         failedAt: null,
         failureMessage: null,
       };
@@ -3946,6 +3959,95 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurnId: command.queuedTurnId,
           failureMessage: command.failureMessage,
           failedAt: command.failedAt,
+        },
+      };
+    }
+
+    case "thread.queue.hold": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Holding an empty or already-held queue is a no-op rather than an error:
+      // crash recovery sweeps every thread it sees, and repeat boots must not
+      // fail on the state a previous boot already wrote.
+      if ((thread.queuedTurns ?? []).length === 0 || thread.queueHeldAt != null) {
+        return [];
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.heldAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queue-held",
+        payload: {
+          threadId: command.threadId,
+          heldAt: command.heldAt,
+        },
+      };
+    }
+
+    case "thread.queue.release": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.queueHeldAt == null) {
+        return [];
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.releasedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queue-released",
+        payload: {
+          threadId: command.threadId,
+          releasedAt: command.releasedAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.reorder": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurns = thread.queuedTurns ?? [];
+      const current = new Set(queuedTurns.map((queuedTurn) => queuedTurn.id));
+      const requested = new Set(command.orderedQueuedTurnIds);
+      // The order must be a permutation of the live queue. A partial order
+      // would silently drop the omitted turns' positions, so the next boot
+      // would rebuild a different order than the user last saw.
+      if (
+        requested.size !== current.size ||
+        current.size !== command.orderedQueuedTurnIds.length ||
+        !command.orderedQueuedTurnIds.every((queuedTurnId) => current.has(queuedTurnId))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Reorder for thread '${command.threadId}' must list every queued turn exactly once.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.reorderedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-reordered",
+        payload: {
+          threadId: command.threadId,
+          orderedQueuedTurnIds: command.orderedQueuedTurnIds,
+          reorderedAt: command.reorderedAt,
         },
       };
     }
@@ -4512,6 +4614,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             interactionMode: command.interactionMode,
             createdAt: command.createdAt,
             updatedAt: command.createdAt,
+            queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
             failedAt: null,
             failureMessage: null,
           },

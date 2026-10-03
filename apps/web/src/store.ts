@@ -38,6 +38,7 @@ import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import {
   sameThreadPullRequest,
   seedLegacyThreadPullRequestLink,
@@ -344,7 +345,10 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     session: thread.session ? mapSession(thread.session) : null,
     messages: thread.messages.map((message) => mapMessage(environmentId, message)),
     proposedPlans: thread.proposedPlans.map(mapProposedPlan),
-    queuedTurns: (thread.queuedTurns ?? []).map((queuedTurn) => ({ ...queuedTurn })),
+    queuedTurns: (thread.queuedTurns ?? [])
+      .map((queuedTurn) => ({ ...queuedTurn }))
+      .toSorted(compareQueuedTurns),
+    queueHeldAt: thread.queueHeldAt ?? null,
     error: sanitizeThreadErrorMessage(thread.session?.lastError),
     createdAt: thread.createdAt,
     archivedAt: thread.archivedAt,
@@ -403,6 +407,7 @@ export function mapThreadShell(
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    queueHeldAt: thread.queueHeldAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -483,6 +488,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    queueHeldAt: thread.queueHeldAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -715,6 +721,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.settledAt === right.settledAt &&
     left.snoozedUntil === right.snoozedUntil &&
     left.snoozedAt === right.snoozedAt &&
+    left.queueHeldAt === right.queueHeldAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
@@ -2646,6 +2653,38 @@ function applyEnvironmentOrchestrationEvent(
         ),
         updatedAt: event.occurredAt,
       }));
+
+    case "thread.queue-held":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queueHeldAt: event.payload.heldAt,
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.queue-released":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queueHeldAt: null,
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.queued-turn-reordered": {
+      const positions = new Map(
+        event.payload.orderedQueuedTurnIds.map((queuedTurnId, index) => [queuedTurnId, index]),
+      );
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        queuedTurns: (thread.queuedTurns ?? [])
+          .map((queuedTurn) => {
+            const queuePosition = positions.get(queuedTurn.id);
+            return queuePosition === undefined
+              ? queuedTurn
+              : { ...queuedTurn, queuePosition, updatedAt: event.payload.reorderedAt };
+          })
+          .toSorted(compareQueuedTurns),
+        updatedAt: event.occurredAt,
+      }));
+    }
 
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":

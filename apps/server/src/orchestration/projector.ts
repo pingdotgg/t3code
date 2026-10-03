@@ -13,6 +13,7 @@ import {
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
 import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { sameThreadPullRequest } from "@t3tools/shared/threadPullRequests";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
@@ -58,6 +59,9 @@ import {
   ThreadQueuedTurnDispatchedPayload,
   ThreadQueuedTurnFailedPayload,
   ThreadQueuedTurnUpdatedPayload,
+  ThreadQueuedTurnReorderedPayload,
+  ThreadQueueHeldPayload,
+  ThreadQueueReleasedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadReviewResultSetPayload,
   ThreadSettledPayload,
@@ -887,6 +891,73 @@ export function projectEvent(
         };
       });
 
+    case "thread.queue-held":
+      return decodeForEvent(ThreadQueueHeldPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queueHeldAt: payload.heldAt,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queue-released":
+      return decodeForEvent(ThreadQueueReleasedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queueHeldAt: null,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.queued-turn-reordered":
+      return decodeForEvent(
+        ThreadQueuedTurnReorderedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          const positions = new Map(
+            payload.orderedQueuedTurnIds.map((queuedTurnId, index) => [queuedTurnId, index]),
+          );
+          const queuedTurns = (thread.queuedTurns ?? [])
+            .map((queuedTurn) => {
+              const queuePosition = positions.get(queuedTurn.id);
+              return queuePosition === undefined
+                ? queuedTurn
+                : { ...queuedTurn, queuePosition, updatedAt: payload.reorderedAt };
+            })
+            .toSorted(compareQueuedTurns);
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              queuedTurns,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.turn-start-requested":
       return decodeForEvent(
         ThreadTurnStartRequestedPayload,
@@ -926,10 +997,7 @@ export function projectEvent(
               (queuedTurn) => queuedTurn.id !== payload.queuedTurn.id,
             ),
             payload.queuedTurn,
-          ].toSorted(
-            (left, right) =>
-              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          );
+          ].toSorted(compareQueuedTurns);
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {

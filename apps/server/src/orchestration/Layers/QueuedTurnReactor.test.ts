@@ -1,6 +1,9 @@
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ChildWaitCondition,
+  CollaborationRequestId,
+  CollaborationResponseId,
+  CollaborativeAcceptanceExchangeId,
   CommandId,
   EventId,
   MessageId,
@@ -19,14 +22,18 @@ import {
   type PullRequestMonitorSnapshot,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
+import { PullRequestMonitorService } from "../../pullRequestMonitor/PullRequestMonitorService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { QueuedTurnReactor } from "../Services/QueuedTurnReactor.ts";
+import { ServerShutdownMarkerRepository } from "../../persistence/Services/ServerShutdownMarker.ts";
+import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { QueuedTurnReactorLive } from "./QueuedTurnReactor.ts";
 
 const now = "2026-03-01T00:00:00.000Z";
@@ -317,9 +324,13 @@ async function runReactor(
   readModelInput: OrchestrationReadModel,
   snapshot: PullRequestMonitorSnapshot,
   options?: {
+    /** Receives the count of `thread.queue.hold` dispatch attempts. */
+    readonly holdAttemptsForTest?: { value: number };
     readonly waitAfterStartMs?: number;
     readonly firstDispatchDelayMs?: number;
     readonly snapshotDelayMs?: number;
+    /** Whether the previous server process exited cleanly. Defaults to true. */
+    readonly previousShutdownWasClean?: boolean;
     readonly snapshotError?: PullRequestOperationError;
     readonly onRetryQueuedDelivery?: (deliveryId: string) => void;
     readonly retryQueuedDeliveryError?: PullRequestMonitorError;
@@ -330,7 +341,22 @@ async function runReactor(
     };
     readonly providerInstances?: ServerSettings["providerInstances"];
     readonly optIn?: boolean;
+    readonly monitorEnabled?: boolean;
+    readonly monitorTerminal?: boolean;
+    readonly monitorOwnerChanged?: boolean;
+    readonly autoMonitorPullRequestsOnCreate?: boolean;
     readonly enableAfterStart?: boolean;
+    /**
+     * Published from inside the startup path, after the event consumer is forked
+     * but before crash recovery completes. Models the readiness-changing event
+     * that provider ingestion can deliver during the recovery window.
+     */
+    readonly resumeDuringStart?: {
+      readonly readModel: OrchestrationReadModel;
+      readonly event: OrchestrationEvent;
+    };
+    /** Fail `thread.queue.hold` dispatches until this 1-based attempt number. */
+    readonly failHoldUntilAttempt?: number;
     readonly delegationIdleStallThresholdMs?: number;
   },
 ): Promise<ReadonlyArray<OrchestrationCommand>> {
@@ -338,11 +364,46 @@ async function runReactor(
   const commands: OrchestrationCommand[] = [];
   const domainEvents = await Effect.runPromise(PubSub.unbounded<OrchestrationEvent>());
   let dispatchesStarted = 0;
+  let publishedDuringStart = false;
+  let holdAttempts = 0;
+  const holdAttemptsForTest = options?.holdAttemptsForTest ?? { value: 0 };
   const engineLayer = Layer.succeed(OrchestrationEngineService, {
-    getReadModel: () => Effect.succeed(readModel),
+    getReadModel: () =>
+      Effect.suspend(() => {
+        // Models the readiness-changing event provider ingestion can deliver
+        // while recovery is still running: this fires from the crash-hold
+        // sweep's own read, which is after the consumer is forked and before the
+        // barrier opens.
+        if (options?.resumeDuringStart && !publishedDuringStart) {
+          publishedDuringStart = true;
+          readModel = options.resumeDuringStart.readModel;
+          return Effect.flatMap(PubSub.publish(domainEvents, options.resumeDuringStart.event), () =>
+            Effect.succeed(readModel),
+          );
+        }
+        return Effect.succeed(readModel);
+      }),
     readEvents: () => Stream.empty,
-    dispatch: (command) =>
-      Effect.sync(() => {
+    dispatch: (command) => {
+      if (command.type === "thread.queue.hold") {
+        holdAttempts += 1;
+        holdAttemptsForTest.value = holdAttempts;
+        if (
+          options?.failHoldUntilAttempt !== undefined &&
+          holdAttempts <= options.failHoldUntilAttempt
+        ) {
+          // Typed like a real dispatch failure (an invariant/command error), not
+          // a defect, so the reactor's `catchCause` handles it the same way it
+          // would handle a transient persistence rejection.
+          return Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: "thread.queue.hold",
+              detail: `simulated persistence failure on hold attempt ${holdAttempts}`,
+            }),
+          );
+        }
+      }
+      return Effect.sync(() => {
         commands.push(command);
         if ((command.type as string) === "thread.delegation.settle" && "threadId" in command) {
           readModel = {
@@ -403,6 +464,42 @@ async function runReactor(
                 : thread,
             ),
           };
+        } else if (command.type === "thread.queue.hold") {
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId ? { ...thread, queueHeldAt: command.heldAt } : thread,
+            ),
+          };
+        } else if (command.type === "thread.queue.release") {
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId ? { ...thread, queueHeldAt: null } : thread,
+            ),
+          };
+        } else if (command.type === "thread.queued-turn.reorder") {
+          const positions = new Map(
+            command.orderedQueuedTurnIds.map((queuedTurnId, index) => [queuedTurnId, index]),
+          );
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId
+                ? {
+                    ...thread,
+                    queuedTurns: (thread.queuedTurns ?? [])
+                      .map((queuedTurn) => {
+                        const queuePosition = positions.get(queuedTurn.id);
+                        return queuePosition === undefined
+                          ? queuedTurn
+                          : { ...queuedTurn, queuePosition };
+                      })
+                      .toSorted(compareQueuedTurns),
+                  }
+                : thread,
+            ),
+          };
         } else if (command.type === "thread.queued-turn.update") {
           readModel = {
             ...readModel,
@@ -427,7 +524,8 @@ async function runReactor(
           };
         }
         return { sequence: 2 };
-      }),
+      });
+    },
     withWorktreeLock: (effect) =>
       Effect.suspend(() => {
         const delay = dispatchesStarted++ === 0 ? (options?.firstDispatchDelayMs ?? 0) : 0;
@@ -454,10 +552,35 @@ async function runReactor(
       listReports: () => Effect.die("unused"),
     }),
   );
+  // Defaults to a clean previous shutdown so existing cases drain as before;
+  // crash-recovery cases opt in explicitly.
+  const previousShutdownWasClean = options?.previousShutdownWasClean ?? true;
+  const shutdownMarkerLayer = Layer.succeed(
+    ServerShutdownMarkerRepository,
+    ServerShutdownMarkerRepository.of({
+      beginSession: () => Effect.sync(() => previousShutdownWasClean),
+      recordCleanShutdown: () => Effect.void,
+    }),
+  );
+  const monitorLayer = Layer.succeed(PullRequestMonitorService, {
+    automationDeliveryState: () =>
+      Effect.succeed(
+        options?.monitorTerminal
+          ? "terminal"
+          : options?.monitorOwnerChanged
+            ? "owner-changed"
+            : (options?.monitorEnabled ?? true) &&
+                (options?.autoMonitorPullRequestsOnCreate ?? true)
+              ? "eligible"
+              : "blocked",
+      ),
+  } as unknown as PullRequestMonitorService["Service"]);
   const layer = QueuedTurnReactorLive.pipe(
     Layer.provide(engineLayer),
     Layer.provide(pullRequestLayer(snapshot, options?.snapshotError, options?.snapshotDelayMs)),
     Layer.provide(feedbackLayer),
+    Layer.provide(shutdownMarkerLayer),
+    Layer.provide(monitorLayer),
     Layer.provideMerge(
       ServerSettingsService.layerTest({
         copilotAutomaticPrFeedback: {
@@ -479,6 +602,10 @@ async function runReactor(
     Effect.scoped(
       Effect.gen(function* () {
         const reactor = yield* QueuedTurnReactor;
+        // `resumeDuringStart` publishes from inside the start path: the engine's
+        // first read model fetch is stubbed to publish an event the first time
+        // it is called, which happens after the event consumer is forked but
+        // before crash recovery has installed the holds.
         yield* reactor.start();
         if (options?.resume) {
           expect(commands).toHaveLength(0);
@@ -503,6 +630,183 @@ async function runReactor(
 }
 
 describe("QueuedTurnReactor", () => {
+  it("holds queued messages after a crash and does not dispatch them", async () => {
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+    });
+
+    const holds = commands.filter((command) => command.type === "thread.queue.hold");
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toMatchObject({ threadId });
+    // The whole point of holding: nothing reaches the provider until the user
+    // says so, even though the queue is otherwise eligible.
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  /**
+   * The event consumer is forked before crash recovery installs the holds, and
+   * TurnLifecycleRuntime starts provider ingestion before this reactor, so a
+   * readiness-changing event for a restored thread can arrive while that thread
+   * is still unheld. Without a recovery barrier the queued prompt dispatches in
+   * that window — the case the hold exists to prevent.
+   */
+  /**
+   * The domain-event consumer is forked before crash recovery installs the
+   * holds, and TurnLifecycleRuntime starts provider ingestion before this
+   * reactor, so a readiness-changing event can arrive for a restored thread
+   * while it is still unheld. `resumeDuringStart` delivers it from inside the
+   * recovery sweep's own read, which is exactly that window.
+   */
+  it("drops an event-triggered drain that arrives while recovery is still running", async () => {
+    const state = queuedReadModel();
+    const commands = await runReactor(state, monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      resumeDuringStart: {
+        readModel: state,
+        event: queueMetaUpdatedEvent(state.threads[0]!.id),
+      },
+      waitAfterStartMs: 40,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(true);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  /**
+   * If a crash hold cannot be durably installed, the thread must stay blocked:
+   * opening the global barrier unconditionally would drain a restored queue
+   * that was never held, which is the unprompted dispatch this PR prevents.
+   */
+  it("keeps a thread blocked when installing its crash hold fails", async () => {
+    const holdAttemptsForTest = { value: 0 };
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      // Every attempt fails, modelling a persistence layer that never recovers.
+      failHoldUntilAttempt: Number.MAX_SAFE_INTEGER,
+      holdAttemptsForTest,
+      waitAfterStartMs: 60,
+    });
+
+    // The hold was attempted and failed, and crucially the thread was NOT
+    // dispatched: swallowing the failure would let the unconditional
+    // `recoveryBarrierOpen = true` drain a queue that was never held.
+    expect(holdAttemptsForTest.value).toBeGreaterThanOrEqual(1);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  it("retries a failed crash hold on the sweep until it is durably installed", async () => {
+    const holdAttemptsForTest = { value: 0 };
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+      // Transient failure: the first attempt fails, later ones succeed.
+      failHoldUntilAttempt: 1,
+      holdAttemptsForTest,
+      // Long enough to cover the 20s retry sweep; the retry itself is what is
+      // under test, not the cadence.
+      waitAfterStartMs: 21_000,
+    });
+
+    // Retried rather than left stuck, and the hold is eventually recorded.
+    expect(holdAttemptsForTest.value).toBeGreaterThanOrEqual(2);
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(true);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  it("drains queued messages on startup after a clean shutdown", async () => {
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(false);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(true);
+  });
+
+  it("drains a held queue once the release lands", async () => {
+    const held = heldQueueReadModel();
+    const commands = await runReactor(held, monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+      resume: {
+        readModel: releasedQueueReadModel(held),
+        event: queueReleasedEvent(threadId, "2026-01-01T00:00:06.000Z"),
+      },
+    });
+
+    expect(
+      commands.some(
+        (command) =>
+          command.type === "thread.queued-turn.dispatch" && command.queuedTurnId === queuedTurnId,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps a held queue from draining on later unrelated events", async () => {
+    const held = heldQueueReadModel();
+    const commands = await runReactor(held, monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+      resume: {
+        readModel: held,
+        event: queueMetaUpdatedEvent(threadId),
+      },
+      waitAfterStartMs: 40,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  const heldAt = "2026-01-01T00:00:05.000Z";
+
+  function withQueueHeldAt(
+    state: OrchestrationReadModel,
+    queueHeldAt: string | null,
+  ): OrchestrationReadModel {
+    return {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, queueHeldAt } : thread,
+      ),
+    };
+  }
+
+  function heldQueueReadModel(): OrchestrationReadModel {
+    return withQueueHeldAt(queuedReadModel(), heldAt);
+  }
+
+  function releasedQueueReadModel(state: OrchestrationReadModel): OrchestrationReadModel {
+    return withQueueHeldAt(state, null);
+  }
+
+  function queueReleasedEvent(targetThreadId: ThreadId, releasedAt: string): OrchestrationEvent {
+    return {
+      sequence: 2,
+      eventId: EventId.make("queue-released"),
+      aggregateKind: "thread",
+      aggregateId: targetThreadId,
+      occurredAt: releasedAt,
+      commandId: CommandId.make("queue-released"),
+      causationEventId: null,
+      correlationId: CommandId.make("queue-released"),
+      metadata: {},
+      type: "thread.queue-released",
+      payload: { threadId: targetThreadId, releasedAt },
+    };
+  }
+
+  function queueMetaUpdatedEvent(targetThreadId: ThreadId): OrchestrationEvent {
+    return {
+      sequence: 2,
+      eventId: EventId.make("queue-meta-updated"),
+      aggregateKind: "thread",
+      aggregateId: targetThreadId,
+      occurredAt: now,
+      commandId: CommandId.make("queue-meta-updated"),
+      causationEventId: null,
+      correlationId: CommandId.make("queue-meta-updated"),
+      metadata: {},
+      type: "thread.meta-updated",
+      payload: { threadId: targetThreadId, updatedAt: now },
+    };
+  }
+
   it("reconciles unavailable child assignments on startup", async () => {
     const base = delegatedReadModel();
     const parent = base.threads[0]!;
@@ -1867,6 +2171,136 @@ describe("QueuedTurnReactor", () => {
     ]);
   });
 
+  it("keeps parent feedback queued while monitoring is paused or policy-disabled", async () => {
+    const state = queuedReadModel({
+      origin: {
+        kind: "pull-request-monitor",
+        repository: "acme/app",
+        number: 42,
+        headSha: "head-current",
+        sourceRevision: "review:head-current",
+        events: [{ kind: "review-finding", sourceId: "finding-1", detail: "Review finding" }],
+        deliveryId: "review-delivery",
+      },
+    });
+
+    const stopped = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: false,
+    });
+    const policyDisabled = await runReactor(state, monitorSnapshot("head-current"), {
+      autoMonitorPullRequestsOnCreate: false,
+    });
+    const resumed = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: true,
+      autoMonitorPullRequestsOnCreate: true,
+    });
+
+    expect(stopped).toEqual([]);
+    expect(policyDisabled).toEqual([]);
+    expect(
+      resumed.filter((command) => command.type === "thread.queued-turn.dispatch"),
+    ).toMatchObject([{ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }]);
+  });
+
+  it("keeps PR feedback pending while the parent has paused automatic nudges", async () => {
+    const model = queuedReadModel({
+      origin: {
+        kind: "pull-request-monitor",
+        repository: "acme/app",
+        number: 42,
+        deliveryId: "paused-parent-delivery",
+      },
+    });
+    const thread = model.threads[0]!;
+    const pausedParent = {
+      ...model,
+      threads: [{ ...thread, nudging: { paused: true } }],
+    };
+
+    const commands = await runReactor(pausedParent, monitorSnapshot("head-current"));
+
+    expect(commands).toEqual([]);
+  });
+
+  it("returns stale-recipient feedback to durable retry after ownership changes", async () => {
+    const retriedDeliveryIds: string[] = [];
+    const deliveryId = "owner-changed-delivery";
+    const commands = await runReactor(
+      queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          deliveryId,
+        },
+      }),
+      monitorSnapshot("head-current"),
+      {
+        monitorOwnerChanged: true,
+        onRetryQueuedDelivery: (id) => retriedDeliveryIds.push(id),
+      },
+    );
+
+    expect(retriedDeliveryIds).toEqual([deliveryId]);
+    expect(commands).toMatchObject([{ type: "thread.queued-turn.delete", threadId, queuedTurnId }]);
+  });
+
+  it("dispatches a collaboration response past paused PR feedback", async () => {
+    const model = queuedReadModel({
+      origin: { kind: "pull-request-monitor", repository: "acme/app", number: 42 },
+    });
+    const thread = model.threads[0]!;
+    const responseId = QueuedTurnId.make("collaboration-response");
+    const monitorTurn = thread.queuedTurns![0]!;
+    const responseTurn = {
+      ...monitorTurn,
+      id: responseId,
+      message: {
+        ...monitorTurn.message,
+        messageId: MessageId.make("collaboration-response-message"),
+        text: "The parent decision is ready.",
+      },
+      origin: {
+        kind: "collaboration-response" as const,
+        requestId: CollaborationRequestId.make("request-1"),
+        responseId: CollaborationResponseId.make("response-1"),
+        exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+      },
+      createdAt: "2026-03-01T00:00:01.000Z",
+    };
+    const state = {
+      ...model,
+      threads: [{ ...thread, queuedTurns: [monitorTurn, responseTurn] }],
+    };
+
+    const commands = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: false,
+    });
+
+    expect(commands).toMatchObject([
+      { type: "thread.queued-turn.dispatch", threadId, queuedTurnId: responseId },
+    ]);
+  });
+
+  it("deletes a terminal monitor turn rather than leaving it queued", async () => {
+    const commands = await runReactor(
+      queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          headSha: "head-current",
+          sourceRevision: "revision-old",
+          events: [{ kind: "behind-base" }],
+        },
+      }),
+      { ...monitorSnapshot("head-current"), state: "closed" },
+      { monitorTerminal: true },
+    );
+
+    expect(commands).toMatchObject([{ type: "thread.queued-turn.delete", threadId, queuedTurnId }]);
+  });
+
   it("keeps disabled feedback pending without recording a failure", async () => {
     const commands = await runReactor(
       queuedReadModel({
@@ -1967,6 +2401,57 @@ describe("QueuedTurnReactor", () => {
     );
     expect(commands.map((command) => command.type)).toEqual(["thread.queued-turn.dispatch"]);
   });
+
+  it.each([
+    "codex",
+    "copilot",
+    "claudeAgent",
+    "cursor",
+    "opencode",
+    "pi",
+    "copilot-acp-native",
+  ] as const)(
+    "dispatches queued parent review feedback through the shared path for the %s driver",
+    async (driver) => {
+      const instanceId = ProviderInstanceId.make(
+        driver === "copilot" || driver === "copilot-acp-native" ? "copilot" : `review-${driver}`,
+      );
+      const readModel = queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          headSha: "head-current",
+          sourceRevision: "review:head-current",
+          events: [{ kind: "review-finding", sourceId: "finding-1", detail: "Finding" }],
+          deliveryId: "review-delivery",
+        },
+      });
+      const thread = readModel.threads[0]!;
+      const commands = await runReactor(
+        {
+          ...readModel,
+          threads: [
+            {
+              ...thread,
+              modelSelection: { instanceId, model: "test-review-model" },
+            },
+          ],
+        },
+        monitorSnapshot("head-current"),
+        {
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make(driver), enabled: true },
+          },
+          optIn: true,
+        },
+      );
+
+      expect(commands.filter((command) => command.type === "thread.queued-turn.dispatch")).toEqual([
+        expect.objectContaining({ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }),
+      ]);
+    },
+  );
 
   it("recognizes custom instances of the Copilot ACP driver", async () => {
     const commands = await runReactor(
