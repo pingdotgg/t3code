@@ -2054,10 +2054,25 @@ export const make = Effect.gen(function* () {
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
-    const changeRequestTemplate =
-      settings.style.followChangeRequestTemplates && provider.kind === "github"
-        ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))
-        : undefined;
+    const templateTreeish =
+      provider.kind === "gitlab" || provider.kind === "azure-devops"
+        ? yield* gitCore.statusDetailsRemote(cwd, { refreshUpstream: false }).pipe(
+            Effect.flatMap((status) =>
+              status.defaultBranch !== null && status.defaultBranch !== baseBranch
+                ? resolveBaseRangeRef(cwd, status.defaultBranch)
+                : Effect.succeed(baseRangeRef),
+            ),
+            Effect.orElseSucceed(() => baseRangeRef),
+          )
+        : baseRangeRef;
+    const changeRequestTemplate = settings.style.followChangeRequestTemplates
+      ? Option.getOrUndefined(
+          yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute, provider.kind, {
+            baseBranch,
+            defaultTreeish: templateTreeish,
+          }),
+        )
+      : undefined;
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
