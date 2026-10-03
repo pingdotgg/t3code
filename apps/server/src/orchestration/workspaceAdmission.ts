@@ -2,6 +2,7 @@ import type {
   OrchestrationCommand,
   OrchestrationProject,
   OrchestrationThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -18,8 +19,51 @@ import { OrchestrationCommandInvariantError } from "./Errors.ts";
 export interface WorkspaceAdmissionDeps {
   readonly findThread: (threadId: string) => OrchestrationThread | undefined;
   readonly findProject: (projectId: string) => OrchestrationProject | undefined;
+  readonly listThreads: () => ReadonlyArray<OrchestrationThread>;
   readonly claimOwnership: WorkspaceOwnershipRepositoryShape["claim"];
   readonly hasCleanupReservationByPath: WorktreeCleanupJobRepositoryShape["hasReservationByPath"];
+}
+
+/**
+ * Threads that share one worktree because they descend from the same root
+ * thread: a fork and the chat it was forked from, sibling forks, and their
+ * descendants. Forks inherit the source's worktree (matching orchestration-v2,
+ * whose fork plan spreads the source thread), so without this the fork could
+ * never run a turn. Unrelated threads stay in conflict.
+ */
+function forkFamily(
+  threadId: ThreadId,
+  deps: Pick<WorkspaceAdmissionDeps, "findThread" | "listThreads">,
+): ReadonlyArray<ThreadId> {
+  const family = new Set<ThreadId>([threadId]);
+  let cursor = deps.findThread(threadId);
+  while (cursor?.parentThreadId != null && !family.has(cursor.parentThreadId)) {
+    family.add(cursor.parentThreadId);
+    cursor = deps.findThread(cursor.parentThreadId);
+  }
+  const rootThreadId = cursor?.id ?? threadId;
+  // Descend from the root so sibling forks of the same source share too.
+  const pending = [rootThreadId];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    for (const candidate of deps.listThreads()) {
+      if (candidate.parentThreadId === current && !family.has(candidate.id)) {
+        family.add(candidate.id);
+        pending.push(candidate.id);
+      }
+    }
+  }
+  return [...family];
+}
+
+function threadIsBusy(thread: OrchestrationThread | undefined): boolean {
+  if (thread === undefined) return false;
+  return (
+    thread.latestTurn?.state === "running" ||
+    thread.session?.status === "running" ||
+    thread.session?.activeTurnId != null
+  );
 }
 
 /**
@@ -380,6 +424,19 @@ export const admitWorkspaceCommand = Effect.fn("admitWorkspace")(function* (
   ) {
     return command;
   }
+  // A fork inherits its source's worktree, so the fork family shares that
+  // checkout. Ownership still transfers per command (the generation advances
+  // and `assertOwned` keeps working), and only one family member may hold the
+  // checkout at a time: a running relative would make this claim stale
+  // mid-turn and would let two turns write one index.
+  const relatives = forkFamily(command.threadId, deps).filter((id) => id !== command.threadId);
+  const busyRelative = relatives.map((id) => deps.findThread(id)).find(threadIsBusy);
+  if (busyRelative !== undefined) {
+    return yield* new OrchestrationCommandInvariantError({
+      commandType: command.type,
+      detail: `Thread '${busyRelative.id}' is running and shares this workspace with '${command.threadId}'. Wait for it to finish or stop it, then try again; T3 will not let two related chats write one checkout at once.`,
+    });
+  }
   const binding = yield* deps
     .claimOwnership({
       threadId: command.threadId,
@@ -392,6 +449,7 @@ export const admitWorkspaceCommand = Effect.fn("admitWorkspace")(function* (
             : (prepared.branch ?? thread?.workspaceBinding?.branch ?? thread?.branch ?? null),
       commandId: command.commandId,
       now: new Date().toISOString(),
+      coOwnerThreadIds: relatives,
     })
     .pipe(
       Effect.mapError((error) => {

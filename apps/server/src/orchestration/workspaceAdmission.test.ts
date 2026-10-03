@@ -1,6 +1,7 @@
 import {
   CommandId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationThread,
   type WorkspaceBinding,
@@ -29,6 +30,7 @@ function archiveCommand(): OrchestrationCommand {
 const depsWithoutOwnership: WorkspaceAdmissionDeps = {
   findThread: () => undefined,
   findProject: () => undefined,
+  listThreads: () => [],
   claimOwnership: () => Effect.die(new Error("claim must not run without a path")),
   hasCleanupReservationByPath: () => Effect.succeed(false),
 };
@@ -132,6 +134,131 @@ describe("admitWorkspaceCommand", () => {
       ),
     )) as { readonly workspaceBinding?: WorkspaceBinding };
     expect(admitted.workspaceBinding).toEqual(binding);
+  });
+});
+
+describe("admitWorkspaceCommand fork lineage sharing", () => {
+  const sourceThreadId = ThreadId.make("fork-family-source");
+  const forkThreadId = ThreadId.make("fork-family-fork");
+  const siblingThreadId = ThreadId.make("fork-family-sibling");
+  const outsiderThreadId = ThreadId.make("fork-family-outsider");
+  const worktreePath = "/tmp/fork-family-wt";
+
+  const thread = (
+    id: ThreadId,
+    parentThreadId: ThreadId | null,
+    overrides: Partial<OrchestrationThread> = {},
+  ) =>
+    ({
+      id,
+      projectId: "fork-family-project",
+      title: id,
+      modelSelection: { instanceId: "pi", model: "default" },
+      interactionMode: "default",
+      runtimeMode: "full-access",
+      pendingRuntimeMode: null,
+      branch: "t3/thread/fork-family",
+      worktreePath,
+      parentThreadId,
+      createdAt: "2025-01-01T00:00:00.000Z",
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      archivedAt: null,
+      latestTurn: null,
+      messages: [],
+      session: null,
+      activities: [],
+      proposedPlans: [],
+      checkpoints: [],
+      deletedAt: null,
+      ...overrides,
+    }) as unknown as OrchestrationThread;
+
+  // The outsider shares the same worktree path but has no fork lineage: it is
+  // the conflict case the family allowance must not loosen.
+  const lineage = [
+    thread(sourceThreadId, null),
+    thread(forkThreadId, sourceThreadId),
+    thread(siblingThreadId, sourceThreadId),
+    thread(outsiderThreadId, null),
+  ];
+  const depsWith = (overrides: Partial<WorkspaceAdmissionDeps> = {}): WorkspaceAdmissionDeps => ({
+    ...depsWithoutOwnership,
+    findThread: (id) => lineage.find((entry) => entry.id === id),
+    listThreads: () => lineage,
+    claimOwnership: () =>
+      Effect.succeed({
+        canonicalPath: worktreePath,
+        worktreePath,
+        branch: "t3/thread/fork-family",
+        generation: 2,
+      }),
+    ...overrides,
+  });
+
+  const turnStart = (id: ThreadId) =>
+    ({
+      type: "thread.turn.start",
+      commandId,
+      threadId: id,
+    }) as unknown as OrchestrationCommand;
+
+  it("offers a fork its source as a co-owner so the fork can claim the shared worktree", async () => {
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+    await Effect.runPromise(
+      admitWorkspaceCommand(depsWith({ claimOwnership }), turnStart(forkThreadId)),
+    );
+    expect(claimOwnership).toHaveBeenCalledTimes(1);
+    const input = claimOwnership.mock.calls[0]![0];
+    expect(input.coOwnerThreadIds).toContain(sourceThreadId);
+    expect(input.coOwnerThreadIds).toContain(siblingThreadId);
+    expect(input.coOwnerThreadIds).not.toContain(outsiderThreadId);
+  });
+
+  it("treats sibling forks of the same source as relatives", async () => {
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+    await Effect.runPromise(
+      admitWorkspaceCommand(depsWith({ claimOwnership }), turnStart(siblingThreadId)),
+    );
+    expect(claimOwnership.mock.calls[0]![0].coOwnerThreadIds).toContain(forkThreadId);
+  });
+
+  it("refuses while a relative is running so one checkout keeps a single writer", async () => {
+    const running = lineage.map((entry) =>
+      entry.id === sourceThreadId
+        ? thread(sourceThreadId, null, {
+            latestTurn: {
+              turnId: TurnId.make("turn-running"),
+              state: "running",
+              requestedAt: "2025-01-01T00:00:00.000Z",
+              startedAt: "2025-01-01T00:00:00.000Z",
+              completedAt: null,
+              assistantMessageId: null,
+            },
+          })
+        : entry,
+    );
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+    const failure = await Effect.runPromise(
+      admitWorkspaceCommand(
+        depsWith({
+          claimOwnership,
+          findThread: (id) => running.find((entry) => entry.id === id),
+          listThreads: () => running,
+        }),
+        turnStart(forkThreadId),
+      ).pipe(Effect.flip),
+    );
+    expect(failure).toBeInstanceOf(OrchestrationCommandInvariantError);
+    expect((failure as Error).message).toContain(sourceThreadId);
+    expect(claimOwnership).not.toHaveBeenCalled();
+  });
+
+  it("leaves unrelated threads in conflict", async () => {
+    const claimOwnership = vi.fn(depsWith().claimOwnership);
+    await Effect.runPromise(
+      admitWorkspaceCommand(depsWith({ claimOwnership }), turnStart(outsiderThreadId)),
+    );
+    expect(claimOwnership.mock.calls[0]![0].coOwnerThreadIds ?? []).not.toContain(sourceThreadId);
   });
 });
 

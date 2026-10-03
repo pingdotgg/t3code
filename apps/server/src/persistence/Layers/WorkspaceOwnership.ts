@@ -182,6 +182,7 @@ const make = Effect.gen(function* () {
       // generation, so concurrent reentrant claims can share one generation.
       // Compensation must only clear state this attempt wrote.
       const attemptId = randomUUID();
+      const coOwnerThreadIds = new Set<string>(input.coOwnerThreadIds ?? []);
       // Snapshot of the ledger entry before this attempt overwrote it. The
       // filesystem write below is not transactional, so compensation restores
       // this snapshot instead of nulling the entry: a failed reentrant claim
@@ -190,7 +191,11 @@ const make = Effect.gen(function* () {
       const filesystemBinding = yield* withFilesystemOwnershipLock(
         filesystemPaths,
         async (state) => {
-          if (state?.ownerThreadId && state.ownerThreadId !== input.threadId) {
+          if (
+            state?.ownerThreadId &&
+            state.ownerThreadId !== input.threadId &&
+            !coOwnerThreadIds.has(state.ownerThreadId)
+          ) {
             throw new WorkspaceOwnershipConflict({
               canonicalPath,
               ownerThreadId: state.ownerThreadId,
@@ -258,7 +263,11 @@ const make = Effect.gen(function* () {
         sql.withTransaction(
           Effect.gen(function* () {
             const existing = yield* getRow(canonicalPath);
-            if (existing.length > 0 && existing[0]!.owner_thread_id !== input.threadId) {
+            if (
+              existing.length > 0 &&
+              existing[0]!.owner_thread_id !== input.threadId &&
+              !coOwnerThreadIds.has(existing[0]!.owner_thread_id)
+            ) {
               return yield* Effect.fail(
                 new WorkspaceOwnershipConflict({
                   canonicalPath,
@@ -286,6 +295,11 @@ const make = Effect.gen(function* () {
               ${input.now}
             )
             ON CONFLICT (canonical_path) DO UPDATE SET
+              -- Reaching this clause means the previous owner was either this
+              -- thread or a declared co-owner, so the row must follow the
+              -- filesystem ledger. Leaving owner_thread_id stale makes
+              -- assertOwned reject the very binding claim just returned.
+              owner_thread_id = excluded.owner_thread_id,
               worktree_path = excluded.worktree_path,
               branch = excluded.branch,
               generation = excluded.generation,
