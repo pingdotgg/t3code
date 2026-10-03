@@ -487,7 +487,9 @@ export const ProjectWriteFileInput = Schema.Struct({
   /**
    * Write `contents` over lines `startLine`..`endLine` (1-based, inclusive) instead of the whole
    * file, and only while those lines still read `expected`. A file that moved fails with
-   * `lines_changed` rather than patching whatever now sits there.
+   * `lines_changed` rather than patching whatever now sits there. The check and the write are
+   * atomic only against other writes through this API; an editor or agent saving the same file in
+   * between can still be overwritten, since the filesystem offers no compare-and-write.
    */
   replaceLines: Schema.optional(
     Schema.Struct({
