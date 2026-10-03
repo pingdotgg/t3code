@@ -168,13 +168,22 @@ describe("previewWindowOpenAction", () => {
     // when its preferences can be overridden. Chromium copies the guest's
     // preferences for `about:blank` and forbids overriding them.
     for (const url of [
-      "about:blank",
       "javascript:alert(1)",
       "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
       "not a url",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+
+  it("denies blank popups without replacing the opener", () => {
+    // MSAL opens `about:blank` first and falls back to a redirect when that
+    // fails, so the opener has to stay on its page.
+    for (const url of ["", "about:blank"]) {
+      for (const disposition of ["new-window", "foreground-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
     }
   });
 });

@@ -512,7 +512,7 @@ interface ExpectedAgentInput {
  *
  * `about:blank` stays out: Chromium skips browser-side navigation for it, so the
  * child copies the guest's `contextIsolation: false` preferences and Electron
- * gives no way to override them. Those popups keep loading in the preview tab.
+ * gives no way to override them. Other schemes keep loading in the preview tab.
  *
  * Deliberately not `ElectronShell.parseSafeExternalUrl`: that also admits
  * `vscode://vscode-remote/...` deep links, which belong in `shell.openExternal`
@@ -558,12 +558,18 @@ const POPUP_WINDOW_OPTIONS = {
  *
  * `target="_blank"` links arrive as a tab disposition and keep loading in the
  * preview tab, which is what people expect from a link inside a preview.
+ *
+ * Blank URLs are denied outright. Loading `about:blank` over the opener never
+ * helps, and it destroys the page that would fall back from a blocked popup
+ * (MSAL's `loginPopup` falls back to `loginRedirect`).
  */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
   readonly disposition: Electron.HandlerDetails["disposition"];
-}): "popup" | "navigate" =>
-  details.disposition === "new-window" && isPopupUrl(details.url) ? "popup" : "navigate";
+}): "popup" | "navigate" | "deny" => {
+  if (details.url === "" || details.url === "about:blank") return "deny";
+  return details.disposition === "new-window" && isPopupUrl(details.url) ? "popup" : "navigate";
+};
 
 export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   input.type === "keyDown" &&
@@ -2086,9 +2092,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler((details) => {
-          if (previewWindowOpenAction(details) === "popup") {
+          const action = previewWindowOpenAction(details);
+          if (action === "popup") {
             return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
           }
+          if (action === "deny") return { action: "deny" };
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
               wc.loadURL(details.url),
