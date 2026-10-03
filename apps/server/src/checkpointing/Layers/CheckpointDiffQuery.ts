@@ -47,6 +47,21 @@ function resolveCheckpointRange(input: {
     | undefined;
   const diffPaths = new Set<string>();
   let attributionComplete = true;
+  // A checkpoint's turnFiles cannot be trusted as the complete set of changed paths when:
+  // - touched-path attribution hit its cap (agentTouchedPaths is the capped set), or
+  // - the cumulative summary shows changes that nothing attributes to the turn (changes made
+  //   outside edit/write/delete/move tools), or
+  // - both file summaries failed, leaving files and turnFiles empty.
+  // Filtering a range by an untrustworthy set silently drops work, so drop the filter instead.
+  // A superset is always preferable to missing changes.
+  const trustTurnFiles = (
+    checkpoint: ProjectionThreadCheckpointContext["checkpoints"][number],
+  ): boolean => {
+    if (checkpoint.agentTouchedPaths.length >= MAX_TURN_SCOPED_PATHS) {
+      return false;
+    }
+    return !(checkpoint.files.length > 0 && checkpoint.turnFiles.length === 0);
+  };
 
   for (const checkpoint of input.threadContext.checkpoints) {
     maxTurnCount = Math.max(maxTurnCount, checkpoint.checkpointTurnCount);
@@ -59,6 +74,9 @@ function resolveCheckpointRange(input: {
     if (checkpoint.checkpointTurnCount === input.toTurnCount && toCheckpointRef === undefined) {
       toCheckpointRef = checkpoint.checkpointRef;
       if (input.scope === "turn") {
+        if (!trustTurnFiles(checkpoint)) {
+          attributionComplete = false;
+        }
         for (const file of checkpoint.turnFiles) {
           addDiffPath(diffPaths, file);
         }
@@ -69,15 +87,7 @@ function resolveCheckpointRange(input: {
       checkpoint.checkpointTurnCount > input.fromTurnCount &&
       checkpoint.checkpointTurnCount <= input.toTurnCount
     ) {
-      // A turn whose cumulative summary shows changes it cannot attribute has an
-      // unreliable turnFiles filter: the summary failed, no file-change activity
-      // matched, or touched-path attribution hit its cap. Filtering the range by
-      // the remaining turns' paths would silently drop this turn's work, so drop
-      // the filter and return the unfiltered range diff.
-      if (
-        checkpoint.files.length > 0 &&
-        (checkpoint.turnFiles.length === 0 || checkpoint.turnFiles.length >= MAX_TURN_SCOPED_PATHS)
-      ) {
+      if (!trustTurnFiles(checkpoint)) {
         attributionComplete = false;
       }
       for (const file of checkpoint.turnFiles) {
@@ -86,6 +96,12 @@ function resolveCheckpointRange(input: {
     }
   }
 
+  // Safety net for the case no content check can catch: a range whose attribution
+  // produced no paths at all. An unfiltered diff of an unchanged range is still
+  // empty, so this can only widen the result, never narrow it.
+  if (diffPaths.size === 0) {
+    attributionComplete = false;
+  }
   const preferredFromCheckpointRef =
     input.scope === "turn"
       ? checkpointBaselineRefForThreadTurn(input.threadId, input.toTurnCount)
@@ -162,8 +178,6 @@ const make = Effect.gen(function* () {
         scope: input.scope,
         threadContext: threadContext.value,
       });
-      const resolvedPaths = input.paths ?? range.diffPaths;
-
       if (input.toTurnCount > range.maxTurnCount) {
         return yield* new CheckpointUnavailableError({
           threadId: input.threadId,
@@ -214,7 +228,7 @@ const make = Effect.gen(function* () {
           ...(input.ignoreWhitespace === undefined
             ? {}
             : { ignoreWhitespace: input.ignoreWhitespace }),
-          ...(resolvedPaths === undefined ? {} : { paths: resolvedPaths }),
+          ...(range.diffPaths === undefined ? {} : { paths: range.diffPaths }),
           ...(threadContext.value.workspaceBinding == null
             ? {}
             : { workspaceBinding: threadContext.value.workspaceBinding }),

@@ -41,8 +41,6 @@ export interface DeriveTurnScopedCheckpointFilesInput {
 export interface DeriveTurnScopedCheckpointFilesResult {
   readonly agentTouchedPaths: ReadonlyArray<string>;
   readonly turnFiles: ReadonlyArray<OrchestrationCheckpointFile>;
-  /** True when touched-path attribution hit MAX_TURN_SCOPED_PATHS and is incomplete. */
-  readonly truncated: boolean;
 }
 
 export function deriveTurnScopedCheckpointFiles(
@@ -94,6 +92,5 @@ export function deriveTurnScopedCheckpointFiles(
   return {
     agentTouchedPaths: [...touched],
     turnFiles,
-    truncated: touched.size >= MAX_TURN_SCOPED_PATHS,
   };
 }
