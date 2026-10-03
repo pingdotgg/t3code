@@ -50,7 +50,7 @@ function describeModelCapabilities(model: ServerProviderModel): string[] {
         descriptor.type === "select" &&
         descriptor.options.some((option) => option.id === "fast" || option.label === "Fast")),
   );
-  if (hasFastMode) labels.push("Fast mode");
+  if (hasFastMode) labels.push("Fast mode available");
   if (descriptors.some((descriptor) => descriptor.id === "thinking")) labels.push("Thinking");
   if (
     descriptors.some(
