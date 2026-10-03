@@ -97,11 +97,9 @@ export class ScheduledTaskService extends Context.Service<
      * no such task exists — the update can never insert a row, so an edit
      * racing a delete loses instead of resurrecting the task.
      *
-     * Two merge cases are typed conflicts instead of silent writes: a patch
-     * carrying schedule/enabled fails when a committed edit already changed
-     * the columns the patch was reasoned from, and a `threadId`/`nextProjectId`
-     * patch fails when the merged pair would bind the task to a thread outside
-     * its project (the dispatch check in `getProjectThread` would reject it).
+     * A `threadId`/`nextProjectId` patch is a typed conflict when the merged
+     * pair would bind the task to a thread outside its project (the dispatch
+     * check in `getProjectThread` would reject it).
      * Unbind explicitly with `threadId: null` to move a bound task.
      */
     readonly update: (
@@ -995,7 +993,15 @@ export const layer = Layer.effect(
                 lastRunError: existingTask?.lastRunError ?? null,
                 runCount: existingTask?.runCount ?? 0,
               };
-              if (task.threadId !== null) {
+              // Like update, validate only a binding this write changes: a
+              // legacy full-row save or a commandId replay resends the stored
+              // pair, and its thread being archived since must not block an
+              // unrelated title or prompt edit.
+              const bindingChanged =
+                existingTask === null ||
+                existingTask.threadId !== task.threadId ||
+                existingTask.projectId !== task.projectId;
+              if (task.threadId !== null && bindingChanged) {
                 yield* requireThreadInProject(task.id, task.projectId, task.threadId);
               }
               yield* saveTask(task, input.requireExisting === true);
@@ -1104,20 +1110,15 @@ export const layer = Layer.effect(
                 }
               }
               patch.updated_at = iso(now);
-              const clauses = [sql`task_id = ${input.id}`, sql`project_id = ${input.projectId}`];
-              // A patch carrying schedule/enabled reasons from the row read
-              // above (whether next_run_at gets recomputed or deliberately
-              // retained), so the write guards on those snapshot columns: a
-              // concurrent schedule/enabled commit turns this update into a
-              // typed conflict rather than a write derived from stale state.
-              if (input.enabled !== undefined || input.schedule !== undefined) {
-                clauses.push(sql`enabled = ${existing.enabled ? 1 : 0}`);
-                clauses.push(sql`schedule_json = ${row.schedule_json}`);
-              }
+              // The read above and this write share one transaction on the
+              // client's single connection, so no same-process write can land
+              // between them; a commit from another connection invalidates the
+              // snapshot (SQLITE_BUSY_SNAPSHOT) and retryContended rebuilds the
+              // patch on fresh state.
               const written = yield* sql<ScheduledTaskRow>`
                 UPDATE scheduled_tasks
                 SET ${sql.update(patch)}
-                WHERE ${sql.and(clauses)}
+                WHERE task_id = ${input.id} AND project_id = ${input.projectId}
                 RETURNING *
               `.pipe(
                 Effect.mapError((cause) =>
@@ -1125,26 +1126,7 @@ export const layer = Layer.effect(
                 ),
               );
               const updatedRow = written[0];
-              if (updatedRow === undefined) {
-                // The row was found above, so an empty RETURNING is either a
-                // delete committed between the read and the write (report
-                // `none`, never resurrect) or a contested scheduling edit
-                // (typed conflict) — re-read inside the transaction to tell
-                // them apart.
-                const reread = yield* getScopedRows(input.id, input.projectId).pipe(
-                  Effect.mapError((cause) =>
-                    taskError("Could not re-read schedule task after a contested update.", {
-                      taskId: input.id,
-                      cause,
-                    }),
-                  ),
-                );
-                if (reread[0] === undefined) return null;
-                return yield* taskError(
-                  "The schedule task changed while it was being updated; retry the edit.",
-                  { taskId: input.id },
-                );
-              }
+              if (updatedRow === undefined) return null;
               return yield* decodeRow(updatedRow);
             }),
           ),
@@ -1186,37 +1168,19 @@ export const layer = Layer.effect(
               }
               const now = yield* localNow;
               const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
-              // RETURNING so a task deleted between the load and this UPDATE is a
-              // visible not-found error, not a false success. The schedule_json
-              // guard keeps a schedule committed mid-transaction from being
-              // paired with a next_run_at derived from the pre-commit row.
               const updated = yield* sql<{ task_id: string }>`
                 UPDATE scheduled_tasks
                 SET enabled = ${input.enabled ? 1 : 0},
                     next_run_at = ${next},
                     updated_at = ${iso(now)}
-                WHERE task_id = ${input.id} AND schedule_json = ${row.schedule_json}
+                WHERE task_id = ${input.id}
                 RETURNING task_id
               `.pipe(
                 Effect.mapError((cause) =>
                   taskError("Could not update schedule task.", { taskId: input.id, cause }),
                 ),
               );
-              if (updated.length === 0) {
-                const reread = yield* getRows(input.id).pipe(
-                  Effect.mapError((cause) =>
-                    taskError("Could not re-read schedule task after a contested update.", {
-                      taskId: input.id,
-                      cause,
-                    }),
-                  ),
-                );
-                if (reread[0] === undefined) return null;
-                return yield* taskError(
-                  "The schedule task changed while it was being updated; retry the edit.",
-                  { taskId: input.id },
-                );
-              }
+              if (updated.length === 0) return null;
               return {
                 task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
                 changed: true,

@@ -971,6 +971,43 @@ it.effect(
     }).pipe(Effect.provide(updateTestLayer)),
 );
 
+it.effect("legacy upsert keeps an unchanged binding to a since-archived thread editable", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedProjectThreads;
+    const seeded = yield* seedTask;
+    const bound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+      enabled: false,
+    });
+    assert.isTrue(Option.isSome(bound));
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET archived_at = '2026-09-15T00:00:00.000Z'
+      WHERE thread_id = ${boundThreadId}
+    `;
+    // An older client resends the stored binding with a title edit.
+    const legacySave = {
+      ...seeded,
+      enabled: false,
+      threadId: boundThreadId,
+      requireExisting: true,
+    };
+    const renamed = yield* tasks.upsert({ ...legacySave, title: "renamed after archive" });
+    assert.equal(renamed.task.title, "renamed after archive");
+    assert.equal(renamed.task.threadId, boundThreadId);
+    // A changed binding is still validated.
+    const rebound = yield* tasks
+      .upsert({ ...legacySave, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(rebound)) assert.fail("expected a typed conflict");
+    assert.equal(rebound.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
+);
+
 it.effect(
   "replayed commandId upsert loses to a racing project move instead of dragging it back",
   () =>
@@ -1156,10 +1193,31 @@ const armDueReadGate = (
   };
 };
 
-it.effect("scheduled dispatch honours a pause committed after the due read", () =>
+// Each edit commits while the poll that found the task due is parked before
+// the dispatch transaction revalidates the row; the run must honour it.
+it.effect.each([
+  {
+    name: "pause",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.update({ id: updateTaskId, projectId: updateProjectId, enabled: false }),
+  },
+  {
+    name: "postpone",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        schedule: { type: "interval", everyMs: 3_600_000 },
+      }),
+  },
+  {
+    name: "delete",
+    edit: (tasks: ScheduledTaskService.ScheduledTaskService["Service"]) =>
+      tasks.delete({ id: updateTaskId }),
+  },
+])("scheduled dispatch honours a $name committed after the due read", ({ edit }) =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-    const sql = yield* SqlClient.SqlClient;
     yield* seedTask; // interval 60s: due at T+60s
     const dueArrived = yield* Deferred.make<void>();
     const dueProceed = yield* Deferred.make<void>();
@@ -1171,97 +1229,20 @@ it.effect("scheduled dispatch honours a pause committed after the due read", () 
     try {
       const adjust = yield* TestClock.adjust("65 seconds").pipe(Effect.forkChild);
       yield* Deferred.await(dueArrived);
-      // The poll found the task due and is parked; pause commits before the
-      // dispatch transaction revalidates.
-      const paused = yield* tasks.update({
-        id: updateTaskId,
-        projectId: updateProjectId,
-        enabled: false,
-      });
-      assert.isTrue(Option.isSome(paused));
+      yield* edit(tasks);
+      const edited = yield* findSeeded;
       yield* Deferred.succeed(dueProceed, undefined);
       yield* Fiber.join(adjust);
       yield* Deferred.await(rechecked); // the mark transaction re-read the row
       yield* TestClock.adjust("5 seconds");
       yield* Deferred.await(nextPoll); // the contested iteration fully drained
       assert.equal(dispatchLaunchCount, 0);
-      const row = yield* sql<{
-        last_run_status: string;
-      }>`SELECT last_run_status FROM scheduled_tasks WHERE task_id = ${updateTaskId}`;
-      assert.equal(row[0]?.last_run_status, "never");
-    } finally {
-      sqlProbe = null;
-    }
-  }).pipe(Effect.provide(gatedDispatchLayer)),
-);
-
-it.effect("scheduled dispatch honours a postpone committed after the due read", () =>
-  Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-    const sql = yield* SqlClient.SqlClient;
-    yield* seedTask;
-    const dueArrived = yield* Deferred.make<void>();
-    const dueProceed = yield* Deferred.make<void>();
-    const rechecked = yield* Deferred.make<void>();
-    const nextPoll = yield* Deferred.make<void>();
-    dispatchLaunchCount = 0;
-    dispatchLaunched = null;
-    armDueReadGate(dueArrived, dueProceed, nextPoll, rechecked);
-    try {
-      const adjust = yield* TestClock.adjust("65 seconds").pipe(Effect.forkChild);
-      yield* Deferred.await(dueArrived);
-      const postponed = yield* tasks.update({
-        id: updateTaskId,
-        projectId: updateProjectId,
-        schedule: { type: "interval", everyMs: 3_600_000 },
-      });
-      const postponedAt = Option.getOrThrow(postponed).task.nextRunAt;
-      assert.isNotNull(postponedAt);
-      yield* Deferred.succeed(dueProceed, undefined);
-      yield* Fiber.join(adjust);
-      yield* Deferred.await(rechecked);
-      yield* TestClock.adjust("5 seconds");
-      yield* Deferred.await(nextPoll);
-      assert.equal(dispatchLaunchCount, 0);
-      const row = yield* sql<{
-        next_run_at: string | null;
-        last_run_status: string;
-      }>`SELECT next_run_at, last_run_status FROM scheduled_tasks WHERE task_id = ${updateTaskId}`;
-      // The skipped dispatch must not stamp over the edit's new due time.
-      assert.equal(row[0]?.next_run_at, postponedAt);
-      assert.equal(row[0]?.last_run_status, "never");
-    } finally {
-      sqlProbe = null;
-    }
-  }).pipe(Effect.provide(gatedDispatchLayer)),
-);
-
-it.effect("scheduled dispatch honours a delete committed after the due read", () =>
-  Effect.gen(function* () {
-    const tasks = yield* ScheduledTaskService.ScheduledTaskService;
-    const sql = yield* SqlClient.SqlClient;
-    yield* seedTask;
-    const dueArrived = yield* Deferred.make<void>();
-    const dueProceed = yield* Deferred.make<void>();
-    const rechecked = yield* Deferred.make<void>();
-    const nextPoll = yield* Deferred.make<void>();
-    dispatchLaunchCount = 0;
-    dispatchLaunched = null;
-    armDueReadGate(dueArrived, dueProceed, nextPoll, rechecked);
-    try {
-      const adjust = yield* TestClock.adjust("65 seconds").pipe(Effect.forkChild);
-      yield* Deferred.await(dueArrived);
-      yield* tasks.delete({ id: updateTaskId });
-      yield* Deferred.succeed(dueProceed, undefined);
-      yield* Fiber.join(adjust);
-      yield* Deferred.await(rechecked);
-      yield* TestClock.adjust("5 seconds");
-      yield* Deferred.await(nextPoll);
-      assert.equal(dispatchLaunchCount, 0);
-      const row = yield* sql<{
-        n: number;
-      }>`SELECT COUNT(*) AS n FROM scheduled_tasks WHERE task_id = ${updateTaskId}`;
-      assert.equal(row[0]?.n, 0);
+      const after = yield* findSeeded;
+      // The skipped dispatch must not stamp over the edit's state, including
+      // a postponed due time.
+      assert.equal(after?.nextRunAt, edited?.nextRunAt);
+      assert.equal(after?.lastRunStatus, edited?.lastRunStatus);
+      if (edited !== undefined) assert.equal(after?.lastRunStatus, "never");
     } finally {
       sqlProbe = null;
     }

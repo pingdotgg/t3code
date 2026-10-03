@@ -42,10 +42,10 @@ export function moveDetachesThreadBinding(draft: DraftState, baseline: DraftStat
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
   if (draft.scheduleMode === "interval") {
-    // Fractional minutes are valid input (the create path permits them), so
-    // truncate-free conversion matters for both diffing and the saved value.
-    const minutes = Math.max(1, Number(draft.intervalMinutes) || 1);
-    return { type: "interval", everyMs: Math.round(minutes * 60_000) };
+    // Invalid input stays invalid here; submit rejects it before building a
+    // create or update input.
+    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
+    return { type: "interval", everyMs };
   }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {

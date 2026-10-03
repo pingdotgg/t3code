@@ -55,6 +55,7 @@ import {
 import {
   buildScheduledTaskUpdateInput,
   moveDetachesThreadBinding,
+  scheduleFromDraft,
   workspaceStrategyFromDraft,
   workspaceStrategyReady,
 } from "./scheduledTasks.logic";
@@ -151,19 +152,6 @@ function splitModelKey(value: string): ModelSelection | null {
   return {
     instanceId: ProviderInstanceId.make(value.slice(0, index)),
     model: value.slice(index + 1),
-  };
-}
-
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
   };
 }
 
