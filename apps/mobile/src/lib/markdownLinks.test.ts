@@ -17,6 +17,13 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("keeps a Codex follow-up href instead of treating it as a file or dropping it", () => {
+    expect(resolveMarkdownLinkPresentation("<t3-follow-up:Fix%20src%2Fmain.ts%3A12>")).toEqual({
+      kind: "link",
+      href: "t3-follow-up:Fix%20src%2Fmain.ts%3A12",
+    });
+  });
+
   it("treats protocol-relative media as an external URL, not a filesystem path", () => {
     expect(resolveMarkdownLinkPresentation("//cdn.example.com/clip.mp4?sig=a%2fb#t=2")).toEqual({
       kind: "external",

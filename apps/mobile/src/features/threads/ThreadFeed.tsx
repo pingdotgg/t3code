@@ -1229,11 +1229,13 @@ function useMarkdownStyles(
             <NativeText
               className="underline"
               onPress={
-                linkHref
-                  ? () => {
-                      void tryOpenExternalUrl(linkHref, "markdown-link");
-                    }
-                  : undefined
+                linkHref && codexFollowUpPromptFromHref(linkHref) !== null
+                  ? () => onLinkPress(linkHref)
+                  : linkHref
+                    ? () => {
+                        void tryOpenExternalUrl(linkHref, "markdown-link");
+                      }
+                    : undefined
               }
               style={{ color: markdownLinkColor }}
             >

@@ -4930,7 +4930,6 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
           }
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-          onUseCodexFollowUp={ctx.onUseCodexFollowUp}
           onImageExpand={ctx.onImageExpand}
           lineBreaks
         />

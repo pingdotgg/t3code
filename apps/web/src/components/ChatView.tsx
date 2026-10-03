@@ -10738,7 +10738,8 @@ export default function ChatView(props: ChatViewProps) {
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onUseArtifactTemplate: useArtifactTemplate,
-                      onUseCodexFollowUp: useCodexFollowUp,
+                      // Provider subagent threads have no composer to fill.
+                      ...(composerMounted ? { onUseCodexFollowUp: useCodexFollowUp } : {}),
                     }
                   : {})}
                 isRevertingCheckpoint={isRevertingCheckpoint}

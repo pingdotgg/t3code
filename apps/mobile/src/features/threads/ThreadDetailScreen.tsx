@@ -1112,7 +1112,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onEndFollowEnabledChange={setEndFollowEnabled}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
-              onUseCodexFollowUp={handleUseCodexFollowUp}
+              {...(isProviderSubagent ? {} : { onUseCodexFollowUp: handleUseCodexFollowUp })}
             />
           </RenderErrorBoundary>
         </View>

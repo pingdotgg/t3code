@@ -226,6 +226,14 @@ describe("follow-up adapters", () => {
     );
   });
 
+  it("escapes GFM strikethrough markers so a label stays literal", () => {
+    expect(
+      renderCodexFollowUpsAsMarkdown(':codex-followup[Drop ~~old~~ code]{prompt="Remove it."}', {
+        actionable: false,
+      }),
+    ).toBe("Drop \\~\\~old\\~\\~ code");
+  });
+
   it("renders a passive follow-up as its label", () => {
     expect(renderCodexFollowUpsAsMarkdown(`Next: ${FOLLOW_UP}`, { actionable: false })).toBe(
       "Next: Prepare print version",

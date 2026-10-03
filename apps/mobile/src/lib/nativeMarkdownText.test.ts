@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
+import { codexFollowUpPromptFromHref } from "@t3tools/client-runtime/codex-markdown-directives";
 
 import {
   nativeMarkdownChunkSpacing,
@@ -123,6 +124,17 @@ describe("nativeMarkdownTextRuns", () => {
       { text: " " },
       { text: "const value = 1", code: true },
     ]);
+  });
+
+  it("keeps a Codex follow-up link pressable so its prompt can reach the composer", () => {
+    const href = "t3-follow-up:Summarize%20the%20changes.";
+    const runs = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [{ type: "link", href, children: [{ type: "text", content: "Summarize" }] }],
+    });
+
+    expect(runs).toEqual([{ text: "Summarize", href }]);
+    expect(codexFollowUpPromptFromHref(runs[0]?.href ?? "")).toBe("Summarize the changes.");
   });
 
   it("normalizes external and file links for native presentation", () => {

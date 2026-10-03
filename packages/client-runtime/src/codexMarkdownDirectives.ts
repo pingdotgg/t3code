@@ -385,7 +385,7 @@ export function renderCodexDirectivesForCopy(markdown: string): string {
 }
 
 // Enough to keep a label literal inside link text; a label is a short phrase, not a block.
-const MARKDOWN_TEXT_SPECIAL_CHARACTERS = /[\\`*_[\]]/g;
+const MARKDOWN_TEXT_SPECIAL_CHARACTERS = /[\\`*_[\]~]/g;
 
 function escapeMarkdownText(text: string): string {
   return text.replace(MARKDOWN_TEXT_SPECIAL_CHARACTERS, (character) => `\\${character}`);
