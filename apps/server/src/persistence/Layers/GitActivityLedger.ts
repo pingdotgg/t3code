@@ -5,7 +5,7 @@ import {
   IsoDateTime,
   ThreadId,
 } from "@t3tools/contracts";
-import { Effect, Layer, Schema } from "effect";
+import { Clock, Effect, Layer, Schedule, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
@@ -17,6 +17,8 @@ import { ProjectionThreadPullRequestRepository } from "../Services/ProjectionThr
 export const GIT_ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const GIT_ACTIVITY_ROW_CAP = 10_000;
 export const GIT_ACTIVITY_LOG_MAX_LIMIT = 500;
+const GIT_ACTIVITY_SWEEP_INTERVAL = "5 minutes";
+const GIT_ACTIVITY_PR_FILTER_SCAN_LIMIT = 50_000;
 
 const GitActivityDbRow = Schema.Struct({
   id: GitActivityLogEntry.fields.id,
@@ -45,10 +47,12 @@ const makeGitActivityLedger = Effect.gen(function* () {
     Request: Schema.Struct({
       all: Schema.Finite,
       threadId: Schema.NullOr(ThreadId),
+      pullRequestNumber: Schema.NullOr(Schema.Finite),
+      cutoff: IsoDateTime,
       limit: Schema.Finite,
     }),
     Result: GitActivityDbRow,
-    execute: ({ all, threadId, limit }) => sql`
+    execute: ({ all, threadId, pullRequestNumber, cutoff, limit }) => sql`
       SELECT
         id,
         occurred_at AS "timestamp",
@@ -62,37 +66,63 @@ const makeGitActivityLedger = Effect.gen(function* () {
       FROM git_activity_log
       WHERE (${all} = 1 OR is_mutating = 1)
         AND (${threadId} IS NULL OR thread_id = ${threadId})
+        AND occurred_at >= ${cutoff}
+        AND (
+          ${pullRequestNumber} IS NULL OR EXISTS (
+            SELECT 1
+            FROM json_each(git_activity_log.pull_requests_json) AS linked_pr
+            WHERE json_extract(linked_pr.value, '$.number') = ${pullRequestNumber}
+          )
+        )
       ORDER BY id DESC
       LIMIT ${limit}
     `,
   });
 
   const listPullRequestCandidates = SqlSchema.findAll({
-    Request: Schema.Struct({ number: Schema.Finite }),
+    Request: Schema.Struct({ number: Schema.Finite, cutoff: IsoDateTime }),
     Result: Schema.Struct({
       pullRequest: Schema.fromJsonString(GitPullRequestAssociation),
     }),
-    execute: ({ number }) => sql`
+    execute: ({ number, cutoff }) => sql`
       SELECT DISTINCT linked_pr.value AS "pullRequest"
       FROM git_activity_log AS activity,
         json_each(activity.pull_requests_json) AS linked_pr
       WHERE json_extract(linked_pr.value, '$.number') = ${number}
-      LIMIT ${GIT_ACTIVITY_ROW_CAP}
+        AND activity.occurred_at >= ${cutoff}
+      LIMIT ${GIT_ACTIVITY_PR_FILTER_SCAN_LIMIT}
     `,
   });
 
-  const prune = () => {
-    const cutoff = new Date(Date.now() - GIT_ACTIVITY_RETENTION_MS).toISOString();
-    return Effect.gen(function* () {
-      yield* sql`DELETE FROM git_activity_log WHERE occurred_at < ${cutoff}`;
-      yield* sql`
-        DELETE FROM git_activity_log
-        WHERE id NOT IN (
-          SELECT id FROM git_activity_log ORDER BY id DESC LIMIT ${GIT_ACTIVITY_ROW_CAP}
-        )
-      `;
-    });
-  };
+  const sweep = Effect.gen(function* () {
+    const cutoff = new Date(
+      (yield* Clock.currentTimeMillis) - GIT_ACTIVITY_RETENTION_MS,
+    ).toISOString();
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM git_activity_log WHERE occurred_at < ${cutoff}`;
+        // Keep the newest mutations first so a read-heavy workload evicts reads before mutations.
+        yield* sql`
+          DELETE FROM git_activity_log
+          WHERE id NOT IN (
+            SELECT id
+            FROM git_activity_log
+            ORDER BY is_mutating DESC, id DESC
+            LIMIT ${GIT_ACTIVITY_ROW_CAP}
+          )
+        `;
+      }),
+    );
+  });
+
+  yield* Effect.forkScoped(
+    sweep.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Git activity ledger sweep failed", { cause }),
+      ),
+      Effect.repeat(Schedule.spaced(GIT_ACTIVITY_SWEEP_INTERVAL)),
+    ),
+  );
 
   const record = (entry: GitActivityRecord) =>
     mapSqlFailure(
@@ -120,13 +150,12 @@ const makeGitActivityLedger = Effect.gen(function* () {
             ${entry.isMutating ? 1 : 0}
           )
         `;
-        yield* prune();
       }),
     );
 
-  const threadsByPullRequest = (number: number) =>
+  const threadsByPullRequest = (number: number, cutoff: string) =>
     Effect.gen(function* () {
-      const candidates = yield* listPullRequestCandidates({ number });
+      const candidates = yield* listPullRequestCandidates({ number, cutoff });
       const pullRequests = new Map<string, typeof GitPullRequestAssociation.Type>();
       for (const { pullRequest } of candidates) {
         const identity = threadPullRequestIdentity(pullRequest);
@@ -153,18 +182,22 @@ const makeGitActivityLedger = Effect.gen(function* () {
   }) =>
     mapSqlFailure(
       Effect.gen(function* () {
-        yield* prune();
+        const cutoff = new Date(
+          (yield* Clock.currentTimeMillis) - GIT_ACTIVITY_RETENTION_MS,
+        ).toISOString();
         const rows = yield* listRows({
           all: input.all ? 1 : 0,
           threadId: input.threadId ?? null,
+          pullRequestNumber: input.pullRequestNumber ?? null,
+          cutoff,
           limit:
             input.pullRequestNumber === undefined
               ? Math.max(1, Math.min(input.limit, GIT_ACTIVITY_LOG_MAX_LIMIT))
-              : GIT_ACTIVITY_ROW_CAP,
+              : GIT_ACTIVITY_PR_FILTER_SCAN_LIMIT,
         });
         if (input.pullRequestNumber === undefined) return rows;
 
-        const threads = yield* threadsByPullRequest(input.pullRequestNumber);
+        const threads = yield* threadsByPullRequest(input.pullRequestNumber, cutoff);
         return rows
           .filter((row) => {
             const threadId = row.threadId;

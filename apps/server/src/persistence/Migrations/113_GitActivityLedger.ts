@@ -28,6 +28,6 @@ export default Effect.gen(function* () {
   `;
   yield* sql`
     CREATE INDEX IF NOT EXISTS idx_git_activity_log_mutating
-    ON git_activity_log(is_mutating, id DESC)
+    ON git_activity_log(is_mutating DESC, id DESC)
   `;
 });

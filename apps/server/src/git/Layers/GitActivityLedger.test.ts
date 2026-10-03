@@ -7,12 +7,17 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
+import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { withLogContext } from "../../observability/LogContext.ts";
-import { GitActivityLedgerLive } from "../../persistence/Layers/GitActivityLedger.ts";
+import {
+  GIT_ACTIVITY_ROW_CAP,
+  GIT_ACTIVITY_RETENTION_MS,
+  GitActivityLedgerLive,
+} from "../../persistence/Layers/GitActivityLedger.ts";
 import { ProjectionThreadPullRequestRepositoryLive } from "../../persistence/Layers/ProjectionThreadPullRequests.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ProjectionThreadPullRequestRepository } from "../../persistence/Services/ProjectionThreadPullRequests.ts";
@@ -167,6 +172,80 @@ testLayer("Git activity ledger through GitCore.execute", (it) => {
         })
         .pipe(Effect.provideService(GitActivityLedger, failingLedger));
       assert.equal(unaffectedCommand.code, 0);
+    }),
+  );
+
+  it.effect("sweeps periodically and evicts reads before mutating rows at the row cap", () =>
+    Effect.gen(function* () {
+      const ledger = yield* GitActivityLedger;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+      const expiredAt = new Date(-GIT_ACTIVITY_RETENTION_MS - 1).toISOString();
+
+      yield* TestClock.adjust("5 minutes");
+      yield* sql`DELETE FROM git_activity_log`;
+      yield* sql`
+        INSERT INTO git_activity_log (
+          occurred_at,
+          operation,
+          args_json,
+          exit_code,
+          duration_ms,
+          cwd,
+          thread_id,
+          pull_requests_json,
+          is_mutating
+        ) VALUES (
+          ${expiredAt}, 'old read', '[]', 0, 0, '/repo', NULL, '[]', 0
+        )
+      `;
+      yield* ledger.record({
+        timestamp: now,
+        operation: "git.commit",
+        args: ["commit"],
+        exitCode: 0,
+        durationMs: 1,
+        cwd: "/repo",
+        threadId: null,
+        pullRequests: [],
+        isMutating: true,
+      });
+      yield* sql`
+        INSERT INTO git_activity_log (
+          occurred_at,
+          operation,
+          args_json,
+          exit_code,
+          duration_ms,
+          cwd,
+          thread_id,
+          pull_requests_json,
+          is_mutating
+        )
+        SELECT ${now}, 'git.status', '[]', 0, 0, '/repo', NULL, '[]', 0
+        FROM json_each(${JSON.stringify(Array.from({ length: GIT_ACTIVITY_ROW_CAP + 1 }, (_, i) => i))})
+      `;
+
+      const beforeSweep = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM git_activity_log
+      `;
+      assert.equal(beforeSweep[0]?.count, GIT_ACTIVITY_ROW_CAP + 3);
+
+      yield* TestClock.adjust("5 minutes");
+
+      const afterSweep = yield* sql<{
+        readonly count: number;
+        readonly mutations: number;
+      }>`
+        SELECT COUNT(*) AS count, SUM(is_mutating) AS mutations FROM git_activity_log
+      `;
+      assert.equal(afterSweep[0]?.count, GIT_ACTIVITY_ROW_CAP);
+      assert.equal(afterSweep[0]?.mutations, 1);
+      const expiredRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM git_activity_log WHERE occurred_at = ${expiredAt}
+      `;
+      assert.equal(expiredRows[0]?.count, 0);
+      assert.equal((yield* ledger.list({ all: false, limit: 10 })).length, 1);
     }),
   );
 });
