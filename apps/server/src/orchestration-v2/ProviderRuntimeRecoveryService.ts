@@ -67,9 +67,8 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
 
 function nonterminalRuns(projection: ProjectionStore.ProjectionRuntimeRecoveryState) {
   return projection.runs.filter((run) => {
-    const status: string = run.status;
     return (
-      status === "preparing" ||
+      run.status === "preparing" ||
       run.status === "starting" ||
       run.status === "running" ||
       run.status === "waiting"
@@ -77,19 +76,27 @@ function nonterminalRuns(projection: ProjectionStore.ProjectionRuntimeRecoverySt
   });
 }
 
-function isBackgroundCapableTurnItemType(type: string): boolean {
+function isBackgroundCapableTurnItemType(
+  type: OrchestrationV2ThreadProjection["turnItems"][number]["type"],
+): boolean {
   return type === "command_execution" || type === "dynamic_tool" || type === "subagent";
 }
 
-function isNonterminalTurnItemStatus(status: string): boolean {
+function isNonterminalTurnItemStatus(
+  status: OrchestrationV2ThreadProjection["turnItems"][number]["status"],
+): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
-function isNonterminalSubagentStatus(status: string): boolean {
+function isNonterminalSubagentStatus(
+  status: OrchestrationV2ThreadProjection["subagents"][number]["status"],
+): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
-function isNonterminalNodeStatus(status: string): boolean {
+function isNonterminalNodeStatus(
+  status: OrchestrationV2ThreadProjection["nodes"][number]["status"],
+): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 

@@ -103,6 +103,51 @@ function testLayer(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect.each(["dispatch", "projection"] as const)(
+    "bounds delegated completion retries after persistent %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const attemptEvents = yield* Queue.unbounded<number>();
+        const fail = Ref.updateAndGet(attempts, (count) => count + 1).pipe(
+          Effect.tap((count) => Queue.offer(attemptEvents, count)),
+          Effect.andThen(Effect.die("persistent continuation failure")),
+        );
+        const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            failure === "projection" ? fail : Effect.succeed(delegatedProjection()),
+          dispatch: () => fail,
+        });
+        const worker = ProviderContinuationService.workerLive.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+          });
+          assert.equal(yield* Queue.take(attemptEvents), 1);
+          for (const delay of [100, 200, 400, 800, 1600, 3200, 5000, 5000]) {
+            yield* TestClock.adjust(`${delay} millis`);
+            if (failure === "projection") yield* Queue.take(attemptEvents);
+            yield* Queue.take(attemptEvents);
+          }
+          const exhaustedCount = yield* Ref.get(attempts);
+          assert.equal(exhaustedCount, failure === "projection" ? 17 : 9);
+          yield* TestClock.adjust("1 day");
+          assert.equal(yield* Ref.get(attempts), exhaustedCount);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+          Effect.scoped,
+        );
+      }),
+  );
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

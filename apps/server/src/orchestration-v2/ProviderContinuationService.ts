@@ -2,6 +2,7 @@ import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contra
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Cause from "effect/Cause";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
@@ -9,6 +10,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
+const MAX_DELEGATED_COMPLETION_RETRIES = 8;
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -76,6 +78,10 @@ export const workerLive = Layer.effectDiscard(
       Ref.modify(retryAttempts, (current) => {
         const attempt = current.get(key) ?? 0;
         const updated = new Map(current);
+        if (attempt >= MAX_DELEGATED_COMPLETION_RETRIES) {
+          updated.delete(key);
+          return [null, updated] as const;
+        }
         updated.set(key, attempt + 1);
         return [Math.min(100 * 2 ** Math.min(attempt, 6), 5_000), updated] as const;
       });
@@ -185,6 +191,7 @@ export const workerLive = Layer.effectDiscard(
         dispatchContinuation(request).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
+              if (Cause.hasInterruptsOnly(cause)) return yield* Effect.failCause(cause);
               yield* Effect.logWarning("orchestration-v2.provider-continuation.dispatch-failed", {
                 threadId: request.threadId,
                 providerThreadId: request.providerThreadId,
@@ -194,6 +201,19 @@ export const workerLive = Layer.effectDiscard(
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);
                 const retryDelay = yield* nextRetryDelay(retryKey);
+                if (retryDelay === null) {
+                  yield* Effect.logError(
+                    "orchestration-v2.provider-continuation.retries-exhausted",
+                    {
+                      threadId: request.threadId,
+                      providerThreadId: request.providerThreadId,
+                      parentRunId: completion.parentRunId,
+                      generation: completion.generation,
+                      messageId: completion.messageId,
+                    },
+                  );
+                  return;
+                }
                 yield* Effect.gen(function* () {
                   yield* Effect.sleep(`${retryDelay} millis`);
                   const projection = yield* threads.getThreadRecords(
@@ -213,11 +233,16 @@ export const workerLive = Layer.effectDiscard(
                   }
                 }).pipe(
                   Effect.catchCause((retryCause) =>
-                    Effect.logWarning("orchestration-v2.provider-continuation.retry-check-failed", {
-                      threadId: request.threadId,
-                      providerThreadId: request.providerThreadId,
-                      cause: retryCause,
-                    }).pipe(Effect.andThen(requests.offer(request))),
+                    Cause.hasInterruptsOnly(retryCause)
+                      ? Effect.failCause(retryCause)
+                      : Effect.logWarning(
+                          "orchestration-v2.provider-continuation.retry-check-failed",
+                          {
+                            threadId: request.threadId,
+                            providerThreadId: request.providerThreadId,
+                            cause: retryCause,
+                          },
+                        ).pipe(Effect.andThen(requests.offer(request))),
                   ),
                   Effect.forkScoped,
                 );
