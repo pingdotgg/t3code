@@ -192,6 +192,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./devProxy": {
+      "types": "./src/devProxy.ts",
+      "import": "./src/devProxy.ts"
+    },
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
       "import": "./src/relayAuth.ts"
@@ -295,6 +299,10 @@
     "./threadReference": {
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
+    },
+    "./threadContext": {
+      "types": "./src/threadContext.ts",
+      "import": "./src/threadContext.ts"
     },
     "./themePreview": {
       "types": "./src/themePreview.ts",

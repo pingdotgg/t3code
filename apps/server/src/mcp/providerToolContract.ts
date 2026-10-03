@@ -7,12 +7,14 @@ import { PullRequestMonitorToolkit } from "./toolkits/pullRequestMonitor/tools.t
 import { CollaborativeAcceptanceToolkit } from "./toolkits/collaborativeAcceptance/tools.ts";
 import { DelegationToolkit } from "./toolkits/delegation/tools.ts";
 import { TerminalToolkit } from "./toolkits/terminal/tools.ts";
+import { ThreadContextToolkit } from "./toolkits/threadContext/tools.ts";
 
 export const providerMcpTools = [
   ...Object.values(PreviewToolkit.tools),
   ...Object.values(PullRequestMonitorToolkit.tools),
   ...Object.values(CollaborativeAcceptanceToolkit.tools),
   ...Object.values(TerminalToolkit.tools),
+  ...Object.values(ThreadContextToolkit.tools),
   ...Object.values(DelegationToolkit.tools),
 ].sort((left, right) => left.name.localeCompare(right.name));
 

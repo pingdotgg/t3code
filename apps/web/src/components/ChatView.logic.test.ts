@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadContextId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -17,8 +18,11 @@ import { isInsightActivity } from "../insights";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildThreadContextForQueueUpdate,
   canStartThreadTurn,
+  countReferencedThreadContexts,
   createLocalDispatchSnapshot,
+  isComposerDraftCleared,
   createThreadPlanCatalogSelector,
   deriveComposerSendState,
   deriveTimelineWorkState,
@@ -979,5 +983,80 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("thread context send builders", () => {
+  const record = (contextId: string, threadId: string) => ({
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId: ThreadContextId.make(contextId),
+    label: `Label ${threadId}`,
+    environmentId: localEnvironmentId,
+    threadId: ThreadId.make(threadId),
+    title: `Title ${threadId}`,
+  });
+
+  it("counts only prompt-referenced thread records as sendable", () => {
+    const records = [record("ctx-a", "a"), record("ctx-b", "b")];
+    expect(
+      countReferencedThreadContexts("[Label a](t3-context://v1/thread/ctx-a) go", records),
+    ).toBe(1);
+    expect(countReferencedThreadContexts("plain text", records)).toBe(0);
+    expect(countReferencedThreadContexts("", records)).toBe(0);
+  });
+
+  it("clears stale queued context with an explicit empty envelope when refs are removed", () => {
+    const records = [record("ctx-a", "a")];
+    const retained = buildThreadContextForQueueUpdate({
+      text: "[Label a](t3-context://v1/thread/ctx-a) ship it",
+      records,
+      previousRecords: records,
+    });
+    expect(retained).toEqual({ version: 1, records });
+
+    const cleared = buildThreadContextForQueueUpdate({
+      text: "ship it without the thread",
+      records,
+      previousRecords: records,
+    });
+    expect(cleared).toEqual({ version: 1, records: [] });
+
+    const untouched = buildThreadContextForQueueUpdate({
+      text: "plain queued message",
+      records: [],
+      previousRecords: [],
+    });
+    expect(untouched).toBe(undefined);
+  });
+
+  it("detects a cleared composer draft for retry restore while preserving newer edits", () => {
+    expect(
+      isComposerDraftCleared({
+        prompt: "",
+        imageCount: 0,
+        terminalContextCount: 0,
+        threadContextCount: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isComposerDraftCleared({
+        prompt: "new typing",
+        imageCount: 0,
+        terminalContextCount: 0,
+        threadContextCount: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isComposerDraftCleared({
+        prompt: "",
+        imageCount: 0,
+        terminalContextCount: 0,
+        threadContextCount: 2,
+      }),
+    ).toBe(false);
+    expect(isComposerDraftCleared(null)).toBe(true);
+    // Clearing the last content can remove the draft entirely; it is still safe to restore.
+    expect(isComposerDraftCleared(undefined)).toBe(true);
   });
 });

@@ -17,6 +17,7 @@ import {
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -28,6 +29,10 @@ import { Deferred, Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
+import {
+  ServerEnvironment,
+  type ServerEnvironmentShape,
+} from "../../environment/Services/ServerEnvironment.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -435,6 +440,12 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(
+        Layer.succeed(ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env-provider-command-reactor-test")),
+          getDescriptor: Effect.die("ServerEnvironment.getDescriptor is unused in this test"),
+        } satisfies ServerEnvironmentShape),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -604,6 +615,7 @@ describe("ProviderCommandReactor", () => {
         checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/thread-1/${input.commandId}`),
         status: "ready",
         files: [],
+        transitionFiles: [],
         agentTouchedPaths: [],
         turnFiles: [],
         checkpointTurnCount: 1,
@@ -741,7 +753,7 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-provider-authority-initial"),
         threadId: ThreadId.make("thread-1"),
         message: {
-          messageId: asMessageId("user-provider-authority-initial"),
+          messageId: asMessageId("assignment-provider-authority"),
           role: "user",
           text: "bind authority",
           attachments: [],
@@ -809,7 +821,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("injects a valid complete authority through the production event path", async () => {
-    const messageId = asMessageId("user-provider-authority-injected");
+    const messageId = asMessageId("assignment-provider-authority");
     const harness = await createHarness({
       delegation: {
         assignmentId: asMessageId("assignment-provider-authority"),
@@ -941,7 +953,7 @@ describe("ProviderCommandReactor", () => {
   ])(
     "rejects %s authority through the production event path before provider calls",
     async (_label, mutateAuthority) => {
-      const messageId = asMessageId("user-provider-authority-rejected");
+      const messageId = asMessageId("assignment-provider-authority");
       const harness = await createHarness({
         delegation: {
           assignmentId: asMessageId("assignment-provider-authority"),

@@ -4,6 +4,7 @@ import type {
   GitStatusStreamEvent,
   OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("./wsTransport", () => ({
@@ -36,6 +37,32 @@ const baseRemoteStatus: GitStatusRemoteResult = {
 };
 
 describe("wsRpcClient", () => {
+  it("sets a completion delay for preview host registrations", () => {
+    const subscribe = vi.fn();
+    const transport = {
+      dispose: vi.fn(async () => undefined),
+      reconnect: vi.fn(async () => undefined),
+      request: vi.fn(),
+      requestStream: vi.fn(),
+      subscribe,
+    };
+    const client = createWsRpcClient(transport as unknown as WsTransport);
+
+    client.preview.automation.connect(
+      {
+        clientId: "preview-host",
+        environmentId: EnvironmentId.make("environment-1"),
+      },
+      vi.fn(),
+    );
+
+    expect(subscribe).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({ completedRetryDelay: 1_000 }),
+    );
+  });
+
   it("requests the dedicated archived shell snapshot", async () => {
     const snapshot = {
       snapshotSequence: 1,

@@ -1,7 +1,7 @@
 import { EventId, TurnId, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { deriveTurnScopedCheckpointFiles } from "./TurnScopedFiles.ts";
+import { deriveTurnScopedCheckpointFiles, MAX_TURN_SCOPED_PATHS } from "./TurnScopedFiles.ts";
 
 function makeActivity(input: {
   readonly id: string;
@@ -147,6 +147,28 @@ describe("deriveTurnScopedCheckpointFiles", () => {
       agentTouchedPaths: [],
       turnFiles: [],
     });
+  });
+
+  it("caps agentTouchedPaths at the attribution limit, which is how truncation is detected", () => {
+    const turnId = TurnId.make("turn-1");
+    const snapshotFiles = Array.from({ length: MAX_TURN_SCOPED_PATHS + 100 }, (_, index) => ({
+      path: `src/file-${String(index).padStart(4, "0")}.ts`,
+      kind: "modified" as const,
+      additions: 1,
+      deletions: 0,
+    }));
+    const result = deriveTurnScopedCheckpointFiles({
+      cwd: "/repo",
+      turnId,
+      snapshotFiles: [],
+      providerTouchedPaths: snapshotFiles.map((file) => file.path),
+      activities: [],
+    });
+
+    // Persisted verbatim, so a reader can detect the cap without a new column.
+    expect(result.agentTouchedPaths).toHaveLength(MAX_TURN_SCOPED_PATHS);
+    // Most capped paths changed in an earlier capture, so turnFiles stays small.
+    expect(result.turnFiles).toEqual([]);
   });
 
   it("rejects unsafe provider paths before deriving turn files", () => {

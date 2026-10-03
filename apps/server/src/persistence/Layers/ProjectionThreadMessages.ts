@@ -1,13 +1,14 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
-import { ChatAttachment, MessageOrigin } from "@t3tools/contracts";
+import { ChatAttachment, MessageOrigin, OrchestrationMessageContext } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionThreadMessagesByIdsInput,
   GetLatestUserMessageAtInput,
   GetProjectionThreadMessageInput,
+  ListProjectionThreadMessagePagesInput,
   ProjectionThreadMessageAttachmentRef,
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRevertKey,
@@ -22,6 +23,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
 );
 
@@ -40,6 +42,7 @@ function toProjectionThreadMessage(
     updatedAt: row.updatedAt,
     ...(row.attachments !== null ? { attachments: row.attachments } : {}),
     ...(row.origin !== null ? { origin: row.origin } : {}),
+    ...(row.context !== null ? { context: row.context } : {}),
   };
 }
 
@@ -52,6 +55,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       const nextAttachmentsJson =
         row.attachments !== undefined ? JSON.stringify(row.attachments) : null;
       const nextOriginJson = row.origin !== undefined ? JSON.stringify(row.origin) : null;
+      const nextContextJson = row.context !== undefined ? JSON.stringify(row.context) : null;
       return sql`
         INSERT INTO projection_thread_messages (
           message_id,
@@ -62,6 +66,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json,
           origin_json,
+          context_json,
           is_streaming,
           created_at,
           updated_at
@@ -89,6 +94,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
               WHERE message_id = ${row.messageId}
             )
           ),
+          COALESCE(
+            ${nextContextJson},
+            (
+              SELECT context_json
+              FROM projection_thread_messages
+              WHERE message_id = ${row.messageId}
+            )
+          ),
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -107,6 +120,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           origin_json = COALESCE(
             excluded.origin_json,
             projection_thread_messages.origin_json
+          ),
+          context_json = COALESCE(
+            excluded.context_json,
+            projection_thread_messages.context_json
           ),
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
@@ -129,6 +146,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           origin_json AS "origin",
+          context_json AS "context",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -152,6 +170,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           origin_json AS "origin",
+          context_json AS "context",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -161,8 +180,55 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       `,
   });
 
-  // Revert trimming only inspects identity/ordering columns: text,
-  // attachments, and origins are never selected or JSON-decoded.
+  // History reads filter and cap in SQL before any payload is decoded:
+  // only rows after the cursor are selected, and never more than the limit.
+  const listProjectionThreadMessagePageRows = SqlSchema.findAll({
+    Request: ListProjectionThreadMessagePagesInput,
+    Result: ProjectionThreadMessageDbRowSchema,
+    execute: ({ threadId, afterCreatedAt, afterMessageId, limit }) =>
+      afterCreatedAt !== undefined && afterMessageId !== undefined
+        ? sql`
+          SELECT
+            message_id AS "messageId",
+            thread_id AS "threadId",
+            sequence,
+            turn_id AS "turnId",
+            role,
+            text,
+            attachments_json AS "attachments",
+            origin_json AS "origin",
+            context_json AS "context",
+            is_streaming AS "isStreaming",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+            AND (created_at, message_id) > (${afterCreatedAt}, ${afterMessageId})
+          ORDER BY created_at ASC, message_id ASC
+          LIMIT ${limit}
+        `
+        : sql`
+          SELECT
+            message_id AS "messageId",
+            thread_id AS "threadId",
+            sequence,
+            turn_id AS "turnId",
+            role,
+            text,
+            attachments_json AS "attachments",
+            origin_json AS "origin",
+            context_json AS "context",
+            is_streaming AS "isStreaming",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+          FROM projection_thread_messages
+          WHERE thread_id = ${threadId}
+          ORDER BY created_at ASC, message_id ASC
+          LIMIT ${limit}
+        `,
+  });
+
+  // Revert trimming only inspects identity/ordering columns: text,  // attachments, and origins are never selected or JSON-decoded.
   const listProjectionThreadMessageRevertKeyRows = SqlSchema.findAll({
     Request: ListProjectionThreadMessagesInput,
     Result: ProjectionThreadMessageRevertKey,
@@ -257,6 +323,14 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       Effect.map((rows) => rows.map(toProjectionThreadMessage)),
     );
 
+  const listMessagesPage: ProjectionThreadMessageRepositoryShape["listMessagesPage"] = (input) =>
+    listProjectionThreadMessagePageRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlError("ProjectionThreadMessageRepository.listMessagesPage:query"),
+      ),
+      Effect.map((rows) => rows.map(toProjectionThreadMessage)),
+    );
+
   const listRevertKeysByThreadId: ProjectionThreadMessageRepositoryShape["listRevertKeysByThreadId"] =
     (input) =>
       listProjectionThreadMessageRevertKeyRows(input).pipe(
@@ -305,6 +379,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
     upsert,
     getByMessageId,
     listByThreadId,
+    listMessagesPage,
     listRevertKeysByThreadId,
     listAttachmentRefsByThreadId,
     deleteByThreadId,

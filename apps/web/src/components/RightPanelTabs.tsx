@@ -87,9 +87,7 @@ function titleFor(
     case "terminal":
       return terminalLabels[surface.resourceId] ?? "Terminal";
     case "pull-request":
-      return surface.title
-        ? `#${surface.reference.number} ${surface.title}`
-        : `Pull request #${surface.reference.number}`;
+      return `#${surface.reference.number}`;
     case "pull-requests":
       return "Pull requests";
     case "device":
@@ -272,7 +270,7 @@ export function RightPanelTabs({
           className="min-w-0 flex-1"
           data-right-panel-tab-list
         >
-          <div className="flex h-full w-max items-center gap-0.5">
+          <div className="flex h-full w-max items-center gap-1">
             {surfaces.map((surface) => {
               const title = titleFor(surface, previewSessions, terminalLabels);
               const fullTitle = surface.kind === "file" ? surface.relativePath : title;
@@ -289,7 +287,7 @@ export function RightPanelTabs({
                     }}
                     onAuxClick={(event) => closeOnMiddleClick(event, surface)}
                     className={cn(
-                      "group flex h-6 min-w-0 max-w-36 shrink-0 items-center gap-0.5 rounded-md pl-1.5 pr-2 text-xs [-webkit-app-region:no-drag]",
+                      "group flex h-7 min-w-0 max-w-36 shrink-0 items-center gap-1 rounded-md pl-2 pr-2.5 text-[13px] [-webkit-app-region:no-drag]",
                       active
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",

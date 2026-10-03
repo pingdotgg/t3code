@@ -1,6 +1,7 @@
 import { deriveThreadBusyState } from "@t3tools/shared/threadBusyState";
 import type {
   OrchestrationCommand,
+  OrchestrationMessage,
   OrchestrationQueuedTurn,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -167,6 +168,34 @@ export function threadCheckoutHasUnsettledWork(thread: OrchestrationThread): boo
   return latestUserMessage.createdAt > thread.latestTurn.completedAt;
 }
 
+// Shared by the probes below: they ask different questions but must agree on
+// which messages count as "the provider never got a turn". Takes the message the
+// caller already resolved rather than re-scanning `thread.messages`.
+function hasFailedTurnStart(
+  thread: OrchestrationThread,
+  latestUserMessage: OrchestrationMessage | undefined,
+): boolean {
+  if (!latestUserMessage) {
+    return false;
+  }
+  return thread.activities.some((activity) => {
+    if (
+      activity.kind !== "provider.turn.start.failed" ||
+      activity.createdAt < latestUserMessage.createdAt
+    ) {
+      return false;
+    }
+    const messageId =
+      typeof activity.payload === "object" &&
+      activity.payload !== null &&
+      "messageId" in activity.payload &&
+      typeof activity.payload.messageId === "string"
+        ? activity.payload.messageId
+        : null;
+    return messageId === null || messageId === latestUserMessage.id;
+  });
+}
+
 export function threadHasQueuedTurnStart(
   thread: OrchestrationThread,
   options: { readonly now: string },
@@ -184,23 +213,7 @@ export function threadHasQueuedTurnStart(
   ) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
-    if (
-      activity.kind !== "provider.turn.start.failed" ||
-      activity.createdAt < latestUserMessage.createdAt
-    ) {
-      return false;
-    }
-    const messageId =
-      typeof activity.payload === "object" &&
-      activity.payload !== null &&
-      "messageId" in activity.payload &&
-      typeof activity.payload.messageId === "string"
-        ? activity.payload.messageId
-        : null;
-    return messageId === null || messageId === latestUserMessage.id;
-  });
-  if (failedTurnStart) {
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   return thread.latestTurn === null || thread.latestTurn.completedAt === null

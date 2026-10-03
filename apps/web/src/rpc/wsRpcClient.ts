@@ -343,7 +343,7 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           transport.subscribe(
             (client) => client[WS_METHODS.previewAutomationConnect](input),
             listener,
-            options,
+            { ...options, completedRetryDelay: 1_000 },
           ),
         respond: (input) =>
           transport.request((client) => client[WS_METHODS.previewAutomationRespond](input)),

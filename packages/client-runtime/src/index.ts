@@ -23,6 +23,7 @@ export * from "./wsTransport.ts";
 export * from "./wsRpcClient.ts";
 export * from "./environmentConnection.ts";
 export * from "./composerPathSearchState.ts";
+export * from "./threadContextMatcher.ts";
 export * from "./archivedThreadsState.ts";
 export * from "./checkpointDiffState.ts";
 export * from "./workflowRuntimeState.ts";

@@ -585,6 +585,7 @@ export function applyThreadDetailEvent(
         files: event.payload.files,
         agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
         turnFiles: event.payload.turnFiles ?? [],
+        transitionFiles: event.payload.transitionFiles ?? [],
         assistantMessageId: event.payload.assistantMessageId,
         completedAt: event.payload.completedAt,
       };

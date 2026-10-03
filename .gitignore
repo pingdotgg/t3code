@@ -1,4 +1,5 @@
 node_modules
+.pi/git/
 .bun
 .turbo
 .vite-plus

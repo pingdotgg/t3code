@@ -434,7 +434,7 @@ const sleep = (ms: number) =>
 it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLayer))(
   "OpenCodeAdapterLive MCP routing",
   (it) => {
-    it.effect("adds the thread MCP server to the requested OpenCode directory", () =>
+    it.effect("adds only the thread t3-code MCP server to the requested OpenCode directory", () =>
       Effect.gen(function* () {
         const adapter = yield* OpenCodeAdapter;
         const threadId = asThreadId("thread-opencode-mcp-directory");
@@ -451,24 +451,25 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
           runtimeMode: "full-access",
         });
 
-        assert.equal(runtimeMock.state.mcpAddCalls.length, 2);
-        const names = runtimeMock.state.mcpAddCalls.map((call) => call?.name).sort();
-        assert.deepEqual(names, ["t3-code", "t3-tools"]);
-        for (const call of runtimeMock.state.mcpAddCalls) {
-          assert.equal(call?.directory, directory);
-          const config = call?.config as
-            | {
-                type?: unknown;
-                url?: unknown;
-                headers?: { Authorization?: unknown };
-                oauth?: unknown;
-              }
-            | undefined;
-          assert.equal(config?.type, "remote");
-          assert.match(String(config?.url), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
-          assert.match(String(config?.headers?.Authorization), /^Bearer \S+$/);
-          assert.equal(config?.oauth, false);
-        }
+        // Exactly one MCP server. A second `t3-tools` server would advertise a
+        // duplicate `delegate_work` with a different schema than the one the
+        // `t3-code` DelegationToolkit serves.
+        assert.equal(runtimeMock.state.mcpAddCalls.length, 1);
+        const call = runtimeMock.state.mcpAddCalls[0];
+        assert.equal(call?.directory, directory);
+        assert.equal(call?.name, "t3-code");
+        const config = call?.config as
+          | {
+              type?: unknown;
+              url?: unknown;
+              headers?: { Authorization?: unknown };
+              oauth?: unknown;
+            }
+          | undefined;
+        assert.equal(config?.type, "remote");
+        assert.match(String(config?.url), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+        assert.match(String(config?.headers?.Authorization), /^Bearer \S+$/);
+        assert.equal(config?.oauth, false);
       }),
     );
   },

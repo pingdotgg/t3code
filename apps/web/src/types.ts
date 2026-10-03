@@ -16,6 +16,7 @@ import type {
   TurnId,
   MessageId,
   MessageOrigin,
+  OrchestrationMessageContext,
   ProviderDriverKind,
   ProviderInstanceId,
   CheckpointRef,
@@ -60,6 +61,7 @@ export interface ChatMessage {
   text: string;
   attachments?: ChatAttachment[];
   origin?: MessageOrigin | undefined;
+  context?: OrchestrationMessageContext | undefined;
   turnId?: TurnId | null;
   createdAt: string;
   completedAt?: string | undefined;
@@ -90,6 +92,7 @@ export interface TurnDiffSummary {
   files: TurnDiffFileChange[];
   agentTouchedPaths?: string[] | undefined;
   turnFiles?: TurnDiffFileChange[] | undefined;
+  transitionFiles?: TurnDiffFileChange[] | undefined;
   checkpointRef?: CheckpointRef | undefined;
   assistantMessageId?: MessageId | undefined;
   checkpointTurnCount?: number | undefined;
@@ -185,6 +188,8 @@ export interface ThreadShell {
 
 export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
+  /** Accepted-but-unacknowledged turn start; see `deriveThreadBusyState`. */
+  pendingTurnStart?: OrchestrationPendingTurnStart | null;
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
 }
 

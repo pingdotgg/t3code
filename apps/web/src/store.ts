@@ -5,6 +5,7 @@ import type {
   OrchestrationEvent,
   OrchestrationLatestTurn,
   OrchestrationMessage,
+  OrchestrationPendingTurnStart,
   OrchestrationProposedPlan,
   OrchestrationQueuedTurn,
   OrchestrationReadModel,
@@ -35,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/validation-lifecycle";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
+import { sessionResolvesPendingTurnStart } from "@t3tools/shared/threadBusyState";
 import { childLifecycleNotificationToActivity } from "@t3tools/shared/orchestrationActivity";
 import {
   sameThreadPullRequest,
@@ -266,6 +268,7 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     id: message.id,
     role: message.role,
     text: message.text,
+    ...(message.context !== undefined ? { context: message.context } : {}),
     turnId: message.turnId,
     createdAt: message.createdAt,
     streaming: message.streaming,
@@ -298,6 +301,7 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     files: checkpoint.files.map((file) => ({ ...file })),
     agentTouchedPaths: [...(checkpoint.agentTouchedPaths ?? [])],
     turnFiles: (checkpoint.turnFiles ?? []).map((file) => ({ ...file })),
+    transitionFiles: (checkpoint.transitionFiles ?? []).map((file) => ({ ...file })),
   };
 }
 
@@ -496,6 +500,10 @@ function toThreadShell(thread: Thread): ThreadShell {
 function toThreadTurnState(thread: Thread): ThreadTurnState {
   return {
     latestTurn: thread.latestTurn,
+    // Must round-trip through turn state: it is the only place the pending start
+    // is persisted, so dropping it here left the derived thread permanently
+    // un-pending and silently disabled the composer block.
+    pendingTurnStart: thread.pendingTurnStart ?? null,
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
@@ -721,7 +729,28 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    // Otherwise the memoized write is skipped and a pending start that starts or
+    // retires never reaches the derived thread.
+    pendingTurnStartsEqual(left.pendingTurnStart ?? null, right.pendingTurnStart ?? null) &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
+  );
+}
+
+function pendingTurnStartsEqual(
+  left: OrchestrationPendingTurnStart | null,
+  right: OrchestrationPendingTurnStart | null,
+): boolean {
+  if (left === right) {
+    return true;
+  }
+  if (left === null || right === null) {
+    return false;
+  }
+  return (
+    left.messageId === right.messageId &&
+    left.requestedAt === right.requestedAt &&
+    left.sourceProposedPlan?.planId === right.sourceProposedPlan?.planId &&
+    left.sourceProposedPlan?.threadId === right.sourceProposedPlan?.threadId
   );
 }
 
@@ -1554,6 +1583,7 @@ function updateThreadMessageState(
               : {}),
           ...(incoming.attachments !== undefined ? { attachments: incoming.attachments } : {}),
           ...(incoming.origin !== undefined ? { origin: incoming.origin } : {}),
+          ...(incoming.context !== undefined ? { context: incoming.context } : {}),
         };
 
   let nextMessageIds = messageIds;
@@ -2277,9 +2307,6 @@ function applyEnvironmentOrchestrationEvent(
 
     case "thread.session-set":
       return updateThreadState(state, event.payload.threadId, (thread) => {
-        // Provider acknowledgement retires the pending start.
-        const acknowledged =
-          event.payload.session.status === "running" && event.payload.session.activeTurnId !== null;
         return {
           ...thread,
           session: mapSession(event.payload.session),
@@ -2289,7 +2316,14 @@ function applyEnvironmentOrchestrationEvent(
             event.payload.session,
             thread.pendingSourceProposedPlan,
           ),
-          ...(acknowledged ? { pendingTurnStart: null } : {}),
+          // Shared with the projector, its SQL projection, and both client
+          // reducers. Retiring only on acknowledgement left the web thread
+          // holding a pending start the server had already resolved when the
+          // provider died before acknowledging, which kept the composer blocked
+          // until a snapshot resync.
+          ...(sessionResolvesPendingTurnStart(event.payload.session)
+            ? { pendingTurnStart: null }
+            : {}),
           updatedAt: event.occurredAt,
         };
       });
@@ -2353,6 +2387,7 @@ function applyEnvironmentOrchestrationEvent(
           files: event.payload.files,
           agentTouchedPaths: event.payload.agentTouchedPaths ?? [],
           turnFiles: event.payload.turnFiles ?? [],
+          transitionFiles: event.payload.transitionFiles ?? [],
           assistantMessageId: event.payload.assistantMessageId,
           completedAt: event.payload.completedAt,
         });
@@ -2570,7 +2605,13 @@ function applyEnvironmentOrchestrationEvent(
           queuedTurn.id === event.payload.queuedTurnId
             ? {
                 ...queuedTurn,
-                message: { ...queuedTurn.message, text: event.payload.text },
+                message: {
+                  ...queuedTurn.message,
+                  text: event.payload.text,
+                  ...(event.payload.context !== undefined
+                    ? { context: event.payload.context }
+                    : {}),
+                },
                 updatedAt: event.payload.updatedAt,
                 failedAt: null,
                 failureMessage: null,

@@ -946,6 +946,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               : previousMessage?.origin !== undefined
                 ? { origin: previousMessage.origin }
                 : {}),
+            ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
             isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -1208,6 +1209,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             text: event.payload.queuedTurn.message.text,
             attachments: event.payload.queuedTurn.message.attachments,
             origin: event.payload.queuedTurn.origin ?? null,
+            ...(event.payload.queuedTurn.message.context !== undefined
+              ? { context: event.payload.queuedTurn.message.context }
+              : {}),
             modelSelection: event.payload.queuedTurn.modelSelection ?? null,
             titleSeed: event.payload.queuedTurn.titleSeed ?? null,
             runtimeMode: event.payload.queuedTurn.runtimeMode,
@@ -1233,6 +1237,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existing.value,
             text: event.payload.text,
             ...(event.payload.origin !== undefined ? { origin: event.payload.origin } : {}),
+            ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
             updatedAt: event.payload.updatedAt,
             failedAt: null,
             failureMessage: null,
@@ -1390,6 +1395,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               checkpointFiles: [],
               checkpointAgentTouchedPaths: [],
               checkpointTurnFiles: [],
+              checkpointTransitionFiles: [],
             });
           }
 
@@ -1433,6 +1439,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointFiles: [],
             checkpointAgentTouchedPaths: [],
             checkpointTurnFiles: [],
+            checkpointTransitionFiles: [],
           });
           return;
         }
@@ -1472,6 +1479,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointFiles: [],
             checkpointAgentTouchedPaths: [],
             checkpointTurnFiles: [],
+            checkpointTransitionFiles: [],
           });
           return;
         }
@@ -1500,6 +1508,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               checkpointFiles: event.payload.files,
               checkpointAgentTouchedPaths: event.payload.agentTouchedPaths,
               checkpointTurnFiles: event.payload.turnFiles,
+              checkpointTransitionFiles: event.payload.transitionFiles,
               startedAt: existingTurn.value.startedAt ?? event.payload.completedAt,
               requestedAt: existingTurn.value.requestedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,
@@ -1523,6 +1532,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             checkpointFiles: event.payload.files,
             checkpointAgentTouchedPaths: event.payload.agentTouchedPaths,
             checkpointTurnFiles: event.payload.turnFiles,
+            checkpointTransitionFiles: event.payload.transitionFiles,
           });
           return;
         }

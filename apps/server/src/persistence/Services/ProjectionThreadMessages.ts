@@ -11,6 +11,7 @@ import {
   MessageId,
   MessageOrigin,
   NonNegativeInt,
+  OrchestrationMessageContext,
   OrchestrationMessageRole,
   ThreadId,
   TurnId,
@@ -31,6 +32,7 @@ export const ProjectionThreadMessage = Schema.Struct({
   text: Schema.String,
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   origin: Schema.optional(MessageOrigin),
+  context: Schema.optional(OrchestrationMessageContext),
   isStreaming: Schema.Boolean,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -41,6 +43,21 @@ export const ListProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
 export type ListProjectionThreadMessagesInput = typeof ListProjectionThreadMessagesInput.Type;
+
+/**
+ * Bounded forward page over a thread's messages in stable
+ * `(created_at, message_id)` order. The cursor binds to the last row of the
+ * previous page; `afterMessageId` without `afterCreatedAt` is rejected by
+ * callers. `limit` is the maximum row count the database may return.
+ */
+export const ListProjectionThreadMessagePagesInput = Schema.Struct({
+  threadId: ThreadId,
+  afterCreatedAt: Schema.optional(IsoDateTime),
+  afterMessageId: Schema.optional(MessageId),
+  limit: NonNegativeInt,
+});
+export type ListProjectionThreadMessagePagesInput =
+  typeof ListProjectionThreadMessagePagesInput.Type;
 
 export const GetProjectionThreadMessageInput = Schema.Struct({
   messageId: MessageId,
@@ -117,6 +134,17 @@ export interface ProjectionThreadMessageRepositoryShape {
    */
   readonly listByThreadId: (
     input: ListProjectionThreadMessagesInput,
+  ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /**
+   * List one bounded page of projected thread messages for a thread.
+   *
+   * Filtering and the row cap happen in SQL before any payload is decoded,
+   * so large threads never hydrate fully. Returned in ascending creation
+   * order.
+   */
+  readonly listMessagesPage: (
+    input: ListProjectionThreadMessagePagesInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadMessage>, ProjectionRepositoryError>;
 
   /**
