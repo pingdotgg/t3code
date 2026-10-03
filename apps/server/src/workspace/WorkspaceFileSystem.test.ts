@@ -360,6 +360,39 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("keeps both edits when two line ranges of one file are replaced at once", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "one\ntwo\nthree\n");
+
+        yield* Effect.all(
+          [
+            workspaceFileSystem.writeFile({
+              cwd,
+              relativePath: "src/a.ts",
+              contents: "ONE",
+              replaceLines: { startLine: 1, endLine: 1, expected: "one" },
+            }),
+            workspaceFileSystem.writeFile({
+              cwd,
+              relativePath: "src/a.ts",
+              contents: "THREE",
+              replaceLines: { startLine: 3, endLine: 3, expected: "three" },
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const saved = yield* fileSystem
+          .readFileString(path.join(cwd, "src/a.ts"))
+          .pipe(Effect.orDie);
+
+        expect(saved).toBe("ONE\ntwo\nTHREE\n");
+      }),
+    );
+
     it.effect("refuses a line range that no longer matches and leaves the file alone", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
