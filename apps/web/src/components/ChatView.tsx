@@ -7136,6 +7136,8 @@ export default function ChatView(props: ChatViewProps) {
     if (presentation === null || !activeThread) {
       return null;
     }
+    const onlyItem = presentation.items.length === 1 ? presentation.items[0] : undefined;
+    const onlyChildThreadId = onlyItem?.childThreadId;
     return {
       id: `background-work:${activeThread.id}`,
       variant: "default",
@@ -7152,29 +7154,39 @@ export default function ChatView(props: ChatViewProps) {
         />
       ),
       title: presentation.title,
-      // A single named item is already in the title.
+      // A single item is already named in the title, so it only needs a way in.
       description:
-        presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
-          ? undefined
-          : presentation.items.map((item, index) => {
-              const childThreadId = item.childThreadId;
-              return (
-                <Fragment key={item.taskId}>
-                  {index > 0 ? ", " : null}
-                  {childThreadId === undefined ? (
-                    item.label
-                  ) : (
-                    <InlineButton
-                      tone="muted"
-                      aria-label={`Open subagent ${item.label}`}
-                      onClick={() => onOpenRelatedThread(childThreadId)}
-                    >
-                      {item.label}
-                    </InlineButton>
-                  )}
-                </Fragment>
-              );
-            }),
+        onlyItem !== undefined ? (
+          onlyChildThreadId === undefined ? undefined : (
+            <InlineButton
+              tone="muted"
+              aria-label={`Show subagent ${onlyItem.label}`}
+              onClick={() => onOpenRelatedThread(onlyChildThreadId)}
+            >
+              Show
+            </InlineButton>
+          )
+        ) : (
+          presentation.items.map((item, index) => {
+            const childThreadId = item.childThreadId;
+            return (
+              <Fragment key={item.taskId}>
+                {index > 0 ? ", " : null}
+                {childThreadId === undefined ? (
+                  item.label
+                ) : (
+                  <InlineButton
+                    tone="muted"
+                    aria-label={`Open subagent ${item.label}`}
+                    onClick={() => onOpenRelatedThread(childThreadId)}
+                  >
+                    {item.label}
+                  </InlineButton>
+                )}
+              </Fragment>
+            );
+          })
+        ),
       actions: (
         <Button
           size="xs"
