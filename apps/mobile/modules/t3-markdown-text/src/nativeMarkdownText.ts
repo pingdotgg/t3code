@@ -630,12 +630,27 @@ function appendListItem(
 
   const children = node.children ?? [];
   let wroteInlineContent = false;
-  for (const child of children) {
+  for (const [index, child] of children.entries()) {
     if (child.type === "paragraph") {
+      if (wroteInlineContent) {
+        appendBlockTerminator(runs, {
+          ...EMPTY_CONTEXT,
+          role: "list-break",
+          depth,
+          spacing: 2,
+        });
+      }
       appendInlineChildren(runs, child, {
         ...EMPTY_CONTEXT,
         role: "body",
         depth,
+        ...(index > 0
+          ? {
+              firstLineHeadIndent: firstLineHeadIndent + markerColumnWidth,
+              headIndent: firstLineHeadIndent + markerColumnWidth,
+              paragraphSpacing: 2,
+            }
+          : {}),
       });
       wroteInlineContent = true;
       continue;

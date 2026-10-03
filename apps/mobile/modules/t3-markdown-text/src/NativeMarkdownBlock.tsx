@@ -5,6 +5,7 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import {
+  nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownNodePosition,
@@ -555,7 +556,17 @@ export function NativeMarkdownBlock(props: {
           }}
         />
       );
-    case "blockquote":
+    case "blockquote": {
+      // Only iOS applies paragraph indents in selectable text. Android lists
+      // still need NativeList's layout inside the quote border.
+      const chunks =
+        Platform.OS === "ios"
+          ? nativeMarkdownDocumentChunks(props.node)
+          : (props.node.children ?? []).map((node, index) => ({
+              kind: "rich" as const,
+              key: nodeKey(node, index),
+              node,
+            }));
       return (
         <View
           style={{
@@ -567,20 +578,33 @@ export function NativeMarkdownBlock(props: {
             gap: 6,
           }}
         >
-          {(props.node.children ?? []).map((child, index) => (
-            <NativeMarkdownBlock
-              key={nodeKey(child, index)}
-              node={child}
-              skills={props.skills}
-              textStyle={props.textStyle}
-              highlightCode={props.highlightCode}
-              onLinkPress={props.onLinkPress}
-              depth={depth}
-              compact
-            />
-          ))}
+          {/* iOS selection cannot cross native text views. Keep consecutive
+          plain children together while the parent draws the quote border. */}
+          {chunks.map((chunk) =>
+            chunk.kind === "selectable" ? (
+              <SelectableNode
+                key={chunk.key}
+                node={chunk.node}
+                skills={props.skills}
+                textStyle={props.textStyle}
+                onLinkPress={props.onLinkPress}
+              />
+            ) : (
+              <NativeMarkdownBlock
+                key={chunk.key}
+                node={chunk.node}
+                skills={props.skills}
+                textStyle={props.textStyle}
+                highlightCode={props.highlightCode}
+                onLinkPress={props.onLinkPress}
+                depth={depth}
+                compact
+              />
+            ),
+          )}
         </View>
       );
+    }
     case "list":
       return (
         <NativeList

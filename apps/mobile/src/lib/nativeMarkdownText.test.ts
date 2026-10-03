@@ -534,6 +534,40 @@ describe("nativeMarkdownDocumentRuns", () => {
     ).toEqual([20, 10, 12]);
   });
 
+  it("keeps paragraphs within a list item separate and aligned", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", children: [{ type: "text", content: "Intro" }] },
+        {
+          type: "list",
+          children: [
+            {
+              type: "list_item",
+              children: [
+                { type: "paragraph", children: [{ type: "text", content: "First paragraph." }] },
+                { type: "paragraph", children: [{ type: "text", content: "Second paragraph." }] },
+              ],
+            },
+            {
+              type: "list_item",
+              children: [{ type: "paragraph", children: [{ type: "text", content: "Next item" }] }],
+            },
+          ],
+        },
+        { type: "paragraph", children: [{ type: "text", content: "Tail" }] },
+      ],
+    };
+    const runs = nativeMarkdownDocumentRuns(node);
+    expect(runs.map((run) => run.text).join("")).toBe(
+      "Intro\n\n•\tFirst paragraph.\nSecond paragraph.\n•\tNext item\n\nTail",
+    );
+    expect(runs.find((run) => run.text === "Second paragraph.")).toMatchObject({
+      firstLineHeadIndent: 24,
+      headIndent: 24,
+    });
+  });
+
   it("renders tight list items whose inline nodes are direct children", () => {
     const node: MarkdownNode = {
       type: "document",
