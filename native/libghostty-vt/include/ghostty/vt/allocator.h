@@ -29,7 +29,7 @@
  *
  * **For the common case, you can pass NULL as the allocator for any
  * function that accepts one,** and libghostty will use a default allocator.
- * The default allocator will be libc malloc/free if libc is linked. 
+ * The default allocator will be libc malloc/free if libc is linked.
  * Otherwise, a custom allocator is used (currently Zig's SMP allocator)
  * that doesn't require any external dependencies.
  *
@@ -68,7 +68,7 @@
 
 /**
  * Function table for custom memory allocator operations.
- * 
+ *
  * This vtable defines the interface for a custom memory allocator. All
  * function pointers must be valid and non-NULL.
  *
@@ -84,7 +84,7 @@
  * the Zig folks, and it enables a diverse set of allocation strategies
  * as shown by the Zig ecosystem. As a consolation, please note that many
  * of the arguments are only needed for advanced use cases and can be
- * safely ignored in simple implementations. For example, if you look at 
+ * safely ignored in simple implementations. For example, if you look at
  * the Zig implementation of the libc allocator in `lib/std/heap.zig`
  * (search for CAllocator), you'll see it is very simple.
  *
@@ -112,7 +112,7 @@ typedef struct {
      * @return Pointer to allocated memory, or NULL if allocation failed
      */
     void* (*alloc)(void *ctx, size_t len, uint8_t alignment, uintptr_t ret_addr);
-    
+
     /**
      * Attempt to expand or shrink memory in place.
      *
@@ -132,7 +132,7 @@ typedef struct {
      * @return true if resize was successful in-place, false if relocation would be required
      */
     bool (*resize)(void *ctx, void *memory, size_t memory_len, uint8_t alignment, size_t new_len, uintptr_t ret_addr);
-    
+
     /**
      * Attempt to expand or shrink memory, allowing relocation.
      *
@@ -159,7 +159,7 @@ typedef struct {
      * @return Pointer to resized memory (may be relocated), or NULL if manual copy is needed
      */
     void* (*remap)(void *ctx, void *memory, size_t memory_len, uint8_t alignment, size_t new_len, uintptr_t ret_addr);
-    
+
     /**
      * Free and invalidate a region of memory.
      *
@@ -181,7 +181,7 @@ typedef struct {
  * Custom memory allocator.
  *
  * For functions that take an allocator pointer, a NULL pointer indicates
- * that the default allocator should be used. The default allocator will 
+ * that the default allocator should be used. The default allocator will
  * be libc malloc/free if we're linking to libc. If libc isn't linked,
  * a custom allocator is used (currently Zig's SMP allocator).
  *

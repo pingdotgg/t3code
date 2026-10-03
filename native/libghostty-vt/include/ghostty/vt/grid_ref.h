@@ -20,7 +20,7 @@ extern "C" {
 
 /** @defgroup grid_ref Grid Reference
  *
- * A grid reference is a reference to a specific cell position in the 
+ * A grid reference is a reference to a specific cell position in the
  * terminal. Obtain a grid reference from `ghostty_terminal_grid_ref`
  * for untracked or `ghostty_terminal_grid_ref_track` for tracked. Untracked
  * vs tracked is explained next.
@@ -30,7 +30,7 @@ extern "C" {
  * screens. Use the render state API for that.
  *
  * ## Untracked vs Tracked References
- *  
+ *
  * ### Untracked Reference
  *
  * An untracked grid reference is a value type that snapshots a specific
@@ -48,7 +48,7 @@ extern "C" {
  * A tracked grid reference follows its cell across normal screen operations.
  * For example scrolling, scrollback pruning, resize/reflow, and other
  * terminal mutations update the tracked reference automatically.
- * 
+ *
  * A tracked reference can still lose its original semantic location. This can
  * happen when the underlying grid is reset, pruned, or otherwise discarded in a
  * way that cannot be mapped to a meaningful new cell. In that state,
@@ -74,8 +74,8 @@ extern "C" {
  * reference is freed first, the handle remains valid only for tracked-grid-ref
  * APIs: it reports no value and can still be freed.
  *
- * Each tracked reference adds bookkeeping to terminal mutations. Use them 
- * sparingly for long-lived anchors such as selections, search state, marks, 
+ * Each tracked reference adds bookkeeping to terminal mutations. Use them
+ * sparingly for long-lived anchors such as selections, search state, marks,
  * or application-side bookmarks.
  *
  * ## Lifetime
