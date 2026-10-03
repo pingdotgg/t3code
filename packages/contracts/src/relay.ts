@@ -1175,6 +1175,28 @@ const RelayServerGroup = HttpApiGroup.make("server")
   .annotate(OpenApi.Description, "Environment-authenticated activity publication.")
   .middleware(RelayEnvironmentAuth);
 
+/**
+ * Public, stateless webhook forwarding to an environment's managed tunnel.
+ * Unauthenticated: the token in the path is the environment's credential, and
+ * the relay only routes and forwards. Raw, so the body reaches the
+ * environment byte for byte and signatures still verify there.
+ */
+const RelayHookParams = Schema.Struct({
+  environmentId: Schema.String,
+  hookId: Schema.String,
+  token: Schema.String,
+});
+const RELAY_HOOK_PATH = "/v1/hooks/:environmentId/:hookId/:token";
+const relayHookEndpoint = { params: RelayHookParams } as const;
+const RelayHooksGroup = HttpApiGroup.make("hooks")
+  .add(
+    HttpApiEndpoint.post("forwardPost", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.put("forwardPut", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.patch("forwardPatch", RELAY_HOOK_PATH, relayHookEndpoint),
+    HttpApiEndpoint.get("forwardGet", RELAY_HOOK_PATH, relayHookEndpoint),
+  )
+  .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
+
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
@@ -1184,6 +1206,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayTokenGroup,
     RelayDpopClientGroup,
     RelayServerGroup,
+    RelayHooksGroup,
   )
   .annotate(OpenApi.Title, "T3 Code Relay API")
   .annotate(OpenApi.Version, "1.0.0")

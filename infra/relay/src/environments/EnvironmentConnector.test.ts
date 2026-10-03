@@ -229,6 +229,7 @@ function makeLinks(
         environmentPublicKey: environmentKeyPair.publicKey,
         ...overrides,
       }),
+    findActiveManagedForEnvironment: () => Effect.succeed([]),
     revokeForUser: () => Effect.succeed(false),
   };
 }
