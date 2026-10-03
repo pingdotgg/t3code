@@ -36,7 +36,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
+import * as WorktreeRevivalServiceTestkit from "../vcs/WorktreeRevivalService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 
@@ -132,6 +132,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
 );
 
 const liveLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
@@ -140,7 +141,6 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(providerInstanceRegistryLayer),
   Layer.provide(ResetCreditCoordinator.layer),
   Layer.provide(backgroundPolicyLayer),
-  Layer.provide(worktreeRepairDependenciesTestLayer),
   Layer.provide(PlatformTestLayer),
 );
 

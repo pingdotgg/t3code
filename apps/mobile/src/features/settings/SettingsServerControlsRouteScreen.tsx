@@ -28,6 +28,7 @@ import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
+import { WorktreeInventorySection } from "./components/WorktreeInventorySection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
   planMobileScopedSettingsClear,
@@ -207,6 +208,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     (target) =>
       target.environment.serverConfig.environment.capabilities.threadRestartContinuation === true,
   );
+  const worktreeTargets = targets.filter(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.worktreeManagement === true,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     (projectSelected &&
@@ -344,7 +349,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ defaultAutoPull: value })}
                     />
                   </SettingsSection>
-                  <SettingsSection title="Worktrees">
+                  <SettingsSection title="New worktrees">
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
                       label="Start from origin"
@@ -354,6 +359,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
                     />
                   </SettingsSection>
+                  {/* Follows the filter: each selected environment, narrowed to
+                      the selected project. Older servers have no inventory. */}
+                  {worktreeTargets.map((target) => (
+                    <WorktreeInventorySection
+                      key={`${target.environment.environmentId}:${target.projectId}`}
+                      title={
+                        worktreeTargets.length > 1
+                          ? `Worktrees on ${target.environment.label}`
+                          : "Worktrees"
+                      }
+                      environmentId={target.environment.environmentId}
+                      projectId={target.projectId}
+                    />
+                  ))}
                 </>
               ) : null}
 

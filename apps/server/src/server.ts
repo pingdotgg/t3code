@@ -101,6 +101,9 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
+import * as WorktreeRevival from "./vcs/WorktreeRevivalService.ts";
+import * as WorktreeService from "./vcs/WorktreeService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -344,9 +347,12 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
 );
 
+const WorktreeLifecycleLayerLive = WorktreeLifecycle.layer;
+
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
   Layer.provideMerge(VcsDriverRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(WorktreeLifecycleLayerLive),
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
@@ -443,6 +449,13 @@ const CloudManagedEndpointRuntimeLive = Layer.mergeAll(
   ),
 );
 
+const WorktreeRevivalLayerLive = WorktreeRevival.layer.pipe(
+  Layer.provideMerge(ProjectServiceLayerLive),
+  Layer.provideMerge(ProjectSetupScriptRunnerLayerLive),
+  Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(WorktreeLifecycleLayerLive),
+);
+
 const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
   Layer.provide(ProviderEventIngestor.analyticsLive),
   Layer.provide(CheckpointStoreLayerLive),
@@ -455,11 +468,19 @@ const OrchestrationV2RuntimeLayerLive = OrchestrationV2ProductionLayerLive.pipe(
       Layer.provide(ProjectServiceLayerLive),
     ),
   ),
+  Layer.provideMerge(WorktreeRevivalLayerLive),
 );
 
 const OrchestrationApplicationLayerLive = CheckpointDiffQuery.layer.pipe(
   Layer.provideMerge(CheckpointStoreLayerLive),
   Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
+);
+
+// The one owner of worktree inventory and removal. Storage cleanup, the
+// WebSocket handlers and the MCP tools all resolve this instance.
+const WorktreeManagementLayerLive = WorktreeService.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provideMerge(WorktreeLifecycleLayerLive),
 );
 
 // Automatic thread settlement (#8600): a server-owned sweep evaluates
@@ -540,6 +561,8 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
 ).pipe(
   // Core Services
   Layer.provideMerge(OrchestrationApplicationLayerLive),
+  // Reads projects, Git and terminals from the layers provided below.
+  Layer.provideMerge(WorktreeManagementLayerLive),
   Layer.provideMerge(OrchestrationEventInfrastructureLayerLive),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
   Layer.provideMerge(ServerSettingsLayerLive),

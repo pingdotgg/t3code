@@ -134,6 +134,14 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      // Reading the managed inventory is safe to auto-approve; removing a
+      // checkout is not.
+      const inventory = tools.find((tool) => tool.name === "t3_worktree_inventory");
+      expect(inventory?.annotations?.readOnlyHint).toBe(true);
+      expect(inventory?.annotations?.destructiveHint).toBe(false);
+      const remove = tools.find((tool) => tool.name === "t3_worktree_remove");
+      expect(remove?.annotations?.readOnlyHint).toBe(false);
+      expect(remove?.annotations?.destructiveHint).toBe(true);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

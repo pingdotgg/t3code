@@ -3,6 +3,9 @@ import {
   OrchestratorMcpFailure,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsListWorktreesResult,
+  VcsPruneWorktreesInput,
+  VcsPruneWorktreesResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
@@ -15,6 +18,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
+import * as WorktreeService from "../../../vcs/WorktreeService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -76,8 +80,49 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+
+const worktreeInventoryDependencies = [
+  McpInvocationContext.McpInvocationContext,
+  ThreadManagementService.ThreadManagementService,
+  WorktreeService.WorktreeService,
+];
+
+const WorktreeInventoryTool = Tool.make("t3_worktree_inventory", {
+  description:
+    "List the app-managed git worktrees of this thread's project, including detached ones: path, branch, linked threads, changed and ignored file counts, unpushed commits, and pruneBlockers, the reasons t3_worktree_remove would keep each one. Reads local state only and does not fetch. Use t3_worktree_list for branch refs.",
+  success: VcsListWorktreesResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: worktreeInventoryDependencies,
+})
+  .annotate(Tool.Title, "List managed worktrees")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const WorktreeRemoveTool = Tool.make("t3_worktree_remove", {
+  description:
+    "Remove managed worktree checkouts of this thread's project by path, as listed by t3_worktree_inventory. Branches, checkpoints and thread history are kept, and a linked thread's checkout is recreated from its branch on its next turn. Never forces: a worktree with a running or queued turn, a live session or terminal, an open thread, uncommitted changes or unpushed commits is skipped and returned with its reason, so this thread's own worktree cannot be removed. A worktree holding ignored files (other than node_modules) is skipped unless allowIgnoredFiles is true; set it only after the user has seen those paths and agreed to delete them. Requires a full-access/default caller.",
+  parameters: Schema.Struct({
+    paths: VcsPruneWorktreesInput.fields.paths,
+    allowIgnoredFiles: VcsPruneWorktreesInput.fields.allowIgnoredFiles,
+  }),
+  success: VcsPruneWorktreesResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: worktreeInventoryDependencies,
+})
+  .annotate(Tool.Title, "Remove managed worktrees")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
+
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
+  WorktreeInventoryTool,
+  WorktreeRemoveTool,
 );

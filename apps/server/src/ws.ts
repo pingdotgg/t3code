@@ -98,6 +98,7 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
+  GitCommandError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -191,6 +192,8 @@ import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
+import * as WorktreeService from "./vcs/WorktreeService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
@@ -1247,6 +1250,8 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const worktreeLifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
+      const worktrees = yield* WorktreeService.WorktreeService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3383,6 +3388,18 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
             "rpc.aggregate": "vcs",
           }),
+        [WS_METHODS.vcsListWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListWorktrees, worktrees.listWorktrees(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.subscribeWorktreeInventory]: () =>
+          observeRpcStream(WS_METHODS.subscribeWorktreeInventory, worktreeLifecycle.changes, {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPruneWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPruneWorktrees, worktrees.pruneWorktrees(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
@@ -3392,7 +3409,20 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            // Older clients send `force: true`. The service ignores it and
+            // applies every manual-removal safeguard.
+            worktrees.removeWorktree(input).pipe(
+              Effect.mapError(
+                (error) =>
+                  new GitCommandError({
+                    operation: "WorktreeService.removeWorktree",
+                    command: "git worktree remove",
+                    cwd: input.cwd,
+                    detail: error.message,
+                  }),
+              ),
+              Effect.tap(() => refreshGitStatus(input.cwd)),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

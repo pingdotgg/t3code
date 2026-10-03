@@ -149,6 +149,35 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+## Manage thread worktrees
+
+Open **Settings → Source Control → Worktrees** to see the Git worktrees T3 Code manages on each
+connected machine, grouped by project. Each row shows its branch, a linked thread, when it was last
+used, and either **Remove** or what keeps it. The mobile app has the same list under
+**Settings → Source control**.
+
+Removing a worktree deletes its checkout and keeps its branch, its commits, and T3 checkpoint
+history. **Remove** is offered only when nothing would be lost:
+
+- **In use:** a turn is running or queued, or a provider session or terminal is open there.
+- **Open thread:** a linked thread is idle but not settled or archived.
+- **Changed, unpushed, or unmerged:** it has uncommitted files, or commits its upstream does not
+  have. Without an upstream, and for a detached checkout, commits must be on the default branch.
+- **Status unknown:** Git could not be read.
+
+Ignored files such as `.env` or build output do not block removal, but they are deleted with the
+checkout. The row shows how many there are and the confirmation lists them. `node_modules` is not
+counted.
+
+[Storage cleanup](./project-settings.md#storage-cleanup) removes worktrees automatically. It uses
+its own rules: it can remove a clean worktree whose thread is idle or whose branch has unpushed
+commits, because the branch is kept, and it never removes one that holds ignored files.
+
+When a thread needs a removed worktree again, T3 Code recreates it from the kept branch before the
+next turn and runs the project's setup script there. If that fails, for example because the branch
+was deleted or a required setup script exits with an error, the turn stops and says why. Send the
+message again to retry.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,

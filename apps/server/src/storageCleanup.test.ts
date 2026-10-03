@@ -1,106 +1,105 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+
+import { ThreadId } from "@t3tools/contracts";
+
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as ServerSettings from "./serverSettings.ts";
+import * as StorageCleanup from "./storageCleanup.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import {
-  ProjectId,
-  ProviderInstanceId,
-  RunId,
-  ThreadId,
-  type OrchestrationV2ThreadShell,
-} from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
+  addWorktree,
+  commitIn,
+  initializeRepository,
+  makeHarness,
+  makeProject,
+  projectId,
+} from "./vcs/WorktreeService.testkit.ts";
+import { makeThreadShell, NOW_MS } from "./vcs/worktreeThreadState.testkit.ts";
 
-const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
-const DAY_MS = 24 * 60 * 60 * 1_000;
+/** Storage cleanup over the real worktree service, removing worktrees idle for a week. */
+const makeCleanupHarness = () => {
+  const harness = makeHarness();
+  const layer = Layer.mergeAll(
+    ServerSettings.layerTest({ storageCleanup: { worktreeAfterDays: 7 } }),
+    Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+  ).pipe(Layer.provideMerge(harness.layer));
+  return { state: harness.state, layer };
+};
 
-function at(offsetMs: number): DateTime.Utc {
-  return DateTime.makeUnsafe(NOW_MS + offsetMs);
-}
-
-function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
-  return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    worktreePath: null,
-    activeProviderThreadId: null,
-    lineage: {
-      rootThreadId: ThreadId.make("thread-1"),
-      parentThreadId: null,
-      relationshipToParent: null,
-    },
-    forkedFrom: null,
-    createdBy: "user",
-    creationSource: "web",
-    activeRunId: null,
-    latestVisibleMessage: null,
-    hasActionableProposedPlan: false,
-    itemCount: 0,
-    visibleItemCount: 0,
-    lastVisitedAt: null,
-    deletedAt: null,
-    branch: null,
-    linkedPullRequest: null,
-    status: "idle",
-    activityRunStatus: null,
-    pendingRuntimeRequest: null,
-    pendingBackgroundTasks: [],
-    latestRunId: null,
-    latestRunRequestedAt: null,
-    latestRunStartedAt: null,
-    latestRunCompletedAt: null,
-    latestUserMessageAt: null,
-    createdAt: at(-30 * DAY_MS),
-    updatedAt: at(-10 * DAY_MS),
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
-    snoozedAt: null,
-    pinnedAt: null,
-    ...overrides,
-  };
-}
-
-describe("V2 storage cleanup eligibility", () => {
-  const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
-
-  it("allows an idle worktree and rejects the project checkout", () => {
-    expect(storageCleanupThreadIdle(candidate(), NOW_MS)).toBe(true);
-    expect(storageCleanupThreadIdle(shell(), NOW_MS)).toBe(false);
+/** An idle, unsettled thread last active thirty days ago. */
+const staleThread = (worktreePath: string, name: string) =>
+  makeThreadShell({
+    id: ThreadId.make(`thread-${name}`),
+    projectId,
+    worktreePath,
+    branch: `feature/${name}`,
   });
 
-  it.each(["running", "starting", "preparing", "waiting", "queued"] as const)(
-    "retains a worktree while its thread is %s",
-    (status) => {
-      expect(storageCleanupThreadIdle(candidateWithStatus(status), NOW_MS)).toBe(false);
-    },
-  );
+/** Starts cleanup and waits for the sweep it runs at startup to finish. */
+const runStartupSweep = Effect.fn("StorageCleanupTest.runStartupSweep")(function* (
+  state: ReturnType<typeof makeHarness>["state"],
+) {
+  const sweepStarted = yield* Deferred.make<void>();
+  state.onThreadsRead = Deferred.succeed(sweepStarted, undefined);
+  const cleanup = yield* StorageCleanup.make;
+  yield* cleanup.start();
+  yield* Deferred.await(sweepStarted);
+  yield* cleanup.drain;
+});
 
-  it("retains an active run even if the shell status is idle", () => {
-    expect(
-      storageCleanupThreadIdle({ ...candidate(), activeRunId: RunId.make("run") }, NOW_MS),
-    ).toBe(false);
-  });
+it.effect("removes a stale worktree through the worktree service and keeps its branch", () => {
+  const { state, layer } = makeCleanupHarness();
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    yield* TestClock.setTime(NOW_MS);
+    const repositoryRoot = yield* initializeRepository();
+    state.projects = [makeProject(repositoryRoot)];
+    const stale = yield* addWorktree(repositoryRoot, "stale");
+    // Unpushed commits do not hold cleanup back: the branch keeps them.
+    yield* commitIn(stale);
+    const dirty = yield* addWorktree(repositoryRoot, "stale-dirty");
+    yield* fs.writeFileString(`${dirty}/notes.txt`, "draft\n");
+    state.threads = [staleThread(stale, "stale"), staleThread(dirty, "stale-dirty")];
 
-  it("retains a queued prompt before the new run has been projected", () => {
-    expect(
-      storageCleanupThreadIdle({ ...candidate(), latestUserMessageAt: at(-1_000) }, NOW_MS),
-    ).toBe(false);
-  });
+    yield* runStartupSweep(state);
 
-  it("uses V2 run activity instead of metadata refreshes for retention", () => {
-    const thread = candidate();
-    const runTime = at(-3 * DAY_MS);
-    expect(
-      storageCleanupActivityAt({ ...thread, latestRunCompletedAt: runTime, updatedAt: at(0) }),
-    ).toBe(DateTime.toEpochMillis(runTime));
-  });
+    assert.isFalse(yield* fs.exists(stale));
+    assert.isTrue(yield* fs.exists(dirty));
+    const branch = yield* git.execute({
+      operation: "StorageCleanupTest.branchKept",
+      cwd: repositoryRoot,
+      args: ["show-ref", "--verify", "--quiet", "refs/heads/feature/stale"],
+      allowNonZeroExit: true,
+    });
+    assert.equal(branch.exitCode, 0);
+  }).pipe(Effect.provide(layer));
+});
 
-  function candidateWithStatus(status: OrchestrationV2ThreadShell["status"]) {
-    return { ...candidate(), status };
-  }
+it.effect("stops removing worktrees once the rule is turned off during a sweep", () => {
+  const { state, layer } = makeCleanupHarness();
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* TestClock.setTime(NOW_MS);
+    const repositoryRoot = yield* initializeRepository();
+    state.projects = [makeProject(repositoryRoot)];
+    const first = yield* addWorktree(repositoryRoot, "first");
+    const second = yield* addWorktree(repositoryRoot, "second");
+    state.threads = [staleThread(first, "first"), staleThread(second, "second")];
+    state.onRemoved = settings
+      .updateSettings({ storageCleanup: { worktreeAfterDays: null } })
+      .pipe(Effect.ignore);
+
+    yield* runStartupSweep(state);
+
+    assert.isFalse(yield* fs.exists(first));
+    assert.isTrue(yield* fs.exists(second));
+  }).pipe(Effect.provide(layer));
 });

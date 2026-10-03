@@ -64,7 +64,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
+import * as WorktreeRevivalServiceTestkit from "../vcs/WorktreeRevivalService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
@@ -204,7 +204,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
   ),
 );
 const orchestrationLayer = OrchestrationV2LayerLive.pipe(
-  Layer.provide(worktreeRepairDependenciesTestLayer),
+  Layer.provide(WorktreeRevivalServiceTestkit.layerNoop),
   Layer.provide(mcpRegistryLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer))),

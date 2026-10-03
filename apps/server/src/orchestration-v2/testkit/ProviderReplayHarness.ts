@@ -43,7 +43,7 @@ import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
-import { worktreeRepairDependenciesTestLayer } from "../ProviderTurnStartService.testkit.ts";
+import * as WorktreeRevivalServiceTestkit from "../../vcs/WorktreeRevivalService.testkit.ts";
 import * as RunExecutionService from "../RunExecutionService.ts";
 import * as RunFinalizationService from "../RunFinalizationService.ts";
 import * as ThreadTitleRegenerationService from "../ThreadTitleRegenerationService.ts";
@@ -374,6 +374,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         }),
         runExecutionServiceProvided,
         runtimeLayer,
+        WorktreeRevivalServiceTestkit.layerNoop,
       ),
     ),
   );
@@ -467,7 +468,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     effectWorkerProvided,
     eventSinkProvided,
     continuationWorkerProvided,
-  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
