@@ -5,6 +5,7 @@ import {
   TurnItemId,
   type OrchestrationProjectShell,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
@@ -93,16 +94,18 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     );
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* () {
-      const base = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
-          return buildActiveShellSnapshot({
-            projects: yield* projectStore.listShells(),
-            threads,
-            snapshotSequence: yield* applicationEvents.latestApplicationSequence,
-          });
-        }),
-      );
+      const base = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threads = yield* threadManagement.getShellSnapshot({ location: "active" });
+            return buildActiveShellSnapshot({
+              projects: yield* projectStore.listShells(),
+              threads,
+              snapshotSequence: yield* applicationEvents.latestApplicationSequence,
+            });
+          }),
+        )
+        .pipe(NodeSqliteClient.readOnly);
       const projects = yield* enrichProjectShells(base.projects);
       return { ...base, projects };
     });
