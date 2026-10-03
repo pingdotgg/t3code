@@ -1294,13 +1294,16 @@ describe("thread outbox", () => {
   });
 
   it("sends existing-thread messages whenever connected so queued messages can steer", () => {
+    // `threadBusy` now means "busy and not steerable". A steerable running turn
+    // reports false, so the message reaches the send path and the drain turns it
+    // into a steer rather than a new start.
     expect(
       resolveThreadOutboxDeliveryAction({
         isCreation: false,
         threadExists: true,
         shellStatus: "live",
         environmentConnected: true,
-        threadBusy: true,
+        threadBusy: false,
       }),
     ).toBe("send");
     expect(
@@ -1309,6 +1312,18 @@ describe("thread outbox", () => {
         threadExists: true,
         shellStatus: "live",
         environmentConnected: false,
+        threadBusy: false,
+      }),
+    ).toBe("wait");
+  });
+
+  it("holds a busy unsteerable thread instead of drawing a duplicate rejection", () => {
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        isCreation: false,
+        threadExists: true,
+        shellStatus: "live",
+        environmentConnected: true,
         threadBusy: true,
       }),
     ).toBe("wait");

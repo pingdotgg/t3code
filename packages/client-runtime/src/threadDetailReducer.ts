@@ -373,9 +373,17 @@ export function applyThreadDetailEvent(
           // Mirrors the list reducer: the start is authoritative before the
           // provider acknowledges, so the detail view must hold the pending state
           // the server invariant relies on.
+          // Mirrors the server projector exactly: the payload's `createdAt`, not
+          // the envelope's `occurredAt`, and the plan reference. Deriving this
+          // differently made a live client disagree with the snapshot and the
+          // server read model about when the start was requested and which plan
+          // it implements.
           pendingTurnStart: {
             messageId: event.payload.messageId,
-            requestedAt: event.occurredAt,
+            requestedAt: event.payload.createdAt,
+            ...(event.payload.sourceProposedPlan !== undefined
+              ? { sourceProposedPlan: event.payload.sourceProposedPlan }
+              : {}),
           },
           updatedAt: event.occurredAt,
         },

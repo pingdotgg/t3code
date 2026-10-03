@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MessageId } from "@t3tools/contracts";
 
-import { isThreadOutboxThreadBusy } from "./thread-outbox-model";
+import { isThreadOutboxThreadBusy, resolveThreadOutboxDeliveryAction } from "./thread-outbox-model";
 
 const pendingTurnStart = {
   messageId: MessageId.make("message-1"),
@@ -26,8 +26,16 @@ describe("isThreadOutboxThreadBusy", () => {
     expect(isThreadOutboxThreadBusy({ session: { status: "ready" } })).toBe(false);
   });
 
-  it("keeps the pre-existing running and starting signals", () => {
-    expect(isThreadOutboxThreadBusy({ session: { status: "running" } })).toBe(true);
+  it("treats a running turn as steerable rather than blocking", () => {
+    // The drain steers an active turn instead of starting a new one, so a
+    // running turn must still reach the send path.
+    expect(
+      isThreadOutboxThreadBusy({ session: { status: "running", activeTurnId: "turn-1" } }),
+    ).toBe(false);
+    // Running with no active turn has nothing to steer.
+    expect(isThreadOutboxThreadBusy({ session: { status: "running", activeTurnId: null } })).toBe(
+      true,
+    );
     expect(isThreadOutboxThreadBusy({ session: { status: "starting" } })).toBe(true);
   });
 
@@ -44,5 +52,31 @@ describe("isThreadOutboxThreadBusy", () => {
 
   it("does not require a session at all to see the pending start", () => {
     expect(isThreadOutboxThreadBusy({ pendingTurnStart })).toBe(true);
+  });
+});
+
+describe("resolveThreadOutboxDeliveryAction", () => {
+  const base = {
+    isCreation: false,
+    threadExists: true,
+    shellStatus: "live" as const,
+    environmentConnected: true,
+  };
+
+  it("waits instead of sending into an unsteerable accepted start", () => {
+    // threadBusy used to be accepted and never read, so every connected thread
+    // sent and collected an "already has a turn in flight" rejection.
+    expect(resolveThreadOutboxDeliveryAction({ ...base, threadBusy: true })).toBe("wait");
+    expect(resolveThreadOutboxDeliveryAction({ ...base, threadBusy: false })).toBe("send");
+  });
+
+  it("still sends when the environment is not connected", () => {
+    expect(
+      resolveThreadOutboxDeliveryAction({
+        ...base,
+        environmentConnected: false,
+        threadBusy: false,
+      }),
+    ).toBe("wait");
   });
 });
