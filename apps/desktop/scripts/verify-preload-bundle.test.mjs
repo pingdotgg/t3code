@@ -15,6 +15,35 @@ const validPreload = `
 `;
 
 describe("desktop preload bundle verifier", () => {
+  it("accepts macOS preload listeners without running renderer lifecycle callbacks", () => {
+    assert.doesNotThrow(() =>
+      verifyPreloadBundle(
+        `
+          if (process.platform !== "darwin") throw new Error("Expected macOS");
+          const syncWindowControlInset = () => {
+            throw new Error("Renderer lifecycle callback ran during preload initialization");
+          };
+          window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
+          window.addEventListener("resize", syncWindowControlInset);
+          ${validPreload}
+        `,
+        { platform: "darwin" },
+      ),
+    );
+  });
+
+  it("rejects bridge exposure deferred until a renderer event", () => {
+    assert.throws(
+      () =>
+        verifyPreloadBundle(`
+          window.addEventListener("DOMContentLoaded", () => {
+            ${validPreload}
+          });
+        `),
+      /missing executable APIs/,
+    );
+  });
+
   it("rejects required API names that only appear in strings", () => {
     assert.throws(
       () =>
