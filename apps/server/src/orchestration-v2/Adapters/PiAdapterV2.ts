@@ -2539,6 +2539,10 @@ export function makePiAdapterV2(
               status: "resolved",
               resolvedAt,
             };
+            const status =
+              requestInput.decision === "decline" || requestInput.decision === "cancel"
+                ? "cancelled"
+                : "completed";
             yield* emit({
               type: "runtime_request.updated",
               driver: PI_PROVIDER,
@@ -2548,14 +2552,14 @@ export function makePiAdapterV2(
             yield* emit({
               type: "node.updated",
               driver: PI_PROVIDER,
-              node: { ...pending.node, status: "completed", completedAt: resolvedAt },
+              node: { ...pending.node, status, completedAt: resolvedAt },
             });
             yield* emit({
               type: "turn_item.updated",
               driver: PI_PROVIDER,
               turnItem: {
                 ...pending.turnItem,
-                status: "completed",
+                status,
                 completedAt: resolvedAt,
                 updatedAt: resolvedAt,
               },
