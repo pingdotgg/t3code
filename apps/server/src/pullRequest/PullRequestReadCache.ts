@@ -48,7 +48,7 @@ export class PullRequestReadCache extends Context.Service<
       key: string,
       lookup: Effect.Effect<string, ReadError>,
     ) => Effect.Effect<string, ReadError>;
-    readonly invalidate: Effect.Effect<void>;
+    readonly invalidate: (keys?: ReadonlyArray<string>) => Effect.Effect<void>;
   }
 >()("t3/pullRequest/PullRequestReadCache") {}
 
@@ -77,6 +77,10 @@ export const make = Effect.gen(function* () {
       inMemoryCapacity: CONCURRENT_READS,
     },
   );
+  const disableAfterInvalidationFailure = () => {
+    enabled = false;
+    return Effect.logWarning("PR cache disabled after invalidation failed");
+  };
 
   return PullRequestReadCache.of({
     get: Effect.fn("PullRequestReadCache.get")(function* (key, lookup) {
@@ -98,14 +102,30 @@ export const make = Effect.gen(function* () {
           lock.withPermits(1),
         );
     }),
-    invalidate: Cache.invalidateAll(cache.inMemory).pipe(
-      Effect.andThen(backing.clear),
-      Effect.catch(() => {
-        enabled = false;
-        return Effect.logWarning("PR cache disabled after clearing failed");
-      }),
-      lock.withPermits(CONCURRENT_READS),
-    ),
+    invalidate: (keys) => {
+      const invalidation =
+        keys === undefined
+          ? Cache.invalidateAll(cache.inMemory).pipe(
+              Effect.andThen(backing.clear),
+              Effect.catch(disableAfterInvalidationFailure),
+            )
+          : Effect.gen(function* () {
+              for (const key of keys) {
+                const digest = yield* crypto
+                  .digest("SHA-256", new TextEncoder().encode(key))
+                  .pipe(Effect.option);
+                if (Option.isSome(digest)) {
+                  yield* cache.invalidate(
+                    new Read({
+                      key: Encoding.encodeHex(digest.value),
+                      lookup: Effect.succeed(""),
+                    }),
+                  );
+                }
+              }
+            }).pipe(Effect.catch(disableAfterInvalidationFailure));
+      return invalidation.pipe(lock.withPermits(CONCURRENT_READS));
+    },
   });
 });
 
