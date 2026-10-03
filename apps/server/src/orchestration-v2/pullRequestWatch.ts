@@ -77,7 +77,8 @@ export function evaluatePullRequestWatch(
   let checks = restarted ? null : watch.checks;
   // An early failure is reported while other checks run, and the final result once they finish.
   // A rerun that leaves another failure in place is recorded quietly and reported when it ends.
-  if (checks === "failed" && outcome === "failing") {
+  const rerun = checks === "failed" && outcome === "failing";
+  if (rerun) {
     checks = "failing";
   } else if (outcome !== null && outcome !== "pending" && outcome !== checks) {
     changes.push(
@@ -123,14 +124,10 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
+  // A new check run, a push, or any check or conflict news is progress, so the count restarts.
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
-  const wakes = commentsOnly
-    ? (restarted ? 0 : watch.wakes) + 1
-    : changes.length > 0
-      ? 0
-      : restarted
-        ? 0
-        : watch.wakes;
+  const progress = restarted || rerun || (changes.length > 0 && !commentsOnly);
+  const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
   return {
     changes,
     next: {

@@ -194,6 +194,21 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(result.next.wakes, 0);
   });
 
+  it("restarts the comment wake count when a partial rerun starts", () => {
+    const tired = watch({
+      headSha: "aaaaaaaaaa",
+      checks: "failed",
+      wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1,
+    });
+    const rerun = evaluatePullRequestWatch(
+      tired,
+      detail({ checks: [check("lint", "failure"), check("test", "pending")] }),
+      [remark("reviewer", "2026-10-02T12:10:00Z")],
+    );
+    assert.isFalse(rerun.exhausted);
+    assert.equal(rerun.next.wakes, 1);
+  });
+
   it("stops after the wake limit unless the head moves", () => {
     const comments = [remark("reviewer", "2026-10-02T12:10:00Z")];
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
