@@ -391,7 +391,7 @@ function makeCompletingHandoffAdapter(startCount: Ref.Ref<number>): ProviderAdap
   };
 }
 
-it.live("restarts selection as a new attempt and retries after old-session cleanup", () =>
+it.live("retries a failed selection restart session open before completing", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("selection-restart-lifecycle");
@@ -407,6 +407,9 @@ it.live("restarts selection as a new attempt and retries after old-session clean
 
       const result = yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+
         yield* orchestrator.dispatch({
           type: "thread.create",
           createdBy: "user",
@@ -421,6 +424,21 @@ it.live("restarts selection as a new attempt and retries after old-session clean
           branch: null,
           worktreePath: cwd,
         });
+        const running = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -433,11 +451,8 @@ it.live("restarts selection as a new attempt and retries after old-session clean
           modelSelection: initialSelection,
           dispatchMode: { type: "start_immediately" },
         });
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.providerTurns.some((turn) => turn.status === "running")) break;
-          yield* Effect.sleep("5 millis");
-        }
+        yield* Fiber.join(running);
+        yield* worker.drain();
         const activeProjection = yield* orchestrator.getThreadProjection(threadId);
         assert.isTrue(activeProjection.providerTurns.some((turn) => turn.status === "running"));
         const activeRunId = activeProjection.runs[0]?.id;
@@ -445,6 +460,20 @@ it.live("restarts selection as a new attempt and retries after old-session clean
           return yield* Effect.die("active restart test run is missing");
         }
 
+        const completed = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === "completed",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -457,27 +486,12 @@ it.live("restarts selection as a new attempt and retries after old-session clean
           modelSelection: replacementSelection,
           dispatchMode: { type: "restart_active", targetRunId: activeRunId },
         });
-        for (let index = 0; index < 1_000; index += 1) {
-          const current = yield* orchestrator.getThreadProjection(threadId);
-          if (current.attempts.length === 2 && current.attempts[1]?.status === "completed") {
-            const captured = yield* Ref.get(state);
-            return { projection: current, captured };
-          }
-          yield* Effect.sleep("5 millis");
-        }
-        const current = yield* orchestrator.getThreadProjection(threadId);
-        const adapterState = yield* Ref.get(state);
-        yield* Effect.logError("selection restart did not complete", {
-          runs: current.runs.map((run) => [run.status, run.activeAttemptId]),
-          attempts: current.attempts.map((attempt) => [attempt.id, attempt.status]),
-          providerTurns: current.providerTurns.map((turn) => [turn.id, turn.status]),
-          providerThreads: current.providerThreads.map((thread) => [
-            thread.providerSessionId,
-            thread.status,
-          ]),
-          adapterState,
-        });
-        return yield* Effect.die("selection restart did not complete");
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+        return {
+          projection: yield* orchestrator.getThreadProjection(threadId),
+          captured: yield* Ref.get(state),
+        };
       }).pipe(
         Effect.provide(
           makeOrchestratorV2ReplayLayerWithRegistry(
@@ -504,7 +518,8 @@ it.live("restarts selection as a new attempt and retries after old-session clean
         ),
         "selection restart supersede must not project hard-Stop interrupt items",
       );
-      assert.equal(projection.runs[0]?.modelSelection.model, replacementSelection.model);
+      assert.equal(projection.runs.at(-1)?.modelSelection.model, replacementSelection.model);
+      assert.equal(projection.runs.at(-1)?.status, "completed");
       assert.isTrue(captured.failedReplacementOpen);
       // The old pooled process remains available to its other threads; this
       // thread moved to a freshly allocated replacement session.

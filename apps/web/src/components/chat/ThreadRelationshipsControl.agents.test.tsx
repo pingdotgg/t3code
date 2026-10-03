@@ -42,6 +42,106 @@ afterEach(async () => {
   state.projects = [];
   state.configs.clear();
   state.showTooltips = false;
+  state.navigate.mockClear();
+});
+
+it("opens the correct chat for every workflow phase and unphased member", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const phases = ["Inspect", "Improve", "Verify"].map((title, index) => ({ index, title }));
+  const agents = Array.from({ length: 7 }, (_, index) => ({
+    index,
+    label: `Member ${index}`,
+    state:
+      index === 2 ? "cancelled" : index === 4 ? "failed" : index === 5 ? "running" : "completed",
+    ...(index < 6 ? { phaseIndex: Math.floor(index / 2) } : {}),
+    childThreadId: `member-chat-${index}`,
+    model: "claude-sonnet-4-6",
+    result: `Result ${index}`,
+    totalTokens: 1200,
+    // Staggered starts, so a phase spans longer than either member's own run.
+    startedAt: 1_700_000_000_000 + index * 1000,
+    durationMs: 5000,
+  }));
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null } },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: "workflow",
+        driver: "claudeAgent",
+        providerInstanceId: "claudeAgent",
+        childThreadId: "workflow-chat",
+        title: "Checkout review",
+        status: "running",
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-09-21T12:00:00Z"),
+        workflow: { name: "Checkout review", phases, agents },
+      },
+    ],
+  };
+  await act(async () => {
+    renderer = create(
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("remote")}
+        threadId={ThreadId.make("parent")}
+      />,
+    );
+  });
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Expand Checkout review" }).props.onClick(),
+  );
+  const memberButtons = () =>
+    renderer.root.findAll(
+      (node) =>
+        node.type === "button" && String(node.props["aria-label"]).startsWith("Open Member"),
+    );
+  const phaseButtons = () =>
+    renderer.root.findAll(
+      (node) =>
+        node.type === "button" &&
+        typeof node.props["aria-expanded"] === "boolean" &&
+        !node.props["aria-label"],
+    );
+  // Phases start closed, so only the unphased member shows.
+  expect(memberButtons()).toHaveLength(1);
+  expect(phaseButtons()).toHaveLength(3);
+  for (const phase of phaseButtons()) await act(async () => phase.props.onClick());
+  expect(memberButtons()).toHaveLength(7);
+  for (const agent of agents) {
+    await act(async () =>
+      renderer.root.findByProps({ "aria-label": `Open ${agent.label} chat` }).props.onClick(),
+    );
+    expect(state.navigate).toHaveBeenLastCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "remote", threadId: agent.childThreadId },
+    });
+  }
+  const rendered = JSON.stringify(renderer.toJSON());
+  for (const phase of phases) expect(rendered).toContain(phase.title);
+  // Six of the seven members settled; only the last phase still has one running.
+  expect(rendered).toContain('"6","/","7"');
+  expect(rendered).toContain('"1","/","2"');
+  // The phase holding the running member reports itself as the active one.
+  expect(rendered).toContain("running");
+  expect(rendered).toContain("done");
+  expect(rendered).toContain("stopped");
+  // Members 0 and 1 start a second apart and run 5s each, so Inspect took 6s.
+  expect(rendered).toContain('"6s"');
+  for (const phase of phaseButtons()) {
+    await act(async () => phase.props.onClick());
+    expect(memberButtons()).toHaveLength(5);
+    await act(async () => phase.props.onClick());
+    expect(memberButtons()).toHaveLength(7);
+  }
+  await act(async () =>
+    renderer.root.findByProps({ "aria-label": "Collapse Checkout review" }).props.onClick(),
+  );
+  expect(memberButtons()).toHaveLength(0);
+  expect(state.navigate).toHaveBeenCalledTimes(7);
 });
 
 it("shows the matching child agent details and refreshes them when the agent settles", async () => {

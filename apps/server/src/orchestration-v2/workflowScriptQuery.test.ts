@@ -2,6 +2,9 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
+import { OrchestrationWorkflowFileError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterAll, assert, describe } from "vite-plus/test";
@@ -30,7 +33,18 @@ afterAll(() => {
   NodeFS.rmSync(outside, { force: true });
 });
 
-describe("readWorkflowScript containment", () => {
+describe("workflow script containment", () => {
+  effectIt.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "rejects a FIFO without waiting for a writer",
+    () =>
+      Effect.gen(function* () {
+        const fifo = NodePath.join(root, "pipe.js");
+        NodeChildProcess.execFileSync("mkfifo", [fifo]);
+        const error = yield* Effect.flip(readWorkflowScript({ scriptPath: fifo }));
+        assert.equal(error.reason, "not-regular-file");
+      }),
+  );
+
   effectIt.effect("serves a real script under the projects root", () =>
     Effect.gen(function* () {
       const result = yield* readWorkflowScript({ scriptPath });
@@ -47,6 +61,12 @@ describe("readWorkflowScript containment", () => {
         readWorkflowScript({ scriptPath: scriptPath.replace(".js", ".ts") }),
       );
       assert.equal(nonJs._tag, "Failure");
+      const error = yield* Effect.flip(readWorkflowScript({ scriptPath: "run.js" }));
+      assert.equal(error._tag, "OrchestrationGetWorkflowScriptError");
+      assert.equal(error.scriptPath, "run.js");
+      assert.equal(error.reason, "invalid-path");
+      assert.equal(error.message, "Workflow scripts must be absolute .js paths.");
+      assert.instanceOf(error.cause, OrchestrationWorkflowFileError);
     }),
   );
 
