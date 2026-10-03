@@ -276,37 +276,21 @@ export function attachThreadContexts(
     insertions.push(`${formatThreadContextReference({ contextId, label })} `);
     insertedIds.push(String(ref.threadId));
   }
-  if (insertions.length === 0) {
-    // Every requested thread is already stored. Re-insert reference text for
-    // stored records whose text was deleted so the chip becomes visible
-    // again; batches that are fully referenced stay a successful no-op.
-    const referenced = referencedContextIds(input.existingPrompt);
-    const missing: ThreadContextRecord[] = [];
-    for (const ref of input.refs) {
-      const record = recordsByScope.get(scopedKeyOf(ref));
-      if (!record) continue;
-      if (referenced.has(String(record.contextId))) continue;
-      if (missing.some((entry) => entry.contextId === record.contextId)) continue;
-      const resolved = input.resolveThread(ref);
-      if (!resolved || !resolved.title || resolved.title.trim().length === 0) {
-        return { ...unchanged, ok: false, reason: "That thread no longer exists." };
-      }
-      missing.push(record);
+  // A batch can contain both new threads and retained records whose chip was deleted.
+  const referenced = referencedContextIds(input.existingPrompt);
+  const restored = new Set<ThreadContextId>();
+  for (const ref of input.refs) {
+    const record = recordsByScope.get(scopedKeyOf(ref));
+    if (!record || referenced.has(record.contextId) || restored.has(record.contextId)) continue;
+    const resolved = input.resolveThread(ref);
+    if (!resolved?.title.trim()) {
+      return { ...unchanged, ok: false, reason: "That thread no longer exists." };
     }
-    if (missing.length === 0) {
-      return { ...unchanged, ok: true, reason: null };
-    }
-    const reinsertions = missing.map((record) => `${formatThreadContextReference(record)} `);
-    const reinserted = insertReferencesAtCaret(input.existingPrompt, reinsertions, input.caret);
-    return {
-      ok: true,
-      reason: null,
-      prompt: reinserted.prompt,
-      records: [...input.existingRecords],
-      insertedIds: missing.map((record) => String(record.threadId)),
-      cursor: reinserted.cursor,
-    };
+    restored.add(record.contextId);
+    insertions.push(`${formatThreadContextReference(record)} `);
+    insertedIds.push(record.threadId);
   }
+  if (insertions.length === 0) return { ...unchanged, ok: true, reason: null };
   const inserted = insertReferencesAtCaret(input.existingPrompt, insertions, input.caret);
   return {
     ok: true,

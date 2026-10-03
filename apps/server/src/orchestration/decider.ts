@@ -674,6 +674,7 @@ function messageForkEvents(input: {
         role: message.role,
         text: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
+        ...(message.context !== undefined ? { context: message.context } : {}),
         turnId: nextTurnId,
         streaming: false,
         createdAt: message.createdAt,

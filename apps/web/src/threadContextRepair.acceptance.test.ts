@@ -66,6 +66,26 @@ function attach(threadId: string, prompt = "", records: ReadonlyArray<ThreadCont
   });
 }
 
+it("reattaches deleted references alongside new threads in one batch", () => {
+  const first = attach("kept-reference");
+  const mixed = attachThreadContexts({
+    existingPrompt: "Follow up ",
+    existingRecords: first.records,
+    refs: [
+      scopeThreadRef(ENV, ThreadId.make("kept-reference")),
+      scopeThreadRef(ENV, ThreadId.make("new-reference")),
+    ],
+    environmentId: ENV,
+    selfThreadId: SELF,
+    capabilities: SUPPORTED,
+    resolveThread,
+  });
+  expect(mixed.ok).toBe(true);
+  expect(mixed.records).toHaveLength(2);
+  expect(mixed.prompt).toContain(first.records[0]!.contextId);
+  expect(buildThreadContextForSend(mixed.prompt, mixed.records)?.records).toHaveLength(2);
+});
+
 describe("cross-composer copy/cut/paste", () => {
   it("rebinds pasted references to the destination's existing scoped record", () => {
     const source = attach("same-reference");

@@ -2270,6 +2270,11 @@ export const ChatComposer = memo(
       if (event.defaultPrevented) return;
       const files = Array.from(event.clipboardData.files);
       if (files.length === 0) return;
+      // Queued edits keep normal text paste, but cannot import files into the separate draft.
+      if (editingQueuedTurn) {
+        event.preventDefault();
+        return;
+      }
       const imageFiles = files.filter((file) => file.type.startsWith("image/"));
       if (imageFiles.length === 0) return;
       event.preventDefault();
@@ -2786,7 +2791,7 @@ export const ChatComposer = memo(
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
                 onCommandKeyDown={onComposerCommandKey}
-                onPaste={editingQueuedTurn ? (event) => event.preventDefault() : onComposerPaste}
+                onPaste={onComposerPaste}
                 placeholder={
                   isComposerApprovalState
                     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
