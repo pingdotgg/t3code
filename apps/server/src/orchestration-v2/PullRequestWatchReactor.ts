@@ -101,7 +101,9 @@ export const make = Effect.gen(function* () {
             : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
         });
       });
-    if (link.snapshot !== null && link.snapshot.state !== "open") return yield* record(null);
+    // A merged pull request cannot reopen, so its watch ends without a host read, even on a
+    // settled thread. A closed one can, so the host decides below.
+    if (link.snapshot?.state === "merged") return yield* record(null);
     if (thread.settledOverride === "settled" || thread.settledAt !== null) return;
 
     const reference = { projectId: thread.projectId, ...pullRequest };
