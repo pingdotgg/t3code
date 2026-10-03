@@ -45,10 +45,11 @@ const hostedChannelLabel = resolveHostedAppChannelLabel(configuredHostedAppChann
 // The bootstrap <title> must match what branding.ts resolves once modules
 // load, or web tabs flash the wrong name until then; desktop replaces it
 // with the injected branding before first paint either way.
-const bootstrapTitlePlugin = (): Plugin => ({
+const bootstrapTitlePlugin = (isDevelopment: boolean): Plugin => ({
   name: "t3code-bootstrap-title",
-  transformIndexHtml(html, ctx) {
-    const stageLabel = hostedChannelLabel ?? (ctx.server ? "Dev" : "Alpha");
+  transformIndexHtml(html) {
+    // Bundled dev transforms HTML without ctx.server; the config command still identifies dev.
+    const stageLabel = hostedChannelLabel ?? (isDevelopment ? "Dev" : "Alpha");
     const title = formatAppDisplayName({ baseName: "T3 Code", stageLabel });
     return html.replace("<title>T3 Code</title>", `<title>${title}</title>`);
   },
@@ -166,11 +167,11 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
-export default defineConfig(() => {
+export default defineConfig(({ command }) => {
   return {
     assetsInclude: ["**/*.wasm"],
     plugins: [
-      bootstrapTitlePlugin(),
+      bootstrapTitlePlugin(command === "serve"),
       devCompressionPlugin(),
       thirdPartyLicensesPlugin({
         bundleName: "web",
