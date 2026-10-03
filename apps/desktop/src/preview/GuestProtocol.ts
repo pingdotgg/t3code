@@ -10,3 +10,6 @@ export const RECORDING_POINTER_CHANNEL = "preview:recording-pointer";
 export const RECORDING_KEY_CHANNEL = "preview:recording-key";
 export const RECORDING_INPUT_CHANNEL = "preview:recording-input";
 export const RECORDING_CONTROLLER_CHANNEL = "preview:recording-controller";
+
+export const ANNOTATION_VOICE_EVENT_CHANNEL = "preview:annotation-voice-event";
+export const ANNOTATION_VOICE_STATE_CHANNEL = "preview:annotation-voice-state";

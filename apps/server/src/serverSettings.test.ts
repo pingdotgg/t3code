@@ -802,6 +802,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const settings = yield* serverSettings.getSettings;
 
       assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.deepEqual(settings.speechPostProcessingModelSelection, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

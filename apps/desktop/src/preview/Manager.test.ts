@@ -3927,6 +3927,71 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("annotation voice updates cannot reach a replaced or cancelled pick", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const firstReady = yield* Deferred.make<void>();
+        const secondReady = yield* Deferred.make<void>();
+        let registrations = 0;
+        const guest = {
+          ...makeTestPreviewWebContents(async () => ({
+            toPNG: () => Buffer.from("unused"),
+            toJPEG: () => Buffer.from("unused"),
+            getSize: () => ({ width: 1, height: 1 }),
+          })),
+          isFocused: () => true,
+          focus: vi.fn(),
+          send: (channel: string, ...args: unknown[]) => {
+            webviewSend(channel, ...args);
+            if (channel === "preview:start-pick") {
+              Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
+            }
+          },
+          once: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+        };
+        fromId.mockReturnValue(guest as never);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const first = yield* manager
+          .pickElement("tab_1", { sessionId: "first", keybindings: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstReady);
+        const state = {
+          tabId: "tab_1",
+          sessionId: "first",
+          available: true,
+          phase: "recording" as const,
+          status: "Recording",
+          errorAction: null,
+          preview: null,
+          freezesEditor: true,
+          blocksSubmission: true,
+          level: 0,
+          shortcutLabel: "Ctrl+D",
+          draft: { text: "Tighten spacing", cursor: 15 },
+        };
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).toHaveBeenCalledWith("preview:annotation-voice-state", state);
+        const second = yield* manager
+          .pickElement("tab_1", { sessionId: "second", keybindings: [] })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(secondReady);
+        expect(yield* Fiber.join(first)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice(state);
+        expect(webviewSend).not.toHaveBeenCalled();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).toHaveBeenCalledOnce();
+        yield* manager.cancelPickElement("tab_1");
+        expect(yield* Fiber.join(second)).toBeNull();
+        webviewSend.mockClear();
+        yield* manager.updateAnnotationVoice({ ...state, sessionId: "second" });
+        expect(webviewSend).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
   effectIt.effect("a stale capture from a replaced pick never touches the next pick", () =>
     withManager((manager) =>
       Effect.gen(function* () {

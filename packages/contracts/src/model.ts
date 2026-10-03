@@ -167,6 +167,42 @@ export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
+export const DEFAULT_SPEECH_POST_PROCESSING_MODEL = "gpt-6-luna";
+export const DEFAULT_SPEECH_POST_PROCESSING_REASONING_EFFORT = "low";
+
+/** Voice cleanup defaults, in provider fallback order. */
+export const DEFAULT_SPEECH_POST_PROCESSING_MODELS: Partial<
+  Record<ProviderDriverKind, { model: string; options: ReadonlyArray<ProviderOptionSelection> }>
+> = {
+  [CODEX_DRIVER_KIND]: {
+    model: DEFAULT_SPEECH_POST_PROCESSING_MODEL,
+    options: [{ id: "reasoningEffort", value: DEFAULT_SPEECH_POST_PROCESSING_REASONING_EFFORT }],
+  },
+  [CLAUDE_DRIVER_KIND]: {
+    model: "claude-haiku-4-5",
+    options: [{ id: "thinking", value: false }],
+  },
+  [CURSOR_DRIVER_KIND]: {
+    model: "composer-2",
+    options: [{ id: "reasoning", value: "low" }],
+  },
+  [GROK_DRIVER_KIND]: {
+    model: "grok-build",
+    options: [{ id: "reasoningEffort", value: "low" }],
+  },
+  [PI_DRIVER_KIND]: {
+    model: "default",
+    options: [],
+  },
+  [OPENCODE_DRIVER_KIND]: {
+    model: "opencode/big-pickle",
+    options: [{ id: "variant", value: "low" }],
+  },
+  [ProviderDriverKind.make("antigravity")]: {
+    model: "antigravity-default",
+    options: [],
+  },
+};
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,

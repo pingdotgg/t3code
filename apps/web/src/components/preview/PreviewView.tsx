@@ -1,5 +1,11 @@
 "use client";
 
+import { randomUUID } from "~/lib/utils";
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
+import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
+
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -106,6 +112,9 @@ export function PreviewView({
 }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
+  const [annotationVoice, setAnnotationVoice] =
+    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -593,9 +602,11 @@ export function PreviewView({
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     pickActiveRef.current = true;
     setPickActive(true);
+    const voice = { sessionId: randomUUID(), keybindings };
+    setAnnotationVoice(voice);
     void (async () => {
       try {
-        const result = await previewBridge.pickElement(runtimeTabId);
+        const result = await previewBridge.pickElement(runtimeTabId, voice);
         if (!result) return;
         const { annotation: picked, submission, screenshotFailed = false } = result;
         // The structured annotation is still sendable when its optional crop
@@ -645,7 +656,10 @@ export function PreviewView({
         pickActiveRef.current = false;
         // Avoid `setState on unmounted component` if the panel/thread closed
         // while the pick was in flight.
-        if (isMountedRef.current) setPickActive(false);
+        if (isMountedRef.current) {
+          setPickActive(false);
+          setAnnotationVoice(null);
+        }
         // Best-effort: restore focus to whatever the user had before the
         // pick stole it into the guest webContents. Skip if the previously-
         // focused element was unmounted or is no longer focusable.
@@ -662,7 +676,7 @@ export function PreviewView({
         }
       }
     })();
-  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef]);
+  }, [addImage, addPreviewAnnotation, onSendAnnotation, runtimeTabId, threadRef, keybindings]);
 
   // If the active tab changes mid-pick (close, thread switch, hot restart),
   // tell main to tear down the in-flight session AND reset our local toggle
@@ -674,9 +688,12 @@ export function PreviewView({
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) setPickActive(false);
+      if (isMountedRef.current) {
+        setPickActive(false);
+        setAnnotationVoice(null);
+      }
     };
-  }, [runtimeTabId]);
+  }, [runtimeTabId, threadRef.environmentId, threadRef.threadId]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
@@ -710,6 +727,14 @@ export function PreviewView({
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
+      {pickActive && runtimeTabId && annotationVoice ? (
+        <PreviewAnnotationSpeech
+          key={JSON.stringify([annotationVoice.sessionId, threadRef])}
+          environmentId={threadRef.environmentId}
+          tabId={runtimeTabId}
+          config={annotationVoice}
+        />
+      ) : null}
       <PreviewChromeRow
         url={url}
         loading={loading}

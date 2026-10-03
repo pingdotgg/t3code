@@ -1,3 +1,10 @@
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  SpeechTextField,
+  TextFieldSpeechControls,
+  type useTextFieldSpeech,
+} from "~/speech/useTextFieldSpeech";
+
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -14,6 +21,9 @@ interface DiffCommentSecondaryAction {
 }
 
 interface DiffCommentAnnotationProps {
+  environmentId?: EnvironmentId;
+  projectId?: ProjectId | undefined;
+  ownerKey?: string;
   kind: "draft" | "comment";
   rangeLabel: string;
   text: string;
@@ -30,6 +40,9 @@ interface DiffCommentAnnotationProps {
 
 /** The shared inline comment treatment for file previews, thread diffs, and pull-request diffs. */
 export function DiffCommentAnnotation({
+  environmentId,
+  projectId,
+  ownerKey,
   kind,
   rangeLabel,
   text,
@@ -82,7 +95,7 @@ export function DiffCommentAnnotation({
     );
   }
 
-  return (
+  const renderDraft = (speech?: ReturnType<typeof useTextFieldSpeech>) => (
     <div
       data-diff-comment-annotation
       className="px-3 py-2 font-sans text-foreground"
@@ -91,6 +104,7 @@ export function DiffCommentAnnotation({
     >
       <Textarea
         ref={textareaRef}
+        readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
         value={displayedText}
@@ -106,14 +120,21 @@ export function DiffCommentAnnotation({
             event.preventDefault();
             onCancel();
           }
-          if (isCommentSubmitShortcut(event, trimmedText, pending)) {
+          if (
+            isCommentSubmitShortcut(
+              event,
+              trimmedText,
+              pending || speech?.blocksSubmission === true,
+            )
+          ) {
             event.preventDefault();
             onComment(trimmedText);
           }
         }}
       />
-      <div className="mt-1.5 flex items-center gap-1">
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
         <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
@@ -121,17 +142,38 @@ export function DiffCommentAnnotation({
           <Button
             size="xs"
             variant="outline"
-            disabled={!secondaryAction.allowEmpty && !trimmedText}
+            disabled={
+              pending || speech?.blocksSubmission || (!secondaryAction.allowEmpty && !trimmedText)
+            }
             onClick={() => secondaryAction.onAction(trimmedText)}
           >
             {secondaryAction.icon}
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
+        <Button
+          size="xs"
+          disabled={pending || speech?.blocksSubmission || !trimmedText}
+          onClick={() => onComment(trimmedText)}
+        >
           {submitLabel}
         </Button>
       </div>
     </div>
+  );
+  return environmentId ? (
+    <SpeechTextField
+      environmentId={environmentId}
+      projectId={projectId}
+      ownerKey={ownerKey ?? rangeLabel}
+      text={displayedText}
+      textareaRef={textareaRef}
+      onTextChange={onTextChange ?? setLocalDraftText}
+      disabled={pending}
+    >
+      {renderDraft}
+    </SpeechTextField>
+  ) : (
+    renderDraft()
   );
 }

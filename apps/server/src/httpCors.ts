@@ -8,4 +8,6 @@ export const browserApiCorsAllowedHeaders = [
   "content-type",
   "dpop",
   ORCHESTRATION_PROTOCOL_HEADER,
+  "x-t3-project-name",
+  "x-t3-project-id",
 ] as const;

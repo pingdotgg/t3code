@@ -620,3 +620,30 @@ describe("partial object patches at project scope", () => {
     });
   });
 });
+
+it("writes project voice vocabulary to each originating environment without changing personal preferences", () => {
+  const words = [{ term: "Effect", aliases: [] }];
+  const plan = planScopedSettingsPatch(project, environments, { speechProjectCustomWords: words });
+  expect(plan.clientPatch).toEqual({});
+  expect(plan.serverWrites).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        environmentId: server.environmentId,
+        patch: { projectSettingsOverrides: { [projectId]: { speechProjectCustomWords: words } } },
+      }),
+      expect.objectContaining({
+        environmentId: laptop.environmentId,
+        patch: {
+          projectSettingsOverrides: { [laptopProjectId]: { speechProjectCustomWords: words } },
+        },
+      }),
+    ]),
+  );
+  expect(plan.serverWrites).toHaveLength(2);
+  const personal = planScopedSettingsPatch(project, environments, {
+    speechCustomWords: words,
+    speechCorrectionWord: "err",
+  });
+  expect(personal.clientPatch).toEqual({ speechCustomWords: words, speechCorrectionWord: "err" });
+  expect(personal.serverWrites).toEqual([]);
+});

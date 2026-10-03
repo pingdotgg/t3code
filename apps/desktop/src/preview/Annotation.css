@@ -36,6 +36,7 @@
   --t3-popover-foreground: oklch(0.269 0 0);
   --t3-primary: oklch(0.488 0.217 264);
   --t3-primary-foreground: white;
+  --t3-destructive: oklch(0.577 0.245 27.325);
   --t3-muted: rgb(0 0 0 / 4%);
   --t3-muted-foreground: oklch(0.556 0 0);
   --t3-accent: rgb(0 0 0 / 4%);
@@ -65,4 +66,9 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--t3-ring) 72%, transparent);
   outline-offset: 1px;
+}
+
+/* Utility display classes must not override the native hidden state. */
+[hidden] {
+  display: none !important;
 }

@@ -87,6 +87,21 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("routes transcript cleanup to an OpenCode 2 instance's server", () =>
+    Effect.gen(function* () {
+      serverStarts.length = 0;
+      const instance = yield* create({}, noHttp);
+      yield* Effect.flip(
+        instance.textGeneration.generateTranscriptionPostProcessing({
+          cwd: process.cwd(),
+          prompt: "Clean this transcript.",
+          modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+        }),
+      );
+      assert.deepStrictEqual(serverStarts, ["start"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lists an OpenCode 2 workspace's own skills and commands from its server", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
