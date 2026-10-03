@@ -100,6 +100,7 @@ describe("embeddedScripts", () => {
     ["plain commands", `rg -n "foo" src && git status`],
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
+    ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
     expect(scriptsOf(command)).toEqual([]);
   });
