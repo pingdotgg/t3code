@@ -181,6 +181,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(TestClock.withLive, Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("follows a settings link that is repointed to another directory", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+        const firstSettingsPath = path.join(dotfiles, "first", "settings.json");
+        const secondSettingsPath = path.join(dotfiles, "second", "settings.json");
+        yield* fs.makeDirectory(path.dirname(firstSettingsPath), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(secondSettingsPath), { recursive: true });
+        yield* fs.writeFileString(firstSettingsPath, `{ "responseStreamingMode": "turn" }`);
+        yield* fs.writeFileString(secondSettingsPath, `{ "responseStreamingMode": "paragraph" }`);
+        yield* fs.remove(config.settingsPath, { force: true });
+        yield* fs.symlink(firstSettingsPath, config.settingsPath);
+        yield* service.start;
+
+        const repointChanges = yield* service.subscribeChanges;
+        yield* fs.remove(config.settingsPath);
+        yield* fs.symlink(secondSettingsPath, config.settingsPath);
+        const repointed = yield* repointChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        assert.equal(Option.getOrUndefined(repointed)?.responseStreamingMode, "paragraph");
+
+        const editChanges = yield* service.subscribeChanges;
+        yield* writeFileStringAtomically({
+          filePath: secondSettingsPath,
+          contents: `{ "responseStreamingMode": "turn" }`,
+        });
+        const edited = yield* editChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        assert.equal(Option.getOrUndefined(edited)?.responseStreamingMode, "turn");
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("reloads when a dangling settings link gets its destination", () =>
     Effect.scoped(
       Effect.gen(function* () {

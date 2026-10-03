@@ -131,6 +131,7 @@ const settingsChange = (settings: DesktopSettings, changed: boolean): DesktopSet
 
 const DesktopSettingsWriteOperation = Schema.Literals([
   "create-temporary-file-name",
+  "resolve-symlink",
   "encode-document",
   "create-directory",
   "write-temporary-file",
@@ -425,6 +426,14 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, input.fileSystem),
     Effect.provideService(Path.Path, input.path),
+    Effect.mapError(
+      (cause) =>
+        new DesktopSettingsWriteError({
+          operation: "resolve-symlink",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
   );
   const directory = input.path.dirname(targetPath);
   const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;

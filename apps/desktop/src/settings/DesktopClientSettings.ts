@@ -42,6 +42,7 @@ export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopCl
 
 const DesktopClientSettingsWriteOperation = Schema.Literals([
   "create-temporary-file-name",
+  "resolve-symlink",
   "encode-document",
   "create-directory",
   "write-temporary-file",
@@ -130,6 +131,14 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, input.fileSystem),
     Effect.provideService(Path.Path, input.path),
+    Effect.mapError(
+      (cause) =>
+        new DesktopClientSettingsWriteError({
+          operation: "resolve-symlink",
+          path: input.settingsPath,
+          cause,
+        }),
+    ),
   );
   const directory = input.path.dirname(targetPath);
   const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;

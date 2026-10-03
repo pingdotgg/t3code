@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -40,6 +41,26 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
 
       assert.strictEqual(yield* fs.readLink(link), destination);
       assert.strictEqual(yield* fs.readFileString(destination), "fresh");
+    }),
+  );
+
+  it.effect("fails on a symlink cycle without replacing either link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const first = path.join(root, "first.json");
+      const second = path.join(root, "second.json");
+      yield* fs.symlink(second, first);
+      yield* fs.symlink(first, second);
+
+      const result = yield* Effect.exit(
+        writeFileStringAtomically({ filePath: first, contents: "after" }),
+      );
+
+      assert.isTrue(Exit.isFailure(result));
+      assert.strictEqual(yield* fs.readLink(first), second);
+      assert.strictEqual(yield* fs.readLink(second), first);
     }),
   );
 

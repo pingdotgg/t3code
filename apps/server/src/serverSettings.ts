@@ -1215,20 +1215,34 @@ const make = Effect.gen(function* () {
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
     // A symlinked settings file is rewritten in its destination's directory,
-    // which a watch on the link's directory never sees.
-    const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, pathService),
-    );
-    const isLinked = linkTargetPath !== pathService.resolve(settingsPath);
-    if (isLinked) {
+    // which a watch on the link's directory never sees. The link is resolved
+    // again whenever it changes, so repointing it moves the watch along.
+    const watchLinkTarget = Effect.gen(function* () {
+      const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, pathService),
+      );
+      if (linkTargetPath === pathService.resolve(settingsPath)) {
+        return Option.none<string>();
+      }
       yield* fs
         .makeDirectory(pathService.dirname(linkTargetPath), { recursive: true })
         .pipe(Effect.ignore({ log: true }));
-    }
-    const linkTargetEvents = isLinked
-      ? watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true }))
-      : Stream.empty;
+      return Option.some(linkTargetPath);
+    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+    const initialLinkTarget = yield* watchLinkTarget;
+    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
+      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
+      Stream.changes,
+      Stream.switchMap(
+        Option.match({
+          onNone: () => Stream.empty,
+          onSome: (linkTargetPath) =>
+            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+        }),
+      ),
+    );
 
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
