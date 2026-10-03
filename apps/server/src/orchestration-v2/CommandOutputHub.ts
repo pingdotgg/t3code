@@ -11,6 +11,7 @@ import {
   normalizeTerminalOutput,
   type TerminalOutputState,
   TERMINAL_OUTPUT_TAIL_CHARS,
+  terminalOutputResumeText,
 } from "@t3tools/shared/terminalOutput";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -258,10 +259,11 @@ export const make = Effect.gen(function* () {
             if (tail === undefined) {
               return { kind: "replace", ...persistedCommandOutput(snapshotOutput), running: true };
             }
-            // The unfinished escape or `\r` rides along so the client resumes exactly.
+            // The cursor, style and any unfinished escape ride along so the client
+            // applies later appends exactly as the hub does.
             return {
               kind: "replace",
-              text: tail.text + tail.pending,
+              text: terminalOutputResumeText(tail),
               truncated: tail.truncated,
               running: true,
             };

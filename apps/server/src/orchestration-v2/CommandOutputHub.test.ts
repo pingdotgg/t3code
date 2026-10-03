@@ -195,7 +195,7 @@ layer("CommandOutputHub", (it) => {
           assert.equal(first.kind, "replace");
           assert.isTrue(first.running);
           let client = applyFrame(EMPTY_TERMINAL_OUTPUT, first);
-          assert.equal(client.text, "building\n55%");
+          assert.equal(client.text, "\u001b[0;32mbuilding\u001b[0m\n55%");
 
           // Chunks that land between frames arrive together in one append.
           yield* TestClock.adjust("1 second");

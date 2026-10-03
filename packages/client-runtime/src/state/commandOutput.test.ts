@@ -17,7 +17,8 @@ describe("applyCommandOutputFrame", () => {
       truncated: false,
       running: true,
     });
-    expect(view.output.text).toBe("install\n100%\n");
+    // The colour opened before the redraw survives it.
+    expect(view.output.text).toBe("install\n\u001b[0;32m100%\u001b[0m\n");
     expect(view.running).toBe(true);
   });
 
@@ -45,9 +46,8 @@ describe("applyCommandOutputFrame", () => {
       truncated: false,
       running: false,
     });
-    expect(view).toEqual({
-      output: { text: "done\n", truncated: false, pending: "" },
-      running: false,
-    });
+    expect(view.output.text).toBe("done\n");
+    expect(view.output.truncated).toBe(false);
+    expect(view.running).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { assert } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
-import { normalizeTerminalOutput } from "@t3tools/shared/terminalOutput";
+import { normalizeTerminalOutput, terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
 import {
@@ -38,16 +38,19 @@ export function assertCommandOutputStreamingOutput(
   const streamed = result.commandOutput?.get(command.id);
   assert.isDefined(streamed, "the running command must stream its output");
   assert.isAbove(streamed?.chunks ?? 0, 0);
-  const live = streamed?.output.text ?? "";
+  const liveText = streamed?.output.text ?? "";
+  const live = terminalOutputPlainText(liveText);
   // Codex never streams what a command prints before its first yield (the recorded
   // session has no delta, and no aggregatedOutput, for line 1), so it is not asserted.
   for (const line of ["stream line 2", "stream line 3", "stream line 4", "progress 100%"]) {
     assert.include(live, line);
   }
+  // The command's green survives as a canonical colour code; nothing else does.
+  assert.include(liveText, "\u001b[0;32mstream line 2\u001b[0m");
   assert.notInclude(live, "\u001b");
   assert.notInclude(live, "progress 50%");
   // What viewers watched is the end of what the row keeps once it settles.
-  const final = normalizeTerminalOutput(command.output ?? "").text;
+  const final = terminalOutputPlainText(normalizeTerminalOutput(command.output ?? "").text);
   assert.isTrue(
     final.trimEnd().endsWith(live.trimEnd()),
     `the live tail must agree with the persisted final output: ${JSON.stringify({ final, live })}`,
