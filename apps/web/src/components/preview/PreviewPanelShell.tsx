@@ -1,41 +1,28 @@
 import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 
-import { flushSync } from "react-dom";
+import { isElectron } from "~/env";
+import {
+  getPreviewPanelMaxWidth,
+  type PreviewPanelInlineSize,
+  usePreviewPanelInlineSize,
+} from "~/hooks/usePreviewPanelInlineSize";
 
-import { useResizableWidth } from "~/hooks/useResizableWidth";
+export { getPreviewPanelMaxWidth };
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
-const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
-const PREVIEW_PANEL_MIN_WIDTH = 360;
-const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
-/**
- * Width reserved for the sibling column (chat, pull-request list) sharing the
- * panel's flex row. This is the only upper bound on the panel, so the chat
- * keeps the same minimum whether or not the app sidebar is open. A cap based
- * on the viewport would ignore the sidebar and bind only once it collapses.
- */
-const SIBLING_COLUMN_MIN_WIDTH = 360;
-
-export function getPreviewPanelMaxWidth(rowWidth: number): number {
-  // Never below the panel's own minimum: when the row cannot fit both
-  // columns' minimums the sibling yields, and useResizableWidth's clamp
-  // must not see max < min (it would resolve the inversion to min and,
-  // via drag-end persistence, overwrite the user's stored width).
-  return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.floor(rowWidth) - SIBLING_COLUMN_MIN_WIDTH);
-}
-
 /**
  * Shell for the preview panel. In inline mode the panel is user-resizable
  * via a drag handle on the left edge; width persists per browser. In
  * sheet/sidebar modes the parent owns the size.
  */
-export function PreviewPanelShell(props: {
+interface PreviewPanelShellProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
+  inlineSize?: PreviewPanelInlineSize;
   open?: boolean;
   /**
    * Overrides the localStorage key used to persist the panel width. Callers
@@ -47,29 +34,41 @@ export function PreviewPanelShell(props: {
   /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
   children: ReactNode;
-}) {
+}
+
+export function PreviewPanelShell(props: PreviewPanelShellProps) {
+  if (props.inlineSize) {
+    return <PreviewPanelShellFrame {...props} inlineSize={props.inlineSize} />;
+  }
+
+  return <ResizablePreviewPanelShell {...props} />;
+}
+
+function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const inlineSize = usePreviewPanelInlineSize(hostRef, {
+    enabled: props.mode === "inline" && !props.maximized,
+    open: props.open ?? true,
+    widthStorageKey: props.widthStorageKey,
+    defaultWidth: props.defaultWidth,
+  });
+  return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} hostRef={hostRef} />;
+}
+
+function PreviewPanelShellFrame(
+  props: PreviewPanelShellProps & {
+    inlineSize: PreviewPanelInlineSize;
+    hostRef?: RefObject<HTMLDivElement | null>;
+  },
+) {
+  const useDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
   const isInline = props.mode === "inline";
   const collapsible = isInline && props.open !== undefined;
   const open = props.open ?? true;
   const maximized = props.maximized ?? false;
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  // Only inline non-maximized mode applies `width`/`maxWidth`; skip the
-  // row measurement (and its re-renders) everywhere else.
-  const rowWidth = useRowWidth(hostRef, isInline && !maximized);
-  const { width, handlers } = useResizableWidth({
-    storageKey: props.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
-    defaultWidth: props.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
-    minWidth: PREVIEW_PANEL_MIN_WIDTH,
-    // Unmeasured only before the first layout effect or in modes that never
-    // apply the width; the viewport is an upper bound on the row.
-    maxWidth: getPreviewPanelMaxWidth(
-      rowWidth ?? (typeof window === "undefined" ? 1280 : window.innerWidth),
-    ),
-    // A closed panel leaves the whole row to its sibling, so only an open one
-    // keeps the sibling's width steady.
-    rowWidth: open ? rowWidth : undefined,
-    edge: "left",
-  });
+  const localHostRef = useRef<HTMLDivElement | null>(null);
+  const hostRef = props.hostRef ?? localHostRef;
+  const { width, handlers } = props.inlineSize;
   // Derive suppression before the layout commits so the browser never creates
   // a width transition for resize or maximize changes.
   const [layoutTransition, setLayoutTransition] = useState(() => ({
@@ -144,47 +143,4 @@ export function PreviewPanelShell(props: {
       </div>
     </div>
   );
-}
-
-/**
- * Track the flex-row width the panel shares with its sibling column. It
- * bounds the panel and lets an open panel absorb row changes (window resize,
- * app sidebar toggle) so the sibling keeps its width. The row is observed
- * rather than the panel itself because the panel competes with its sibling
- * for row space. Measurement only runs when `enabled`; modes without a resize
- * handle never apply the resulting width, so they skip the observer entirely.
- */
-function useRowWidth(
-  hostRef: RefObject<HTMLDivElement | null>,
-  enabled: boolean,
-): number | undefined {
-  const [rowWidth, setRowWidth] = useState<number | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (!enabled) return;
-    const parent = hostRef.current?.parentElement;
-    if (!parent) return;
-    // Measure before first paint: the persisted width must be clamped
-    // against the row on the initial render, not one observer tick later
-    // (the panel would flash over-wide on every mount). clientWidth is
-    // integral, so sub-pixel resize deltas bail out of re-rendering.
-    const measure = () => {
-      setRowWidth(parent.clientWidth);
-    };
-    measure();
-    // Flush in the observer's pre-paint slot: the app sidebar animates its
-    // width, and a panel that caught up a frame late would wobble the chat.
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(() => {
-            flushSync(measure);
-          });
-    observer?.observe(parent);
-    return () => {
-      observer?.disconnect();
-      // Tracking restarts from a fresh baseline, not a width from before.
-      setRowWidth(undefined);
-    };
-  }, [hostRef, enabled]);
-  return rowWidth;
 }

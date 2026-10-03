@@ -89,7 +89,7 @@ function DeviceStreamDocumentView({
   readonly onStreaming: () => void;
   readonly onRecoverProcess: () => boolean;
 }) {
-  const webView = useRef<WebView>(null);
+  const webView = useRef<WebView<object>>(null);
   const active = useRef(true);
   const failed = useRef(false);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");
@@ -148,7 +148,7 @@ function DeviceStreamDocumentView({
   };
   return (
     <View className="flex-1" style={{ backgroundColor: background }}>
-      <WebView
+      <WebView<object>
         ref={webView}
         source={source}
         originWhitelist={["*"]}

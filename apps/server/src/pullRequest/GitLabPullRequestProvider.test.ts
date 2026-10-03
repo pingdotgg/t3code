@@ -88,6 +88,23 @@ describe("getChangeRequest base freshness", () => {
     reviewerIds: [],
   };
 
+  it.effect("reads checks without fetching project settings", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: () => Effect.succeed(detail),
+          }),
+        ),
+      );
+      const read = provider.getChangeRequestChecks;
+      if (read === undefined) return yield* Effect.die("checks read missing");
+      expect(
+        yield* read({ cwd: "/w", repository: "group/subgroup/web", host: "gitlab.com", number: 7 }),
+      ).toEqual({ state: "open", checks: [] });
+    }),
+  );
+
   const readWith = (divergence: { readonly divergedCommits?: number }) =>
     Effect.gen(function* () {
       const provider = yield* make;

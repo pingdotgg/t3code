@@ -1,3 +1,5 @@
+import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -516,6 +518,17 @@ export function UsagePage() {
                       </span>
                     </div>
 
+                    {[...presentations].some(
+                      ([id, presentation]) =>
+                        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
+                        presentation.serverConfig?.providers.some(usesChatGptSharing),
+                    ) ? (
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>ChatGPT shared usage</span>
+                        <ChatGptUsageButton size="xs" />
+                      </div>
+                    ) : null}
+
                     {summaryRows.map((row) => {
                       if (row.kind === "enable") {
                         return (
@@ -902,8 +915,14 @@ function ProviderMark({
   readonly provider: UsageProviderKind;
   readonly className: string;
 }) {
-  const Mark = PROVIDER_PRESENTATION[provider].mark;
-  return <Mark className={cn("shrink-0", className)} aria-hidden />;
+  const presentation = PROVIDER_PRESENTATION[provider];
+  return (
+    <ProviderInstanceIcon
+      driverKind={presentation.driverKind}
+      displayName={presentation.label}
+      iconClassName={className}
+    />
+  );
 }
 
 function Metric({ label, value }: { readonly label: string; readonly value: string }) {
