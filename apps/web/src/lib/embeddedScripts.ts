@@ -68,9 +68,10 @@ const PYTHON: Interpreter = {
   stdin: "without-script-file",
 };
 
-const SQL_SHELL: Interpreter = {
+// Shared by SQL clients; each names its own script flags, since `-c` and `-f`
+// mean different things to psql and mysql.
+const SQL_SHELL = {
   language: "sql",
-  inline: flagIn("-c", "--command", "-e", "--execute", "-cmd"),
   valueOptions: new Set([
     "-d",
     "-h",
@@ -84,10 +85,9 @@ const SQL_SHELL: Interpreter = {
     "-nullvalue",
     "-init",
   ]),
-  scriptFileOptions: new Set(["-f", "--file"]),
   stdin: "always",
   repeatable: true,
-};
+} satisfies Omit<Interpreter, "inline">;
 
 const INTERPRETERS: Record<string, Interpreter> = {
   sh: SHELL,
@@ -132,13 +132,22 @@ const INTERPRETERS: Record<string, Interpreter> = {
     stdin: "never",
     ignoreCase: true,
   },
-  psql: SQL_SHELL,
-  mysql: SQL_SHELL,
-  mariadb: SQL_SHELL,
-  sqlite3: { ...SQL_SHELL, positionalScript: 1 },
-  duckdb: { ...SQL_SHELL, positionalScript: 1 },
+  psql: {
+    ...SQL_SHELL,
+    inline: flagIn("-c", "--command"),
+    scriptFileOptions: new Set(["-f", "--file"]),
+  },
+  mysql: { ...SQL_SHELL, inline: flagIn("-e", "--execute") },
+  sqlite3: { ...SQL_SHELL, inline: flagIn("-cmd"), positionalScript: 1 },
+  duckdb: {
+    ...SQL_SHELL,
+    inline: flagIn("-c", "-cmd"),
+    scriptFileOptions: new Set(["-f"]),
+    positionalScript: 1,
+  },
 };
 INTERPRETERS.powershell = INTERPRETERS.pwsh!;
+INTERPRETERS.mariadb = INTERPRETERS.mysql!;
 
 // Commands that run the next word as the program, with the options that consume a value.
 const PROGRAM_WRAPPERS: Record<string, ReadonlySet<string>> = {

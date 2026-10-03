@@ -68,6 +68,8 @@ describe("embeddedScripts", () => {
     [`env -- FOO=1 python3 -c 'print(1)'`, "python", "print(1)"],
     [`node --eval="process.exit(0)"`, "javascript", "process.exit(0)"],
     [`psql --command='select 1'`, "sql", "select 1"],
+    [`mysql -c -e 'select 1'`, "sql", "select 1"],
+    [`mysql -f app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`psql app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`echo "$(node -e 'console.log(1)')"`, "javascript", "console.log(1)"],
     [`python3 <<< 'print(1)'`, "python", "print(1)"],
