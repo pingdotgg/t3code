@@ -243,8 +243,19 @@ const AGENT_HEADER_RE = /^(.+)\s+\((\S+)\)\s*$/;
  * The serve subcommand accepts only `--port`, `--hostname`, `--mDNS`,
  * `--mDNS-domain`, and `--cors`; it rejects anything else by printing usage and
  * exiting 1. In particular `--dir` belongs to `run`/`web`/`attach`, not
- * `serve`. Workspace scoping is per request instead: the SDK client sends the
- * directory as a query parameter on each call.
+ * `serve`.
+ *
+ * Upstream `serve` deliberately carries no ambient project: it sets
+ * `instance: false` and resolves the project per request. Scoping therefore
+ * belongs to the caller, and it is not redundant with anything this function
+ * does.
+ *
+ * `createOpencodeClient({ directory })` sets `x-opencode-directory` on every
+ * request, and a client interceptor rewrites that header into a `directory`
+ * query param for GET/HEAD only. It returns early for other methods, so a POST
+ * is not rewritten. Callers that need a POST bound to a specific project must
+ * keep passing `directory` per call — `client.mcp.add({ directory })` does,
+ * and must not be simplified to rely on the client-level value.
  *
  * @internal
  */

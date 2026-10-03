@@ -264,32 +264,34 @@ describe("parseAgentListCliOutput", () => {
 });
 
 describe("buildOpenCodeServeArgs", () => {
-  // `opencode serve` rejects unknown flags by printing usage and exiting 1, so
-  // every argument here must be one the subcommand actually accepts. Scoping a
-  // workspace happens per request through the SDK client's `directory`, not
-  // through server argv.
+  // `opencode serve` rejects unknown flags by printing usage and exiting 1.
+  // Every emitted flag is checked against the subcommand's accepted set, which
+  // mirrors `withNetworkOptions` in opencode's cli/cmd/serve.ts, so a future
+  // addition cannot reintroduce a flag that only exists on `run`/`web`/`attach`.
   const SERVE_FLAGS = new Set(["--port", "--hostname", "--mDNS", "--mDNS-domain", "--cors"]);
 
-  it("passes only flags the serve subcommand accepts", () => {
+  function flagOf(arg: string): string {
+    const separator = arg.indexOf("=");
+    return separator === -1 ? arg : arg.slice(0, separator);
+  }
+
+  it("emits only flags the serve subcommand accepts", () => {
     const args = buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 });
 
-    NodeAssert.deepEqual(args, ["serve", "--hostname=127.0.0.1", "--port=41234"]);
+    NodeAssert.ok(args.length > 1, "expected flags, not just the subcommand");
     for (const arg of args.slice(1)) {
-      const flag = arg.slice(0, arg.indexOf("=") === -1 ? undefined : arg.indexOf("="));
       NodeAssert.ok(
-        SERVE_FLAGS.has(flag),
-        `\`opencode serve\` rejects ${flag}; it prints usage and exits 1`,
+        SERVE_FLAGS.has(flagOf(arg)),
+        `\`opencode serve\` rejects ${arg}; it prints usage and exits 1`,
       );
     }
   });
 
-  it("keeps workspace scoping out of server argv", () => {
-    // `--dir` belongs to `opencode run`/`web`/`attach`. On `serve` it is an
-    // unknown flag, which failed every workspace skill probe with exit code 1.
-    NodeAssert.ok(
-      !buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 }).some((arg) =>
-        arg.startsWith("--dir"),
-      ),
-    );
+  it("passes the requested bind address", () => {
+    NodeAssert.deepEqual(buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 }), [
+      "serve",
+      "--hostname=127.0.0.1",
+      "--port=41234",
+    ]);
   });
 });
