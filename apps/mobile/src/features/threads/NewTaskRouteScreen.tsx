@@ -465,6 +465,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                           ? `${scope.projects.length} workspaces`
                           : selectionTarget.workspaceRoot
                       }
+                      subtitleNumberOfLines={1}
+                      subtitleEllipsizeMode="middle"
                       disabled={reservedDestinationProject !== null}
                       onPress={() => void selectProject(selectionTarget)}
                       leading={
