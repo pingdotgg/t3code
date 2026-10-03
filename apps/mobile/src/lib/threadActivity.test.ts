@@ -1085,6 +1085,46 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
+    const imported = <T extends OrchestrationV2TurnItem>(item: T, id: string) => ({
+      ...item,
+      id: TurnItemId.make(id),
+      runId: null,
+    });
+    const feed = buildThreadFeed(
+      [
+        imported(userMessage("2026-06-20T00:00:00.000Z"), "imported-prompt"),
+        imported(
+          { ...assistantMessage("2026-06-20T00:00:02.000Z"), messageId: MessageId.make("update") },
+          "imported-update",
+        ),
+        imported(command("2026-06-20T00:00:04.000Z"), "imported-ls"),
+        imported(
+          { ...assistantMessage("2026-06-20T00:00:08.000Z"), messageId: MessageId.make("answer") },
+          "imported-answer",
+        ),
+        {
+          ...userMessage("2026-06-20T00:01:00.000Z"),
+          id: TurnItemId.make("new-prompt"),
+          messageId: MessageId.make("new-prompt"),
+        },
+      ].map((item, position) => projected(item, position)),
+    );
+
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      { runId, status: "running", startedAt: "2026-06-20T00:01:00.000Z", completedAt: null },
+      new Set(),
+      new Set(),
+      "2026-06-20T00:01:00.000Z",
+    );
+    expect(
+      presented
+        .slice(0, 5)
+        .map((entry) => (entry.type === "message" ? entry.message.role : entry.type)),
+    ).toEqual(["user", "assistant", "run-fold", "assistant", "user"]);
+  });
+
   it("keeps a provider-native subagent's runless tool call live while it works", () => {
     const startedAt = "2026-06-20T00:00:01.000Z";
     const { exitCode: _exitCode, ...completedCommand } = command();

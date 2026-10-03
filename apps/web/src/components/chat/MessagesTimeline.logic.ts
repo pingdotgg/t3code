@@ -850,8 +850,9 @@ function failedTimelineRunIds(
 /**
  * Settled turns fold activity before their terminal assistant message behind
  * a "Worked for ..." row. Ordinary trailing work joins the fold, while failures
- * and work still in progress stay visible. A thread without runs (a
- * provider-native subagent) folds each prompt's response the same way.
+ * and work still in progress stay visible. A prompt without a run (a
+ * provider-native subagent, or a turn imported from V1) folds its response
+ * the same way.
  */
 function deriveTurnFolds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -888,8 +889,9 @@ function deriveTurnFolds(input: {
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
 
-  // Fold state is keyed by run, so each prompt of a runless thread lends its
-  // response a stable key of its own.
+  // Fold state is keyed by run, so each runless prompt lends its response a
+  // stable key of its own. Decide per prompt, not per thread: a V1 thread's
+  // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
@@ -898,7 +900,13 @@ function deriveTurnFolds(input: {
       pendingBoundary = nextEntry
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
-      runlessKey = input.latestRun === null ? RunId.make(`runless:${entry.id}`) : null;
+      const boundaryRunId =
+        entry.kind === "message"
+          ? entry.message.runId
+          : entry.kind === "work"
+            ? entry.entry.runId
+            : null;
+      runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
     }
     const runId = timelineEntryFoldRunId(entry, runlessKey);
