@@ -32,6 +32,7 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
     readonly handle: (request: PreviewAutomationRequest) => Promise<unknown>;
   }>;
   readonly respond: (response: PreviewAutomationResponse) => Promise<unknown>;
+  readonly onTimeout?: (request: PreviewAutomationRequest) => void;
   readonly label: string;
 }): Atom.Atom<void> {
   return Atom.make((get) => {
@@ -63,6 +64,7 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
         return;
       }
       const request = event.request;
+      const timeout = setTimeout(() => options.onTimeout?.(request), request.timeoutMs);
       void get
         .once(options.requestHandlerAtom)
         .handle(request)
@@ -89,7 +91,9 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
                 tabId: request.tabId ?? null,
               }),
             }),
-        );
+        )
+        .finally(() => clearTimeout(timeout))
+        .catch(() => undefined);
     };
 
     get.addFinalizer(() => {

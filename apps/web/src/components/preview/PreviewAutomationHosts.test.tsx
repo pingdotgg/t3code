@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   ),
   list: vi.fn(async () => AsyncResult.success(emptyList)),
   resize: vi.fn(),
+  close: vi.fn(async () => AsyncResult.success(undefined)),
   respond:
     vi.fn<
       (target: { environmentId: EnvironmentId; input: PreviewAutomationResponse }) => Promise<void>
@@ -56,6 +57,7 @@ vi.mock("~/state/preview", () => ({
     list: () => listAtom,
     open: mocks.open,
     resize: mocks.resize,
+    close: mocks.close,
     respondToAutomation: mocks.respond,
     focusAutomationHost: mocks.focus,
   },
@@ -211,6 +213,158 @@ describe("PreviewAutomationHosts open", () => {
   });
 });
 
+describe("PreviewAutomationHosts timeout cleanup", () => {
+  it("closes a hidden tab created after its open request already timed out", async () => {
+    const opened = deferred<Awaited<ReturnType<typeof mocks.open>>>();
+    mocks.open.mockImplementationOnce(() => opened.promise);
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        appAtomRegistry.set(
+          requestsAtom,
+          AsyncResult.success({
+            ...requestEvent,
+            request: { ...requestEvent.request, timeoutMs: 100 },
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mocks.open).toHaveBeenCalledTimes(1);
+      await act(async () => vi.advanceTimersByTimeAsync(100));
+      expect(mocks.close).not.toHaveBeenCalled();
+
+      await act(async () => {
+        opened.resolve(AsyncResult.success(snapshot));
+        await opened.promise;
+      });
+      expect(mocks.close).toHaveBeenCalledTimes(1);
+      expect(readThreadPreviewState(threadRef).sessions[snapshot.tabId]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves an agent tab after it has been explicitly presented", async () => {
+    await act(async () => {
+      appAtomRegistry.set(requestsAtom, AsyncResult.success(requestEvent));
+      await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(1));
+    });
+    const runtimeTabId = previewRuntimeTabId(
+      threadRef,
+      readThreadPreviewState(threadRef).serverEpoch,
+      snapshot.tabId,
+    );
+    const owner = Symbol();
+    await act(() => {
+      useBrowserSurfaceStore.getState().claim(runtimeTabId, owner, false);
+      useBrowserSurfaceStore
+        .getState()
+        .present(runtimeTabId, owner, { x: 0, y: 0, width: 800, height: 600 }, true, 0, 1);
+    });
+    await act(async () => {
+      appAtomRegistry.set(
+        requestsAtom,
+        AsyncResult.success({
+          ...requestEvent,
+          request: {
+            ...requestEvent.request,
+            requestId: "present-existing",
+            tabId: snapshot.tabId,
+            input: { open: true },
+          },
+        }),
+      );
+      await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(2));
+    });
+    await act(() => useBrowserSurfaceStore.getState().release(runtimeTabId, owner));
+
+    const pendingResponse = deferred<void>();
+    mocks.respond.mockImplementationOnce(() => pendingResponse.promise);
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        appAtomRegistry.set(
+          requestsAtom,
+          AsyncResult.success({
+            ...requestEvent,
+            request: {
+              ...requestEvent.request,
+              requestId: "stalled-status",
+              operation: "status",
+              tabId: snapshot.tabId,
+              input: {},
+            },
+          }),
+        );
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(15_000));
+      expect(mocks.close).not.toHaveBeenCalled();
+      expect(readThreadPreviewState(threadRef).sessions[snapshot.tabId]).toEqual(snapshot);
+    } finally {
+      pendingResponse.resolve();
+      await act(async () => pendingResponse.promise);
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([false, true])(
+    "closes only a hidden agent tab that was never presented (presented: %s)",
+    async (wasPresented) => {
+      await act(async () => {
+        appAtomRegistry.set(requestsAtom, AsyncResult.success(requestEvent));
+        await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(1));
+      });
+      const runtimeTabId = previewRuntimeTabId(
+        threadRef,
+        readThreadPreviewState(threadRef).serverEpoch,
+        snapshot.tabId,
+      );
+      if (wasPresented) {
+        const owner = Symbol();
+        await act(() => {
+          useBrowserSurfaceStore.getState().claim(runtimeTabId, owner, false);
+          useBrowserSurfaceStore
+            .getState()
+            .present(runtimeTabId, owner, { x: 0, y: 0, width: 800, height: 600 }, true, 0, 1);
+        });
+        await act(() => useBrowserSurfaceStore.getState().release(runtimeTabId, owner));
+      }
+      expect(useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible ?? false).toBe(false);
+      expect(mocks.close).not.toHaveBeenCalled();
+
+      const pendingResponse = deferred<void>();
+      mocks.respond.mockImplementationOnce(() => pendingResponse.promise);
+      vi.useFakeTimers();
+      try {
+        await act(async () => {
+          appAtomRegistry.set(
+            requestsAtom,
+            AsyncResult.success({
+              ...requestEvent,
+              request: {
+                ...requestEvent.request,
+                requestId: "stalled-status",
+                operation: "status",
+                tabId: snapshot.tabId,
+                input: {},
+              },
+            }),
+          );
+        });
+        await act(async () => vi.advanceTimersByTimeAsync(15_000));
+        expect(mocks.close).toHaveBeenCalledTimes(wasPresented ? 0 : 1);
+        expect(readThreadPreviewState(threadRef).sessions[snapshot.tabId]).toBe(
+          wasPresented ? snapshot : undefined,
+        );
+      } finally {
+        pendingResponse.resolve();
+        await act(async () => pendingResponse.promise);
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 describe("PreviewAutomationHosts ownership", () => {
   it("reports only local live tabs and removes ownership when their web contents close", async () => {
     await act(() => {
@@ -359,5 +513,51 @@ describe("PreviewAutomationHosts ownership", () => {
       ok: true,
       result: { available: false, tabId: snapshot.tabId },
     });
+  });
+
+  it("preserves an existing user tab reused by a hidden automation request", async () => {
+    const pendingResponse = deferred<void>();
+    applyPreviewServerSnapshot(threadRef, snapshot);
+    await act(async () => {
+      appAtomRegistry.set(
+        requestsAtom,
+        AsyncResult.success({
+          ...requestEvent,
+          request: {
+            ...requestEvent.request,
+            tabId: snapshot.tabId,
+            input: { open: false },
+          },
+        }),
+      );
+      await vi.waitFor(() => expect(mocks.respond).toHaveBeenCalledTimes(1));
+    });
+    expect(mocks.open).not.toHaveBeenCalled();
+    mocks.respond.mockImplementationOnce(() => pendingResponse.promise);
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        appAtomRegistry.set(
+          requestsAtom,
+          AsyncResult.success({
+            ...requestEvent,
+            request: {
+              ...requestEvent.request,
+              requestId: "stalled-status",
+              operation: "status",
+              tabId: snapshot.tabId,
+              input: {},
+            },
+          }),
+        );
+      });
+      await act(async () => vi.advanceTimersByTimeAsync(15_000));
+      expect(mocks.close).not.toHaveBeenCalled();
+      expect(readThreadPreviewState(threadRef).sessions[snapshot.tabId]).toEqual(snapshot);
+    } finally {
+      pendingResponse.resolve();
+      await act(async () => pendingResponse.promise);
+      vi.useRealTimers();
+    }
   });
 });

@@ -7,7 +7,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   PreviewAutomationRecordingNotActiveError,
@@ -53,6 +53,70 @@ const consumerState = (handleRequest: (request: PreviewAutomationRequest) => Pro
 });
 
 describe("previewAutomationRequestConsumer", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("reclaims a timed-out request while its handler is still pending", async () => {
+    vi.useFakeTimers();
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial(false),
+    );
+    const handleRequest = vi.fn(() => new Promise<unknown>(() => undefined));
+    const onTimeout = vi.fn();
+    const respond = vi.fn(async () => undefined);
+    const state = consumerState(handleRequest);
+    const registry = AtomRegistry.make();
+    registry.mount(
+      createPreviewAutomationRequestConsumerAtom({
+        requestsAtom,
+        clientId,
+        connectionAtom: state.connectionAtom,
+        environmentId,
+        requestHandlerAtom: state.requestHandlerAtom,
+        respond,
+        onTimeout,
+        label: "test:preview-automation-timeout",
+      }),
+    );
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("stalled", { timeoutMs: 100 })));
+
+    await vi.advanceTimersByTimeAsync(99);
+    expect(onTimeout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onTimeout).toHaveBeenCalledExactlyOnceWith(request("stalled", { timeoutMs: 100 }));
+    expect(respond).not.toHaveBeenCalled();
+    registry.dispose();
+  });
+
+  it("cancels cleanup after the host response completes", async () => {
+    vi.useFakeTimers();
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial(false),
+    );
+    const respond = vi.fn(async () => undefined);
+    const onTimeout = vi.fn();
+    const state = consumerState(async () => ({ available: true }));
+    const registry = AtomRegistry.make();
+    registry.mount(
+      createPreviewAutomationRequestConsumerAtom({
+        requestsAtom,
+        clientId,
+        connectionAtom: state.connectionAtom,
+        environmentId,
+        requestHandlerAtom: state.requestHandlerAtom,
+        respond,
+        onTimeout,
+        label: "test:preview-automation-completed",
+      }),
+    );
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("completed", { timeoutMs: 100 })));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(respond).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onTimeout).not.toHaveBeenCalled();
+    registry.dispose();
+  });
+
   it("acknowledges a replacement stream before consuming requests from it", async () => {
     const requestsAtom = Atom.make(
       AsyncResult.success<PreviewAutomationStreamEvent, Error>({
