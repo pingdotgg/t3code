@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
+  claudeAgentMessageTitle,
   classifyToolActivity,
   collectToolFilePaths,
   formatReadToolLabel,
@@ -502,16 +503,18 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         data: { toolName: item.toolName ?? undefined, input: item.input },
       });
       const [readPath] = collectToolFilePaths({ input: item.input });
+      // Items from before the adapter titled agent messages still get a heading.
+      const toolTitle = title ?? claudeAgentMessageTitle(item.toolName, item.input) ?? null;
       return {
         ...common,
         label:
-          title ??
+          toolTitle ??
           (classified === "read"
             ? formatReadToolLabel(readPath ?? "")
             : classified === "search"
               ? (formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call")
               : (item.toolName ?? "Tool call")),
-        toolTitle: title ?? item.toolName ?? "Tool",
+        toolTitle: toolTitle ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
       };
     }

@@ -27,15 +27,99 @@ export function claudeSkillInvocation(
 
 /**
  * Activity log heading a dynamic tool derives from its input: CUA's `title`,
- * or the skill a Claude `Skill` call loads.
+ * the skill a Claude `Skill` call loads, or Claude's agent roster lookup.
  */
 export function dynamicToolTitle(
   toolName: string | null | undefined,
   input: unknown,
 ): string | undefined {
   if (toolName === "cua_repl.js") return asTrimmedString(asRecord(input)?.title);
+  if (toolName === "ListAgents") return "Listed agents";
   const skill = claudeSkillInvocation(toolName, input);
   return skill === undefined ? undefined : `Skill: ${skill.name}`;
+}
+
+/** A Claude `SendMessage` call: who it goes to and what it says. */
+export interface ClaudeAgentMessage {
+  /** Agent id, session name, `main`, or `*`, as the agent wrote it. */
+  readonly to: string | undefined;
+  readonly summary: string | undefined;
+  readonly message: string | undefined;
+  /** One line for a collapsed row: the summary, else the body's first line. */
+  readonly preview: string | undefined;
+  /** Asks to hear when the recipient goes idle. */
+  readonly notifyWhenIdle: boolean;
+}
+
+/**
+ * Reads a Claude `SendMessage` call. Structured protocol messages (a non-text
+ * `message`) and inputs the server summarized for transport are left to the
+ * generic tool view.
+ */
+export function claudeAgentMessage(
+  toolName: string | null | undefined,
+  input: unknown,
+): ClaudeAgentMessage | undefined {
+  if (toolName !== "SendMessage") return undefined;
+  const record = asRecord(input);
+  if (record === undefined) return undefined;
+  // The CLI echoes a truncated `content` preview beside `message`; older
+  // team messages carried their text in `content` alone.
+  const body = record.message ?? record.content;
+  if (body !== undefined && typeof body !== "string") return undefined;
+  const to =
+    record.type === "broadcast"
+      ? "*"
+      : (asTrimmedString(record.to) ?? asTrimmedString(record.recipient));
+  const summary = asTrimmedString(record.summary);
+  const message = asTrimmedString(body);
+  return {
+    to,
+    summary,
+    message,
+    preview:
+      summary ??
+      // Strip a leading Markdown heading marker; the body renders as Markdown.
+      asTrimmedString(message?.split("\n", 1)[0]?.replace(/^#{1,6}\s+/u, "")),
+    notifyWhenIdle: record.notify_when_idle === true,
+  };
+}
+
+const CLAUDE_AGENT_ID_PATTERN = /^a[0-9a-f]{16}$/u;
+
+/**
+ * Names a `SendMessage` recipient for a heading. Claude's subagent ids are
+ * shortened the way Claude Code shortens them; peers addressed by socket
+ * path are just another session.
+ */
+export function agentMessageRecipientLabel(to: string): string {
+  if (to === "main") return "main agent";
+  if (to === "*") return "everyone";
+  if (to.startsWith("uds:")) return "another session";
+  if (CLAUDE_AGENT_ID_PATTERN.test(to)) return `agent ${to.slice(0, 7)}`;
+  // Peers can be addressed as `name [ref]`; the ref only disambiguates.
+  return to.replace(/\s*\[[^\]]*\]$/u, "") || to;
+}
+
+/**
+ * Heading for a Claude `SendMessage` call. The adapter passes the name of the
+ * subagent it resolved the recipient to; clients fall back to the raw address.
+ */
+export function claudeAgentMessageTitle(
+  toolName: string | null | undefined,
+  input: unknown,
+  recipientName?: string,
+): string | undefined {
+  const message = claudeAgentMessage(toolName, input);
+  if (message === undefined) return undefined;
+  const recipient =
+    recipientName ??
+    (message.to === undefined ? undefined : agentMessageRecipientLabel(message.to));
+  if (recipient === undefined) return "Message";
+  if (message.message === undefined && message.notifyWhenIdle) {
+    return `Notify when ${recipient} is idle`;
+  }
+  return `Message to ${recipient}`;
 }
 
 function recordHasKeys(

@@ -46,6 +46,8 @@ import type {
 } from "@t3tools/contracts";
 import { RunId, ThreadId } from "@t3tools/contracts";
 import {
+  claudeAgentMessage,
+  claudeAgentMessageTitle,
   classifyToolActivity,
   collectToolFilePaths,
   dynamicToolTitle,
@@ -473,6 +475,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     }
   }
   if (item.type === "dynamic_tool") {
+    if (item.toolName === "SendMessage") return "message";
+    if (item.toolName === "ListAgents") return "hammer";
     const classified = classifyToolActivity({
       itemType: "dynamic_tool_call",
       data: { toolName: item.toolName ?? undefined, input: item.input },
@@ -541,7 +545,11 @@ function itemSummary(
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
     (item.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : undefined) ??
-    item.title?.trim();
+    (item.title?.trim() ||
+      // Items from before the adapter titled agent messages still get a heading.
+      (item.type === "dynamic_tool"
+        ? claudeAgentMessageTitle(item.toolName, item.input)
+        : undefined));
   if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
@@ -735,9 +743,20 @@ function toFeedActivity(
     item.type === "dynamic_tool" && toolGroupAction(workEntry) === "read"
       ? collectToolFilePaths(item)
       : null;
+  const agentMessage =
+    item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
+  // An agent message expands to its body; an agent listing's result never
+  // reaches clients, so it has nothing to expand.
+  const plainDetail = readPaths
+    ? readPaths.join("\n") || null
+    : agentMessage
+      ? (agentMessage.message ?? null)
+      : item.type === "dynamic_tool" && item.toolName === "ListAgents"
+        ? null
+        : undefined;
   const getFullDetail = memoizeValue(() => {
-    if (readPaths) {
-      return readPaths.join("\n") || null;
+    if (plainDetail !== undefined) {
+      return plainDetail;
     }
     return JSON.stringify(
       {
@@ -765,7 +784,7 @@ function toFeedActivity(
     attemptId,
     summary,
     detail,
-    canExpand: !(item.type === "error" && item.status === "failed") && (readPaths?.length ?? 1) > 0,
+    canExpand: !(item.type === "error" && item.status === "failed") && plainDetail !== null,
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),

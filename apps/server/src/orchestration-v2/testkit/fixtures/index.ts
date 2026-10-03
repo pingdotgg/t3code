@@ -32,6 +32,8 @@ import { claudeNestedBackgroundSubagentWakeInput } from "./claude_nested_backgro
 import { assertClaudeNestedBackgroundSubagentWakeOutput } from "./claude_nested_background_subagent_wake/output.ts";
 import { claudeNestedSubagentModelInput } from "./claude_nested_subagent_model/input.ts";
 import { assertClaudeNestedSubagentModelOutput } from "./claude_nested_subagent_model/output.ts";
+import { claudeAgentMessageRefusedInput } from "./claude_agent_message_refused/input.ts";
+import { assertClaudeAgentMessageRefusedOutput } from "./claude_agent_message_refused/output.ts";
 import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/input.ts";
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
@@ -420,6 +422,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeNestedSubagentModelOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_agent_message_refused",
+    buildInput: claudeAgentMessageRefusedInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_agent_message_refused/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAgentMessageRefusedOutput,
       },
     ],
   },

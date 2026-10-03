@@ -95,6 +95,7 @@ export type ToolGroupAction =
   | "device"
   | "code-search"
   | "search"
+  | "message"
   | "other"
   | "update";
 
@@ -440,6 +441,9 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
       : typeof data.toolName === "string"
         ? data.toolName
         : entry.toolTitle;
+  // Claude's SendMessage, including inputs summarized for transport.
+  if (entry.structuredPayload?.type === "dynamic_tool" && toolName === "SendMessage")
+    return "message";
   const classified = classifyToolActivity({
     itemType:
       entry.itemType === "command_execution" ||
@@ -567,6 +571,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Searched the web ${count} ${count === 1 ? "time" : "times"}`;
     case "code-search":
       return `Searched code ${count} ${count === 1 ? "time" : "times"}`;
+    case "message":
+      return `Sent ${count} ${count === 1 ? "message" : "messages"}`;
     case "other":
       return `Used ${count} ${count === 1 ? "tool" : "tools"}`;
     case "update":

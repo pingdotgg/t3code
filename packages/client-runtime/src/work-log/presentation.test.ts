@@ -960,3 +960,36 @@ describe("device group summaries", () => {
     ).toBe("Used 1 tool");
   });
 });
+
+describe("agent messages", () => {
+  function sendMessage(
+    id: string,
+    status: "completed" | "failed",
+    input: unknown,
+  ): WorkLogPresentationEntry {
+    return {
+      id,
+      createdAt: "2026-10-02T00:00:00.000Z",
+      tone: "tool",
+      label: "Message to Agent A",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: status,
+      structuredPayload: {
+        type: "dynamic_tool",
+        toolName: "SendMessage",
+        input,
+      } as NonNullable<WorkLogPresentationEntry["structuredPayload"]>,
+    };
+  }
+
+  it("summarizes a run of messages, counting refused deliveries as failures", () => {
+    const delivered = sendMessage("one", "completed", { to: "main", message: "Done." });
+    // An input the server summarized for transport is still a message.
+    const summarized = sendMessage("two", "failed", '{ "to": "ghost-agent", …');
+    expect(summarizeToolGroup([delivered, summarized])).toEqual({
+      summary: "Sent 2 messages",
+      hasFailure: true,
+    });
+    expect(toolGroupSummaryKind([delivered, summarized])).toBe("message");
+  });
+});
