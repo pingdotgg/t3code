@@ -571,21 +571,34 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
           Effect.ignore,
         );
-        for (const [index, event] of committedCommand.committedEvents.entries()) {
-          yield* PubSub.publish(eventPubSub, event);
-          if (index === 0) {
-            yield* Metric.update(
-              Metric.withAttributes(
-                orchestrationCommandAckDuration,
-                metricAttributes({
-                  ...baseMetricAttributes,
-                  ackEventType: event.type,
-                }),
-              ),
-              Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
-            );
-          }
-        }
+        // Uninterruptible from here: the transaction has already committed, so
+        // every event below is durable whether or not this fiber survives. An
+        // interrupt in the middle would strand committed events that nothing
+        // re-publishes — the in-memory read model would advance past events no
+        // live subscriber ever received, and only a full snapshot resync would
+        // repair it. Publication is pure in-memory fan-out with no I/O, so making
+        // it atomic costs nothing and cannot wedge shutdown. Projection
+        // reconciliation above deliberately stays interruptible: it is slow,
+        // SQL-backed, and already carries its own durable repair path.
+        yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            for (const [index, event] of committedCommand.committedEvents.entries()) {
+              yield* PubSub.publish(eventPubSub, event);
+              if (index === 0) {
+                yield* Metric.update(
+                  Metric.withAttributes(
+                    orchestrationCommandAckDuration,
+                    metricAttributes({
+                      ...baseMetricAttributes,
+                      ackEventType: event.type,
+                    }),
+                  ),
+                  Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
+                );
+              }
+            }
+          }),
+        );
         return dispatchResult(
           admittedCommand,
           committedCommand.lastSequence,
