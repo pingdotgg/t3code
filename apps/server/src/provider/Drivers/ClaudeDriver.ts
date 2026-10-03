@@ -75,12 +75,15 @@ const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 
+/**
+ * POSIX native launchers symlink into `~/.local/share/claude/`, so a plain
+ * `~/.local/bin/claude` is a wrapper (e.g. Omarchy's mise) whose `claude update`
+ * does nothing. Windows copies `claude.exe` there instead of linking it.
+ */
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
-    normalized.endsWith("/.local/bin/claude") ||
-    normalized.endsWith("/.local/bin/claude.exe") ||
-    normalized.includes("/.local/share/claude/")
+    normalized.endsWith("/.local/bin/claude.exe") || normalized.includes("/.local/share/claude/")
   );
 }
 
