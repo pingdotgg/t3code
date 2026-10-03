@@ -24,6 +24,7 @@ export * from "./gitHubUsage.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./orchestration.ts";
+export * from "./threadContext.ts";
 export * from "./workflowRuntime.ts";
 export * from "./editor.ts";
 export * from "./project.ts";

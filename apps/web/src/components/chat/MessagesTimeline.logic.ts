@@ -3,10 +3,57 @@ import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../..
 import {
   type DelegationAuditEvent,
   type MessageId,
+  type ThreadContextRecord,
   type TurnId,
   type WorkspaceHandoffOrigin,
 } from "@t3tools/contracts";
 import { isReviewOutputText } from "@t3tools/shared/workflows/reviewOutput";
+import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+
+export interface TimelineThreadContextChip {
+  /** Context identity: stable React key and record binding, never the label. */
+  key: string;
+  title: string;
+  /** True when no record backs the reference: render as unavailable, never as a live thread. */
+  unavailable: boolean;
+}
+
+/**
+ * Chips for one timeline message, in first-reference order. Every inline
+ * reference resolves to its structured record (live title with label
+ * fallback) or is marked unavailable when the record is gone. Unreferenced
+ * records are never surfaced: they were never sent to the provider.
+ */
+export function selectTimelineThreadContextChips(message: {
+  text: string;
+  context?: { records?: ReadonlyArray<ThreadContextRecord> } | undefined;
+}): TimelineThreadContextChip[] {
+  const recordsById = new Map<string, ThreadContextRecord>();
+  for (const record of message.context?.records ?? []) {
+    const key = String(record.contextId);
+    if (!recordsById.has(key)) recordsById.set(key, record);
+  }
+  const chips: TimelineThreadContextChip[] = [];
+  const seen = new Set<string>();
+  for (const occurrence of collectThreadContextReferences(message.text)) {
+    const key = String(occurrence.contextId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const record = recordsById.get(key);
+    if (!record) {
+      chips.push({ key, title: occurrence.label, unavailable: true });
+      continue;
+    }
+    const title =
+      record.title?.trim().length > 0
+        ? record.title
+        : record.label?.trim().length > 0
+          ? record.label
+          : occurrence.label;
+    chips.push({ key, title, unavailable: false });
+  }
+  return chips;
+}
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 export const EMPTY_REVIEW_OUTPUT_MESSAGE_IDS: ReadonlySet<string> = new Set();

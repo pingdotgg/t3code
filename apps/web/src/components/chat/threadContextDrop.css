@@ -1,0 +1,12 @@
+/* Thread-context drop target highlight. The sidebar bridge toggles
+ * `data-thread-context-over` on the composer form while a thread drag hovers
+ * it; `data-thread-context-drop-disabled` marks busy/unsupported composers. */
+.thread-context-drop-target[data-thread-context-over="true"] {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 12px;
+}
+
+.thread-context-drop-target[data-thread-context-drop-disabled="true"] {
+  outline: none;
+}
