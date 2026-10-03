@@ -12,6 +12,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  Cause,
   Data,
   Deferred,
   Effect,
@@ -36,6 +37,7 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { ServerShutdownMarkerRepository } from "./persistence/Services/ServerShutdownMarker.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { readCliDesiredCloudLink } from "./cloud/CliState.ts";
@@ -88,6 +90,18 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
   Exit.isSuccess(exit)
     ? Deferred.succeed(deferred, exit.value)
     : Deferred.failCause(deferred, exit.cause);
+
+export /**
+ * Whether this exit should leave the shutdown marker set.
+ *
+ * Success counts. So does an interruption with no typed failure or defect:
+ * that is how NodeRuntime reports SIGINT/SIGTERM, which are ordinary shutdowns
+ * rather than crashes. Anything else is a real failure.
+ */
+function isGracefulRuntimeExit(exit: Exit.Exit<unknown, unknown>): boolean {
+  if (Exit.isSuccess(exit)) return true;
+  return Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause);
+}
 
 export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
@@ -355,6 +369,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
+  const shutdownMarker = yield* ServerShutdownMarkerRepository;
   const agentAwarenessRelay = yield* AgentAwarenessRelay;
 
   const commandGate = yield* makeCommandGate;
@@ -367,6 +382,31 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
     port: serverConfig.port,
   });
 
+  // Scope finalizers run last-registered-first, so this is registered first to
+  // run last: the marker is written only after the reactors have been stopped
+  // and everything flushed. A kill between that point and process exit still
+  // leaves the marker unset, which is what keeps the next boot holding queues.
+  //
+  // "Clean" means the runtime finished or was asked to stop, not that it
+  // succeeded. NodeRuntime interrupts the main fiber on SIGINT/SIGTERM so scoped
+  // finalizers can run, so an ordinary desktop quit or terminal Ctrl-C arrives
+  // here as an *interrupted* exit, not a success. Gating on `Exit.isSuccess`
+  // would classify every normal shutdown as a crash and hold all restored
+  // queues. Only a genuine failure or defect — an unhandled error or a thrown
+  // defect — leaves the marker unset.
+  yield* Effect.addFinalizer((exit) =>
+    isGracefulRuntimeExit(exit)
+      ? shutdownMarker.recordCleanShutdown(new Date().toISOString()).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to record clean shutdown", {
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        )
+      : Effect.logWarning("server exited with a failure; next boot will hold queued messages", {
+          reason: Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "unknown",
+        }).pipe(Effect.asVoid),
+  );
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
   yield* Effect.addFinalizer((exit) =>
     Effect.logInfo("server.stop", {

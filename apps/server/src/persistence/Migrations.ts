@@ -119,6 +119,7 @@ import Migration0114 from "./Migrations/114_RepairThreadContextHistory.ts";
 import Migration0115 from "./Migrations/115_GitActivityLedger.ts";
 import Migration0116 from "./Migrations/116_CollaborativeAcceptancePullRequestLookup.ts";
 import Migration0117 from "./Migrations/117_PendingPullRequestFeedbackIndex.ts";
+import Migration0118 from "./Migrations/118_QueueHoldAndShutdownMarker.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -237,6 +238,7 @@ export const migrationEntries = [
   [115, "GitActivityLedger", Migration0115],
   [116, "CollaborativeAcceptancePullRequestLookup", Migration0116],
   [117, "PendingPullRequestFeedbackIndex", Migration0117],
+  [118, "QueueHoldAndShutdownMarker", Migration0118],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

@@ -427,6 +427,7 @@ export interface ChatComposerProps {
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
   queuedTurns: OrchestrationQueuedTurn[];
+  queueHeldAt: string | null;
   activePendingProgress: {
     questionIndex: number;
     isLastQuestion: boolean;
@@ -492,6 +493,8 @@ export interface ChatComposerProps {
     context?: OrchestrationMessageContext,
   ) => void;
   onDeleteQueuedTurn: (queuedTurnId: QueuedTurnId) => void;
+  onMoveQueuedTurn: (queuedTurnId: QueuedTurnId, direction: -1 | 1) => void;
+  onReleaseQueue: () => void;
   onSelectActivePendingUserInputOption: (questionId: string, optionLabel: string) => void;
   onAdvanceActivePendingUserInput: () => void;
   onPreviousActivePendingUserInputQuestion: () => void;
@@ -575,6 +578,9 @@ export const ChatComposer = memo(
       onRespondToApproval,
       onUpdateQueuedTurn,
       onDeleteQueuedTurn,
+      onMoveQueuedTurn,
+      onReleaseQueue,
+      queueHeldAt,
       onSelectActivePendingUserInputOption,
       onAdvanceActivePendingUserInput,
       onPreviousActivePendingUserInputQuestion,
@@ -674,10 +680,6 @@ export const ChatComposer = memo(
       settings.providerInstances,
       settings.copilotAutomaticPrFeedback,
     ]);
-    const messageQueue = useMemo(
-      () => queuedTurns.filter((turn) => turn.origin?.kind !== "child-nudge"),
-      [queuedTurns],
-    );
     const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
 
     const unlockedSelectedProvider =
@@ -2568,13 +2570,16 @@ export const ChatComposer = memo(
             {activePendingApproval || pendingUserInputs.length > 0 ? null : (
               <QueuedMessagesPanel
                 policyBlocks={queuedPolicyBlocks}
-                queuedTurns={messageQueue}
+                queuedTurns={queuedTurns}
+                queueHeldAt={queueHeldAt}
                 editingQueuedTurnId={editingQueuedTurn?.id ?? null}
                 editingText={editingQueuedTurn?.text ?? ""}
                 onStartEditingQueuedTurn={startEditingQueuedTurn}
                 onCancelEditingQueuedTurn={stopEditingQueuedTurn}
                 onSaveEditingQueuedTurn={saveEditingQueuedTurn}
                 onDeleteQueuedTurn={onDeleteQueuedTurn}
+                onMoveQueuedTurn={onMoveQueuedTurn}
+                onReleaseQueue={onReleaseQueue}
               />
             )}
 

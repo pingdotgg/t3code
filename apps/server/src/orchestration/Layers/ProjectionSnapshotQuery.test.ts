@@ -564,6 +564,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          queueHeldAt: null,
           pinnedAt: "2026-02-24T00:00:02.500Z",
           pinOrderKey: "a0",
           titleRegeneration: {
@@ -696,6 +697,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          queueHeldAt: null,
           pinnedAt: "2026-02-24T00:00:02.500Z",
           pinOrderKey: "a0",
           titleRegeneration: {

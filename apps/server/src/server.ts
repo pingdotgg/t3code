@@ -144,6 +144,7 @@ import { layer as pullRequestMonitorReviewHandoffReactorLayer } from "./pullRequ
 import { layer as createdPullRequestReviewReactorLayer } from "./pullRequestMonitor/CreatedPullRequestReviewReactor.ts";
 import { layer as reviewThreadMergeArchiveReactorLayer } from "./pullRequestMonitor/ReviewThreadMergeArchiveReactor.ts";
 import { ProjectionStateRepositoryLive } from "./persistence/Layers/ProjectionState.ts";
+import { ServerShutdownMarkerRepositoryLive } from "./persistence/Layers/ServerShutdownMarker.ts";
 import { PullRequestCreationIntentRepositoryLive } from "./persistence/Layers/PullRequestCreationIntents.ts";
 import { CollaborativeAcceptanceRepositoryLive } from "./persistence/Layers/CollaborativeAcceptance.ts";
 import { CollaborativeAcceptanceCoordinatorLive } from "./collaborativeAcceptance/Coordinator.ts";
@@ -248,6 +249,7 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ValidationCoordinatorWiredLive),
   Layer.provideMerge(ReviewSnapshotVerifierLive),
   Layer.provideMerge(ProjectionWorkflowRepositoryLive),
+  Layer.provideMerge(ServerShutdownMarkerRepositoryLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(RuntimeReceiptBusLive),
   Layer.provideMerge(createdPullRequestReviewReactorLayer),
@@ -273,6 +275,7 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 );
 
 export const PersistenceLayerLive = PullRequestCreationIntentRepositoryLive.pipe(
+  Layer.provideMerge(ServerShutdownMarkerRepositoryLive),
   Layer.provideMerge(CollaborativeAcceptanceRepositoryLive),
   Layer.provideMerge(
     GitActivityLedgerLive.pipe(Layer.provideMerge(ProjectionThreadPullRequestRepositoryLive)),

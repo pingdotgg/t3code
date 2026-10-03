@@ -30,6 +30,7 @@ it.effect("repairs skipped chronology indexes above the existing migration high-
       [115, "GitActivityLedger"],
       [116, "CollaborativeAcceptancePullRequestLookup"],
       [117, "PendingPullRequestFeedbackIndex"],
+      [118, "QueueHoldAndShutdownMarker"],
     ]);
     yield* repair;
     assert.deepStrictEqual(yield* runMigrations(), []);

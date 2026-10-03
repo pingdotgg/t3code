@@ -127,6 +127,8 @@ export interface Thread {
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
   queuedTurns?: OrchestrationQueuedTurn[];
+  /** Set while crash recovery holds the queue; cleared on explicit resume. */
+  queueHeldAt?: string | null;
   error: string | null;
   createdAt: string;
   archivedAt: string | null;
@@ -174,6 +176,11 @@ export interface ThreadShell {
   settledAt?: string | null;
   snoozedUntil?: string | null;
   snoozedAt?: string | null;
+  /**
+   * Set while crash recovery holds the queue. The thread selectors rebuild from
+   * the shell slice, so this must live here or the Resume control never sees it.
+   */
+  queueHeldAt?: string | null;
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
