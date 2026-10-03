@@ -35,6 +35,13 @@ const DESKTOP_AUTH = {
   sessionCookieName: "t3_session",
 } as const;
 
+const REMOTE_AUTH = {
+  policy: "remote-reachable",
+  bootstrapMethods: ["one-time-token"],
+  sessionMethods: ["browser-session-cookie"],
+  sessionCookieName: "t3_session",
+} as const;
+
 const SESSION_EXPIRES_AT = DateTime.makeUnsafe("2026-04-05T00:00:00.000Z");
 const unauthenticatedSession = (auth: AuthSessionState["auth"]): AuthSessionState => ({
   authenticated: false,
@@ -267,6 +274,64 @@ describe("resolveInitialServerAuthGateState", () => {
       auth: LOOPBACK_AUTH,
     });
     expect(attempts).toBe(4);
+  });
+
+  it("degrades to requires-auth instead of crashing beforeLoad when the initial session fetch fails", async () => {
+    // Reproduces the launch crash: the initial fetchSessionState() goes
+    // through the desktop bearer-token path, and a failed bearer bootstrap
+    // surfaced as an uncaught error in beforeLoad. The fix wraps the initial
+    // fetch so a failure degrades to requires-auth with an error message.
+    const runner: PrimaryHttpEffectRunner = async () => {
+      throw new Error("Failed to create the local desktop bearer session.");
+    };
+    __setPrimaryHttpRunnerForTests(runner);
+    installDesktopBootstrap();
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    // fetchSessionState wraps the thrown error as a PrimaryEnvironmentRequestError
+    // (status 500 for a non-HTTP cause). The important behavior is that the gate
+    // resolves to requires-auth instead of rejecting — before the fix this
+    // rejection crashed TanStack Router's beforeLoad.
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: DESKTOP_AUTH,
+      errorMessage: "Primary environment request failed during fetch-session-state (HTTP 500).",
+    });
+  });
+
+  it("uses loopback-browser fallback metadata when the session fetch fails without a desktop bridge", async () => {
+    const runner: PrimaryHttpEffectRunner = async () => {
+      throw new Error("session fetch failed");
+    };
+    __setPrimaryHttpRunnerForTests(runner);
+    installTestBrowser("http://localhost/");
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+      errorMessage: "Primary environment request failed during fetch-session-state (HTTP 500).",
+    });
+  });
+
+  it("uses remote-reachable fallback metadata when the session fetch fails on a remote origin", async () => {
+    const runner: PrimaryHttpEffectRunner = async () => {
+      throw new Error("session fetch failed");
+    };
+    __setPrimaryHttpRunnerForTests(runner);
+    vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");
+    vi.stubEnv("VITE_WS_URL", "wss://remote.example.com");
+    installTestBrowser("https://remote.example.com/");
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: REMOTE_AUTH,
+      errorMessage: "Primary environment request failed during fetch-session-state (HTTP 500).",
+    });
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {
