@@ -82,7 +82,21 @@ the thread's non-default branch and that a newer run is not active.
 [Checkpoints](../../apps/server/src/checkpointing/CheckpointStore.ts) use hidden Git refs to
 capture workspace state without adding commits to the user's branch. A revert must coordinate
 workspace state with the provider conversation. A provider that cannot roll back its conversation
-must reject that operation before changing the filesystem.
+must reject that operation before changing the filesystem. Deleting a thread queues a
+[checkpoint cleanup effect](../../apps/server/src/orchestration-v2/ResourceCleanupService.ts) that
+removes the thread's refs in one Git transaction per target directory, so a held lock costs one
+timeout per target rather than one per ref. The effect reads the recorded refs when it runs, after
+any capture queued ahead of it in the thread's lane, and a capture that starts after deletion
+writes nothing, so the checkpoint of a cancelled run cannot slip past it. The project root is
+always a target: a worktree shares its refs with the project repository and is often removed before the
+thread is, and ref names derive from the thread's own scope ids, so no other thread's refs can be
+touched. The effect retries through the outbox, and when the last attempt still fails, usually on a held Git lock, the effect settles as
+succeeded and logs the refs it left behind. That is the state every deleted thread was in before
+the effect existed, and it keeps the thread's worktree removal unblocked. A deferred retry needs a
+record of deleted threads that is safe when a dev worktree shares its database with the live
+install, and does not exist yet. Thread ids are client-generated and random, so the window in
+which a thread re-created under a deleted thread's id could lose refs to that thread's pending
+cleanup is accepted rather than guarded.
 
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR

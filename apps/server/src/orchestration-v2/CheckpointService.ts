@@ -547,10 +547,21 @@ export const layer: Layer.Layer<
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
-        }),
+        checkpointStore
+          .deleteCheckpointRefs({
+            cwd: input.scope.cwd,
+            checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          })
+          .pipe(
+            // The workspace is already restored; a lock on a stale ref must not
+            // fail the rollback. The refs stay behind, as before.
+            Effect.catchTag("VcsProcessExitError", (error) =>
+              Effect.logWarning("Stale checkpoint refs were left behind after rollback", {
+                scopeId: input.scope.id,
+                error,
+              }),
+            ),
+          ),
       ).pipe(
         Effect.mapError(
           (cause) =>

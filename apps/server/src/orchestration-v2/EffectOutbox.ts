@@ -95,6 +95,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
+  Schema.Struct({ type: Schema.Literal("checkpoint.cleanup") }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
@@ -112,6 +113,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "attachment.cleanup",
+  "checkpoint.cleanup",
   "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 

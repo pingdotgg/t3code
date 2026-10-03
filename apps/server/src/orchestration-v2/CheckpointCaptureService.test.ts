@@ -485,6 +485,80 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
+  // Deletion cancels the run while its capture is still queued. The thread's
+  // cleanup only deletes recorded refs, so capture must not write a new one.
+  it.effect("captures nothing for a deleted thread", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const deletedThreadId = ThreadId.make("thread:checkpoint-capture-deleted");
+      const thread = {
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: deletedThreadId,
+        projectId,
+        title: "Checkpoint capture after delete",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: deletedThreadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-deleted:thread"),
+        type: "thread.created",
+        threadId: deletedThreadId,
+        occurredAt: now,
+        payload: thread,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-deleted:deleted"),
+        type: "thread.deleted",
+        threadId: deletedThreadId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, deletedAt: now, titleRegeneration: null },
+      });
+      const captureLayer = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              materializeBaselineCheckpoint: () => Effect.die("deleted thread must not capture"),
+              capture: () => Effect.die("deleted thread must not capture"),
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: () => Effect.die("deleted thread must not commit"),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        yield* service.execute({
+          threadId: deletedThreadId,
+          runId: RunId.make("run:checkpoint-capture-deleted"),
+          scopeId: CheckpointScopeId.make("scope:checkpoint-capture-deleted"),
+        });
+      }).pipe(Effect.provide(captureLayer));
+    }),
+  );
+
   // A cancelled run's checkpoint is the rollback point for the message after
   // it, so capture records it without reporting the run as completed.
   it.effect("records the checkpoint of a cancelled run and keeps it cancelled", () =>

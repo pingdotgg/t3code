@@ -65,8 +65,12 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals } =
+      const { threadDeletedAt, run, rootNode, scope, providerThread, readyCheckpointOrdinals } =
         yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      // Deletion cancels the run while its capture is queued or waiting to
+      // retry. The thread's checkpoint.cleanup removes only the refs it finds
+      // recorded when it runs, so a ref written now would stay behind.
+      if (threadDeletedAt !== null) return;
       // A stopped run is already terminal. Its checkpoint is the rollback point
       // for the message after it, so capture leaves its status alone.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";

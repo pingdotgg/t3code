@@ -22,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -79,6 +80,7 @@ function restartEffect(
 function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
+  readonly resourceCleanup?: (typeof ResourceCleanupService.ResourceCleanupService)["Service"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -150,6 +152,14 @@ function makeExecutorLayer(input: {
         dependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
         ServerSettings.layerTest(),
+        Layer.succeed(
+          ResourceCleanupService.ResourceCleanupService,
+          input.resourceCleanup ?? {
+            cleanupTerminals: () => Effect.void,
+            cleanupAttachments: () => Effect.void,
+            cleanupCheckpointRefs: () => Effect.void,
+          },
+        ),
       ),
     ),
   );
@@ -719,6 +729,57 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
     yield* TestClock.adjust("1 millis");
     while ((yield* Ref.get(attempts)) < 2) yield* Effect.yieldNow;
   }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("checkpoint cleanup fails while a retry follows and settles on the last attempt", () =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const attempts = yield* Ref.make(0);
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:checkpoint-cleanup",
+      commandId: CommandId.make("command:checkpoint-cleanup"),
+      threadId,
+      request: { type: "checkpoint.cleanup" },
+      status: "running",
+      attemptCount: 1,
+      availableAt: now,
+      leaseOwner: "test-worker",
+      leaseExpiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      lastError: null,
+    };
+    const layer = makeExecutorLayer({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      resourceCleanup: {
+        cleanupTerminals: () => Effect.void,
+        cleanupAttachments: () => Effect.void,
+        cleanupCheckpointRefs: () =>
+          Ref.update(attempts, (count) => count + 1).pipe(
+            Effect.andThen(
+              new ResourceCleanupService.ResourceCleanupError({
+                operation: "checkpoint",
+                cwd: "/repo",
+                cause: "simulated ref lock",
+              }),
+            ),
+          ),
+      },
+    });
+
+    const exits = yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      return {
+        retrying: yield* Effect.exit(executor.execute(effect, { willRetry: true })),
+        last: yield* Effect.exit(executor.execute(effect, { willRetry: false })),
+      };
+    }).pipe(Effect.provide(layer));
+
+    assert.isTrue(Exit.isFailure(exits.retrying));
+    assert.isTrue(Exit.isSuccess(exits.last));
+    assert.equal(yield* Ref.get(attempts), 2);
+  }),
 );
 
 it.effect("safely retries after replacement cleanup succeeds and start fails", () =>

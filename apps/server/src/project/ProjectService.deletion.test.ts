@@ -197,9 +197,13 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.lengthOf(partialEvents, 1);
       assert.equal(partialEvents[0]?.stream_id, firstThreadId);
       assert.equal(partialEvents[0]?.event_type, "thread.deleted");
-      assert.lengthOf(partialCleanup, 1);
-      assert.equal(partialCleanup[0]?.thread_id, firstThreadId);
-      assert.equal(partialCleanup[0]?.effect_type, "terminal.cleanup");
+      assert.deepEqual(
+        partialCleanup.map((row) => [row.thread_id, row.effect_type]),
+        [
+          [firstThreadId, "checkpoint.cleanup"],
+          [firstThreadId, "terminal.cleanup"],
+        ],
+      );
 
       const deletedProject = yield* service.delete(input);
       assert.isNotNull(deletedProject.deletedAt);
@@ -220,7 +224,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 2);
+      assert.lengthOf(finalCleanup, 4);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
@@ -229,14 +233,12 @@ it.effect("retries a partial project deletion without repeating child events or 
         const expectedCommandId = `${commandId}:delete-thread:${threadId}`;
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
-          [
-            {
-              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
-              thread_id: threadId,
-              command_id: expectedCommandId,
-              effect_type: "terminal.cleanup",
-            },
-          ],
+          ["checkpoint.cleanup", "terminal.cleanup"].map((effectType) => ({
+            effect_id: `effect:${expectedCommandId}:${effectType}`,
+            thread_id: threadId,
+            command_id: expectedCommandId,
+            effect_type: effectType,
+          })),
         );
       }
     }).pipe(Effect.provide(servicesLayer));

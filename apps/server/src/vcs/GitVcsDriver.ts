@@ -416,6 +416,9 @@ const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+// Checkpoint refs live under refs/t3/. A ref from a corrupt record must never
+// reach a transaction that could delete a branch or tag.
+const isCheckpointRefName = (ref: string) => ref.startsWith("refs/t3/") && !ref.includes("\0");
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -1215,17 +1218,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
-        yield* Effect.forEach(
-          input.checkpointRefs,
-          (checkpointRef) =>
-            execute({
-              operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
-              cwd: input.cwd,
-              args: ["update-ref", "-d", checkpointRef],
-              allowNonZeroExit: true,
-            }),
-          { discard: true },
-        );
+        const checkpointRefs = input.checkpointRefs.filter(isCheckpointRefName);
+        if (checkpointRefs.length === 0) return;
+        // One transaction per call takes the packed-refs lock once, so a held
+        // lock costs one timeout per call instead of one per ref. Deleting a
+        // missing ref is a no-op; any other non-zero exit, such as a lock, fails
+        // the whole batch and the caller decides whether to retry. Without
+        // --no-deref, Git deletes the target of a symbolic ref instead of the
+        // ref itself, so a symbolic ref planted in our namespace could delete a
+        // branch.
+        yield* execute({
+          operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+          cwd: input.cwd,
+          args: [...durableWrite, "update-ref", "--no-deref", "-z", "--stdin"],
+          stdin: checkpointRefs.map((checkpointRef) => `delete ${checkpointRef}\0\0`).join(""),
+        });
       },
     ),
   };

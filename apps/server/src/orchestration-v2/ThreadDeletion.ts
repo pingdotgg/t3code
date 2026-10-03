@@ -224,5 +224,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       request: { type: "attachment.cleanup", attachmentIds },
     });
   }
+  // Checkpoint refs live in the repository, not the thread, so nothing else
+  // removes them. The effect reads the thread's recorded refs when it runs,
+  // after any capture queued ahead of it in the thread's lane, so a checkpoint
+  // captured for a cancelled run is removed too.
+  effects.push({
+    id: `effect:${command.commandId}:checkpoint.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "checkpoint.cleanup" },
+  });
   return { events, effects };
 });
