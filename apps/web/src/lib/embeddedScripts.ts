@@ -258,15 +258,17 @@ function programIndex(words: ReadonlyArray<Word>): number {
     const valueOptions = PROGRAM_WRAPPERS[programName(words[index]!)];
     if (!valueOptions) return index;
     index += 1;
+    let optionsEnded = false;
     while (index < words.length) {
       const value = words[index]!.value;
-      if (value === "--") {
-        index += 1;
+      const isOption = !optionsEnded && value.startsWith("-");
+      if (isOption && value === "--") optionsEnded = true;
+      // `env -- FOO=1 cmd` still takes assignments after the options end.
+      if (isOption || /^[A-Za-z_]\w*=/u.test(value)) {
+        index += isOption && valueOptions.has(value) ? 2 : 1;
+      } else {
         break;
       }
-      if (valueOptions.has(value)) index += 2;
-      else if (value.startsWith("-") || /^[A-Za-z_]\w*=/u.test(value)) index += 1;
-      else break;
     }
   }
   return index;
@@ -289,14 +291,12 @@ function commandScripts(
   let readsStdinScript = false;
   if (interpreter) {
     const { script, scriptFromFile } = interpreterArgs(interpreter, args);
-    if (script) {
-      const mapped = wordText(script, source);
-      if (mapped) scripts.push({ language: interpreter.language, mapped });
+    const mapped = script && wordText(script.word, source);
+    if (mapped) {
+      const start = script.inValue ? mapped.text.indexOf("=") + 1 : 0;
+      scripts.push({ language: interpreter.language, mapped: sliceMapped(mapped, start) });
     }
-    readsStdinScript =
-      interpreter.stdin === "always"
-        ? !script
-        : interpreter.stdin === "without-script-file" && !script && !scriptFromFile;
+    readsStdinScript = interpreter.stdin !== "never" && !script && !scriptFromFile;
   }
 
   const stdinLanguage = readsStdinScript ? interpreter?.language : undefined;
@@ -320,12 +320,20 @@ function isStdinDescriptor(descriptor: NonNullable<HereDoc["descriptor"]>): bool
   return descriptor.type === "FileDescriptor" && descriptor.value === 0;
 }
 
+interface ScriptArgument {
+  readonly word: Word;
+  /** The script follows the `=` of `--eval=…` rather than filling the word. */
+  readonly inValue: boolean;
+}
+
 /** The inline script argument, and whether the script comes from a file instead. */
 function interpreterArgs(
   interpreter: Interpreter,
   args: ReadonlyArray<Word>,
-): { script: Word | undefined; scriptFromFile: boolean } {
+): { script: ScriptArgument | undefined; scriptFromFile: boolean } {
   const positionals: Word[] = [];
+  const asScript = (word: Word | undefined) =>
+    word && { script: { word, inValue: false }, scriptFromFile: false };
   let optionsEnded = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -335,10 +343,16 @@ function interpreterArgs(
       continue;
     }
     if (!optionsEnded && flag.startsWith("-") && flag !== "-") {
-      if (interpreter.inline(flag)) return { script: args[index + 1], scriptFromFile: false };
-      if (interpreter.scriptFileOptions?.has(flag))
+      // `--eval=code` and `--file=path` carry their value in the same word.
+      const [name = flag, value] = flag.startsWith("--") ? flag.split(/=(.*)/su) : [flag];
+      if (interpreter.scriptFileOptions?.has(name)) {
         return { script: undefined, scriptFromFile: true };
-      if (interpreter.valueOptions?.has(flag)) index += 1;
+      }
+      if (interpreter.inline(name)) {
+        if (value === undefined) return asScript(args[index + 1]) ?? noScript;
+        return { script: { word: arg, inValue: true }, scriptFromFile: false };
+      }
+      if (value === undefined && interpreter.valueOptions?.has(flag)) index += 1;
       continue;
     }
     positionals.push(arg);
@@ -348,14 +362,27 @@ function interpreterArgs(
 
   if (interpreter.subcommand) {
     return positionals[0]?.value === interpreter.subcommand
-      ? { script: positionals[1], scriptFromFile: false }
+      ? (asScript(positionals[1]) ?? noScript)
       : { script: undefined, scriptFromFile: true };
   }
   if (interpreter.positionalScript !== undefined) {
-    return { script: positionals[interpreter.positionalScript], scriptFromFile: false };
+    return asScript(positionals[interpreter.positionalScript]) ?? noScript;
   }
+  // SQL shells take databases as positional arguments, not script files.
+  if (interpreter.stdin === "always") return noScript;
   const first = positionals[0];
   return { script: undefined, scriptFromFile: first !== undefined && first.value !== "-" };
+}
+
+const noScript = { script: undefined, scriptFromFile: false };
+
+function sliceMapped(mapped: MappedText, start: number): MappedText {
+  if (start === 0) return mapped;
+  return {
+    text: mapped.text.slice(start),
+    starts: mapped.starts.slice(start),
+    ends: mapped.ends.slice(start),
+  };
 }
 
 /** The language of the file `cat > file` or `tee file` writes its stdin to. */
