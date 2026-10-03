@@ -18,7 +18,9 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
+  intervalScheduleFromDraft,
   matchesScheduledTaskScope,
+  SCHEDULED_TASK_INTERVAL_UNIT_MS,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
 
@@ -165,6 +167,35 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("scheduled task interval units", () => {
+  it.each([
+    ["minutes", "7"],
+    ["hours", "3"],
+    ["days", "2"],
+    ["months", "4"],
+  ] as const)("converts %s values to the existing millisecond schedule", (unit, value) => {
+    expect(intervalScheduleFromDraft(value, unit)).toEqual({
+      type: "interval",
+      everyMs: Number(value) * SCHEDULED_TASK_INTERVAL_UNIT_MS[unit],
+    });
+  });
+
+  it.each([
+    [60_000, "1", "minutes"],
+    [3 * 60 * 60_000, "3", "hours"],
+    [2 * 24 * 60 * 60_000, "2", "days"],
+    [60 * 24 * 60 * 60_000, "2", "months"],
+    [90 * 60_000, "90", "minutes"],
+  ] as const)("restores %i milliseconds as %s %s", (everyMs, intervalValue, intervalUnit) => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "interval", everyMs },
+    });
+    expect(draft.intervalValue).toBe(intervalValue);
+    expect(draft.intervalUnit).toBe(intervalUnit);
   });
 });
 

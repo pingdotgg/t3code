@@ -47,6 +47,8 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   matchesScheduledTaskScope,
+  SCHEDULED_TASK_INTERVAL_UNIT_MS,
+  intervalScheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
   type DraftState,
@@ -99,7 +101,8 @@ const EMPTY_DRAFT: DraftState = {
   prompt: "",
   enabled: true,
   scheduleMode: "fixed",
-  intervalMinutes: "15",
+  intervalValue: "15",
+  intervalUnit: "minutes",
   timeOfDay: "09:00",
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
@@ -150,8 +153,7 @@ function splitModelKey(value: string): ModelSelection | null {
 
 function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
   if (draft.scheduleMode === "interval") {
-    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
-    return { type: "interval", everyMs };
+    return intervalScheduleFromDraft(draft.intervalValue, draft.intervalUnit);
   }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
@@ -163,10 +165,14 @@ function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "interval") {
-    const minutes = schedule.everyMs / 60_000;
-    return Number.isInteger(minutes)
-      ? `Every ${minutes} min`
-      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+    const intervalUnit = (["months", "days", "hours", "minutes"] as const).find(
+      (unit) => schedule.everyMs % SCHEDULED_TASK_INTERVAL_UNIT_MS[unit] === 0,
+    );
+    if (!intervalUnit) return `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+    const interval = schedule.everyMs / SCHEDULED_TASK_INTERVAL_UNIT_MS[intervalUnit];
+    if (intervalUnit === "minutes") return `Every ${interval} min`;
+    const label = intervalUnit === "hours" ? "hour" : intervalUnit === "days" ? "day" : "month";
+    return `Every ${interval} ${label}${interval === 1 ? "" : "s"}`;
   }
   const weekdays = schedule.weekdays ?? [];
   const days =
@@ -882,12 +888,33 @@ function ScheduledTaskEditorDialog({
                     min={1}
                     step="any"
                     className="w-24"
-                    value={draft.intervalMinutes}
+                    value={draft.intervalValue}
                     onChange={(event) =>
-                      setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
+                      setDraft((current) => ({ ...current, intervalValue: event.target.value }))
                     }
                   />
-                  <span className="text-xs text-muted-foreground">minutes</span>
+                  <Select
+                    value={draft.intervalUnit}
+                    onValueChange={(value) => {
+                      if (
+                        value === "minutes" ||
+                        value === "hours" ||
+                        value === "days" ||
+                        value === "months"
+                      )
+                        setDraft((current) => ({ ...current, intervalUnit: value }));
+                    }}
+                  >
+                    <SelectTrigger aria-label="Interval unit" className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectItem value="minutes">Minutes</SelectItem>
+                      <SelectItem value="hours">Hours</SelectItem>
+                      <SelectItem value="days">Days</SelectItem>
+                      <SelectItem value="months">Months</SelectItem>
+                    </SelectPopup>
+                  </Select>
                 </div>
               )}
             </div>

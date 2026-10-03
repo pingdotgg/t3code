@@ -45,6 +45,24 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 
 type ScheduleMode = "fixed" | "interval";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
+export type ScheduledTaskIntervalUnit = "minutes" | "hours" | "days" | "months";
+
+export const SCHEDULED_TASK_INTERVAL_UNIT_MS: Record<ScheduledTaskIntervalUnit, number> = {
+  minutes: 60_000,
+  hours: 60 * 60_000,
+  days: 24 * 60 * 60_000,
+  months: 30 * 24 * 60 * 60_000,
+};
+
+export function intervalScheduleFromDraft(
+  intervalValue: string,
+  intervalUnit: ScheduledTaskIntervalUnit,
+) {
+  return {
+    type: "interval" as const,
+    everyMs: Math.round(Number(intervalValue) * SCHEDULED_TASK_INTERVAL_UNIT_MS[intervalUnit]),
+  };
+}
 
 export interface DraftState {
   readonly editingId: string | null;
@@ -52,7 +70,8 @@ export interface DraftState {
   readonly prompt: string;
   readonly enabled: boolean;
   readonly scheduleMode: ScheduleMode;
-  readonly intervalMinutes: string;
+  readonly intervalValue: string;
+  readonly intervalUnit: ScheduledTaskIntervalUnit;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
@@ -75,6 +94,14 @@ export interface DraftState {
 
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
+  const intervalUnits = ["months", "days", "hours", "minutes"] as const;
+  const intervalUnit =
+    schedule.type === "interval"
+      ? (intervalUnits.find(
+          (unit) => schedule.everyMs % SCHEDULED_TASK_INTERVAL_UNIT_MS[unit] === 0,
+        ) ?? "minutes")
+      : "minutes";
+  const intervalMilliseconds = SCHEDULED_TASK_INTERVAL_UNIT_MS[intervalUnit];
   const weekdays =
     schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
       ? new Set(schedule.weekdays)
@@ -85,8 +112,11 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     prompt: task.prompt,
     enabled: task.enabled,
     scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
-    intervalMinutes:
-      schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
+    intervalValue:
+      schedule.type === "interval"
+        ? String(Math.max(1, schedule.everyMs / intervalMilliseconds))
+        : "15",
+    intervalUnit,
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     weekdays,
     projectId: task.projectId,
