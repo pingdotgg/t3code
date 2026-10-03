@@ -32,10 +32,21 @@ export function PullRequestResolveThreadButton({
   className?: string | undefined;
   onRefresh: () => void;
 }) {
-  // The state asked for, held until the refreshed thread shows it, so the button stays disabled
-  // through the refetch instead of re-enabling on the old label.
-  const [requested, setRequested] = useState<boolean | null>(null);
-  if (requested !== null && thread.isResolved === requested) setRequested(null);
+  // The state asked for, held until the thread shows it so the button stays disabled through the
+  // refetch instead of re-enabling on the old label. `sent` is the thread as it was when the update
+  // succeeded: any refreshed copy also ends the wait, so a refetch that still reports the old
+  // state cannot leave the button disabled.
+  const [requested, setRequested] = useState<{
+    readonly resolved: boolean;
+    readonly sent: PullRequestReviewThread | null;
+  } | null>(null);
+  if (
+    requested !== null &&
+    (thread.isResolved === requested.resolved ||
+      (requested.sent !== null && thread !== requested.sent))
+  ) {
+    setRequested(null);
+  }
   const pending = requested !== null;
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
@@ -45,7 +56,7 @@ export function PullRequestResolveThreadButton({
   const toggle = async () => {
     if (pending) return;
     const resolved = !thread.isResolved;
-    setRequested(resolved);
+    setRequested({ resolved, sent: null });
     const result = await setThreadResolution({
       environmentId,
       input: { ...reference, threadId: thread.id, resolved },
@@ -55,6 +66,7 @@ export function PullRequestResolveThreadButton({
       toastManager.add({ type: "error", title: "The conversation could not be updated" });
       return;
     }
+    setRequested({ resolved, sent: thread });
     onRefresh();
   };
 
