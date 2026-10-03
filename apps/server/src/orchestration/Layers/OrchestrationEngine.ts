@@ -145,6 +145,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   // section. Lock order is always checkout/worktree locks -> commitLock,
   // never the reverse. The intake and shard queues stay unbounded to preserve
   // dispatch() backpressure semantics; throughput keeps them shallow instead.
+  // The shard key is deliberately the command's own aggregate only: sharding
+  // a cross-thread turn.start on its source thread would break per-thread
+  // commit ordering (provider ingestion relies on same-thread commands
+  // committing in dispatch order). Cross-thread session reads are therefore
+  // validated on the fresh model at commit time and fail closed; a rejection
+  // is transient — operation retries mint a new commandId — and the
+  // cross-aggregate staleness window shrank from seconds of queue-wait to the
+  // millisecond admission phase.
   const DISPATCH_SHARD_COUNT = 16;
   const shardIndexForCommand = (command: OrchestrationCommand): number => {
     const ref = commandToAggregateRef(command);

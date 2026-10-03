@@ -158,7 +158,11 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
     const isProjectCheckout =
       (requestedRoot !== null && requestedRoot === gitRoot) ||
       (requestedRoot === null && projectRoot === canonicalRequested);
-    if (isProjectCheckout && (isFreshCheckoutRequest || isPersistedCheckoutRequest)) {
+    if (
+      isProjectCheckout &&
+      isExecutionCommand &&
+      (isFreshCheckoutRequest || isPersistedCheckoutRequest)
+    ) {
       return {
         command,
         worktreePath: canonicalRequested,
@@ -166,10 +170,12 @@ export const prepareIsolatedWorkspace = Effect.fn("prepareIsolatedWorkspace")(fu
         honoredProjectCheckout: true,
       };
     }
-    if (isProjectCheckout && gitRoot !== null) {
+    if (isProjectCheckout && isExecutionCommand && gitRoot !== null) {
       // Treat legacy/root bindings as an isolation request. This preserves
       // the user's turn and recovery path while ensuring the human checkout
-      // is never admitted as the writer's workspace.
+      // is never admitted as the writer's workspace. Non-execution commands
+      // (handoff/meta.update) keep the rejection below: they must never
+      // claim the human's main checkout.
     } else if (isProjectCheckout) {
       return yield* new OrchestrationCommandInvariantError({
         commandType: command.type,
