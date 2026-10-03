@@ -2952,9 +2952,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )
         : [];
+    // With a separate git dir lacking `core.worktree`, git lists the git dir itself as the
+    // main worktree. It is not a checkout, so it must never be offered as one.
+    const normalizedGitCommonDir = path.normalize(path.resolve(gitCommonDir));
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
       ([, worktreePath]) =>
+        worktreePath !== normalizedGitCommonDir &&
         fileSystem.stat(worktreePath).pipe(
           Effect.as(true),
           Effect.orElseSucceed(() => false),

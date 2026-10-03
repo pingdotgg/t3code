@@ -693,6 +693,34 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("does not report a separate git dir as the worktree of its branch", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* makeGitVcsDriverCore();
+      const cwd = yield* makeTmpDir();
+      const gitDir = NodeFS.realpathSync(yield* makeTmpDir());
+      yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* git(cwd, ["config", "user.email", "test@example.com"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* git(cwd, ["config", "user.name", "Test"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* git(cwd, ["commit", "--allow-empty", "-m", "init"]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+
+      assert.isTrue(refs.isRepo);
+      const current = refs.refs.find((ref) => ref.current);
+      assert.isDefined(current);
+      assert.notEqual(current?.worktreePath, gitDir);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("refreshes the current branch after an external checkout", () =>
   Effect.scoped(
     Effect.gen(function* () {
