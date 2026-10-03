@@ -11,21 +11,37 @@ import { SshHostDiscoveryError } from "./errors.ts";
 
 const NO_HOSTS: ReadonlyArray<string> = [] as const;
 
-function stripInlineComment(line: string): string {
-  const hashIndex = line.indexOf("#");
-  return (hashIndex >= 0 ? line.slice(0, hashIndex) : line).trim();
-}
-
-function splitDirectiveArgs(value: string): ReadonlyArray<string> {
-  const args: Array<string> = [];
-  for (const rawEntry of value
-    .replace(/=(?!=)/gu, " ")
-    .trim()
-    .split(/\s+/u)) {
-    const entry = rawEntry.trim();
-    if (entry.length > 0) {
-      args.push(entry);
+/** Split SSH arguments without treating quoted spaces, hashes, or equals signs as syntax. */
+function splitDirectiveArgs(line: string): ReadonlyArray<string> {
+  const directive = /^\s*([^\s=#]+)\s*=?\s*(.*)$/.exec(line);
+  if (!directive) return NO_HOSTS;
+  const args = [directive[1]!];
+  const value = directive[2]!;
+  let index = 0;
+  while (index < value.length) {
+    while (value[index] === " " || value[index] === "\t") index += 1;
+    if (index >= value.length || value[index] === "#") break;
+    let word = "";
+    let quote: string | undefined;
+    while (index < value.length) {
+      const character = value[index]!;
+      const next = value[index + 1];
+      if (
+        character === "\\" &&
+        (next === "\\" || next === "'" || next === '\"' || (quote === undefined && next === " "))
+      ) {
+        word += next;
+        index += 2;
+        continue;
+      }
+      if (quote === undefined && (character === " " || character === "\t")) break;
+      if (quote === undefined && (character === "'" || character === '\"')) quote = character;
+      else if (character === quote) quote = undefined;
+      else word += character;
+      index += 1;
     }
+    if (quote !== undefined) return NO_HOSTS;
+    args.push(word);
   }
   return args;
 }
@@ -111,12 +127,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   const raw = yield* fs.readFileString(resolvedPath);
 
   for (const line of raw.split(/\r?\n/u)) {
-    const stripped = stripInlineComment(line);
-    if (stripped.length === 0) {
-      continue;
-    }
-
-    const [directive = "", ...rawArgs] = splitDirectiveArgs(stripped);
+    const [directive = "", ...rawArgs] = splitDirectiveArgs(line);
     const normalizedDirective = directive.toLowerCase();
     if (normalizedDirective === "include") {
       for (const includePattern of rawArgs) {
