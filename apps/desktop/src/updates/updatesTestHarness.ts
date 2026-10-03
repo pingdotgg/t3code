@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -146,6 +147,18 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     waitForReady: () => Effect.succeed(true),
   };
   const backendLayer = DesktopBackendPool.layerTest([stubBackendInstance]);
+  const sshLayer = Layer.succeed(
+    DesktopSshEnvironment.DesktopSshEnvironment,
+    DesktopSshEnvironment.DesktopSshEnvironment.of({
+      discoverHosts: () => Effect.succeed([]),
+      resolveHost: () => Effect.die("unused"),
+      ensureEnvironment: () => Effect.die("unused"),
+      disconnectEnvironment: () => Effect.die("unused"),
+      closeLocalForwards: Effect.sync(() => {
+        installSteps.push("closeLocalForwards");
+      }),
+    }),
+  );
 
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -239,6 +252,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provideMerge(updaterLayer),
     Layer.provideMerge(windowLayer),
     Layer.provideMerge(backendLayer),
+    Layer.provideMerge(sshLayer),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(settingsLayer),
     Layer.provideMerge(
