@@ -1,3 +1,4 @@
+import { partitionCheckpointFiles } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { type RunId } from "@t3tools/contracts";
 import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
@@ -44,8 +45,13 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
-  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
-  const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
+  const { workspaceFiles, gitFiles } = useMemo(() => partitionCheckpointFiles(files), [files]);
+  const [expandedGitRunId, setExpandedGitRunId] = useState<RunId | null>(null);
+  const showGitFiles = expandedGitRunId === runId;
+  const visibleFiles = showGitFiles ? files : workspaceFiles;
+  const summaryStat = useMemo(() => summarizeTurnDiffStats(workspaceFiles), [workspaceFiles]);
+  const gitStat = useMemo(() => summarizeTurnDiffStats(gitFiles), [gitFiles]);
+  const hasDirectories = visibleFiles.some((file) => /[/\\]/.test(file.path));
 
   return (
     <div
@@ -58,7 +64,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>
-            {files.length} changed file{files.length === 1 ? "" : "s"}
+            {workspaceFiles.length === 0 && gitFiles.length > 0
+              ? "Git update"
+              : `${workspaceFiles.length} changed file${workspaceFiles.length === 1 ? "" : "s"}`}
           </span>
           {hasNonZeroStat(summaryStat) && (
             <DiffStatLabel
@@ -105,21 +113,42 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   size="xs"
                   variant="ghost-muted"
                   aria-label="Open diff"
-                  onClick={() => onOpenTurnDiff(runId, files[0]?.path)}
+                  onClick={() =>
+                    onOpenTurnDiff(runId, workspaceFiles[0]?.path ?? gitFiles[0]?.path)
+                  }
                 />
               }
             >
               <FileDiffIcon className="size-3" />
               <span className="hidden @[24rem]/changed-files:inline">Open diff</span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+            <TooltipPopup side="top">Open the turn diff</TooltipPopup>
           </Tooltip>
         </div>
       </div>
+      {gitFiles.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-border/40 px-3 py-2 text-xs text-muted-foreground">
+          <span>
+            Updated via Git · {gitFiles.length} file{gitFiles.length === 1 ? "" : "s"}
+          </span>
+          <DiffStatLabel
+            additions={gitStat.additions}
+            deletions={gitStat.deletions}
+            layout="inline"
+          />
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            onClick={() => setExpandedGitRunId(showGitFiles ? null : runId)}
+          >
+            {showGitFiles ? "Hide Git files" : "Show Git files"}
+          </Button>
+        </div>
+      )}
       <ChangedFilesTree
         key={`${runId}:${allDirectoriesExpanded}`}
         runId={runId}
-        files={files}
+        files={visibleFiles}
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}

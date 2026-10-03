@@ -1,5 +1,6 @@
 export interface TurnDiffFileSummary {
   readonly path: string;
+  readonly previousPath?: string;
   readonly additions: number;
   readonly deletions: number;
 }
@@ -15,8 +16,10 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
     if (!counts) continue;
 
     let path = record.slice(counts[0].length);
+    let previousPath: string | undefined;
     if (path.length === 0) {
       // Renames and copies use two more records: the source and destination.
+      previousPath = records[index + 1];
       path = records[index + 2] ?? "";
       index += 2;
     }
@@ -24,6 +27,7 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
 
     files.push({
       path,
+      ...(previousPath === undefined ? {} : { previousPath }),
       additions: counts[1] === "-" ? 0 : Number(counts[1]),
       deletions: counts[2] === "-" ? 0 : Number(counts[2]),
     });

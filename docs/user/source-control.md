@@ -3,6 +3,16 @@
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
 repositories, create pull requests, and review changes.
 
+## Review turn changes
+
+A turn's changed-files summary separates recognized upstream merge changes from other workspace
+changes. Show Git changes to include those imported files in the turn diff. The complete saved
+workspace remains available for restore.
+
+Attribution is conservative: edits to imported files, overlapping merge changes, older checkpoints,
+and ambiguous Git rewrites remain in the ordinary file list. Use the branch comparison to review
+cumulative changes against your base branch.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

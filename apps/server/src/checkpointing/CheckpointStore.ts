@@ -40,6 +40,7 @@ export interface DiffCheckpointsInput {
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
   readonly format?: "patch" | "numstat";
+  readonly filePaths?: ReadonlyArray<string>;
 }
 
 export interface DeleteCheckpointRefsInput {
@@ -86,6 +87,11 @@ export class CheckpointStore extends Context.Service<
     readonly diffCheckpoints: (
       input: DiffCheckpointsInput,
     ) => Effect.Effect<string, CheckpointStoreError>;
+
+    /** Identifies unchanged imports from Git merges; uncertain paths remain workspace edits. */
+    readonly getGitChangedPaths: (
+      input: DiffCheckpointsInput,
+    ) => Effect.Effect<ReadonlyArray<string>, CheckpointStoreError>;
 
     /**
      * Delete the provided checkpoint refs.
@@ -150,6 +156,13 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.diffCheckpoints(input);
   });
 
+  const getGitChangedPaths: CheckpointStore["Service"]["getGitChangedPaths"] = Effect.fn(
+    "CheckpointStore.getGitChangedPaths",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.getGitChangedPaths", input.cwd);
+    return checkpoints.getGitChangedPaths ? yield* checkpoints.getGitChangedPaths(input) : [];
+  });
+
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
@@ -166,6 +179,7 @@ export const make = Effect.gen(function* () {
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    getGitChangedPaths,
     deleteCheckpointRefs,
   });
 });

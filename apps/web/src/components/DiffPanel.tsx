@@ -258,6 +258,16 @@ export default function DiffPanel({
         : null,
     [selectedCheckpointTurnCount],
   );
+  const gitScopeKey = `${collapseScopeKey}:${selectedFileRevealRequestId}`;
+  const [gitVisibility, setGitVisibility] = useState<{ scope: string; visible: boolean } | null>(
+    null,
+  );
+  const includeGitChanges =
+    gitVisibility?.scope === gitScopeKey
+      ? gitVisibility.visible
+      : selectedTurn?.files.some(
+          (file) => file.path === selectedFilePath && file.origin === "git",
+        ) === true;
   const activeCheckpointDiff = useCheckpointDiff(
     {
       environmentId: activeThread?.environmentId ?? null,
@@ -265,6 +275,7 @@ export default function DiffPanel({
       fromTurnCount: selectedCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: selectedCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
+      includeGitChanges,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
@@ -986,6 +997,24 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {selectedTurn && (activeCheckpointDiff.data?.gitFileCount ?? 0) > 0 && (
+              <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/70 px-3 py-1.5 text-xs text-muted-foreground">
+                <span>
+                  {activeCheckpointDiff.data?.gitFileCount}{" "}
+                  {activeCheckpointDiff.data?.gitFileCount === 1 ? "file" : "files"} updated via Git{" "}
+                  {includeGitChanges ? "shown" : "hidden"}.
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  onClick={() =>
+                    setGitVisibility({ scope: gitScopeKey, visible: !includeGitChanges })
+                  }
+                >
+                  {includeGitChanges ? "Hide Git changes" : "Show Git changes"}
+                </Button>
+              </div>
+            )}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.

@@ -30,6 +30,7 @@ import {
   type CheckpointServiceError,
 } from "./Errors.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 
 /** Service tag for checkpoint diff queries. */
 export class CheckpointDiffQuery extends Context.Service<
@@ -181,17 +182,89 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      const comparison = {
+        cwd: toScope.cwd,
+        fromCheckpointRef,
+        toCheckpointRef: toCheckpoint.ref,
+        fallbackFromToHead: false,
+        ignoreWhitespace,
+      };
+      // Capture attributes only the previous checkpoint in this scope, not arbitrary turn ranges.
+      const fromScopeId =
+        input.fromTurnCount === 0
+          ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")?.id
+          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
+              ?.scopeId;
+      const summary =
+        input.includeGitChanges !== undefined &&
+        input.toTurnCount === input.fromTurnCount + 1 &&
+        fromScopeId === toScope.id
+          ? yield* threads
+              .getThreadRecords(input.threadId, ["checkpoints"], {
+                checkpointRefs: [toCheckpoint.ref],
+              })
+              .pipe(
+                Effect.map(({ checkpoints }) =>
+                  checkpoints.find(
+                    (checkpoint) =>
+                      checkpoint.status === "ready" &&
+                      checkpoint.scopeId === toScope.id &&
+                      checkpoint.appRunOrdinal === input.toTurnCount &&
+                      checkpoint.ref === toCheckpoint.ref &&
+                      checkpoint.ordinalWithinScope > 0 &&
+                      checkpointRefForScopeOrdinal({
+                        scopeId: checkpoint.scopeId,
+                        ordinalWithinScope: checkpoint.ordinalWithinScope - 1,
+                      }) === fromCheckpointRef &&
+                      checkpointRefForScopeOrdinal({
+                        scopeId: checkpoint.scopeId,
+                        ordinalWithinScope: checkpoint.ordinalWithinScope,
+                      }) === toCheckpoint.ref,
+                  ),
+                ),
+                Effect.orElseSucceed(() => undefined),
+              )
+          : undefined;
+      const storedGitPaths = summary?.files
+        .filter((file) => file.origin === "git")
+        .map((file) => file.path);
+      const gitPaths =
+        input.includeGitChanges === undefined
+          ? []
+          : storedGitPaths && storedGitPaths.length > 0
+            ? storedGitPaths
+            : yield* checkpointStore
+                .getGitChangedPaths(comparison)
+                .pipe(Effect.catch(() => Effect.succeed([])));
+      const files =
+        gitPaths.length === 0
+          ? []
+          : parseTurnDiffFilesFromNumstat(
+              yield* checkpointStore.diffCheckpoints({ ...comparison, format: "numstat" }),
+            );
+      const imported = new Set(gitPaths);
+      const gitFileCount = files.filter((file) => imported.has(file.path)).length;
+      const filePaths =
+        input.includeGitChanges === false && gitPaths.length > 0
+          ? files
+              .filter((file) => !imported.has(file.path))
+              .flatMap((file) =>
+                file.previousPath === undefined ? [file.path] : [file.previousPath, file.path],
+              )
+          : undefined;
+      // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
       const diff = yield* checkpointStore
         .diffCheckpoints({
-          cwd: toScope.cwd,
-          fromCheckpointRef,
-          toCheckpointRef: toCheckpoint.ref,
-          fallbackFromToHead: false,
-          ignoreWhitespace,
+          ...comparison,
+          ...(filePaths ? { filePaths } : {}),
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      // Older clients keep the complete diff. Updated clients explicitly choose the grouped view.
+      const turnDiff = {
+        ...buildTurnDiffResult(input, diff),
+        ...(gitFileCount > 0 ? { gitFileCount } : {}),
+      };
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,
@@ -239,6 +312,9 @@ export const make = Effect.gen(function* () {
       fromTurnCount: 0,
       toTurnCount: input.toTurnCount,
       ignoreWhitespace,
+      ...(input.includeGitChanges === undefined
+        ? {}
+        : { includeGitChanges: input.includeGitChanges }),
     });
     if (!isTurnDiffResult(turnDiff)) {
       return yield* new CheckpointDiffResultInvalidError({

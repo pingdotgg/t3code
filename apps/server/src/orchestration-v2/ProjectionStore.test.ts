@@ -29,8 +29,12 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -2583,7 +2587,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         const nodeId = NodeId.make("node:checkpoint-context");
         const scopeId = CheckpointScopeId.make("scope:checkpoint-context");
         const checkpointId = CheckpointId.make("checkpoint:checkpoint-context");
-        const ref = CheckpointRef.make("refs/t3/checkpoint-context/1");
+        const ref = checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 1 });
         yield* projectionStore.apply({
           id: EventId.make("event:checkpoint-context:thread"),
           type: "thread.created",
@@ -2675,6 +2679,99 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
             capturedAt: now,
           },
         });
+        const records = yield* projectionStore.getThreadRecords(threadId, [
+          "runs",
+          "checkpoints",
+          "checkpointScopes",
+        ]);
+        const nextRef = checkpointRefForScopeOrdinal({ scopeId, ordinalWithinScope: 2 });
+        const nextRunId = RunId.make("run:checkpoint-context:next");
+        const nextCheckpoint = {
+          ...records.checkpoints[0]!,
+          id: CheckpointId.make("checkpoint:checkpoint-context:next"),
+          runId: nextRunId,
+          appRunOrdinal: 2,
+          ordinalWithinScope: 2,
+          ref: nextRef,
+          files: [
+            {
+              path: "git.txt",
+              kind: "modified",
+              additions: 1,
+              deletions: 0,
+              origin: "git" as const,
+            },
+          ],
+        };
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:next-run"),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: { ...records.runs[0]!, id: nextRunId, ordinal: 2 },
+        });
+        const otherScopeId = CheckpointScopeId.make("scope:checkpoint-context:other");
+        yield* projectionStore.apply({
+          id: EventId.make("event:checkpoint-context:other-scope"),
+          type: "checkpoint-scope.created",
+          threadId,
+          occurredAt: now,
+          payload: { ...records.checkpointScopes[0]!, id: otherScopeId, ordinalWithinParent: 1 },
+        });
+        const getGitChangedPaths = vi.fn(() => Effect.succeed(["git.txt"]));
+        const query = yield* CheckpointDiffQuery.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getCheckpointContext: (id) =>
+                  projectionStore.getCheckpointContext(id).pipe(Effect.orDie),
+                getThreadRecords: (id, fields, filter) =>
+                  projectionStore.getThreadRecords(id, fields, filter).pipe(Effect.orDie),
+              }),
+              Layer.mock(CheckpointStore.CheckpointStore)({
+                getGitChangedPaths,
+                diffCheckpoints: (input) =>
+                  Effect.succeed(
+                    input.format === "numstat"
+                      ? "1\t0\tgit.txt\u00001\t1\tworkspace.txt\0"
+                      : (input.filePaths ?? ["workspace.txt", "git.txt"]).join("\n"),
+                  ),
+              }),
+            ),
+          ),
+        );
+        for (const [name, fromTurnCount, checkpoint, reuse] of [
+          [
+            "baseline",
+            0,
+            { ...records.checkpoints[0]!, appRunOrdinal: 1, files: nextCheckpoint.files },
+            true,
+          ],
+          ["adjacent", 1, nextCheckpoint, true],
+          ["wider range", 0, nextCheckpoint, false],
+          ["other scope", 1, { ...nextCheckpoint, scopeId: otherScopeId }, false],
+          ["mismatched refs", 1, { ...nextCheckpoint, ordinalWithinScope: 3 }, false],
+          ["no origins", 1, { ...nextCheckpoint, files: [] }, false],
+        ] as const) {
+          yield* projectionStore.apply({
+            id: EventId.make(`event:checkpoint-context:${name}`),
+            type: "checkpoint.captured",
+            threadId,
+            occurredAt: now,
+            payload: checkpoint,
+          });
+          getGitChangedPaths.mockClear();
+          const input = { threadId, fromTurnCount, toTurnCount: checkpoint.appRunOrdinal };
+          const filtered = yield* query.getTurnDiff({ ...input, includeGitChanges: false });
+          assert.strictEqual(filtered.diff, "workspace.txt", name);
+          assert.strictEqual(filtered.gitFileCount, 1, name);
+          const full = yield* query.getTurnDiff({ ...input, includeGitChanges: true });
+          assert.strictEqual(full.diff, "workspace.txt\ngit.txt", name);
+          assert.strictEqual(full.gitFileCount, 1, name);
+          assert.strictEqual((yield* query.getTurnDiff(input)).diff, full.diff, name);
+          assert.strictEqual(getGitChangedPaths.mock.calls.length, reuse ? 0 : 2, name);
+        }
+        const checkpointContext = yield* projectionStore.getCheckpointContext(threadId);
         // Old transcript shapes must not make a metadata-only diff unreadable.
         yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items (
@@ -2690,16 +2787,23 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           (yield* Effect.exit(projectionStore.getThreadProjection(threadId)))._tag,
           "Failure",
         );
+        const targeted = yield* projectionStore.getThreadRecords(threadId, ["checkpoints"], {
+          checkpointRefs: [ref],
+        });
+        assert.deepEqual(
+          targeted.checkpoints.map((checkpoint) => checkpoint.ref),
+          [ref],
+        );
         yield* sql`
         UPDATE orchestration_v2_projection_checkpoints
         SET payload_json = json_set(payload_json, '$.files', 'obsolete file summary')
         WHERE checkpoint_id = ${checkpointId}
       `;
-        assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), {
-          runs: [{ id: runId, ordinal: 1, status: "completed" }],
-          checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
-          checkpoints: [{ scopeId, runId, appRunOrdinal: 1, status: "ready", ref }],
+        assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), checkpointContext);
+        const excluded = yield* projectionStore.getThreadRecords(threadId, ["checkpoints"], {
+          checkpointRefs: [CheckpointRef.make("refs/t3/checkpoint-context/other")],
         });
+        assert.deepEqual(excluded.checkpoints, []);
         const missing = yield* projectionStore
           .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))
           .pipe(Effect.flip);

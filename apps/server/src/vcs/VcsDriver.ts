@@ -32,6 +32,7 @@ export interface VcsDiffCheckpointsInput {
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
   readonly format?: "patch" | "numstat";
+  readonly filePaths?: ReadonlyArray<string>;
 }
 
 export interface VcsDeleteCheckpointRefsInput {
@@ -40,6 +41,9 @@ export interface VcsDeleteCheckpointRefsInput {
 }
 
 export interface VcsCheckpointOps {
+  readonly getGitChangedPaths?: (
+    input: VcsDiffCheckpointsInput,
+  ) => Effect.Effect<ReadonlyArray<string>, VcsError>;
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,

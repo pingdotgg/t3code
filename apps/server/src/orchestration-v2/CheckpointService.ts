@@ -483,6 +483,18 @@ export const layer: Layer.Layer<
                 )
             : [];
 
+          const gitPaths =
+            files.length === 0
+              ? []
+              : yield* checkpointStore
+                  .getGitChangedPaths({
+                    cwd: input.scope.cwd,
+                    fromCheckpointRef: previousCheckpointRef,
+                    toCheckpointRef: checkpointRef,
+                    ignoreWhitespace: false,
+                  })
+                  .pipe(Effect.catch(() => Effect.succeed([])));
+          const imported = new Set(gitPaths);
           return makeCheckpoint({
             id: checkpointId,
             scope: input.scope,
@@ -493,7 +505,9 @@ export const layer: Layer.Layer<
             appRunOrdinal: input.appRunOrdinal,
             ref: checkpointRef,
             status: "ready",
-            files,
+            files: files.map((file) =>
+              imported.has(file.path) ? { ...file, origin: "git" as const } : file,
+            ),
             capturedAt: input.capturedAt,
           });
         }),

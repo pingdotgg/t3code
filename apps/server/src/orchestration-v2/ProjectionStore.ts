@@ -30,6 +30,7 @@ import type {
   RunAttemptId,
   RuntimeRequestId,
   MessageId,
+  CheckpointRef,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -273,6 +274,7 @@ export interface ProjectionRuntimeResponseContext {
 }
 
 export interface ProjectionRecordFilter {
+  readonly checkpointRefs?: ReadonlyArray<CheckpointRef>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
@@ -3000,6 +3002,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId}
+              ${filter?.checkpointRefs === undefined ? sql`` : sql`AND json_extract(payload_json, '$.ref') IN (SELECT value FROM json_each(${encodeIdList(filter.checkpointRefs)}))`}
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `
               : sql<PayloadRow>`
@@ -5747,6 +5750,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               filter?.runIds === undefined
                 ? projection.runs
                 : projection.runs.filter((row) => filter.runIds!.includes(row.id)),
+            checkpoints: projection.checkpoints.filter(
+              (row) =>
+                filter?.checkpointRefs === undefined || filter.checkpointRefs.includes(row.ref),
+            ),
             turnItems: projection.turnItems.filter(
               (row) =>
                 (filter?.turnItemRunIds === undefined ||

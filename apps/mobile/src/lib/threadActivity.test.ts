@@ -224,7 +224,7 @@ describe("buildThreadFeed", () => {
     expect(buildThreadFeed([projected(reply, 0)])[0]?.type).toBe("message");
   });
 
-  it("does not create a work group for a message and checkpoint", () => {
+  it("does not create a work group for a message and empty checkpoint", () => {
     const checkpoint: OrchestrationV2TurnItem = {
       ...base("checkpoint", "2026-06-20T00:00:04.000Z", 3),
       type: "checkpoint",
@@ -234,6 +234,37 @@ describe("buildThreadFeed", () => {
     };
     const feed = buildThreadFeed([projected(assistantMessage(), 0), projected(checkpoint, 1)]);
     expect(feed.map((entry) => entry.type)).toEqual(["message"]);
+  });
+
+  it("keeps workspace and Git counts visible in the completed turn feed", () => {
+    const checkpoint: OrchestrationV2TurnItem = {
+      ...base("checkpoint", "2026-06-20T00:00:04.000Z", 3),
+      type: "checkpoint",
+      checkpointId: CheckpointId.make("checkpoint"),
+      scopeId: CheckpointScopeId.make("scope"),
+      files: [
+        { path: "welcome.txt", kind: "modified", additions: 1, deletions: 1 },
+        { path: "upstream.txt", kind: "added", additions: 2, deletions: 0, origin: "git" },
+      ],
+    };
+    const feed = deriveThreadFeedPresentation(
+      buildThreadFeed([projected(assistantMessage(), 0), projected(checkpoint, 1)]),
+      {
+        runId,
+        status: "completed",
+        startedAt: null,
+        completedAt: DateTime.formatIso(checkpoint.updatedAt),
+      },
+      new Set(),
+    );
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toMatchObject([{ detail: "1 changed file · 1 updated via Git" }]);
+    expect(activities.map((activity) => workEntryRowLabel(activity.workEntry))).toEqual([
+      "1 changed file · 1 updated via Git",
+    ]);
+    expect(activities[0]?.getFullDetail()).toBe("welcome.txt\nupstream.txt (updated via Git)");
   });
 
   it("omits cached tool output and patch bodies from expanded and copied activity", () => {

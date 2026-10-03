@@ -477,6 +477,9 @@ export function ReviewSheet(props: ReviewSheetProps) {
     selectSection,
     isSelectedSectionPending,
     diffPreviewRevision,
+    gitFileCount,
+    includeGitChanges,
+    toggleGitChanges,
   } = useReviewSections({
     enabled: isEnvironmentReady,
     environmentId,
@@ -736,6 +739,19 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
       <MaterialScreenContent>
         <View className="flex-1 bg-sheet android:bg-sheet-solid">
+          {gitFileCount > 0 && (
+            <View className="flex-row flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+              <Text className="text-xs text-muted-foreground">
+                {gitFileCount} {gitFileCount === 1 ? "file" : "files"} updated via Git{" "}
+                {includeGitChanges ? "shown" : "hidden"}.
+              </Text>
+              <Pressable accessibilityRole="button" onPress={toggleGitChanges}>
+                <Text className="text-sm text-primary">
+                  {includeGitChanges ? "Hide Git changes" : "Show Git changes"}
+                </Text>
+              </Pressable>
+            </View>
+          )}
           {showConnectionNotice ? (
             <View className="flex-1" style={{ paddingTop: topContentInset }}>
               <EnvironmentConnectionNotice

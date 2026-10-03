@@ -331,15 +331,25 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget) {
 }
 
 export function useCheckpointDiff(target: CheckpointDiffTarget) {
+  const {
+    environmentId,
+    fromTurnCount,
+    ignoreWhitespace,
+    includeGitChanges,
+    threadId,
+    toTurnCount,
+  } = target;
   const targets = useMemo(
-    () => buildCheckpointDiffTargets(target),
-    [
-      target.environmentId,
-      target.fromTurnCount,
-      target.ignoreWhitespace,
-      target.threadId,
-      target.toTurnCount,
-    ],
+    () =>
+      buildCheckpointDiffTargets({
+        environmentId,
+        fromTurnCount,
+        ignoreWhitespace,
+        includeGitChanges,
+        threadId,
+        toTurnCount,
+      }),
+    [environmentId, fromTurnCount, ignoreWhitespace, includeGitChanges, threadId, toTurnCount],
   );
   const fullThread = useEnvironmentQuery(
     targets.fullThread === null

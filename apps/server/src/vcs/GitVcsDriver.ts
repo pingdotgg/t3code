@@ -759,6 +759,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ...(env !== undefined ? { env } : {}),
     }).pipe(Effect.map((result) => result.exitCode === 0));
 
+  const resolveHeadBranch = (cwd: string) =>
+    execute({
+      operation: "GitVcsDriver.checkpoints.resolveHeadBranch",
+      cwd,
+      args: ["symbolic-ref", "--quiet", "HEAD"],
+      allowNonZeroExit: true,
+    }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
+
   const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
     execute({
       operation: "GitVcsDriver.checkpoints.resolveCheckpointCommit",
@@ -828,7 +836,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
+        const capturedHead = yield* resolveHeadCommit(input.cwd);
+        const capturedBranch = yield* resolveHeadBranch(input.cwd);
+        const headExists = capturedHead !== null;
         const sparseConfig = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1040,7 +1050,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
+        const currentHead = yield* resolveHeadCommit(input.cwd);
+        const currentBranch = yield* resolveHeadBranch(input.cwd);
+        const stableHead =
+          capturedHead === currentHead && capturedBranch === currentBranch ? capturedHead : null;
+        const stableBranch = capturedBranch === currentBranch ? capturedBranch : null;
+        const message = `t3 checkpoint ref=${input.checkpointRef}\nhead=${stableHead ?? "none"}\nbranch=${stableBranch ?? "none"}`;
         const commitTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1149,6 +1164,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
+      if (input.filePaths?.length === 0) return "";
       yield* Effect.annotateCurrentSpan({
         "checkpoint.cwd": input.cwd,
         "checkpoint.from_ref": input.fromCheckpointRef,
@@ -1194,6 +1210,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
           `${input.toCheckpointRef}^{commit}`,
+          ...(input.filePaths ? ["--", ...input.filePaths.map((file) => `:(literal)${file}`)] : []),
         ],
         allowNonZeroExit: true,
         maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
@@ -1211,6 +1228,125 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       return result.stdout;
+    }),
+
+    getGitChangedPaths: Effect.fn("GitVcsDriver.checkpoints.getGitChangedPaths")(function* (input) {
+      const operation = "GitVcsDriver.checkpoints.getGitChangedPaths";
+      const read = Effect.fnUntraced(function* (args: ReadonlyArray<string>) {
+        const result = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args,
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        });
+        return result.stdout;
+      });
+      const heads = yield* Effect.all([
+        read(["show", "-s", "--format=%B", input.fromCheckpointRef]),
+        read(["show", "-s", "--format=%B", input.toCheckpointRef]),
+      ]);
+      const fromHead = /^head=([0-9a-f]{40,64})$/m.exec(heads[0])?.[1];
+      const toHead = /^head=([0-9a-f]{40,64})$/m.exec(heads[1])?.[1];
+      const fromBranch = /^branch=(refs\/heads\/[^\n]+)$/m.exec(heads[0])?.[1];
+      const toBranch = /^branch=(refs\/heads\/[^\n]+)$/m.exec(heads[1])?.[1];
+      if (!fromHead || !toHead || fromHead === toHead || !fromBranch || fromBranch !== toBranch)
+        return [];
+      const commits = (yield* read([
+        "rev-list",
+        "--first-parent",
+        "--reverse",
+        "--parents",
+        "--max-count=33",
+        `${fromHead}..${toHead}`,
+      ]))
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      if (commits.length > 32) return [];
+      // Require a continuous first-parent history from the starting HEAD. Rewrites or ancestry
+      // through a merge's other parent can otherwise make the turn's own commits look imported.
+      if (commits[0]?.split(" ")[1] !== fromHead) return [];
+      if (!commits.some((line) => line.split(" ").length > 2)) return [];
+      const rawDiff = Effect.fnUntraced(function* (from: string, to: string) {
+        const records = (yield* read([
+          "diff",
+          "--raw",
+          "--no-abbrev",
+          "--no-renames",
+          "-z",
+          "--no-ext-diff",
+          "--no-textconv",
+          from,
+          to,
+          "--",
+        ])).split("\0");
+        const transitions = new Map<string, string>();
+        for (let index = 0; index + 1 < records.length; index += 2) {
+          const transition = records[index]!;
+          if (!/^:[0-7]{6} [0-7]{6} [0-9a-f]+ [0-9a-f]+ [AMDT]$/.test(transition)) continue;
+          transitions.set(records[index + 1]!, transition);
+        }
+        return transitions;
+      });
+      const workspaceDelta = yield* rawDiff(input.fromCheckpointRef, input.toCheckpointRef);
+      const imported = new Map<string, Set<string>>();
+      const edited = new Set<string>();
+      for (const line of commits) {
+        const [commit, firstParent, ...otherParents] = line.split(" ");
+        if (!commit || !firstParent) return [];
+        const delta = yield* rawDiff(firstParent, commit);
+        if (otherParents.length === 0) {
+          for (const path of delta.keys()) edited.add(path);
+          continue;
+        }
+        // Octopus merges and multiple merge bases need more provenance than two snapshots give.
+        if (otherParents.length !== 1) return [];
+        const secondParent = otherParents[0]!;
+        const bases = (yield* read(["merge-base", "--all", firstParent, secondParent]))
+          .trim()
+          .split("\n");
+        if (bases.length !== 1 || !bases[0]) return [];
+        const ours = yield* rawDiff(bases[0], firstParent);
+        const theirs = yield* rawDiff(bases[0], secondParent);
+        // A shared path may contain a conflict resolution, including choosing one side unchanged.
+        for (const path of ours.keys()) if (theirs.has(path)) edited.add(path);
+        for (const [path, transition] of delta) {
+          // Only exact upstream transitions count. Merge resolutions and preexisting dirty edits stay visible.
+          if (theirs.get(path) !== transition) continue;
+          const transitions = imported.get(path) ?? new Set<string>();
+          transitions.add(transition);
+          imported.set(path, transitions);
+        }
+      }
+      const candidates = new Set(
+        [...workspaceDelta].flatMap(([path, transition]) =>
+          !edited.has(path) && imported.get(path)?.has(transition) ? [path] : [],
+        ),
+      );
+      if (candidates.size === 0) return [];
+      // Git can pair an imported addition with a workspace deletion as one rename.
+      // Summaries and patches use that pairing, so both sides must be imported to hide it.
+      const statuses = (yield* read([
+        "diff",
+        "--name-status",
+        "-z",
+        "--no-ext-diff",
+        "--no-textconv",
+        input.fromCheckpointRef,
+        input.toCheckpointRef,
+        "--",
+      ])).split("\0");
+      for (let index = 0; index + 1 < statuses.length;) {
+        const status = statuses[index++]!;
+        const from = statuses[index++]!;
+        if (!/^[RC]/.test(status)) continue;
+        const to = statuses[index++]!;
+        if (candidates.has(from) && candidates.has(to)) continue;
+        candidates.delete(from);
+        candidates.delete(to);
+      }
+      return [...candidates].sort();
     }),
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
