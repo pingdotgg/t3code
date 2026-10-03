@@ -13,4 +13,14 @@ export default Effect.gen(function* () {
       ADD COLUMN enabled_seq INTEGER
     `;
   }
+
+  // Enablements that predate the column count as committed now: an archive
+  // already in the event log must not read as newer than them, or the startup
+  // sweep would pause tasks on threads that were archived and later unarchived.
+  // A thread that is still archived is paused by the sweep regardless.
+  yield* sql`
+    UPDATE scheduled_tasks
+    SET enabled_seq = (SELECT COALESCE(MAX(sequence), 0) FROM orchestration_events)
+    WHERE enabled = 1 AND enabled_seq IS NULL
+  `;
 });
