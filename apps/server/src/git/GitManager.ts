@@ -247,6 +247,15 @@ export function pullRequestRepositoryKey(value: string): string | null {
   }
 }
 
+// Splits an SSH remote around its host: `git@` + `github-work` + `:owner/repo.git`.
+const SSH_REMOTE_HOST_PATTERN = /^((?:ssh:\/\/)?(?:[^@/\s]+@)?)([^:/\s@]+)(.*)$/iu;
+
+// SSH endpoints forges document for reaching their web host over port 443.
+const SSH_TRANSPORT_WEB_HOSTS = new Map([
+  ["ssh.github.com", "github.com"],
+  ["altssh.gitlab.com", "gitlab.com"],
+]);
+
 function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
   const trimmed = url.trim();
   const match = /^https?:\/\/[^/]+\/[^/]+\/([^/]+)\/pull\/\d+(?:\/.*)?$/i.exec(trimmed);
@@ -273,6 +282,24 @@ function resolveHeadRepositoryNameWithOwner(
   }
 
   return `${ownerLogin}/${repositoryName}`;
+}
+
+// The repository the head branch lives in: the fork for a cross-repository pull request,
+// otherwise the pull request's own. Null when a cross-repository head names no repository.
+function pullRequestHeadRepositoryKey(
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): string | null {
+  const headRepository = resolveHeadRepositoryNameWithOwner(pullRequest);
+  if (headRepository === null) {
+    return pullRequest.isCrossRepository === true
+      ? null
+      : pullRequestRepositoryKey(pullRequest.url);
+  }
+  try {
+    return normalizeGitRemoteUrl(`${new URL(pullRequest.url).origin}/${headRepository}`);
+  } catch {
+    return null;
+  }
 }
 
 function resolvePullRequestWorktreeLocalBranchName(
@@ -2329,6 +2356,79 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  const ensureNoTrackedChanges = Effect.fn("ensureNoTrackedChanges")(function* (
+    cwd: string,
+    pullRequestNumber: number,
+  ) {
+    const trackedChanges = yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.trackedChanges",
+      cwd,
+      args: ["status", "--porcelain", "--untracked-files=no"],
+    });
+    if (trackedChanges.stdout.trim().length > 0) {
+      return yield* new GitManagerError({
+        operation: "preparePullRequestThread",
+        cwd,
+        detail: `This repository has uncommitted changes. Commit or stash them before checking out pull request #${pullRequestNumber} here, or check it out in its own folder.`,
+      });
+    }
+  });
+
+  // A remote names a repository by its own URL or, for an SSH remote, through the host its SSH
+  // config resolves to. That host decides even when the URL already spells the web host, since
+  // `Host github.com` can point somewhere else; `git@github-work:owner/repo` resolves the same way.
+  const remoteNamesRepository = Effect.fn("remoteNamesRepository")(function* (
+    cwd: string,
+    remoteName: string,
+    repositoryKey: string,
+  ) {
+    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+    if (remoteUrl === null) {
+      return false;
+    }
+    if (!isSshRemoteUrl(remoteUrl)) {
+      return normalizeGitRemoteUrl(remoteUrl) === repositoryKey;
+    }
+    const sshRemote = SSH_REMOTE_HOST_PATTERN.exec(remoteUrl.trim());
+    if (sshRemote === null) {
+      return false;
+    }
+    const [, prefix = "", host = "", rest = ""] = sshRemote;
+    const sshHost = (yield* gitCore.resolveSshHostName(host)).toLowerCase();
+    const webHost = SSH_TRANSPORT_WEB_HOSTS.get(sshHost) ?? sshHost;
+    return normalizeGitRemoteUrl(`${prefix}${webHost}${rest}`) === repositoryKey;
+  });
+
+  // A fork or any other repository can publish its own `refs/pull/<n>/head` or a branch of the
+  // same name, so a head is read only from a remote whose URL names the repository it belongs
+  // to. A remote that names no hosted repository, such as a local path, cannot prove that.
+  const resolveRepositoryRemoteName = Effect.fn("resolveRepositoryRemoteName")(function* (
+    cwd: string,
+    repositoryKey: string | null,
+  ) {
+    const remoteNames = (yield* gitCore.execute({
+      operation: "GitManager.preparePullRequestThread.remotes",
+      cwd,
+      args: ["remote"],
+    })).stdout
+      .split("\n")
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
+    for (const remoteName of remoteNames) {
+      if (
+        repositoryKey !== null &&
+        (yield* remoteNamesRepository(cwd, remoteName, repositoryKey))
+      ) {
+        return remoteName;
+      }
+    }
+    return yield* new GitManagerError({
+      operation: "preparePullRequestThread",
+      cwd,
+      detail: "No remote points at the pull request's repository.",
+    });
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2361,11 +2461,51 @@ export const make = Effect.gen(function* () {
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
+      // The pull request's own ref, because it is the only thing that certainly names its
+      // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
+      // from `origin/main` whose head branch has since been deleted still resolves — and
+      // following it would move the checkout onto main and call that the pull request.
+      const resolvePullRequestHeadCommit = (cwd: string) =>
+        resolveRepositoryRemoteName(cwd, pullRequestRepositoryKey(pullRequest.url)).pipe(
+          Effect.flatMap((remoteName) =>
+            gitCore.fetchPullRequestHeadCommit({ cwd, remoteName, prNumber: pullRequest.number }),
+          ),
+          // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
+          // taken only where it is the head branch's own on the head repository's remote rather
+          // than whatever the checkout happened to be cut from.
+          Effect.catch(() =>
+            Effect.gen(function* () {
+              const details = yield* gitCore.statusDetails(cwd);
+              const upstreamRemoteName =
+                details.branch === null
+                  ? null
+                  : yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`);
+              const headRepositoryKey = pullRequestHeadRepositoryKey({
+                ...pullRequest,
+                ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+              });
+              if (
+                upstreamRemoteName === null ||
+                headRepositoryKey === null ||
+                details.upstreamRef !== `${upstreamRemoteName}/${pullRequest.headBranch}` ||
+                !(yield* remoteNamesRepository(cwd, upstreamRemoteName, headRepositoryKey))
+              ) {
+                return yield* new GitManagerError({
+                  operation: "preparePullRequestThread",
+                  cwd,
+                  detail: "The pull request head could not be resolved for this checkout.",
+                });
+              }
+              return yield* gitCore.resolveCommit({ cwd, revision: details.upstreamRef });
+            }),
+          ),
+        );
+
       if (input.mode === "local") {
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
-          force: true,
         });
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
@@ -2376,11 +2516,26 @@ export const make = Effect.gen(function* () {
           },
           details.branch ?? pullRequest.headBranch,
         );
+        // Unforced checkout leaves a branch that is ahead of, or was never advanced to, the pull
+        // request where it is, so only the resulting HEAD says whether this is the pull request.
+        const isOnPullRequestHead = yield* resolvePullRequestHeadCommit(input.cwd).pipe(
+          Effect.flatMap((target) =>
+            gitCore
+              .resolveCommit({ cwd: input.cwd, revision: "HEAD" })
+              .pipe(Effect.map((head) => head.commitSha === target.commitSha)),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("GitManager.preparePullRequestThread local head check failed", {
+              cwd: input.cwd,
+              cause: error,
+            }).pipe(Effect.as(false)),
+          ),
+        );
         return {
           pullRequest,
           branch: details.branch ?? pullRequest.headBranch,
           worktreePath: null,
-          isOnPullRequestHead: true,
+          isOnPullRequestHead,
         };
       }
 
@@ -2439,53 +2594,25 @@ export const make = Effect.gen(function* () {
 
         yield* ensureExistingWorktreeUpstream(worktreePath);
 
-        const refreshed = yield* gitCore
-          // The pull request's own ref, because it is the only thing that certainly names its
-          // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
-          // from `origin/main` whose head branch has since been deleted still resolves — and
-          // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
-          .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
-            // taken only where it is the head branch's own rather than whatever the checkout
-            // happened to be cut from.
-            Effect.catch(() =>
-              Effect.gen(function* () {
-                const details = yield* gitCore.statusDetails(worktreePath);
-                if (
-                  details.upstreamRef === null ||
-                  !details.upstreamRef.endsWith(`/${pullRequest.headBranch}`)
-                ) {
-                  return yield* new GitManagerError({
-                    operation: "preparePullRequestThread",
-                    cwd: worktreePath,
-                    detail: "The pull request head could not be resolved for this checkout.",
-                  });
-                }
-                return yield* gitCore.resolveCommit({
-                  cwd: worktreePath,
-                  revision: details.upstreamRef,
-                });
-              }),
-            ),
-            Effect.flatMap((target) =>
-              gitCore.refreshCheckedOutBranch({
-                cwd: worktreePath,
-                targetCommit: target.commitSha,
-                resetWhenHeadCommit: upstreamCommitBeforeFetch,
-              }),
-            ),
-            Effect.catch((error) =>
-              Effect.logWarning(
-                "GitManager.preparePullRequestThread reused worktree refresh failed",
-                {
-                  worktreePath,
-                  localBranch: localPullRequestBranch,
-                  cause: error,
-                },
-              ).pipe(Effect.as({ moved: false, onTarget: false })),
-            ),
-          );
+        const refreshed = yield* resolvePullRequestHeadCommit(worktreePath).pipe(
+          Effect.flatMap((target) =>
+            gitCore.refreshCheckedOutBranch({
+              cwd: worktreePath,
+              targetCommit: target.commitSha,
+              resetWhenHeadCommit: upstreamCommitBeforeFetch,
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "GitManager.preparePullRequestThread reused worktree refresh failed",
+              {
+                worktreePath,
+                localBranch: localPullRequestBranch,
+                cause: error,
+              },
+            ).pipe(Effect.as({ moved: false, onTarget: false })),
+          ),
+        );
 
         // Only when the checkout actually moved: another thread may be running in this worktree,
         // and re-running the setup script under it buys nothing when the code did not change.

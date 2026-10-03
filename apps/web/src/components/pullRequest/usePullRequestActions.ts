@@ -134,6 +134,14 @@ export type PullRequestHandoffDetail = Pick<
  */
 const lastHandoffPromptByDraft = new Map<DraftId, string>();
 
+/** Shown in place of success when a checkout is kept off the pull request's head. */
+export const STALE_PULL_REQUEST_CHECKOUT_TOAST = {
+  type: "warning",
+  title: "Checked out, but not on the latest commits",
+  description:
+    "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
+} as const;
+
 /**
  * The hand-offs from a pull request into a thread: a question that needs nothing checked out, and
  * a task that needs the branch under the agent's feet first. One `handoff` key holds them all to
@@ -313,12 +321,6 @@ export function usePullRequestHandoffs({
     // A worktree that was already there and had been worked in keeps whatever it holds, so the
     // thread opens on older code than the pull request carries. Said once, in place of the
     // success, because everything else about the handoff did happen.
-    const staleCheckoutToast = {
-      type: "warning",
-      title: "Checked out, but not on the latest commits",
-      description:
-        "The checkout could not be moved onto the pull request's latest commits, so the code there is older than the pull request. Uncommitted work or local commits keep it where it is.",
-    } as const;
     if (task === null) {
       toastManager.update(
         toastId,
@@ -331,7 +333,7 @@ export function usePullRequestHandoffs({
                   ? "This repository is on the pull request's branch, with a thread open on it."
                   : "The pull request is in its own worktree, with a thread open on it.",
             }
-          : staleCheckoutToast,
+          : STALE_PULL_REQUEST_CHECKOUT_TOAST,
       );
       return;
     }
@@ -344,7 +346,7 @@ export function usePullRequestHandoffs({
             title: "Checkout ready",
             description: "The task is in the composer — read it over, then send.",
           }
-        : staleCheckoutToast,
+        : STALE_PULL_REQUEST_CHECKOUT_TOAST,
     );
   };
 

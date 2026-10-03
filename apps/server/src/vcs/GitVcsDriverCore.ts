@@ -3353,13 +3353,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
     Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
-      const remoteName = yield* resolvePrimaryRemoteName(input.cwd);
       // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
       // branch, which is the only way to read it while that branch is checked out somewhere.
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        ["fetch", "--quiet", "--no-tags", input.remoteName, `refs/pull/${input.prNumber}/head`],
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },
@@ -3367,6 +3366,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
       return yield* resolveCommit({ cwd: input.cwd, revision: "FETCH_HEAD" });
     });
+
+  // Git leaves SSH config to `ssh`, so ask it for the resolved `hostname`, as `gh` does.
+  const resolveSshHostName: GitVcsDriver.GitVcsDriver["Service"]["resolveSshHostName"] = (host) =>
+    commandSpawner
+      .string(ChildProcess.make("ssh", ["-G", "--", host], { stdin: "ignore", stderr: "ignore" }))
+      .pipe(
+        Effect.timeout(DEFAULT_TIMEOUT_MS),
+        Effect.map((output) => /^hostname\s+(\S+)\s*$/m.exec(output)?.[1] ?? host),
+        Effect.orElseSucceed(() => host),
+      );
 
   const refreshCheckedOutBranch: GitVcsDriver.GitVcsDriver["Service"]["refreshCheckedOutBranch"] =
     Effect.fn("refreshCheckedOutBranch")(function* (input) {
@@ -3826,6 +3835,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
     fetchPullRequestHeadCommit,
+    resolveSshHostName,
     resolveCommit,
     refreshCheckedOutBranch: (input) =>
       withListRefsInvalidation(input.cwd, refreshCheckedOutBranch(input)),
