@@ -52,6 +52,6 @@ Inspect `PRAGMA table_info(<table>)` and the current migrations under `apps/serv
 
 No mobile showcase fixture script is installed in this checkout. Derive any separately reviewed fixture from the target database schema and current migrations, not an unavailable example. Stop the server before mutation; `t3-sqlite-state.ts exec` takes a `VACUUM INTO` backup (0600) automatically, but prefer it only for isolated fixture databases, never the shared homes.
 
-Direct projection writes may be appropriate for ephemeral visual states, edge-case counts, long titles, activity lists, and similar UI fixtures, but this checkout provides no supported fixture helper. They do not create a coherent orchestration event history. Do not modify `orchestration_events` unless the test specifically exercises projector internals, and do not use direct projection writes to claim backend business behavior works.
+Direct projection writes may be appropriate for ephemeral visual states, edge-case counts, long titles, activity lists, and similar UI fixtures via the guarded `t3-sqlite-state.ts exec` helper on an isolated database. They do not create a coherent orchestration event history. Do not modify `orchestration_events` unless the test specifically exercises projector internals, and do not use direct projection writes to claim backend business behavior works.
 
 Use the app's commands or APIs for behavior tests. Use `node apps/server/src/bin.ts auth ...` for auth state rather than editing `auth_pairing_links` or `auth_sessions`.

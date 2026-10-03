@@ -11,7 +11,7 @@ import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { AutomaticArchiveGuardRegistry } from "../orchestration/Services/AutomaticArchiveGuardRegistry.ts";
 import {
-  canAutoArchiveThreadNow,
+  canAdmitAutomaticArchiveNow,
   liveReviewThreadPullRequests,
   planReviewThreadAutoArchive,
   reviewThreadMergeArchiveCommandId,
@@ -122,7 +122,9 @@ export const sweepOnce = Effect.gen(function* () {
 
 const makeReactor = Effect.gen(function* () {
   const guards = yield* AutomaticArchiveGuardRegistry;
-  yield* guards.register(({ readModel, threadId }) => canAutoArchiveThreadNow(readModel, threadId));
+  yield* guards.register(({ readModel, threadId }) =>
+    canAdmitAutomaticArchiveNow(readModel, threadId),
+  );
   yield* Effect.forkScoped(sweepOnce.pipe(Effect.repeat(Schedule.spaced(SWEEP_INTERVAL))));
 });
 

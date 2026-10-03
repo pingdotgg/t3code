@@ -1122,6 +1122,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             onSome: (session) => session.resumeCursor,
           });
       const activeMessageId = shouldPreserveActiveMessageId({
+        previousActiveTurnId: Option.match(existingSession, {
+          onNone: () => null,
+          onSome: (session) => session.activeTurnId,
+        }),
         activeTurnId: event.payload.session.activeTurnId,
         activeMessageId: event.payload.session.activeMessageId,
       })

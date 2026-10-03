@@ -4,6 +4,8 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/providers"
+  | "/settings/keybindings"
+  | "/settings/storage"
   | "/settings/connections"
   | "/settings/workflows"
   | "/settings/pull-request-collaboration"
@@ -52,6 +54,7 @@ const settingsByPage: ReadonlyArray<{
       "Transfer active chats",
       "Chat export details",
       "Archive review chats on merge",
+      "Auto-archive settled threads",
       "Archive confirmation",
       "Delete confirmation",
       "Keybindings",
@@ -94,6 +97,7 @@ const settingsByPage: ReadonlyArray<{
       "Interface font",
       "Code font",
       "Code font size",
+      "File preview line spacing",
       "Chat font size",
       "Status line font size",
       "Input font size",
@@ -117,7 +121,21 @@ const settingsByPage: ReadonlyArray<{
   },
   {
     to: "/settings/providers",
-    rows: ["Text generation model", "Delegated thread model", "Providers"],
+    rows: ["Default model", "Text generation model", "Delegated thread model", "Providers"],
+  },
+  {
+    to: "/settings/keybindings",
+    rows: ["Keybindings", "Shortcuts", "Keybindings file"],
+  },
+  {
+    to: "/settings/storage",
+    rows: [
+      "Delete worktrees with deleted threads",
+      "Delete merged worktrees",
+      "Project checkout",
+      "Shared worktrees",
+      "Worktrees with local changes",
+    ],
   },
   {
     to: "/settings/connections",
@@ -152,6 +170,7 @@ const relatedTerms: Readonly<Record<string, string>> = {
   "UI density": "spacing compact comfortable spacious",
   "Archived threads": "archive restore delete",
   "Archive review chats on merge": "review pull request merged cleanup",
+  "Auto-archive settled threads": "settled archive cleanup days",
 };
 
 export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
@@ -159,7 +178,12 @@ export const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     rows.map((title) => ({
       title,
       to,
-      id: title === "Providers" ? "section-providers" : settingsSearchId(title),
+      id:
+        title === "Providers"
+          ? "section-providers"
+          : title === "Keybindings" || title === "Shortcuts"
+            ? "section-shortcuts"
+            : settingsSearchId(title),
       ...(relatedTerms[title] ? { terms: relatedTerms[title] } : {}),
     })),
   ),

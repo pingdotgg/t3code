@@ -31,7 +31,7 @@ import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { projectQueryKeys } from "~/lib/projectReactQuery";
 import { providerQueryKeys } from "~/lib/providerReactQuery";
-import { getPrimaryKnownEnvironment } from "../primary";
+import { getPrimaryKnownEnvironment, waitForPrimaryAuthentication } from "../primary";
 import {
   bootstrapRemoteBearerSession,
   fetchRemoteEnvironmentDescriptor,
@@ -1039,12 +1039,30 @@ function createPrimaryEnvironmentClient(
   }
 
   return createWsRpcClient(
-    new WsTransport(wsBaseUrl, {
+    new WsTransport(createPrimarySocketUrlProvider(wsBaseUrl, waitForPrimaryAuthentication), {
       onProtocolConnected: () => {
         repairRetainedThreadDetailSubscriptionsAfterReconnect();
       },
     }),
   );
+}
+
+/**
+ * Defers every primary socket dial until the session exists, so no dial ever
+ * 401-storms: pre-auth dials are rejected with 401s that Chromium logs as
+ * console errors and the transport retries loudly, all before the user could
+ * possibly be paired. Waiting (rather than failing) preserves recovery: once
+ * a session exists again — submit, refocus, re-check — the pending dial
+ * proceeds without any page action.
+ */
+export function createPrimarySocketUrlProvider(
+  wsBaseUrl: string,
+  waitForAuthentication: () => Promise<void>,
+): () => Promise<string> {
+  return async () => {
+    await waitForAuthentication();
+    return wsBaseUrl;
+  };
 }
 
 function createSavedEnvironmentClient(

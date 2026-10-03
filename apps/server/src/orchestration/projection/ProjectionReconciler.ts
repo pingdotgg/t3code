@@ -95,6 +95,9 @@ function deriveHasActionableProposedPlan(input: {
   return latestPlan !== null && latestPlan.implementedAt === null;
 }
 
+// Match the file-backed Node SQLite read pool while bounding bootstrap fan-out.
+const MAX_CONCURRENT_SHELL_SUMMARY_REFRESHES = 4;
+
 interface ProjectionReconcilerShape {
   readonly drain: Effect.Effect<void, ProjectionRepositoryError | PlatformError.PlatformError>;
 }
@@ -227,7 +230,7 @@ const makeProjectionReconciler = Effect.gen(function* () {
       const shellThreadIds = new Set(pending.flatMap((job) => job.shellThreadIds));
       const attachmentThreadIds = new Set(pending.flatMap((job) => job.attachmentThreadIds));
       yield* Effect.forEach(shellThreadIds, refreshShellSummary, {
-        concurrency: 1,
+        concurrency: MAX_CONCURRENT_SHELL_SUMMARY_REFRESHES,
         discard: true,
       });
       yield* Effect.forEach(attachmentThreadIds, reconcileAttachments, {

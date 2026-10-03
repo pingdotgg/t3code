@@ -9,7 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
+import { KeybindingCommand, KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -320,6 +320,19 @@ export const ServerUpsertKeybindingResult = Schema.Struct({
   issues: ServerConfigIssues,
 });
 export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
+
+/**
+ * Row-level replacement for one command's custom rules. An empty `rules`
+ * array removes the command override entirely so server defaults apply.
+ */
+export const ServerReplaceKeybindingRulesInput = Schema.Struct({
+  command: KeybindingCommand,
+  rules: Schema.Array(KeybindingRule),
+});
+export type ServerReplaceKeybindingRulesInput = typeof ServerReplaceKeybindingRulesInput.Type;
+
+export const ServerReplaceKeybindingRulesResult = ServerUpsertKeybindingResult;
+export type ServerReplaceKeybindingRulesResult = typeof ServerReplaceKeybindingRulesResult.Type;
 
 export const ServerExportThreadMarkdownInput = Schema.Struct({
   threadId: ThreadId,

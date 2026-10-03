@@ -372,7 +372,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
   };
 }
 
-function mapThreadShell(
+export function mapThreadShell(
   thread: OrchestrationThreadShell,
   environmentId: EnvironmentId,
 ): {

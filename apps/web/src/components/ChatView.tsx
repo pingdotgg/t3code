@@ -367,7 +367,10 @@ function isTypeToFocusGuardElement(element: Element | null): boolean {
   return (
     element.closest(TYPE_TO_FOCUS_EDITABLE_SELECTOR) !== null ||
     element.closest(TYPE_TO_FOCUS_INTERACTIVE_SELECTOR) !== null ||
-    element.closest("[data-file-browser-search]") !== null
+    element.closest("[data-file-browser-search]") !== null ||
+    // Device panel owns the keyboard while focused (sends HID keys to the
+    // simulator/emulator); never steal those keystrokes for the composer.
+    element.closest("[data-device-stream]") !== null
   );
 }
 
@@ -1117,14 +1120,21 @@ function ChatViewBody(
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
-              model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
-            },
+            fallbackDraftProject?.defaultModelSelection ??
+              settings.defaultModelSelection ?? {
+                instanceId: defaultInstanceIdForDriver(DEFAULT_PROVIDER_DRIVER_KIND),
+                model: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER_DRIVER_KIND] ?? DEFAULT_MODEL,
+              },
             localDraftError,
           )
         : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
+    [
+      draftThread,
+      fallbackDraftProject?.defaultModelSelection,
+      settings.defaultModelSelection,
+      localDraftError,
+      threadId,
+    ],
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
@@ -1451,6 +1461,7 @@ function ChatViewBody(
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
+    settings.defaultModelSelection?.instanceId ??
     null;
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
@@ -1731,6 +1742,7 @@ function ChatViewBody(
     activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
+    settings.defaultModelSelection?.instanceId ??
     null;
   const activeProviderStatus = useMemo(() => {
     if (activeProviderInstanceId) {
@@ -4950,7 +4962,8 @@ function ChatViewBody(
       settings.agentWorkflows.reviewChanges.modelSelection ??
       sendCtx?.selectedModelSelection ??
       activeProject?.defaultModelSelection ??
-      activeThread?.modelSelection
+      activeThread?.modelSelection ??
+      settings.defaultModelSelection
     )?.instanceId;
     if (!instanceId) {
       return;
@@ -4966,6 +4979,7 @@ function ChatViewBody(
     environmentId,
     gitCwd,
     settings.agentWorkflows.reviewChanges.modelSelection,
+    settings.defaultModelSelection,
     activeProject?.defaultModelSelection,
     activeThread?.modelSelection,
   ]);
@@ -4979,7 +4993,8 @@ function ChatViewBody(
     const instanceId = (
       sendCtx?.selectedModelSelection ??
       activeProject?.defaultModelSelection ??
-      activeThread?.modelSelection
+      activeThread?.modelSelection ??
+      settings.defaultModelSelection
     )?.instanceId;
     if (!instanceId) {
       return;
@@ -4994,6 +5009,7 @@ function ChatViewBody(
   }, [
     activeProject?.defaultModelSelection,
     activeThread?.modelSelection,
+    settings.defaultModelSelection,
     environmentId,
     gitCwd,
     runtimeMode,
@@ -5262,6 +5278,7 @@ function ChatViewBody(
               <PullRequestDetailPanel
                 environmentId={surface.environmentId}
                 reference={surface.reference}
+                visible={visible}
                 onClose={() => {
                   if (activeThreadRef) {
                     useRightPanelStore.getState().closeSurface(activeThreadRef, surface.id);
@@ -5284,6 +5301,9 @@ function ChatViewBody(
               threadRef={activeThreadRef}
               onOpenFile={openRightPanelFile}
               onPendingChange={handleFilePendingChange}
+              {...(activeThreadRef.environmentId === primaryEnvironmentId
+                ? { editorPicker: { keybindings, availableEditors } }
+                : {})}
             />
           ) : null;
       }
@@ -5295,72 +5315,68 @@ function ChatViewBody(
   }
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-chat-background">
-      {/* Top bar */}
-      <header
-        className={cn(
-          "shrink-0 border-b border-border",
-          isElectron
-            ? cn(
-                "drag-region flex items-center px-3 sm:px-5",
-                TITLEBAR_ROW_CLASS,
-                TITLEBAR_CONTROL_INSET_CLASS,
-              )
-            : "py-2 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:py-3 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
-        )}
-      >
-        <ChatHeader
-          activeThreadEnvironmentId={activeThread.environmentId}
-          activeThreadId={activeThread.id}
-          {...(routeKind === "draft" && draftId ? { draftId } : {})}
-          activeThreadTitle={activeThread.title}
-          activeProjectName={activeProject?.name}
-          isGitRepo={isGitRepo}
-          openInCwd={gitCwd}
-          activeProjectScripts={activeProject?.scripts}
-          preferredScriptId={
-            activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
-          }
-          keybindings={keybindings}
-          availableEditors={availableEditors}
-          exportingThread={isExportingThread}
-          exportThreadDisabledReason={exportThreadDisabledReason}
-          gitCwd={gitCwd}
-          workflowActions={workflowHeaderActions}
-          workflowRuns={workflowRuns}
-          onRunProjectScript={runProjectScript}
-          onRunWorkflow={onRunWorkflow}
-          onListOpenPullRequests={listOpenPullRequests}
-          onPrewarmProviderSession={prewarmProviderSession}
-          onPrewarmReviewPullRequest={prewarmReviewPullRequest}
-          onNavigateThread={navigateToThread}
-          onAddProjectScript={saveProjectScript}
-          onUpdateProjectScript={updateProjectScript}
-          onDeleteProjectScript={deleteProjectScript}
-          onExportThread={onExportThread}
-          {...(headerPanelToggles ? { panelToggles: headerPanelToggles } : {})}
-          paneActions={paneActions}
-        />
-      </header>
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-x-hidden bg-chat-background">
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", rightPanelMaximized && "hidden")}>
+        {/* Top bar */}
+        <header
+          className={cn(
+            "shrink-0 border-b border-border",
+            isElectron
+              ? cn(
+                  "drag-region flex items-center px-3 sm:px-5",
+                  TITLEBAR_ROW_CLASS,
+                  (shouldUseRightPanelSheet || !browserPanel.isOpen) &&
+                    TITLEBAR_CONTROL_INSET_CLASS,
+                )
+              : "py-2 ps-[calc(env(safe-area-inset-left)+--spacing(3))] pe-[calc(env(safe-area-inset-right)+--spacing(3))] sm:py-3 sm:ps-[calc(env(safe-area-inset-left)+--spacing(5))] sm:pe-[calc(env(safe-area-inset-right)+--spacing(5))]",
+          )}
+        >
+          <ChatHeader
+            activeThreadEnvironmentId={activeThread.environmentId}
+            activeThreadId={activeThread.id}
+            {...(routeKind === "draft" && draftId ? { draftId } : {})}
+            activeThreadTitle={activeThread.title}
+            activeProjectName={activeProject?.name}
+            isGitRepo={isGitRepo}
+            openInCwd={gitCwd}
+            activeProjectScripts={activeProject?.scripts}
+            preferredScriptId={
+              activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
+            }
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            exportingThread={isExportingThread}
+            exportThreadDisabledReason={exportThreadDisabledReason}
+            gitCwd={gitCwd}
+            workflowActions={workflowHeaderActions}
+            workflowRuns={workflowRuns}
+            onRunProjectScript={runProjectScript}
+            onRunWorkflow={onRunWorkflow}
+            onListOpenPullRequests={listOpenPullRequests}
+            onPrewarmProviderSession={prewarmProviderSession}
+            onPrewarmReviewPullRequest={prewarmReviewPullRequest}
+            onNavigateThread={navigateToThread}
+            onAddProjectScript={saveProjectScript}
+            onUpdateProjectScript={updateProjectScript}
+            onDeleteProjectScript={deleteProjectScript}
+            onExportThread={onExportThread}
+            {...(headerPanelToggles ? { panelToggles: headerPanelToggles } : {})}
+            paneActions={paneActions}
+          />
+        </header>
 
-      {/* Error banner */}
-      <ProviderStatusBanner status={activeProviderStatus} />
-      <ThreadErrorBanner
-        error={activeThread.error}
-        onDismiss={() => setThreadError(activeThread.id, null)}
-      />
-      {/* Pane body: content column plus the panel rail pinned to its right edge */}
-      <div className="flex min-h-0 min-w-0 flex-1">
+        {/* Error banner */}
+        <ProviderStatusBanner status={activeProviderStatus} />
+        <ThreadErrorBanner
+          error={activeThread.error}
+          onDismiss={() => setThreadError(activeThread.id, null)}
+        />
+        {/* Pane body */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Main content area with optional plan sidebar */}
+          {/* Main content area */}
           <div className="flex min-h-0 min-w-0 flex-1">
             {/* Chat column */}
-            <div
-              className={cn(
-                "relative flex min-h-0 min-w-0 flex-1 flex-col",
-                rightPanelMaximized && "hidden",
-              )}
-            >
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               {/* Messages Wrapper */}
               <div ref={messagesViewportRef} className="relative flex min-h-0 flex-1 flex-col">
                 <ChatTimelineSection
@@ -5586,35 +5602,6 @@ function ChatViewBody(
               ) : null}
             </div>
             {/* end chat column */}
-
-            {browserPanel.isOpen && !shouldUseRightPanelSheet && activeThreadRef ? (
-              <RightPanelTabs
-                mode="inline"
-                surfaces={browserPanel.surfaces}
-                activeSurfaceId={browserPanel.activeSurfaceId}
-                previewSessions={previewState.sessions}
-                terminalLabels={terminalLabels}
-                onActivate={activateRightPanelSurface}
-                onClose={closeRightPanelSurface}
-                onCloseOthers={closeOtherRightPanelSurfaces}
-                onCloseToRight={closeRightPanelSurfacesToRight}
-                onCloseAll={closeAllRightPanelSurfaces}
-                onClosePanel={closeBrowserPreview}
-                onCopyPath={copyRightPanelFilePath}
-                onAddBrowserInProfile={createBrowserSurface}
-                onAddTerminal={addTerminalSurface}
-                onAddFiles={addFilesSurface}
-                onAddDiff={addDiffSurface}
-                onAddInsights={addInsightsSurface}
-                onAddDevice={addDeviceSurface}
-                onAddPullRequests={addPullRequestsSurface}
-                {...(activeDirtyFilePaths ? { dirtyFilePaths: activeDirtyFilePaths } : {})}
-                maximized={rightPanelMaximized}
-                onToggleMaximize={toggleRightPanelMaximized}
-              >
-                {renderRightPanelSurfaces()}
-              </RightPanelTabs>
-            ) : null}
           </div>
           {/* end horizontal flex container */}
 
@@ -5641,8 +5628,38 @@ function ChatViewBody(
             ),
           )}
         </div>
-        {showPanelRail ? <ChatPanelToggles orientation="vertical" {...panelTogglesState} /> : null}
       </div>
+      {browserPanel.isOpen && !shouldUseRightPanelSheet && activeThreadRef ? (
+        <RightPanelTabs
+          mode="inline"
+          surfaces={browserPanel.surfaces}
+          activeSurfaceId={browserPanel.activeSurfaceId}
+          previewSessions={previewState.sessions}
+          terminalLabels={terminalLabels}
+          onActivate={activateRightPanelSurface}
+          onClose={closeRightPanelSurface}
+          onCloseOthers={closeOtherRightPanelSurfaces}
+          onCloseToRight={closeRightPanelSurfacesToRight}
+          onCloseAll={closeAllRightPanelSurfaces}
+          onClosePanel={closeBrowserPreview}
+          onCopyPath={copyRightPanelFilePath}
+          onAddBrowserInProfile={createBrowserSurface}
+          onAddTerminal={addTerminalSurface}
+          onAddFiles={addFilesSurface}
+          onAddDiff={addDiffSurface}
+          onAddInsights={addInsightsSurface}
+          onAddDevice={addDeviceSurface}
+          onAddPullRequests={addPullRequestsSurface}
+          {...(activeDirtyFilePaths ? { dirtyFilePaths: activeDirtyFilePaths } : {})}
+          maximized={rightPanelMaximized}
+          onToggleMaximize={toggleRightPanelMaximized}
+          terminalOpen={terminalState.terminalOpen}
+          onToggleTerminal={toggleTerminalVisibility}
+        >
+          {renderRightPanelSurfaces()}
+        </RightPanelTabs>
+      ) : null}
+      {showPanelRail ? <ChatPanelToggles orientation="vertical" {...panelTogglesState} /> : null}
       {shouldUseRightPanelSheet && browserPanel.isOpen && activeThreadRef ? (
         <RightPanelSheet
           open
@@ -5651,6 +5668,8 @@ function ChatViewBody(
         >
           <RightPanelTabs
             mode="sheet"
+            terminalOpen={terminalState.terminalOpen}
+            onToggleTerminal={toggleTerminalVisibility}
             surfaces={browserPanel.surfaces}
             activeSurfaceId={browserPanel.activeSurfaceId}
             previewSessions={previewState.sessions}

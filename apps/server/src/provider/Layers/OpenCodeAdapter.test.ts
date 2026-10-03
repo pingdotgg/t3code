@@ -434,7 +434,7 @@ const sleep = (ms: number) =>
 it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLayer))(
   "OpenCodeAdapterLive MCP routing",
   (it) => {
-    it.effect("adds the thread MCP server to the requested OpenCode directory", () =>
+    it.effect("adds only the thread t3-code MCP server to the requested OpenCode directory", () =>
       Effect.gen(function* () {
         const adapter = yield* OpenCodeAdapter;
         const threadId = asThreadId("thread-opencode-mcp-directory");
@@ -451,6 +451,9 @@ it.layer(Layer.merge(OpenCodeLocalMcpAdapterTestLayer, mcpSessionRegistryTestLay
           runtimeMode: "full-access",
         });
 
+        // Exactly one MCP server. A second `t3-tools` server would advertise a
+        // duplicate `delegate_work` with a different schema than the one the
+        // `t3-code` DelegationToolkit serves.
         assert.equal(runtimeMock.state.mcpAddCalls.length, 1);
         const call = runtimeMock.state.mcpAddCalls[0];
         assert.equal(call?.directory, directory);

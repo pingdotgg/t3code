@@ -1957,7 +1957,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(fallbackThreadShell._tag, "Some");
       if (fallbackThreadShell._tag === "Some") {
         assert.equal(fallbackThreadShell.value.latestTurn?.turnId, asTurnId("turn-running"));
-        assert.equal(fallbackThreadShell.value.latestTurn?.state, "running");
+        // Session `ready` with a turn row still `running`: terminalised, to
+        // match projector.test.ts's "marks running latest turn interrupted".
+        assert.equal(fallbackThreadShell.value.latestTurn?.state, "interrupted");
         assert.equal(fallbackThreadShell.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }
 
@@ -1967,14 +1969,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(fallbackThreadDetail._tag, "Some");
       if (fallbackThreadDetail._tag === "Some") {
         assert.equal(fallbackThreadDetail.value.latestTurn?.turnId, asTurnId("turn-running"));
-        assert.equal(fallbackThreadDetail.value.latestTurn?.state, "running");
+        assert.equal(fallbackThreadDetail.value.latestTurn?.state, "interrupted");
         assert.equal(fallbackThreadDetail.value.latestTurn?.startedAt, "2026-04-02T00:00:30.000Z");
       }
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       const shellThread = shellSnapshot.threads.find((thread) => thread.id === "thread-1");
       assert.equal(shellThread?.latestTurn?.turnId, asTurnId("turn-running"));
-      assert.equal(shellThread?.latestTurn?.state, "running");
+      assert.equal(shellThread?.latestTurn?.state, "interrupted");
       if (shellThread?.latestTurn) {
         assert.equal(shellThread.latestTurn.startedAt, "2026-04-02T00:00:30.000Z");
       }
@@ -2086,6 +2088,20 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           updatedAt: "2026-04-04T00:00:02.000Z",
         },
       ]);
+      const archivedResult = yield* searchTranscript("needle", undefined, true);
+      assert.deepStrictEqual(
+        archivedResult.matches.map((match) => match.threadId),
+        [ThreadId.make("thread-archived")],
+      );
+      const scopedArchivedResult = yield* searchTranscript(
+        "needle",
+        [ThreadId.make("thread-active")],
+        true,
+      );
+      assert.deepStrictEqual(scopedArchivedResult.matches, []);
+      yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-04T00:00:05.000Z' WHERE thread_id = 'thread-archived'`;
+      const deletedResult = yield* searchTranscript("needle", undefined, true);
+      assert.deepStrictEqual(deletedResult.matches, []);
     }),
   );
 

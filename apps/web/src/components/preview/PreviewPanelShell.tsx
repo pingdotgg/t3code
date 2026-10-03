@@ -9,7 +9,7 @@ import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
 const PREVIEW_PANEL_WIDTH_STORAGE_KEY = "t3code:preview-panel-width";
-const PREVIEW_PANEL_MIN_WIDTH = 360;
+const PREVIEW_PANEL_MIN_WIDTH = 280;
 /** Fraction of the viewport allowed, preserving the remaining space for chat. */
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
 const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
@@ -42,11 +42,11 @@ export function PreviewPanelShell(props: {
   return (
     <div
       className={cn(
-        "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-background",
+        "relative flex h-full min-h-0 min-w-0 flex-col self-stretch bg-chat-background",
         isInline
           ? props.maximized
-            ? "flex-1 border-l border-border"
-            : "shrink-0 border-l border-border"
+            ? "flex-1 border-l border-border wco:pt-[env(titlebar-area-height)]"
+            : "shrink-0 border-l border-border wco:pt-[env(titlebar-area-height)]"
           : "w-full",
       )}
       style={isInline && !props.maximized ? { width: `${width}px` } : undefined}

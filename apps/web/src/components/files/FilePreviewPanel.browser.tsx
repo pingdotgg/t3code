@@ -168,6 +168,40 @@ describe("FilePreviewPanel", () => {
     expect(writeFileMock).toHaveBeenCalledTimes(2);
   });
 
+  it("browses sibling files from breadcrumbs without mounting an explorer", async () => {
+    const onOpenFile = vi.fn();
+    listEntriesMock.mockResolvedValueOnce({
+      entries: [
+        { path: "src", kind: "directory" },
+        { path: "src/index.ts", kind: "file", parentPath: "src" },
+        { path: "src/other.ts", kind: "file", parentPath: "src" },
+      ],
+      truncated: false,
+    });
+    localStorage.setItem("t3code.fileExplorerOpen", "false");
+    const screen = await render(
+      <div className="flex h-96 w-96 flex-col">
+        <FilePreviewPanel
+          cwd="/repo/breadcrumb-siblings"
+          projectName="t3code"
+          relativePath="src/index.ts"
+          threadRef={threadRef}
+          onOpenFile={onOpenFile}
+        />
+      </div>,
+    );
+    try {
+      await expect.element(page.getByText("export const covered = true;")).toBeInTheDocument();
+      expect(document.querySelector("[data-file-browser-panel]")).toBeNull();
+      await page.getByRole("button", { name: "Browse src", exact: true }).click();
+      await page.getByRole("menuitemradio", { name: "other.ts", exact: true }).click();
+      expect(onOpenFile).toHaveBeenCalledWith("src/other.ts");
+      expect(document.querySelector("[data-file-browser-panel]")).toBeNull();
+    } finally {
+      await screen.unmount();
+      localStorage.removeItem("t3code.fileExplorerOpen");
+    }
+  });
   it("constrains long file scrolling to the retained panel height", async () => {
     readFileMock.mockResolvedValueOnce({
       relativePath: "long.ts",
@@ -300,6 +334,74 @@ describe("FilePreviewPanel", () => {
     }
   });
 
+  it("uses the configured code line spacing for workspace files", async () => {
+    const rootStyle = document.documentElement.style;
+    const previousLineSpacing = rootStyle.getPropertyValue("--app-file-preview-line-height");
+    rootStyle.setProperty("--app-file-preview-line-height", "1.75");
+    const screen = await render(
+      <FilePreviewPanel
+        cwd="/repo/line-spacing"
+        relativePath="src/index.ts"
+        threadRef={threadRef}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    try {
+      await expect.element(page.getByText("export const covered = true;")).toBeInTheDocument();
+      const collect = (root: ParentNode, selector: string, out: Element[]): void => {
+        for (const element of root.querySelectorAll(selector)) out.push(element);
+        for (const host of root.querySelectorAll("*")) {
+          if (host.shadowRoot) collect(host.shadowRoot, selector, out);
+        }
+      };
+      const preElements: Element[] = [];
+      const host = document.querySelector(".file-preview-virtualizer");
+      expect(host).not.toBeNull();
+      collect(host!, "pre", preElements);
+      expect(preElements.length).toBeGreaterThan(0);
+      expect(parseFloat(getComputedStyle(preElements[0]!).lineHeight)).toBeCloseTo(22.75, 1);
+    } finally {
+      await screen.unmount();
+      if (previousLineSpacing) {
+        rootStyle.setProperty("--app-file-preview-line-height", previousLineSpacing);
+      } else {
+        rootStyle.removeProperty("--app-file-preview-line-height");
+      }
+    }
+  });
+
+  it("uses the chat canvas for code in dark mode", async () => {
+    const root = document.documentElement;
+    const wasDark = root.classList.contains("dark");
+    const previousTheme = localStorage.getItem("t3code:theme");
+    localStorage.setItem("t3code:theme", "dark");
+    root.classList.add("dark");
+    const screen = await render(
+      <FilePreviewPanel
+        cwd="/repo/dark-code-canvas"
+        relativePath="src/index.ts"
+        threadRef={threadRef}
+        onOpenFile={vi.fn()}
+      />,
+    );
+    try {
+      await expect.element(page.getByText("export const covered = true;")).toBeInTheDocument();
+      await vi.waitFor(() => expect(root.classList.contains("dark")).toBe(true));
+      const styles = getComputedStyle(root);
+      expect(styles.getPropertyValue("--code-background")).toBe(
+        styles.getPropertyValue("--chat-background"),
+      );
+    } finally {
+      await screen.unmount();
+      if (!wasDark) root.classList.remove("dark");
+      if (previousTheme === null) {
+        localStorage.removeItem("t3code:theme");
+      } else {
+        localStorage.setItem("t3code:theme", previousTheme);
+      }
+    }
+  });
+
   it("wraps long lines by default like upstream", async () => {
     readFileMock.mockResolvedValueOnce({
       relativePath: "wrap.ts",
@@ -342,6 +444,7 @@ describe("FilePreviewPanel", () => {
       await vi.waitFor(() => {
         expect(listEntriesMock).toHaveBeenCalledWith({
           cwd: "/caller/cannot-control-this",
+          directoryPath: "",
         });
         expect(document.querySelector("[data-file-browser-panel]")).not.toBeNull();
       });

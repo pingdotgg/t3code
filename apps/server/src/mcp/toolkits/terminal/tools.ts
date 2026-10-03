@@ -31,9 +31,9 @@ export const TerminalToolkit = Toolkit.make(
     .annotate(Tool.Idempotent, false),
   Tool.make("terminal_list", {
     description:
-      "List this chat's agent-managed terminals without opening or restarting anything. Reuse retained servers before starting replacements. Terminal status describes the shell; hasRunningSubprocess indicates attached work, not service readiness.",
+      "List this chat's agent-managed terminals without opening or restarting anything. The result contains a terminals array. Reuse retained servers before starting replacements. Terminal status describes the shell; hasRunningSubprocess indicates attached work, not service readiness.",
     parameters: Schema.Record(Schema.String, Schema.Never),
-    success: Schema.Array(TerminalSummary),
+    success: Schema.Struct({ terminals: Schema.Array(TerminalSummary) }),
     failure: TerminalToolError,
     dependencies,
   })

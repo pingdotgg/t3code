@@ -107,6 +107,7 @@ type MarkdownFunctionComponentProps<K extends keyof Components> = Parameters<
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const WEB_CITATION_TOKEN_PATTERN = /\uE200cite(?:\uE202turn\d+[A-Za-z]+\d+)+\uE201/g;
 const TRAILING_PARTIAL_WEB_CITATION_PATTERN = /\uE200cite[\s\S]*$/;
+const MemoizedReactMarkdown = memo(ReactMarkdown);
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 const highlightedCodeCache = new LRUCache<string>(
@@ -166,6 +167,23 @@ function extractCodeBlock(
 function normalizeChatMarkdownText(text: string, isStreaming: boolean): string {
   const normalized = text.replace(WEB_CITATION_TOKEN_PATTERN, "");
   return isStreaming ? normalized.replace(TRAILING_PARTIAL_WEB_CITATION_PATTERN, "") : normalized;
+}
+
+function useStreamingMarkdownText(text: string, isStreaming: boolean): string {
+  const [frameText, setFrameText] = useState(text);
+
+  useEffect(() => {
+    if (!isStreaming) {
+      setFrameText(text);
+      return;
+    }
+
+    // Coalesce provider deltas faster than the display can paint into one parse per frame.
+    const frameId = window.requestAnimationFrame(() => setFrameText(text));
+    return () => window.cancelAnimationFrame(frameId);
+  }, [isStreaming, text]);
+
+  return isStreaming ? frameText : text;
 }
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
@@ -1188,9 +1206,10 @@ function ChatMarkdownView({
 }: ChatMarkdownViewProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const markdownText = useStreamingMarkdownText(text, isStreaming);
   const normalizedText = useMemo(
-    () => normalizeChatMarkdownText(text, isStreaming),
-    [isStreaming, text],
+    () => normalizeChatMarkdownText(markdownText, isStreaming),
+    [isStreaming, markdownText],
   );
   const environmentIds = useStore(
     useShallow((state) => Object.keys(state.environmentStateById) as EnvironmentId[]),
@@ -1308,7 +1327,7 @@ function ChatMarkdownView({
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of extractMarkdownLinkHrefs(markdownText)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd, linkBaseDir);
@@ -1317,7 +1336,7 @@ function ChatMarkdownView({
       }
     }
     return metaByHref;
-  }, [cwd, linkBaseDir, text]);
+  }, [cwd, linkBaseDir, markdownText]);
   const fileLinkParentSuffixByPath = useMemo(() => {
     return buildFileParentSuffixByPath(
       [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
@@ -1445,10 +1464,12 @@ function ChatMarkdownView({
     ({ node, ...props }: MarkdownFunctionComponentProps<"li">) => {
       const listItemStart = node?.position?.start.offset;
       const markerOffset =
-        typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+        typeof listItemStart === "number"
+          ? findTaskListMarkerOffset(markdownText, listItemStart)
+          : null;
       return <li {...props} data-task-marker-offset={markerOffset ?? undefined} />;
     },
-    [text],
+    [markdownText],
   );
   const markdownTaskInput = useCallback(
     ({
@@ -1523,13 +1544,13 @@ function ChatMarkdownView({
     <div
       className={cn("chat-markdown w-full min-w-0 leading-relaxed text-foreground/80", className)}
     >
-      <ReactMarkdown
+      <MemoizedReactMarkdown
         remarkPlugins={remarkPlugins}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >
         {normalizedText}
-      </ReactMarkdown>
+      </MemoizedReactMarkdown>
     </div>
   );
 }

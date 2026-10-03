@@ -11,7 +11,9 @@ import {
   hasUnseenChildNotification,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isCollapsedSettledRow,
   orderItemsByPreferredIds,
+  partitionSettledSidebarRows,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarDraftPreview,
@@ -32,6 +34,8 @@ import {
   SIDEBAR_THREAD_HOVER_PREWARM_DELAY_MS,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import { buildSidebarThreadRows, selectVisibleThreadRows } from "../sidebarThreadTree";
 
 import {
   EnvironmentId,
@@ -1582,5 +1586,305 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+const SETTLED_NOW = "2026-03-09T12:00:00.000Z";
+
+function makeSummary(overrides: Partial<SidebarThreadSummary> = {}): SidebarThreadSummary {
+  return {
+    id: ThreadId.make("thread-1"),
+    environmentId: localEnvironmentId,
+    projectId: ProjectId.make("project-1"),
+    parentThreadId: null,
+    title: "Thread",
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    createdAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    hasPendingQueuedTurn: false,
+    ...overrides,
+  };
+}
+
+function summaryKey(thread: SidebarThreadSummary): string {
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
+
+function buildSettledRows(
+  threads: readonly SidebarThreadSummary[],
+  input: {
+    pinnedThreadKeys?: readonly string[];
+    expandedThreadKeys?: readonly string[];
+  } = {},
+) {
+  return buildSidebarThreadRows({
+    threads,
+    pinnedThreadKeys: input.pinnedThreadKeys ?? [],
+    expandedOverrideByThreadKey: new Map(
+      (input.expandedThreadKeys ?? []).map((threadKey) => [threadKey, true]),
+    ),
+    sortOrder: "created_at",
+    resolveThreadStatus: (thread) => resolveThreadStatusPill({ thread, lastVisitedAt: null }),
+  }).rowViews;
+}
+
+describe("isCollapsedSettledRow", () => {
+  it("fades a quiet settled thread", () => {
+    expect(
+      isCollapsedSettledRow({
+        status: null,
+        thread: makeSummary({ settledOverride: "settled" }),
+        now: SETTLED_NOW,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a settled thread with a failed pill full-strength", () => {
+    const status = resolveThreadStatusPill({
+      thread: makeSummary({
+        settledOverride: "settled",
+        latestTurn: { ...makeLatestTurn(), state: "error" },
+      }),
+      lastVisitedAt: null,
+    });
+    expect(status).not.toBeNull();
+    expect(
+      isCollapsedSettledRow({
+        status,
+        thread: makeSummary({ settledOverride: "settled" }),
+        now: SETTLED_NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps an unsettled thread full-strength", () => {
+    expect(isCollapsedSettledRow({ status: null, thread: makeSummary(), now: SETTLED_NOW })).toBe(
+      false,
+    );
+  });
+});
+
+describe("partitionSettledSidebarRows", () => {
+  it("sinks settled roots below active roots", () => {
+    const settled = makeSummary({
+      id: ThreadId.make("thread-settled"),
+      title: "Settled",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([settled, active]);
+    // Newest-created sorts first, so the settled root starts on top.
+    expect(rowViews.map((row) => row.thread.title)).toEqual(["Settled", "Active"]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Active", "Settled"]);
+    expect(partitioned.orderedThreadKeys).toEqual(partitioned.rowViews.map((row) => row.threadKey));
+    expect(partitioned.settledThreadKeys).toEqual(new Set([summaryKey(settled)]));
+  });
+
+  it("keeps a settled parent's subtree whole and marks nested children settled", () => {
+    const parent = makeSummary({
+      id: ThreadId.make("thread-parent"),
+      title: "Parent",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+    });
+    const child = makeSummary({
+      id: ThreadId.make("thread-child"),
+      title: "Child",
+      parentThreadId: parent.id,
+    });
+    const rowViews = buildSettledRows([parent, child], {
+      expandedThreadKeys: [summaryKey(parent)],
+    });
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Parent", "Child"]);
+    // Nested children of a settled root fade too.
+    expect(partitioned.settledThreadKeys).toEqual(new Set([summaryKey(parent), summaryKey(child)]));
+  });
+
+  it("keeps a settled root active when a descendant needs attention", () => {
+    const parent = makeSummary({
+      id: ThreadId.make("thread-parent"),
+      title: "Parent",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+    });
+    const child = makeSummary({
+      id: ThreadId.make("thread-child"),
+      title: "Child",
+      parentThreadId: parent.id,
+      hasPendingUserInput: true,
+    });
+    const rowViews = buildSettledRows([parent, child]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    // A settled parent cannot bury a child that is blocked on the user.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Parent", "Child"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set());
+  });
+
+  it("sorts settled roots most-recently-settled first", () => {
+    const older = makeSummary({
+      id: ThreadId.make("thread-older"),
+      title: "Older",
+      createdAt: "2026-03-09T10:30:00.000Z",
+      updatedAt: "2026-03-09T10:30:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T10:00:00.000Z",
+    });
+    const newer = makeSummary({
+      id: ThreadId.make("thread-newer"),
+      title: "Newer",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([older, newer]);
+    expect(rowViews.map((row) => row.thread.title)).toEqual(["Older", "Newer"]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Newer", "Older"]);
+  });
+
+  it("keeps a pinned settled root leading but faded", () => {
+    const settled = makeSummary({
+      id: ThreadId.make("thread-settled"),
+      title: "Settled",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const rowViews = buildSettledRows([settled, active], {
+      pinnedThreadKeys: [summaryKey(settled)],
+    });
+
+    const partitioned = partitionSettledSidebarRows(rowViews, {
+      now: SETTLED_NOW,
+      pinnedThreadKeys: new Set([summaryKey(settled)]),
+    });
+
+    // A pin is an explicit order override the settle must not defeat.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Settled", "Active"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set([summaryKey(settled)]));
+  });
+
+  it("keeps a settled root active when its own turn failed", () => {
+    const failed = makeSummary({
+      id: ThreadId.make("thread-failed"),
+      title: "Failed",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+      latestTurn: { ...makeLatestTurn(), state: "error" },
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([failed, active]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    // The failed pill needs attention even though no canSettle blocker fires.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Failed", "Active"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set());
+  });
+
+  it("keeps a settled root with an unseen completion active", () => {
+    const done = makeSummary({
+      id: ThreadId.make("thread-done"),
+      title: "Done",
+      createdAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:05:00.000Z",
+      settledOverride: "settled",
+      settledAt: "2026-03-09T11:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T09:55:00.000Z",
+      latestTurn: makeLatestTurn(),
+    });
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:00:00.000Z",
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const rowViews = buildSettledRows([done, active]);
+
+    const partitioned = partitionSettledSidebarRows(rowViews, { now: SETTLED_NOW });
+
+    // buildSettledRows visits nothing, so the completed turn reads as unseen.
+    expect(partitioned.rowViews.map((row) => row.thread.title)).toEqual(["Done", "Active"]);
+    expect(partitioned.settledThreadKeys).toEqual(new Set());
+  });
+
+  it("keeps the active-route settled row visible below the window", () => {
+    const active = makeSummary({
+      id: ThreadId.make("thread-active"),
+      title: "Active",
+      createdAt: "2026-03-09T10:30:00.000Z",
+      updatedAt: "2026-03-09T10:30:00.000Z",
+    });
+    const settledThreads = ["s1", "s2", "s3"].map((suffix, index) =>
+      makeSummary({
+        id: ThreadId.make(`thread-settled-${suffix}`),
+        title: `Settled ${suffix}`,
+        createdAt: `2026-03-09T10:0${index}:00.000Z`,
+        updatedAt: `2026-03-09T10:0${index}:00.000Z`,
+        settledOverride: "settled",
+        settledAt: `2026-03-09T11:0${index}:00.000Z`,
+      }),
+    );
+    const partitioned = partitionSettledSidebarRows(buildSettledRows([active, ...settledThreads]), {
+      now: SETTLED_NOW,
+    });
+    const routedKey = summaryKey(settledThreads[0]!);
+
+    const withoutRoute = selectVisibleThreadRows({
+      rowViews: partitioned.rowViews,
+      rootLimit: 1,
+    });
+    expect(withoutRoute.hasOverflow).toBe(true);
+    expect(withoutRoute.rows.some((row) => row.threadKey === routedKey)).toBe(false);
+
+    const withRoute = selectVisibleThreadRows({
+      rowViews: partitioned.rowViews,
+      rootLimit: 1,
+      requiredThreadKey: routedKey,
+    });
+    expect(withRoute.hasOverflow).toBe(true);
+    expect(withRoute.rows.some((row) => row.threadKey === routedKey)).toBe(true);
   });
 });

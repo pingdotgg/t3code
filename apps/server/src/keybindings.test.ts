@@ -387,6 +387,52 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("replaces one command's rules while preserving other commands", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+n", command: "chat.new" },
+        { key: "mod+f", command: "chat.find" },
+      ]);
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.replaceKeybindingRules("chat.new", [
+          { key: "mod+t", command: "chat.new" },
+          { key: "mod+shift+o", command: "chat.new" },
+        ]);
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+      assert.deepEqual(persistedView, [
+        { key: "mod+f", command: "chat.find" },
+        { key: "mod+t", command: "chat.new" },
+        { key: "mod+shift+o", command: "chat.new" },
+      ]);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("removing a command override restores its server defaults", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+shift+j", command: "terminal.toggle" },
+      ]);
+      const resolved = yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        return yield* keybindings.replaceKeybindingRules("terminal.toggle", []);
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
+      const restored = resolved.filter((entry) => entry.command === "terminal.toggle");
+      assert.equal(
+        restored.length,
+        DEFAULT_KEYBINDINGS.filter((rule) => rule.command === "terminal.toggle").length,
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("refuses to overwrite malformed keybindings config", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

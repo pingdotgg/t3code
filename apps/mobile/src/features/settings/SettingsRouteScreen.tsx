@@ -38,8 +38,11 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
+  DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   DEFAULT_SERVER_SETTINGS,
+  MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -59,7 +62,10 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import {
+  resolveAgentAwarenessPlatformPresentation,
+  resolveDaysDraftCommit,
+} from "./SettingsRouteScreen.logic";
 import { mobileDiagnosticReport } from "../../connection/diagnostics";
 import { mobileDiagnosticStore } from "../../connection/diagnostic-store";
 
@@ -572,6 +578,7 @@ function AutoSettleSettingsRows() {
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
+  const [archiveDaysDraft, setArchiveDaysDraft] = useState<string | null>(null);
 
   if (reference === null || referenceSettings === null) {
     return null;
@@ -596,18 +603,29 @@ function AutoSettleSettingsRows() {
 
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
   const commitDays = () => {
-    const draft = (daysDraft ?? "").trim();
+    const commit = resolveDaysDraftCommit({
+      draft: daysDraft,
+      current: afterDays,
+      minDays: MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+      maxDays: MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+    });
     setDaysDraft(null);
-    // Whole-string check so "3.5" and "3days" are rejected instead of
-    // silently becoming 3 on every eligible sync target.
-    const parsed = /^\d+$/.test(draft) ? Number(draft) : Number.NaN;
-    if (
-      Number.isInteger(parsed) &&
-      parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-      parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-      parsed !== afterDays
-    ) {
-      writeToAll({ sidebarAutoSettleAfterDays: parsed });
+    if (commit !== null) {
+      writeToAll({ sidebarAutoSettleAfterDays: commit });
+    }
+  };
+
+  const archiveAfterDays = referenceSettings.autoArchiveSettledAfterDays;
+  const commitArchiveDays = () => {
+    const commit = resolveDaysDraftCommit({
+      draft: archiveDaysDraft,
+      current: archiveAfterDays,
+      minDays: MIN_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+      maxDays: MAX_AUTO_ARCHIVE_SETTLED_AFTER_DAYS,
+    });
+    setArchiveDaysDraft(null);
+    if (commit !== null) {
+      writeToAll({ autoArchiveSettledAfterDays: commit });
     }
   };
 
@@ -640,6 +658,32 @@ function AutoSettleSettingsRows() {
             onBlur={commitDays}
             onSubmitEditing={commitDays}
             accessibilityLabel="Days before auto-settle"
+          />
+        </View>
+      ) : null}
+      <SettingsSwitchRow
+        icon="archivebox"
+        label="Auto-archive settled threads"
+        subtitle={archiveAfterDays === null ? undefined : `After ${archiveAfterDays} days settled`}
+        value={archiveAfterDays !== null}
+        onValueChange={(value) =>
+          writeToAll({
+            autoArchiveSettledAfterDays: value ? DEFAULT_AUTO_ARCHIVE_SETTLED_AFTER_DAYS : null,
+          })
+        }
+      />
+      {archiveAfterDays !== null ? (
+        <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+          <Text className="flex-1 text-lg text-foreground">Days before archive</Text>
+          <TextInput
+            className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
+            keyboardType="number-pad"
+            returnKeyType="done"
+            value={archiveDaysDraft ?? String(archiveAfterDays)}
+            onChangeText={setArchiveDaysDraft}
+            onBlur={commitArchiveDays}
+            onSubmitEditing={commitArchiveDays}
+            accessibilityLabel="Days before archive"
           />
         </View>
       ) : null}

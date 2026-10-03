@@ -151,6 +151,7 @@
   --app-font-mono-stack:
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   --app-code-font-size: 13px;
+  --app-file-preview-line-height: 1.5;
   --app-chat-font-size: 14px;
   --app-sidebar-font-size: 11px;
   /* The thread title is the row's anchor, so it scales just above the sidebar
@@ -178,6 +179,9 @@
   --app-sidebar-legacy-row-padding-x: calc(var(--app-sidebar-font-size) * 0.545455);
   --app-tool-font-size: 12px;
   --app-input-font-size: 14px;
+  /* Workspace/branch/PR line under the message composer. Its own setting so
+     it can stay visibly quieter than the composer's controls at any size. */
+  --app-composer-meta-font-size: 11px;
   --pr-body-font-size: 14px;
   --sidebar-translucency-alpha: 100%;
   --sidebar-backdrop-blur: 0px;
@@ -227,6 +231,7 @@
     color-scheme: dark;
     --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
     --chat-background: var(--color-neutral-950);
+    --code-background: var(--chat-background);
     --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
@@ -578,22 +583,21 @@ label:has(> select#reasoning-effort) select {
   margin: 0.65rem 0;
 }
 
-/* Pull request bodies and comments keep GitHub-style section headings:
-   Tailwind preflight leaves headings at body size, which buries the
-   Problem / What Changed structure authors write. Scoped to PR surfaces
-   so chat messages are untouched. */
+/* Pull request bodies and comments keep modest section headings: large
+   display sizes shout over the 14px body and the 2rem section gaps break
+   the reading rhythm. Scoped to PR surfaces so chat messages are untouched. */
 .pull-request-body .chat-markdown h1 {
-  font-size: 1.4rem;
+  font-size: 1.15rem;
   font-weight: 700;
   line-height: 1.3;
-  margin: 1.1rem 0 0.6rem;
+  margin: 0.9rem 0 0.4rem;
 }
 
 .pull-request-body .chat-markdown h2 {
-  font-size: 1.375rem;
-  font-weight: 600;
+  font-size: 1.05rem;
+  font-weight: 700;
   line-height: 1.35;
-  margin: 1rem 0 0.5rem;
+  margin: 0.85rem 0 0.35rem;
 }
 
 .pull-request-body .chat-markdown {
@@ -605,15 +609,11 @@ label:has(> select#reasoning-effort) select {
   margin-top: 0;
 }
 
-.pull-request-body .chat-markdown h2:not(:first-child) {
-  margin-top: 2rem;
-}
-
 .pull-request-body .chat-markdown h3 {
-  font-size: 1.05rem;
+  font-size: 0.95rem;
   font-weight: 600;
   line-height: 1.4;
-  margin: 0.9rem 0 0.45rem;
+  margin: 0.7rem 0 0.3rem;
 }
 
 .chat-markdown ul {
@@ -1041,12 +1041,12 @@ label:has(> select#reasoning-effort) select {
   flex-shrink: 0;
   align-items: center;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  background: color-mix(in srgb, var(--muted) 20%, var(--background));
+  background: var(--chat-background);
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
 .diff-panel-viewport {
-  background: color-mix(in srgb, var(--background) 94%, var(--card));
+  background: var(--chat-background);
 }
 
 .diff-render-file {

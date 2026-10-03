@@ -1244,6 +1244,62 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("falls back to a valid native screenshot when CDP capture fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("captured-native-png");
+        const image = makeTestCapturedPreviewImage(png, 640, 480);
+        const capturePage = vi.fn(async () => image);
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            return {
+              result: {
+                value: {
+                  url: "https://example.com/",
+                  title: "Example",
+                  loading: false,
+                  visibleText: "Rendered page diagnostics",
+                  interactiveElements: [],
+                },
+              },
+            };
+          }
+          if (method === "Page.captureScreenshot") {
+            throw new Error("CDP screenshot capture is unavailable");
+          }
+          return undefined;
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42, undefined, sendCommand));
+
+        yield* manager.createTab("tab_snapshot_native_fallback");
+        yield* manager.registerWebview("tab_snapshot_native_fallback", 42);
+        const snapshotFiber = yield* manager
+          .automationSnapshot("tab_snapshot_native_fallback")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          yield* TestClock.adjust(200);
+          yield* Effect.yieldNow;
+        }
+        const snapshot = yield* Fiber.join(snapshotFiber);
+
+        expect(
+          sendCommand.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
+        ).toHaveLength(3);
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(snapshot).toMatchObject({
+          visibleText: "Rendered page diagnostics",
+          screenshot: {
+            data: png.toString("base64"),
+            width: 640,
+            height: 480,
+          },
+        });
+        expect(snapshot.screenshotCaptureFailure).toBeUndefined();
+      }),
+    ),
+  );
+
   effectIt.effect(
     "retains page diagnostics and releases control after stalled screenshot capture",
     () =>
@@ -1308,6 +1364,7 @@ describe("PreviewManager", () => {
             },
             diagnosticsSummary: expect.stringContaining("visibleText: 25 chars"),
           });
+          expect(capturePage).toHaveBeenCalledOnce();
           expect(
             sendCommand.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
           ).toHaveLength(3);
@@ -1319,7 +1376,7 @@ describe("PreviewManager", () => {
             width: 1280,
             height: 800,
           });
-          expect(capturePage).not.toHaveBeenCalled();
+          expect(capturePage).toHaveBeenCalledOnce();
         }),
       ),
   );
@@ -2020,4 +2077,102 @@ describe("Preview automation diagnostics", () => {
     expect(JSON.stringify(error)).not.toContain(selector);
     expect("locator" in error).toBe(false);
   });
+});
+
+describe("Preview automation snapshot roles", () => {
+  effectIt.effect("resolves implicit ARIA roles for native elements without a role attribute", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("captured-roles-png");
+        const image = makeTestCapturedPreviewImage(png, 1, 1);
+        const evaluated: Array<string> = [];
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method === "Runtime.evaluate" && typeof params?.["expression"] === "string") {
+            evaluated.push(params["expression"]);
+            return {
+              result: {
+                value: {
+                  url: "https://example.com",
+                  title: "Example",
+                  loading: false,
+                  visibleText: "Example",
+                  interactiveElements: [],
+                },
+              },
+            };
+          }
+          if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
+          return undefined;
+        });
+        createFromBuffer.mockReturnValue(image);
+        fromId.mockReturnValue(
+          makeTestPreviewWebContents(async () => image, 42, undefined, sendCommand),
+        );
+
+        yield* manager.createTab("tab_roles");
+        yield* manager.registerWebview("tab_roles", 42);
+        yield* manager.automationSnapshot("tab_roles", {});
+
+        const collector = evaluated.find((expression) =>
+          expression.includes("interactiveElements"),
+        );
+        expect(collector).toBeDefined();
+        // Native elements must report their implicit ARIA role so
+        // role-based Playwright locators (role=button[name=...]) resolve.
+        // The mapping mirrors the injected Playwright engine
+        // (getImplicitAriaRole in playwright-core): spinbutton, searchbox,
+        // file-as-button, and listbox must not collapse to textbox/combobox.
+        expect(collector).toContain("implicitRole");
+        expect(collector).toContain("|| implicitRole(element)");
+        expect(collector).toContain('"button"');
+        expect(collector).toContain('"link"');
+        expect(collector).toContain('"textbox"');
+        expect(collector).toContain('"checkbox"');
+        expect(collector).toContain('"spinbutton"');
+        expect(collector).toContain('"searchbox"');
+        expect(collector).toContain('"listbox"');
+      }),
+    ),
+  );
+});
+
+describe("Preview automation scroll fallback", () => {
+  effectIt.effect(
+    "falls back past window to the document scroller when the page does not scroll",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const evaluated: Array<string> = [];
+          const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Runtime.evaluate" && typeof params?.["expression"] === "string") {
+              evaluated.push(params["expression"]);
+              return { result: { value: { ok: true } } };
+            }
+            return undefined;
+          });
+          fromId.mockReturnValue(
+            makeTestPreviewWebContents(
+              async () => {
+                throw new Error("capturePage is unused by scroll");
+              },
+              42,
+              undefined,
+              sendCommand,
+            ),
+          );
+
+          yield* manager.createTab("tab_scroll");
+          yield* manager.registerWebview("tab_scroll", 42);
+          yield* manager.automationScroll("tab_scroll", { deltaY: 800 });
+
+          const scroller = evaluated.find((expression) => expression.includes("scrollBy"));
+          expect(scroller).toBeDefined();
+          // window.scrollBy is a silent no-op on inner-scroll pages, yet
+          // reports success. The fallback must measure movement and continue
+          // into the document scroller instead.
+          expect(scroller).toContain("scrollingElement");
+          expect(scroller).toContain("scrollY");
+        }),
+      ),
+  );
 });

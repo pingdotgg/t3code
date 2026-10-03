@@ -48,7 +48,10 @@ search only that project's threads and conversations. Tab on a thread result nar
 that thread and its subthreads. Backspace in an empty search or the chip's remove button
 removes a scope. You can also commit `project:name` or `thread:title` with space or Tab;
 quote names containing spaces. Multiple projects are combined, while project and thread
-scopes intersect.
+scopes intersect. Search excludes archived threads by default. Select "Search archived
+threads", or type `archived` and press Tab or Space, to add an Archived chip and search
+only archived threads (including IDs and conversation content). Combine it with project
+or thread chips to narrow the archive; removing the Archived chip returns to active threads.
 
 We are very very early in this project. Expect bugs.
 

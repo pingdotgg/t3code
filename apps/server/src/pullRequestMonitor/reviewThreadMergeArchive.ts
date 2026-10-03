@@ -11,6 +11,7 @@ import {
   threadPullRequestKey,
 } from "@t3tools/shared/threadPullRequests";
 
+import { pullRequestFromReviewSnapshot } from "../orchestration/reviewPullRequest.ts";
 import { collectActiveThreadSubtree } from "../orchestration/threadHierarchy.ts";
 import { isReviewWorkflowThread } from "./reviewWorkflowThread.ts";
 
@@ -26,13 +27,23 @@ export type ReviewThreadPullRequest = {
   readonly recordedState: "merged" | "unmerged";
 };
 
+/**
+ * A review worker created after 8ba0d1103e records `pullRequest: null` to keep
+ * `CreatedPullRequestReviewReactor` from reviewing the PR it is reviewing, which
+ * leaves it with no link at all. Its immutable review snapshot is still explicit
+ * PR provenance — the same authority migrations 067/068 give it — so fall back to
+ * that before concluding the thread is not watching a pull request.
+ */
 export function reviewThreadPullRequests(
-  thread: Pick<OrchestrationThread, "pullRequests" | "pullRequest">,
+  thread: Pick<OrchestrationThread, "pullRequests" | "pullRequest" | "reviewSnapshot">,
 ): ReadonlyArray<GitPullRequestAssociation> {
   const linked = (thread.pullRequests ?? []).map((link) => link.pullRequest);
   const legacy = thread.pullRequest;
-  if (legacy === null || legacy === undefined) return linked;
-  return [...linked, legacy];
+  const associated = legacy === null || legacy === undefined ? linked : [...linked, legacy];
+  // Safe to append unconditionally: `liveReviewThreadPullRequests` keys by pull
+  // request ref and dedupes keys, so a link naming the same PR costs nothing.
+  const fromSnapshot = pullRequestFromReviewSnapshot(thread.reviewSnapshot);
+  return fromSnapshot === undefined ? associated : [...associated, fromSnapshot];
 }
 
 // Shared by the sweep's plan and the admission guard so the two cannot drift.
@@ -45,6 +56,23 @@ export function canAutoArchiveThreadNow(
   if (!isReviewWorkflowThread(thread)) return false;
   if (reviewThreadPullRequests(thread).length === 0) return false;
   return !subtreeHasRunningTurn(readModel, threadId);
+}
+
+// Admission guard registered on the AutomaticArchiveGuardRegistry. Unsettled
+// threads are checked exactly as `canAutoArchiveThreadNow`; settled threads
+// are abstained on (approved) because the settled auto-archiver owns them: the
+// merge sweep never dispatches a settled thread (`activeReviewRoots` excludes
+// them, and the plan re-reads the model after provider reads), while the
+// settled guard re-checks candidacy and due-ness at admission. Returning false
+// here would veto every settled auto-archive under the registry's
+// every-guard-must-approve rule.
+export function canAdmitAutomaticArchiveNow(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+): boolean {
+  const thread = readModel.threads.find((entry) => entry.id === threadId);
+  if (thread !== undefined && (thread.settledOverride ?? null) === "settled") return true;
+  return canAutoArchiveThreadNow(readModel, threadId);
 }
 
 function isArchiveCandidate(thread: OrchestrationThread): boolean {

@@ -110,7 +110,7 @@ export function PreviewChromeRow({
   };
 
   return (
-    <div className="relative bg-background">
+    <div className="relative bg-chat-background">
       <form onSubmit={submit} className="surface-subheader gap-1 px-1.5" data-surface-subheader>
         <div
           className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/60 bg-background/70 p-px"

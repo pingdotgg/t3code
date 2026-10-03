@@ -7,6 +7,7 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_FILE_PREVIEW_LINE_SPACING,
   DEFAULT_CODE_FONT,
   DEFAULT_SIDEBAR_ROW_SPACING,
   DEFAULT_SIDEBAR_TRANSLUCENCY,
@@ -24,12 +25,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import {
   CODE_FONT_OPTIONS,
+  FILE_PREVIEW_LINE_SPACING_OPTIONS,
   FONT_SIZE_OPTIONS,
   formatMessagePreviewLineCount,
   HEADER_BEHAVIOR_ROWS,
   HEADER_VISIBILITY_ROWS,
   HeaderSidebarToggleRows,
   isCodeFont,
+  isFilePreviewLineSpacing,
   isFontSize,
   isMessagePreviewLineCount,
   isUiFont,
@@ -432,6 +435,46 @@ export function AppearanceSettingsPanel() {
           }
         />
         <SettingsRow
+          title="File preview line spacing"
+          description="Line height for source files in the Files panel."
+          resetAction={
+            settings.filePreviewLineSpacing !== DEFAULT_FILE_PREVIEW_LINE_SPACING ? (
+              <SettingResetButton
+                label="file preview line spacing"
+                onClick={() =>
+                  updateSettings({ filePreviewLineSpacing: DEFAULT_FILE_PREVIEW_LINE_SPACING })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.filePreviewLineSpacing)}
+              onValueChange={(value) => {
+                const spacing = Number(value);
+                if (isFilePreviewLineSpacing(spacing)) {
+                  updateSettings({ filePreviewLineSpacing: spacing });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="File preview line spacing">
+                <SelectValue>
+                  {FILE_PREVIEW_LINE_SPACING_OPTIONS.find(
+                    (option) => option.value === settings.filePreviewLineSpacing,
+                  )?.label ?? "Default"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FILE_PREVIEW_LINE_SPACING_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
           title="Chat font size"
           description="Font size for assistant and user messages in the chat."
           resetAction={
@@ -598,6 +641,46 @@ export function AppearanceSettingsPanel() {
                 <SelectValue>
                   {FONT_SIZE_OPTIONS.find((option) => option.value === settings.inputFontSize)
                     ?.label ?? `${recommendedFontSizes.inputFontSize}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Composer metadata font size"
+          description="Font size for the workspace, branch, and pull request line under the message composer."
+          resetAction={
+            settings.composerMetaFontSize !== recommendedFontSizes.composerMetaFontSize ? (
+              <SettingResetButton
+                label="composer metadata font size"
+                onClick={() =>
+                  updateSettings({
+                    composerMetaFontSize: recommendedFontSizes.composerMetaFontSize,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.composerMetaFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) updateSettings({ composerMetaFontSize: num });
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Composer metadata font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find(
+                    (option) => option.value === settings.composerMetaFontSize,
+                  )?.label ?? `${recommendedFontSizes.composerMetaFontSize}px`}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

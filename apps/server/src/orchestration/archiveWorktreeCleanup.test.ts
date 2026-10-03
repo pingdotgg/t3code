@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  isRemovableArchiveWorktreePath,
-  shouldScheduleArchiveWorktreeCleanup,
-} from "./archiveWorktreeCleanup.ts";
+import { isRemovableArchiveWorktreePath } from "./archiveWorktreeCleanup.ts";
 
 describe("archiveWorktreeCleanup", () => {
   it("rejects the project workspace root", () => {
@@ -29,40 +26,6 @@ describe("archiveWorktreeCleanup", () => {
       isRemovableArchiveWorktreePath({
         canonicalWorktreePath: "/repo/nested/feature",
         canonicalWorkspaceRoot: "/repo",
-      }),
-    ).toBe(false);
-  });
-
-  it("schedules only merged sole-owner removable paths", () => {
-    expect(
-      shouldScheduleArchiveWorktreeCleanup({
-        pullRequestState: "merged",
-        hasActiveOwner: false,
-        isRemovableWorktreePath: true,
-      }),
-    ).toBe(true);
-
-    expect(
-      shouldScheduleArchiveWorktreeCleanup({
-        pullRequestState: "open",
-        hasActiveOwner: false,
-        isRemovableWorktreePath: true,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldScheduleArchiveWorktreeCleanup({
-        pullRequestState: "merged",
-        hasActiveOwner: true,
-        isRemovableWorktreePath: true,
-      }),
-    ).toBe(false);
-
-    expect(
-      shouldScheduleArchiveWorktreeCleanup({
-        pullRequestState: "merged",
-        hasActiveOwner: false,
-        isRemovableWorktreePath: false,
       }),
     ).toBe(false);
   });

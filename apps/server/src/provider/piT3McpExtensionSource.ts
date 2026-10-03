@@ -95,6 +95,21 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
   return JSON.parse(body) as JsonRpcResponse;
 }
 
+/**
+ * Drops explicit nulls from top-level tool arguments before the MCP call.
+ * Strict-mode models send null for optional arguments they leave unset, but
+ * T3 tool schemas accept missing/undefined — not null — for those fields, so
+ * the call would fail validation. Nested nulls are the model's own data and
+ * pass through untouched.
+ */
+function stripNullArguments(params: Record<string, unknown>) {
+  const cleaned: Record<string, unknown> = {};
+  for (const key of Object.keys(params)) {
+    if (params[key] !== null) cleaned[key] = params[key];
+  }
+  return cleaned;
+}
+
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
@@ -344,13 +359,18 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
           description,
           promptSnippet: description.split("\\n")[0] ?? name,
           promptGuidelines: [
+            ...(name === "delegate_work"
+              ? [
+                  "Use this tool when delegated work should appear as a nested T3 child thread. Pi's local subagent tool creates a separate Pi child run instead; keep using it for transient internal assistance that does not need a T3 thread.",
+                ]
+              : []),
             \`Use \${registeredName} from the t3-code MCP server when the user asks for T3 orchestration that this tool covers.\`,
           ],
           parameters: jsonSchemaToTypebox(normalizeToolInputSchema(tool.inputSchema)),
           async execute(_toolCallId, params, signal) {
             const result = await client.callTool(
               name,
-              (params ?? {}) as Record<string, unknown>,
+              stripNullArguments((params ?? {}) as Record<string, unknown>),
               signal,
             );
             return {

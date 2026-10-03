@@ -10,6 +10,8 @@ import {
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  HardDriveIcon,
+  KeyboardIcon,
   Link2Icon,
   PaletteIcon,
   SearchIcon,
@@ -46,6 +48,8 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Appearance", to: "/settings/appearance", icon: PaletteIcon },
   { label: "Providers", to: "/settings/providers", icon: ServerIcon },
+  { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
+  { label: "Storage", to: "/settings/storage", icon: HardDriveIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Agent Workflows", to: "/settings/workflows", icon: WorkflowIcon },
   {

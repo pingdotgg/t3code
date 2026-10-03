@@ -653,7 +653,7 @@ async function appendNestedThreadOperationAudit(
   });
 }
 
-async function withNestedThreadAudit(
+export async function withNestedThreadAudit(
   options: McpServeOptions,
   toolName: NestedThreadCreationPolicy["toolName"],
   toolCallId: string,
@@ -1200,7 +1200,7 @@ async function resolveGitCommonDir(cwd: string): Promise<string> {
   return await fs.realpath(path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir));
 }
 
-async function createIsolatedWorkspaceTool(
+export async function createIsolatedWorkspaceTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -1240,7 +1240,7 @@ async function createIsolatedWorkspaceTool(
   });
 }
 
-async function switchWorkspaceTool(
+export async function switchWorkspaceTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2026,7 +2026,7 @@ function delegateWorkChild(
   };
 }
 
-async function delegateWorkTool(
+export async function delegateWorkTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   dependencyOverrides: Partial<NestedThreadToolDependencies> = {},
@@ -2119,7 +2119,7 @@ async function delegateWorkTool(
   return serializedBatch;
 }
 
-async function sendToThreadTool(
+export async function sendToThreadTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
   mode: "message" | "assignment" = "message",
@@ -2166,7 +2166,7 @@ async function sendToThreadTool(
   return result.stdout.trim();
 }
 
-async function setChildWaitTool(
+export async function setChildWaitTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2183,7 +2183,7 @@ async function setChildWaitTool(
   return result.stdout.trim();
 }
 
-async function reportToParentTool(
+export async function reportToParentTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2242,7 +2242,7 @@ async function reportToParentTool(
   return result.stdout.trim();
 }
 
-async function associatePullRequestTool(
+export async function associatePullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2268,7 +2268,7 @@ async function associatePullRequestTool(
   return result.stdout.trim();
 }
 
-async function linkPullRequestTool(
+export async function linkPullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2289,7 +2289,7 @@ async function linkPullRequestTool(
   return result.stdout.trim();
 }
 
-async function unlinkPullRequestTool(
+export async function unlinkPullRequestTool(
   options: McpServeOptions,
   args: Record<string, unknown>,
 ): Promise<string> {
@@ -2310,7 +2310,7 @@ async function unlinkPullRequestTool(
   return result.stdout.trim();
 }
 
-async function listThreadPullRequestsTool(options: McpServeOptions): Promise<string> {
+export async function listThreadPullRequestsTool(options: McpServeOptions): Promise<string> {
   if (!options.threadId) {
     throw new Error("list_thread_pull_requests is only available from a T3 provider session");
   }
@@ -3064,29 +3064,66 @@ async function serveMcp(options: McpServeOptions): Promise<void> {
   }
 }
 
-export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: string }) =>
-  Effect.promise(() =>
+export interface McpCliInvocation {
+  readonly cliCommand: string;
+  readonly cliArgsPrefix: ReadonlyArray<string>;
+}
+
+/**
+ * Resolves how to invoke the T3 CLI, honoring the documented
+ * `T3_MCP_CLI_COMMAND` / `T3_MCP_CLI_ARGS_PREFIX` overrides before falling back
+ * to running this process's entry point directly. Every in-process caller that
+ * shells out to the CLI (the stdio server and the `t3-code` delegation
+ * toolkit) must resolve it here so an override applies uniformly instead of
+ * only on the stdio path.
+ */
+export const resolveMcpCliInvocation = (
+  environment: NodeJS.ProcessEnv = process.env,
+  runtime: { readonly execPath: string; readonly entryPath: string | undefined } = {
+    execPath: process.execPath,
+    entryPath: process.argv[1],
+  },
+): McpCliInvocation => {
+  const configuredCommand = environment.T3_MCP_CLI_COMMAND?.trim();
+  if (configuredCommand) {
+    return { cliCommand: configuredCommand, cliArgsPrefix: parseCliArgsPrefix(environment) };
+  }
+  if (runtime.entryPath === undefined) {
+    return { cliCommand: "t3", cliArgsPrefix: [] };
+  }
+  return {
+    cliCommand: runtime.execPath,
+    cliArgsPrefix: [runtime.entryPath, ...parseCliArgsPrefix(environment)],
+  };
+};
+
+const parseCliArgsPrefix = (environment: NodeJS.ProcessEnv): ReadonlyArray<string> => {
+  const raw = environment.T3_MCP_CLI_ARGS_PREFIX?.trim();
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
+  }
+  if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+    throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
+  }
+  return parsed;
+};
+
+export const runMcpServer = (input: { readonly cwd: string; readonly toolsets?: string }) => {
+  const cli = resolveMcpCliInvocation();
+  return Effect.promise(() =>
     serveMcp({
       cwd: path.resolve(input.cwd),
       toolsets: normalizeToolsets(input.toolsets),
       threadId: process.env.T3_MCP_THREAD_ID,
-      cliCommand: process.env.T3_MCP_CLI_COMMAND?.trim() || "t3",
-      cliArgsPrefix: (() => {
-        const raw = process.env.T3_MCP_CLI_ARGS_PREFIX?.trim();
-        if (!raw) return [];
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
-        }
-        if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
-          throw new Error("T3_MCP_CLI_ARGS_PREFIX must be a JSON array of strings");
-        }
-        return parsed;
-      })(),
+      cliCommand: cli.cliCommand,
+      cliArgsPrefix: cli.cliArgsPrefix,
     }),
   );
+};
 
 /** Exposed for tests. */
 export const __testing = {
