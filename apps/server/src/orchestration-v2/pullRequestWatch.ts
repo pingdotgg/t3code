@@ -16,7 +16,7 @@ const SNIPPET_LENGTH = 200;
 
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
-  | { readonly kind: "checks-passed"; readonly count: number }
+  | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "conflicting" };
 
@@ -33,18 +33,13 @@ export interface PullRequestWatchReport {
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
-/** The result once every check finished; null while one still runs or there are none. */
-function checksResult(checks: ReadonlyArray<PullRequestCheck>): "passing" | "failed" | null {
-  if (checks.length === 0 || checks.some((check) => check.status === "pending")) return null;
-  return checks.some(isFailedCheck) ? "failed" : "passing";
-}
-
 /**
- * Compares a watched pull request with what its agent was last told. The check result is
- * reported once every check finished, and again after the head commit moves or checks run
- * again. Remarks count when someone other than the agent's own account wrote them, so its own
- * replies never wake it. `remarks` is null when
- * the conversation could not be read; remarks then wait for a later pass.
+ * Compares a watched pull request with what its agent was last told. Each check is reported as
+ * soon as it fails, so a check that never finishes (an advisory review bot) cannot hold the
+ * news back. "Passed" is reported once the checks the base branch requires all passed, or all
+ * checks where the host marks none required. Remarks count when someone other than the agent's
+ * own account wrote them, so its own replies never wake it. `remarks` is null when the
+ * conversation could not be read; remarks then wait for a later pass.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -53,25 +48,27 @@ export function evaluatePullRequestWatch(
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
-  const result = checksResult(detail.checks);
-  // Hosts that report no head commit still show a push or a rerun as checks running again. An
-  // empty list is not a rerun: a host can answer with one when its check read fails.
-  const restarted =
-    headSha !== watch.headSha ||
-    (watch.checks !== null && detail.checks.some((check) => check.status === "pending"));
+  const headMoved = headSha !== watch.headSha;
 
-  let checks = restarted ? null : watch.checks;
-  if (result !== null && result !== checks) {
-    changes.push(
-      result === "passing"
-        ? { kind: "checks-passed", count: detail.checks.length }
-        : { kind: "checks-failed", failed: detail.checks.filter(isFailedCheck) },
-    );
-    checks = result;
+  // An empty list keeps the last state: a host can answer with one when its check read fails.
+  let failedChecks = headMoved ? [] : watch.failedChecks;
+  let passed = headMoved ? false : watch.passed;
+  if (detail.checks.length > 0) {
+    const failed = detail.checks.filter(isFailedCheck);
+    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
+    if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    // A check that runs again leaves the list, so a rerun that fails again is reported.
+    failedChecks = failed.map((check) => check.name);
+
+    const required = detail.checks.filter((check) => check.required === true);
+    const gate = required.length > 0 ? required : detail.checks;
+    const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
+    if (passedNow && !passed) {
+      changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
+    }
+    passed = passedNow;
   }
 
-  // The agent posts as the viewer. Where the host does not name one, the agent most likely
-  // opened the pull request, so its author stands in.
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   // GitHub times are per second, so remarks at the boundary time are told apart by ID.
@@ -99,14 +96,15 @@ export function evaluatePullRequestWatch(
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
-  const progress = restarted || (changes.length > 0 && !commentsOnly);
+  const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
   return {
     changes,
     next: {
       startedAt: watch.startedAt,
       headSha,
-      checks,
+      failedChecks,
+      passed,
       remarksThrough,
       remarkIds,
       conflicting,
@@ -146,7 +144,7 @@ function changeLines(
       ];
     case "checks-passed":
       return [
-        `- All ${change.count} ${change.count === 1 ? "check" : "checks"} finished without a failure${context.commit}.`,
+        `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
       ];
     case "remarks":
       return [

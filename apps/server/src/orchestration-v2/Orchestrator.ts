@@ -2964,7 +2964,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : (existing.watch ?? {
                     startedAt,
                     headSha: null,
-                    checks: null,
+                    failedChecks: [],
+                    passed: false,
                     remarksThrough: startedAt,
                     remarkIds: [],
                     conflicting: false,

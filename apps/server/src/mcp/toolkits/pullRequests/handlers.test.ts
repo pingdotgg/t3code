@@ -246,7 +246,8 @@ describe("pull request toolkit handlers", () => {
       const watch = {
         startedAt: "2026-08-20T00:00:00.000Z",
         headSha: null,
-        checks: null,
+        failedChecks: [],
+        passed: false,
         remarksThrough: "2026-08-20T00:00:00.000Z",
         remarkIds: [],
         conflicting: false,
