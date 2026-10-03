@@ -164,12 +164,7 @@ export function deriveProjectGroupLabel(input: {
     input.members.map((member) => member.repositoryIdentity?.name),
   );
   const sharedTitle = sharedTitles[0];
-  if (
-    sharedTitles.length === 1 &&
-    sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
-  ) {
+  if (sharedTitles.length === 1 && sharedTitle !== undefined) {
     return sharedTitle;
   }
   if (sharedDisplayNames.length === 1) {
