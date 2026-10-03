@@ -52,7 +52,7 @@ export function barColor(driver: ServerProvider["driver"]): string {
 }
 
 /** Pace as a glyph with the words on hover. */
-export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
     <Tooltip>

@@ -10,6 +10,7 @@ import {
   displayLimitWindows,
   formatDuration,
   formatResetsIn,
+  LIMIT_PACE_LABEL,
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
@@ -28,7 +29,6 @@ import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
-const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -112,13 +112,13 @@ function PoolWindowCard({
           </View>
         </View>
         {pool.pace ? (
-          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
+          <Text className="text-xs text-foreground-tertiary">{LIMIT_PACE_LABEL[pool.pace]}</Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
       {nextRefill ? (
         <Text className="text-xs tabular-nums text-foreground-muted">
-          ↻ +{nextRefill.restoresPercent}%{" "}
+          ↻ returns {nextRefill.restoresPercent}% of the pool{" "}
           {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
         </Text>
       ) : null}

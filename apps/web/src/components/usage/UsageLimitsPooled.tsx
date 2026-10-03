@@ -6,7 +6,9 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
+  formatDuration,
   formatResetsIn,
+  LIMIT_PACE_LABEL,
   type LimitAccount,
   type LimitPool,
   type LimitPoolMember,
@@ -27,13 +29,7 @@ import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import {
-  PaceIcon,
-  ResetCreditDialog,
-  barColor,
-  resetCreditsSummary,
-  useResetCredit,
-} from "./UsageLimits";
+import { ResetCreditDialog, barColor, resetCreditsSummary, useResetCredit } from "./UsageLimits";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -506,17 +502,26 @@ function PoolWindowCard({
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
-        <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+          {pool.pace ? (
+            <span className="text-xs text-muted-foreground">{LIMIT_PACE_LABEL[pool.pace]}</span>
+          ) : null}
+        </span>
         <span className="flex items-baseline gap-2">
           <span className="text-3xl font-semibold text-foreground tabular-nums">
             {pool.remainingPercent}%
           </span>
           <span className="text-sm text-muted-foreground">left</span>
-          {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
         {nextRefill && pool.columns.length > 1 ? (
-          <span className="text-xs font-medium text-foreground tabular-nums">
-            ↻ +{nextRefill.restoresPercent}%
+          <span className="text-xs text-muted-foreground tabular-nums">
+            ↻ returns{" "}
+            <span className="font-medium text-foreground">{nextRefill.restoresPercent}%</span> of
+            the pool{" "}
+            <span className="whitespace-nowrap">
+              {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
+            </span>
           </span>
         ) : null}
       </div>
