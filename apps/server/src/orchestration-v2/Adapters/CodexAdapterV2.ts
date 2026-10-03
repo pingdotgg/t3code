@@ -31,7 +31,7 @@ import {
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
@@ -631,10 +631,6 @@ const decodeTurnApprovalPolicy = Schema.decodeUnknownEffect(
 const decodeTurnSandboxPolicy = Schema.decodeUnknownEffect(
   Schema.Union([CodexSchema.V2TurnStartParams__SandboxPolicy, Schema.Null]),
 );
-const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
-  Schema.Union([CodexSchema.V2TurnStartParams__ReasoningEffort, Schema.Null]),
-);
-
 const CodexTurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pipe(
   Schema.fieldsAssign({
     collaborationMode: Schema.optionalKey(CodexSchema.ClientRequest__CollaborationMode),
@@ -714,12 +710,6 @@ export function buildCodexTurnStartParams(input: {
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
-    const selectedEffort = getModelSelectionStringOptionValue(
-      input.modelSelection,
-      "reasoningEffort",
-    );
-    const effort =
-      selectedEffort === undefined ? undefined : yield* decodeTurnReasoningEffort(selectedEffort);
     const serviceTier =
       input.omitServiceTier === true
         ? undefined
@@ -731,7 +721,7 @@ export function buildCodexTurnStartParams(input: {
     const additionalContext =
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
-            { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
+            { model: input.modelSelection.model },
             {
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
@@ -745,7 +735,6 @@ export function buildCodexTurnStartParams(input: {
             mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
             settings: {
               model: input.modelSelection.model,
-              reasoning_effort: effort ?? "medium",
               ...(developerInstructions === undefined
                 ? {}
                 : { developer_instructions: developerInstructions }),
@@ -766,7 +755,6 @@ export function buildCodexTurnStartParams(input: {
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
-      ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
       ...(collaborationMode === undefined ? {} : { collaborationMode }),
     });

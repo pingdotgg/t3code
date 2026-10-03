@@ -5,6 +5,7 @@ import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
@@ -71,7 +72,7 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
-  it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
+  it("ignores selected context windows while preserving fixed catalog capacities", () => {
     const source = manifest();
     const profile = source.providers!.claudeAgent!.profiles.synthetic!;
     const catalog = resolveClaudeModelCatalog({
@@ -102,13 +103,12 @@ describe("Claude model catalog", () => {
       },
     });
     const selection = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "synthetic" };
-    assert.equal(resolveClaudeCatalogContextWindowTokens(catalog, selection), 1_000_000);
-    assert.equal(
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, selection));
+    assert.isUndefined(
       resolveClaudeCatalogContextWindowTokens(catalog, {
         ...selection,
         options: [{ id: "contextWindow", value: "small" }],
       }),
-      32_000,
     );
     assert.equal(
       resolveClaudeCatalogContextWindowTokens(catalog, { ...selection, model: "fixed" }),
@@ -132,7 +132,7 @@ describe("Claude model catalog", () => {
     );
   });
 
-  it("resolves aliases and declarative adapter mappings", () => {
+  it("resolves aliases without exposing provider-managed effort or context options", () => {
     const base = manifest();
     const input: ModelManifestData = {
       ...base,
@@ -159,12 +159,24 @@ describe("Claude model catalog", () => {
       "claude-synthetic-next",
     );
     assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "extreme", "synthetic"), "high");
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "synthetic").optionDescriptors,
+      [],
+    );
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
     assert.strictEqual(
       resolveClaudeCatalogApiModelId(catalog, {
         instanceId: ProviderInstanceId.make("claudeAgent"),
         model: "synthetic",
       }),
-      "claude-synthetic-next[large]",
+      "claude-synthetic-next",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogContextWindowTokens(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "synthetic",
+      }),
+      undefined,
     );
   });
 
@@ -189,7 +201,7 @@ describe("Claude model catalog", () => {
     assert.isFalse(hasValidClaudeManifestAdapters(malformed));
   });
 
-  it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
+  it("hides provider-managed options on custom models and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(resolveClaudeModelCatalog(manifest()), [
       "synthetic",
       {
@@ -215,15 +227,13 @@ describe("Claude model catalog", () => {
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
     assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
 
-    // The entry with descriptors resolves user-defined effort ids and passes
-    // them through untouched (no effortMap, no model suffix).
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
-      "brutal",
+      undefined,
     );
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "bogus"),
-      "gentle",
+      undefined,
     );
     assert.strictEqual(
       normalizeClaudeCatalogEffort(catalog, "brutal", "claude-custom-tuned"),

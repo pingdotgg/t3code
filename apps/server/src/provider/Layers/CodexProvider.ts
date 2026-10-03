@@ -78,27 +78,12 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
-const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
-  none: "None",
-  minimal: "Minimal",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "Extra High",
-  max: "Max",
-  ultra: "Ultra",
-};
-
 const DEFAULT_SERVICE_TIER_ID = "default";
 
 /** Shorter copy for tiers whose catalog description wraps in the traits menu. */
 const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
 };
-
-function reasoningEffortLabel(reasoningEffort: string): string {
-  return REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort;
-}
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
@@ -153,20 +138,6 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
 export function mapCodexModelCapabilities(
   model: CodexSchema.V2ModelListResponse__Model,
 ): ModelCapabilities {
-  const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) =>
-    reasoningEffort ===
-    (codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort)
-      ? {
-          id: reasoningEffort,
-          label: reasoningEffortLabel(reasoningEffort),
-          isDefault: true,
-        }
-      : {
-          id: reasoningEffort,
-          label: reasoningEffortLabel(reasoningEffort),
-        },
-  );
-  const defaultReasoning = reasoningOptions.find((option) => option.isDefault)?.id;
   const serviceTiers =
     model.serviceTiers && model.serviceTiers.length > 0
       ? model.serviceTiers
@@ -183,15 +154,6 @@ export function mapCodexModelCapabilities(
   const defaultServiceTier = catalogDefaultServiceTier ?? DEFAULT_SERVICE_TIER_ID;
   const optionDescriptors: ProviderOptionDescriptor[] = [];
 
-  if (reasoningOptions.length > 0) {
-    optionDescriptors.push({
-      id: "reasoningEffort",
-      label: "Reasoning",
-      type: "select",
-      options: reasoningOptions,
-      ...(defaultReasoning ? { currentValue: defaultReasoning } : {}),
-    });
-  }
   if (serviceTiers.length > 0) {
     optionDescriptors.push({
       id: "serviceTier",

@@ -14,7 +14,7 @@ const selection = (
 });
 
 describe("compileClaudeModelSelection", () => {
-  it("compiles context, effort, and settings together", () => {
+  it("ignores saved provider-managed context and effort", () => {
     expect(
       compileClaudeModelSelection(
         selection("claude-fable-5", [
@@ -23,9 +23,9 @@ describe("compileClaudeModelSelection", () => {
         ]),
       ),
     ).toMatchObject({
-      apiModelId: "claude-fable-5[1m]",
-      effort: "xhigh",
-      settings: { ultracode: true },
+      apiModelId: "claude-fable-5",
+      effort: undefined,
+      settings: {},
     });
   });
 
@@ -40,12 +40,12 @@ describe("compileClaudeModelSelection", () => {
     ).toEqual({ fastMode: false });
   });
 
-  it("uses the model default SDK effort alongside prompt-injected effort", () => {
+  it("ignores saved prompt-injected effort", () => {
     expect(
       compileClaudeModelSelection(
         selection("claude-sonnet-4-6", [{ id: "effort", value: "ultrathink" }]),
       ),
-    ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
+    ).toMatchObject({ effort: undefined, promptEffort: undefined });
   });
 
   it("compiles the thinking toggle for models that expose it", () => {

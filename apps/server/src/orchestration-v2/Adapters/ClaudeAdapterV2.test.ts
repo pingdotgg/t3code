@@ -165,6 +165,26 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(options.settings, { showThinkingSummaries: true });
   });
 
+  it("ignores saved Claude effort and context choices while preserving the environment", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-opus-5-5",
+        options: [
+          { id: "effort", value: "max" },
+          { id: "contextWindow", value: "1m" },
+        ],
+      },
+      nativeThreadId: "provider-config-thread",
+      resume: false,
+      cwd: "/workspace",
+      environment: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+    });
+    assert.equal(options.model, "claude-opus-5-5");
+    assert.isUndefined(options.effort);
+    assert.equal(options.env?.CLAUDE_CODE_DISABLE_1M_CONTEXT, "1");
+  });
+
   it("preserves an explicit omitted thinking display", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -1484,7 +1504,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           expectedImageBlock,
           {
             type: "text",
-            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
+            text: `What's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
 
@@ -1511,7 +1531,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           expectedImageBlock,
           {
             type: "text",
-            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
+            text: `Focus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),

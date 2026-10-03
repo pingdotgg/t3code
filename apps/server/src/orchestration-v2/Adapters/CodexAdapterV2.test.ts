@@ -482,6 +482,9 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.collaborationMode?.mode, "default");
+      assert.isUndefined(params.effort);
+      assert.isUndefined(params.collaborationMode?.settings.reasoning_effort);
+      assert.notInclude(params.additionalContext?.t3_code_runtime?.value ?? "", "reasoning effort");
       assert.include(
         params.additionalContext?.t3_code_orchestration?.value ?? "",
         "Use `delegate_task`",
@@ -562,7 +565,7 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
+  it.effect("ignores saved Codex effort while keeping service tier and cwd", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
@@ -584,11 +587,11 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.model, "gpt-5.4");
-      assert.equal(params.effort, "xhigh");
+      assert.isUndefined(params.effort);
       assert.equal(params.serviceTier, "priority");
       assert.equal(params.cwd, "/workspace/model-options");
       assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
-      assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
+      assert.isUndefined(params.collaborationMode?.settings.reasoning_effort);
 
       // ChatGPT token sharing rejects service tiers, so managed sessions drop a stale pick.
       const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
