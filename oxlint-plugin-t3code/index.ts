@@ -8,6 +8,7 @@ import noManualEffectRuntimeInTests from "./rules/no-manual-effect-runtime-in-te
 import noMobileUniwindThemeEscapeHatches from "./rules/no-mobile-uniwind-theme-escape-hatches.ts";
 import noNativeTitleTooltip from "./rules/no-native-title-tooltip.ts";
 import noTestInLoop from "./rules/no-test-in-loop.ts";
+import noUnscopedHas from "./rules/no-unscoped-has.ts";
 
 export default definePlugin({
   meta: {
@@ -22,5 +23,6 @@ export default definePlugin({
     "no-mobile-uniwind-theme-escape-hatches": noMobileUniwindThemeEscapeHatches,
     "no-native-title-tooltip": noNativeTitleTooltip,
     "no-test-in-loop": noTestInLoop,
+    "no-unscoped-has": noUnscopedHas,
   },
 });
