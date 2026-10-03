@@ -145,6 +145,25 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("pairs an outdated server so it can be updated from this client", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const registration = yield* preparePairingRegistration({
+        host: "remote.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CLIENT_PRESENTATION_LAYER,
+            pairingHttpLayer(calls, { protocolVersion: ORCHESTRATION_PROTOCOL_VERSION - 1 }),
+          ),
+        ),
+      );
+      expect(registration.target.environmentId).toBe("environment-paired");
+      expect(calls.map((call) => call.url)).toContain("https://remote.example.test/oauth/token");
+    }),
+  );
+
   it.effect("does not consume a pairing credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
       const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
