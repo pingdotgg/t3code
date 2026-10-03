@@ -1604,6 +1604,180 @@ describe("ClaudeAdapterV2 attachments", () => {
   );
 });
 
+describe("ClaudeAdapterV2 skill dispatch", () => {
+  const makeSkillDispatchHarness = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const claudeHome = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-v2-skills-home-",
+    });
+    yield* fileSystem.makeDirectory(path.join(claudeHome, "skills", "implement"), {
+      recursive: true,
+    });
+    yield* fileSystem.writeFileString(
+      path.join(claudeHome, "skills", "implement", "SKILL.md"),
+      "---\ndescription: Implement the requested change\n---\nImplement it.\n",
+    );
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-v2-skills-attachments-",
+    });
+    const offeredMessages: Array<SDKUserMessage> = [];
+    const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: claudeHome },
+      environment: {},
+      attachmentsDir,
+      fileSystem,
+      path,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed("native-thread-claude-skills"),
+        open: () =>
+          Effect.succeed({
+            messages: Stream.never,
+            offer: (message) =>
+              Effect.sync(() => {
+                offeredMessages.push(message);
+              }),
+            setModel: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            interrupt: Effect.void,
+            close: Effect.void,
+          }),
+        forkSession: () => Effect.die("unused forkSession"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make("thread-claude-skills");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-skills"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    return { attachmentsDir, offeredMessages, providerThread, runtime, threadId };
+  });
+
+  // Claude Code moves the expanded command ahead of earlier text blocks, so a
+  // leading block holding only the words before the chip reaches the model as
+  // a cut-off sentence (#13256).
+  it.effect("keeps the full request ahead of a mid-sentence skill command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { offeredMessages, providerThread, runtime, threadId } =
+          yield* makeSkillDispatchHarness;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-skills"),
+            text: "you will $implement fixes",
+            attachments: [],
+          }),
+        );
+
+        assert.deepEqual(offeredMessages[0]?.message.content, [
+          { type: "text", text: "Ultrathink:\nyou will /implement fixes" },
+          { type: "text", text: "/implement fixes" },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps the full request ahead of images and the skill command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { attachmentsDir, offeredMessages, providerThread, runtime, threadId } =
+          yield* makeSkillDispatchHarness;
+        const attachment = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("thread-claude-skills-12345678-1234-1234-1234-123456789abc"),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        });
+        const attachmentPath = path.join(attachmentsDir, attachmentRelativePath(attachment)!);
+        yield* fileSystem.writeFile(attachmentPath, Uint8Array.from([1, 2, 3, 4]));
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-skills-image"),
+            text: "please $implement this screenshot",
+            attachments: [attachment],
+          }),
+        );
+
+        const attachmentNote = `[Attached image "screen.png" is saved at: ${attachmentPath}]`;
+        assert.deepEqual(offeredMessages[0]?.message.content, [
+          {
+            type: "text",
+            text: `Ultrathink:\nplease /implement this screenshot\n\n${attachmentNote}`,
+          },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "AQIDBA==" } },
+          { type: "text", text: `/implement this screenshot\n\n${attachmentNote}` },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps the full request ahead of a skill command sent as steering", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const { offeredMessages, providerThread, runtime, threadId } =
+          yield* makeSkillDispatchHarness;
+        const attemptId = RunAttemptId.make("attempt-claude-skills-steer");
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "look at the failing tests",
+            attachments: [],
+          }),
+        );
+
+        yield* runtime.steerTurn({
+          threadId,
+          runId: RunId.make(`run-${attemptId}`),
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-skills-steer"),
+            text: "then $implement the fixes",
+            attachments: [],
+          },
+        });
+
+        assert.equal(offeredMessages[1]?.priority, "now");
+        assert.deepEqual(offeredMessages[1]?.message.content, [
+          { type: "text", text: "Ultrathink:\nthen /implement the fixes" },
+          { type: "text", text: "/implement the fixes" },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 native fork", () => {
   it.effect("forks at the source assistant cursor and resumes the forked session", () =>
     Effect.scoped(

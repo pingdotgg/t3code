@@ -18,8 +18,10 @@
  *    its Skill tool when it reads `/name` in the prompt, so earlier mentions
  *    are rewritten to `/name` inline.
  *
- * So one mention anywhere in the prompt becomes a guaranteed invocation, and
- * the user's text on either side is kept in order.
+ * Expansion puts the command ahead of the earlier text blocks, so a block with
+ * only the words before a mid-prompt mention reads as a cut-off sentence. The
+ * earlier block therefore carries the whole request, and the last block
+ * repeats the invocation so the skill still loads.
  *
  * @module provider/Drivers/ClaudeSkillDispatch
  */
@@ -33,7 +35,7 @@ const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 export interface ClaudeSkillDispatch {
-  /** Text before the dispatched mention, or `undefined` when it opens the prompt. */
+  /** The whole prompt with mentions as `/name`, or `undefined` when the mention opens it. */
   readonly leadingText: string | undefined;
   /** `/name` plus the trailing text, ready to be the message's last text block. */
   readonly commandText: string;
@@ -41,7 +43,7 @@ export interface ClaudeSkillDispatch {
 }
 
 /**
- * Split `prompt` around the last `$skill` mention that names a known skill.
+ * Plan the text blocks that invoke the last `$skill` mention naming a known skill.
  * Returns `undefined` when there is nothing to dispatch, in which case the
  * prompt should go out unchanged. Mentions that do not match a discovered
  * skill stay literal: a `$HOME` in prose must not become a command.
@@ -61,19 +63,18 @@ export function planClaudeSkillDispatch(
     return undefined;
   }
 
-  const leading = prompt.slice(0, last.start);
   const trailing = prompt.slice(last.end);
-  const leadingWithInlineSlashes = mentions
-    .slice(0, -1)
+  const promptWithInlineSlashes = mentions
     .reduceRight(
       (text, mention) =>
         `${text.slice(0, mention.start)}/${mention.name}${text.slice(mention.end)}`,
-      leading,
+      prompt,
     )
     .trimEnd();
 
   return {
-    leadingText: leadingWithInlineSlashes.length > 0 ? leadingWithInlineSlashes : undefined,
+    leadingText:
+      prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
     commandText: `/${last.name}${trailing}`.trimEnd(),
     skillName: last.name,
   };
