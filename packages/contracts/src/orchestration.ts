@@ -1638,13 +1638,6 @@ const ThreadQueueReleaseCommand = Schema.Struct({
   releasedAt: IsoDateTime,
 });
 
-const ClientThreadQueueReleaseCommand = Schema.Struct({
-  type: Schema.Literal("thread.queue.release"),
-  commandId: CommandId,
-  threadId: ThreadId,
-  releasedAt: IsoDateTime,
-});
-
 const ClientThreadQueuedTurnReorderCommand = Schema.Struct({
   type: Schema.Literal("thread.queued-turn.reorder"),
   commandId: CommandId,
@@ -1963,7 +1956,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
   ClientThreadQueuedTurnReorderCommand,
-  ClientThreadQueueReleaseCommand,
+  ThreadQueueReleaseCommand,
   ThreadTurnInterruptCommand,
   ThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,
@@ -2015,7 +2008,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadQueuedTurnDeleteCommand,
   ThreadQueuedTurnDispatchCommand,
   ClientThreadQueuedTurnReorderCommand,
-  ClientThreadQueueReleaseCommand,
+  ThreadQueueReleaseCommand,
   ThreadTurnInterruptCommand,
   ClientThreadTurnSteerCommand,
   ThreadApprovalRespondCommand,

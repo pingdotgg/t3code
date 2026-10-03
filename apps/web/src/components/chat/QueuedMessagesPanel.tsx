@@ -156,7 +156,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
                       type="button"
                       size="icon-xs"
                       variant="ghost"
-                      disabled={queueIndex === visibleQueuedTurns.length - 1}
+                      disabled={queueIndex === queuedTurns.length - 1}
                       aria-label="Move queued message down"
                       title="Move down"
                       onClick={() => onMoveQueuedTurn(queuedTurn.id, 1)}

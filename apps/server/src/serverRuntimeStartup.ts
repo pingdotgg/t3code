@@ -370,24 +370,32 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
     port: serverConfig.port,
   });
 
+  // Scope finalizers run last-registered-first, so this is registered first to
+  // run last: the marker is written only after the reactors have been stopped
+  // and everything flushed. A kill between that point and process exit still
+  // leaves the marker unset, which is what keeps the next boot holding queues.
+  //
+  // It is also gated on a successful exit, because a failed or interrupted
+  // runtime is a crash from the queue's point of view — recording "clean" there
+  // would drain queued prompts unprompted, which is the case this exists to
+  // prevent.
+  yield* Effect.addFinalizer((exit) =>
+    Exit.isSuccess(exit)
+      ? shutdownMarker.recordCleanShutdown(new Date().toISOString()).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("failed to record clean shutdown", {
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        )
+      : Effect.void,
+  );
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
   yield* Effect.addFinalizer((exit) =>
     Effect.logInfo("server.stop", {
       reason: Exit.isSuccess(exit) ? "success" : "failure",
       ...(Exit.isFailure(exit) ? { cause: exit.cause } : {}),
     }),
-  );
-  // A clean exit tells the next boot that nothing was lost, so it resumes
-  // queued messages normally. Only an absent marker makes the next boot treat
-  // the queue as crash-recovered and hold it for the user to release.
-  yield* Effect.addFinalizer(() =>
-    shutdownMarker.recordCleanShutdown(new Date().toISOString()).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("failed to record clean shutdown", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
-    ),
   );
 
   const startup = Effect.gen(function* () {

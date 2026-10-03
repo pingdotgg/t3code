@@ -67,6 +67,79 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
     }),
   );
 
+  /**
+   * The thread upsert names its columns and values positionally, so inserting a
+   * column in one list but not the other silently writes every later field into
+   * the wrong column. `snoozed_at` and `queue_held_at` were once swapped that
+   * way, which made a crash-recovery hold vanish on the next restart. Assert
+   * distinct values so a swap cannot pass.
+   */
+  it.effect("binds each thread column to its own value", () =>
+    Effect.gen(function* () {
+      const threads = yield* ProjectionThreadRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* threads.upsert({
+        threadId: ThreadId.make("thread-column-binding"),
+        projectId: ProjectId.make("project-column-binding"),
+        title: "Column binding",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        pendingRuntimeMode: null,
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        pullRequest: null,
+        pendingPullRequestAssociation: null,
+        latestTurnId: null,
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        // Deliberately different instants so a swap is visible.
+        snoozedUntil: "2026-03-24T01:00:00.000Z",
+        snoozedAt: "2026-03-24T01:00:00.000Z",
+        queueHeldAt: "2026-03-24T02:00:00.000Z",
+        pinnedAt: null,
+        pinOrderKey: null,
+        latestUserMessageAt: null,
+        latestChildNotificationAt: null,
+        pendingApprovalCount: 0,
+        pendingUserInputCount: 0,
+        hasActionableProposedPlan: 0,
+        deletedAt: null,
+      });
+
+      const rows = yield* sql<{
+        readonly snoozedUntil: string | null;
+        readonly snoozedAt: string | null;
+        readonly queueHeldAt: string | null;
+        readonly pinnedAt: string | null;
+      }>`
+        SELECT
+          snoozed_until AS "snoozedUntil",
+          snoozed_at AS "snoozedAt",
+          queue_held_at AS "queueHeldAt",
+          pinned_at AS "pinnedAt"
+        FROM projection_threads
+        WHERE thread_id = 'thread-column-binding'
+      `;
+
+      assert.deepStrictEqual(rows, [
+        {
+          snoozedUntil: "2026-03-24T01:00:00.000Z",
+          snoozedAt: "2026-03-24T01:00:00.000Z",
+          queueHeldAt: "2026-03-24T02:00:00.000Z",
+          pinnedAt: null,
+        },
+      ]);
+    }),
+  );
+
   it.effect("stores JSON for thread model options", () =>
     Effect.gen(function* () {
       const threads = yield* ProjectionThreadRepository;

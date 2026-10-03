@@ -680,10 +680,6 @@ export const ChatComposer = memo(
       settings.providerInstances,
       settings.copilotAutomaticPrFeedback,
     ]);
-    const messageQueue = useMemo(
-      () => queuedTurns.filter((turn) => turn.origin?.kind !== "child-nudge"),
-      [queuedTurns],
-    );
     const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
 
     const unlockedSelectedProvider =
@@ -2574,7 +2570,7 @@ export const ChatComposer = memo(
             {activePendingApproval || pendingUserInputs.length > 0 ? null : (
               <QueuedMessagesPanel
                 policyBlocks={queuedPolicyBlocks}
-                queuedTurns={messageQueue}
+                queuedTurns={queuedTurns}
                 queueHeldAt={queueHeldAt}
                 editingQueuedTurnId={editingQueuedTurn?.id ?? null}
                 editingText={editingQueuedTurn?.text ?? ""}
