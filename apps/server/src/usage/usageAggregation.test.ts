@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { UsageAggregator } from "./usageAggregation.ts";
+import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -253,6 +253,25 @@ describe("UsageAggregator", () => {
     expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
   });
 
+  it("folds a mapped model into its target and prices it there", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      modelAliases: resolveModelAliases({ "example-preview": "claude-fable-5" }),
+    });
+    aggregator.add(record());
+    aggregator.add(record({ model: "example-preview", rateModel: "example-preview-high" }));
+    const result = aggregator.finish();
+
+    expect(result.buckets).toHaveLength(1);
+    expect(result.buckets[0]?.model).toBe("claude-fable-5");
+    expect(result.buckets[0]?.records).toBe(2);
+    expect(result.buckets[0]?.costUsd).toBeCloseTo(0.00925, 9);
+    expect(result.buckets[0]?.unpricedRecords).toBe(0);
+  });
+
   it("separates providers and models into their own buckets", () => {
     const result = aggregate([
       record(),
@@ -261,5 +280,25 @@ describe("UsageAggregator", () => {
     ]);
 
     expect(result.buckets).toHaveLength(3);
+  });
+});
+
+describe("resolveModelAliases", () => {
+  it("follows chains to the final model and drops chains that enter a loop", () => {
+    expect(
+      resolveModelAliases({
+        "preview[1m]": "preview",
+        preview: "example-model",
+        loop: "back",
+        back: "loop",
+        intoLoop: "loop",
+        self: "self",
+      }),
+    ).toEqual(
+      new Map([
+        ["preview[1m]", "example-model"],
+        ["preview", "example-model"],
+      ]),
+    );
   });
 });

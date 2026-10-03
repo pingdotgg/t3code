@@ -936,12 +936,17 @@ export function createServerEnvironmentAtoms<R, E>(
     }).pipe(Atom.withLabel(`environment-data:server:usage-prices:${environmentId}`)),
   );
   const usageScanSettingsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) =>
-      JSON.stringify([
+    Atom.make((get) => {
+      const settings = get(settingsValueAtom(environmentId));
+      const aliases = settings?.usageModelAliases ?? {};
+      return JSON.stringify([
         get(usagePricesAtom(environmentId)),
-        get(settingsValueAtom(environmentId))?.cursorKeychainUsageEnabled ?? false,
-      ]),
-    ).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
+        Object.keys(aliases)
+          .sort()
+          .map((model) => [model, aliases[model]]),
+        settings?.cursorKeychainUsageEnabled ?? false,
+      ]);
+    }).pipe(Atom.withLabel(`environment-data:server:usage-scan-settings:${environmentId}`)),
   );
   const providersValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.providers ?? null).pipe(

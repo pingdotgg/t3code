@@ -61,6 +61,11 @@ edited rows. Untouched cells keep each environment's rate. Select one environmen
 prices. **Reset to automatic** marks a model's override for removal when you save; you can undo
 it before saving.
 
+To count one model as another, such as a preview model under its released name, enter the target
+model ID under **Map to**. The mapped model no longer appears on **Usage**: its tokens and cost
+move to the target model and use the target's price. Clear **Map to** or reset the row to show
+the model on its own again.
+
 Each destination reports whether the change saved. Offline or unavailable environments are
 marked **Not saved**. Reconnect them and choose **Retry failed saves** to finish the same change
 without writing again to environments that already saved. Changes are not queued after you close

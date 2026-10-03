@@ -1,6 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  usageAliasCell,
   usagePriceCell,
   usagePriceTableChanges,
   usagePriceTableErrors,
@@ -9,10 +10,15 @@ import {
 import type { UsagePriceTarget } from "./usagePriceTargets";
 
 const price = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
-const target = (name: string, prices: UsagePriceTarget["prices"]): UsagePriceTarget => ({
+const target = (
+  name: string,
+  prices: UsagePriceTarget["prices"],
+  aliases: UsagePriceTarget["aliases"] = {},
+): UsagePriceTarget => ({
   environmentId: EnvironmentId.make(name),
   label: name,
   prices,
+  aliases,
   unavailable: null,
 });
 const draft = (values: UsagePriceDraft["values"]): UsagePriceDraft => ({
@@ -166,5 +172,56 @@ describe("price table edits", () => {
     expect(
       usagePriceTableChanges(environment, [draft({ outputCostPerMillionTokens: "" })]).errors.size,
     ).toBe(1);
+  });
+
+  it("mapping a model drops its own price and resetting removes the mapping", () => {
+    const priced = target("a", { example: price });
+    expect(usagePriceTableChanges(priced, [{ ...draft({}), alias: " example-model " }])).toEqual({
+      changes: [
+        { model: "example", alias: "example-model" },
+        { model: "example", price: null },
+      ],
+      errors: new Map(),
+    });
+    const mapped = target("b", {}, { example: "example-model" });
+    expect(usagePriceTableChanges(mapped, [{ ...draft({}), removed: true }]).changes).toEqual([
+      { model: "example", alias: null },
+    ]);
+    expect(
+      usagePriceTableChanges(mapped, [{ ...draft({}), alias: "example" }]).errors.get(
+        "model:example",
+      ),
+    ).toBe("Map to a different model.");
+  });
+
+  it("clearing a mapping returns to automatic pricing unless prices are entered", () => {
+    const mapped = target("a", {}, { example: "example-model" });
+    expect(usagePriceTableChanges(mapped, [{ ...draft({}), alias: "" }]).changes).toEqual([
+      { model: "example", alias: null },
+    ]);
+    expect(
+      usagePriceTableChanges(mapped, [
+        {
+          ...draft({ inputCostPerMillionTokens: "2", outputCostPerMillionTokens: "8" }),
+          alias: "",
+        },
+      ]).changes,
+    ).toEqual([
+      { model: "example", alias: null },
+      { model: "example", price },
+    ]);
+  });
+
+  it("keeps each environment's mapping when the column is untouched", () => {
+    const edits = [draft({ inputCostPerMillionTokens: "3" })];
+    expect(
+      usagePriceTableChanges(target("a", {}, { example: "example-model" }), edits).changes,
+    ).toEqual([]);
+    expect(
+      usageAliasCell(
+        [target("a", {}, { example: "example-model" }), target("b", { example: price })],
+        "example",
+      ),
+    ).toEqual({ value: "", placeholder: "Mixed" });
   });
 });
