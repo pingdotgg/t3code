@@ -113,6 +113,30 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+/**
+ * Fixed, secret-free hints for common failure modes. stderr is matched but never echoed, since
+ * VCS CLIs may print credentials. Order matters: more specific patterns come first.
+ */
+const COMMAND_FAILURE_HINTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /permission denied \([^)]*(?:publickey|password|keyboard-interactive)[^)]*\)/i,
+    "SSH authentication failed. Check that your SSH key is set up for this host, or use an HTTPS URL.",
+  ],
+  [
+    /detected dubious ownership in repository/i,
+    "The directory is owned by a different user, which git refuses to trust. Fix the directory ownership or add it to git's safe.directory list.",
+  ],
+  [
+    /permission denied/i,
+    "Permission denied. Check that the directory is owned by your user account and writable.",
+  ],
+  [/not a git repository/i, "The directory is not a git repository."],
+];
+
+/** Resolves a sanitized failure hint from stderr without retaining any of its content. */
+export const resolveCommandFailureHint = (stderr: string): string | undefined =>
+  COMMAND_FAILURE_HINTS.find(([pattern]) => pattern.test(stderr))?.[1];
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
@@ -177,12 +201,15 @@ export const make = Effect.gen(function* () {
 
     if (!input.allowNonZeroExit && result.code !== 0) {
       const failureKind = classifyNonZeroExit(input.command, result.stderr);
+      const failureDetail =
+        failureKind === "command-failed" ? resolveCommandFailureHint(result.stderr) : undefined;
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
         {
           exitCode: result.code,
           stderr: result.stderr,
           stderrTruncated: result.stderrTruncated,
+          ...(failureDetail !== undefined ? { failureDetail } : {}),
         },
         failureKind,
         input.command === "git" &&

@@ -35,6 +35,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { resolveCommandFailureHint } from "./VcsProcess.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -934,7 +935,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (!input.allowNonZeroExit && exitCode !== 0) {
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
+            detail:
+              resolveCommandFailureHint(stderr.text) ??
+              "Git command exited with a non-zero status.",
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -1019,7 +1022,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         (result) =>
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+            detail:
+              options.fallbackErrorDetail ??
+              resolveCommandFailureHint(result.stderr) ??
+              "Git command exited with a non-zero status.",
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
