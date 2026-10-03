@@ -53,6 +53,7 @@ import {
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
+  isClaudeAgentMessageItem,
 } from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
@@ -475,8 +476,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     }
   }
   if (item.type === "dynamic_tool") {
-    if (item.toolName === "SendMessage") return "message";
-    if (item.toolName === "ListAgents") return "hammer";
+    if (isClaudeAgentMessageItem(item.toolName, item.input)) return "message";
     const classified = classifyToolActivity({
       itemType: "dynamic_tool_call",
       data: { toolName: item.toolName ?? undefined, input: item.input },
@@ -745,15 +745,12 @@ function toFeedActivity(
       : null;
   const agentMessage =
     item.type === "dynamic_tool" ? claudeAgentMessage(item.toolName, item.input) : undefined;
-  // An agent message expands to its body; an agent listing's result never
-  // reaches clients, so it has nothing to expand.
+  // An agent message expands to its body.
   const plainDetail = readPaths
     ? readPaths.join("\n") || null
     : agentMessage
       ? (agentMessage.message ?? null)
-      : item.type === "dynamic_tool" && item.toolName === "ListAgents"
-        ? null
-        : undefined;
+      : undefined;
   const getFullDetail = memoizeValue(() => {
     if (plainDetail !== undefined) {
       return plainDetail;

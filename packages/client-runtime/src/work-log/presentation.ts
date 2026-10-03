@@ -18,7 +18,7 @@ import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
-import { classifyToolActivity } from "@t3tools/shared/toolActivity";
+import { classifyToolActivity, isClaudeAgentMessageItem } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
@@ -441,9 +441,12 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
       : typeof data.toolName === "string"
         ? data.toolName
         : entry.toolTitle;
-  // Claude's SendMessage, including inputs summarized for transport.
-  if (entry.structuredPayload?.type === "dynamic_tool" && toolName === "SendMessage")
+  if (
+    entry.structuredPayload?.type === "dynamic_tool" &&
+    isClaudeAgentMessageItem(toolName, entry.structuredPayload.input)
+  ) {
     return "message";
+  }
   const classified = classifyToolActivity({
     itemType:
       entry.itemType === "command_execution" ||

@@ -992,4 +992,12 @@ describe("agent messages", () => {
     });
     expect(toolGroupSummaryKind([delivered, summarized])).toBe("message");
   });
+
+  it("leaves structured protocol messages to the generic tool view", () => {
+    const shutdown = sendMessage("three", "completed", {
+      to: "researcher",
+      message: { type: "shutdown_request" },
+    });
+    expect(toolGroupAction(shutdown)).toBe("other");
+  });
 });

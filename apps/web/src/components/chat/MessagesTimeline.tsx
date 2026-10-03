@@ -4871,12 +4871,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (workEntry.toolSurface) return workEntry.toolSurface;
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
   if (toolPresentation) return toolPresentation.icon;
-  if (
-    workEntry.structuredPayload?.type === "dynamic_tool" &&
-    workEntry.structuredPayload.toolName === "ListAgents"
-  ) {
-    return "bot";
-  }
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
 
@@ -5056,14 +5050,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : undefined;
   // Reads and skills expand to plain text instead of the item inspector. A
   // skill's heading already names it, so only its arguments are left to show.
-  // An agent message expands to its body, and an agent listing has nothing
-  // to show: its result is not sent to clients.
+  // An agent message expands to its body.
   const plainOutput =
     toolGroupAction(workEntry) === "read"
       ? workEntryReadOutput(workEntry, workspaceRoot)
       : skill
         ? (skill.args ?? null)
-        : agentMessage || (payload?.type === "dynamic_tool" && payload.toolName === "ListAgents")
+        : agentMessage
           ? null
           : undefined;
   const trailingPreview = answerPreview ?? agentMessage?.preview ?? null;

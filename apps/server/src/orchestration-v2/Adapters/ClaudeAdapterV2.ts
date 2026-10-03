@@ -3797,7 +3797,7 @@ export function makeClaudeAdapterV2(
                   dynamicToolTitle(input.toolName, nativeToolInput) ??
                   input.presentation?.title ??
                   claudeAgentMessageTitle(input.toolName, nativeToolInput) ??
-                  null),
+                  (input.toolName === "ListAgents" ? "Listed agents" : null)),
             startedAt: input.startedAt,
             completedAt,
             updatedAt: input.updatedAt,

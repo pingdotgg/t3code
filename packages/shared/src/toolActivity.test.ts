@@ -10,6 +10,7 @@ import {
   dynamicToolTitle,
   formatReadToolLabel,
   formatSearchToolLabel,
+  isClaudeAgentMessageItem,
   mergeToolActivityData,
 } from "./toolActivity.ts";
 
@@ -172,13 +173,24 @@ describe("toolActivity", () => {
     const titleFor = (input: Record<string, unknown>) =>
       claudeAgentMessageTitle("SendMessage", { message: "hi", ...input });
     expect(titleFor({ to: "main" })).toBe("Message to main agent");
-    expect(titleFor({ to: "homelab-3d [c9ede1]" })).toBe("Message to homelab-3d");
+    expect(titleFor({ to: "release-bot [c9ede1]" })).toBe("Message to release-bot");
     expect(titleFor({ to: "uds:/tmp/cc-socks/54926.sock" })).toBe("Message to another session");
     expect(titleFor({ type: "broadcast" })).toBe("Message to everyone");
     expect(titleFor({})).toBe("Message");
     expect(
-      claudeAgentMessageTitle("SendMessage", { to: "homelab-b7", notify_when_idle: true }),
-    ).toBe("Notify when homelab-b7 is idle");
-    expect(dynamicToolTitle("ListAgents", {})).toBe("Listed agents");
+      claudeAgentMessageTitle("SendMessage", { to: "docs-writer", notify_when_idle: true }),
+    ).toBe("Notify when docs-writer is idle");
+  });
+
+  it("counts text and transport-summarized messages, not protocol payloads", () => {
+    expect(isClaudeAgentMessageItem("SendMessage", { to: "main", message: "Done." })).toBe(true);
+    expect(isClaudeAgentMessageItem("SendMessage", '{ "to": "ghost-agent", …')).toBe(true);
+    expect(
+      isClaudeAgentMessageItem("SendMessage", {
+        to: "researcher",
+        message: { type: "shutdown_request" },
+      }),
+    ).toBe(false);
+    expect(isClaudeAgentMessageItem("send_message", { message: "hi" })).toBe(false);
   });
 });

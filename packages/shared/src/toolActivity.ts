@@ -27,14 +27,13 @@ export function claudeSkillInvocation(
 
 /**
  * Activity log heading a dynamic tool derives from its input: CUA's `title`,
- * the skill a Claude `Skill` call loads, or Claude's agent roster lookup.
+ * or the skill a Claude `Skill` call loads.
  */
 export function dynamicToolTitle(
   toolName: string | null | undefined,
   input: unknown,
 ): string | undefined {
   if (toolName === "cua_repl.js") return asTrimmedString(asRecord(input)?.title);
-  if (toolName === "ListAgents") return "Listed agents";
   const skill = claudeSkillInvocation(toolName, input);
   return skill === undefined ? undefined : `Skill: ${skill.name}`;
 }
@@ -85,6 +84,19 @@ export function claudeAgentMessage(
   };
 }
 
+/**
+ * Whether a tool call is a Claude agent message, including one whose input the
+ * server summarized to a string for transport. Structured protocol messages
+ * such as shutdown requests are not.
+ */
+export function isClaudeAgentMessageItem(
+  toolName: string | null | undefined,
+  input: unknown,
+): boolean {
+  if (toolName !== "SendMessage") return false;
+  return typeof input === "string" || claudeAgentMessage(toolName, input) !== undefined;
+}
+
 const CLAUDE_AGENT_ID_PATTERN = /^a[0-9a-f]{16}$/u;
 
 /**
@@ -92,7 +104,7 @@ const CLAUDE_AGENT_ID_PATTERN = /^a[0-9a-f]{16}$/u;
  * shortened the way Claude Code shortens them; peers addressed by socket
  * path are just another session.
  */
-export function agentMessageRecipientLabel(to: string): string {
+function agentMessageRecipientLabel(to: string): string {
   if (to === "main") return "main agent";
   if (to === "*") return "everyone";
   if (to.startsWith("uds:")) return "another session";
