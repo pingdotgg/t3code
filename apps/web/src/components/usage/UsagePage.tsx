@@ -27,7 +27,6 @@ import {
   type DailyTotals,
   type HourlyTotals,
   type MergedUsage,
-  type ModelTotals,
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
@@ -79,7 +78,14 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
-import { cacheHitRate, costPerMillionTokens, sortModelsByTokens } from "./usageBreakdown";
+import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
+import { UsageShareBar } from "./UsageShareBar";
+import {
+  costTypeSegments,
+  sortModelsByTokens,
+  speedCostSegments,
+  tokenTypeSegments,
+} from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
   WINDOW_OPTIONS,
@@ -129,6 +135,7 @@ export function UsagePage() {
   const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
+  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
@@ -184,12 +191,13 @@ export function UsagePage() {
     [breakdown, merged.models, metric],
   );
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
-  const unpricedModels = useMemo(
-    () =>
-      merged.models
-        .filter((model) => model.unpricedTokens > 0)
-        .toSorted((left, right) => right.unpricedTokens - left.unpricedTokens),
-    [merged.models],
+  const selectedModel =
+    selectedModelKey === null
+      ? undefined
+      : merged.models.find((model) => `${model.provider}:${model.model}` === selectedModelKey);
+  const breakdownPeak = breakdownModels.reduce(
+    (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
+    0,
   );
   const summaryRows: Array<
     | { readonly kind: "usage"; readonly provider: UsageProviderKind }
@@ -635,54 +643,35 @@ export function UsagePage() {
                   </div>
                 </section>
 
-                <section className="flex flex-col gap-2">
-                  <h2 className="text-sm font-medium text-foreground">Cost</h2>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-                    <Metric label="Input" value={formatUsd(merged.categoryCost.input)} />
-                    <Metric label="Cache read" value={formatUsd(merged.categoryCost.cacheRead)} />
-                    <Metric label="Cache write" value={formatUsd(merged.categoryCost.cacheWrite)} />
-                    <Metric label="Output" value={formatUsd(merged.categoryCost.output)} />
-                    {/* Reported cost with no rates to split it, or from older servers. */}
-                    {merged.categoryCost.unsplit >= 0.005 ? (
-                      <Metric label="Other" value={formatUsd(merged.categoryCost.unsplit)} />
-                    ) : null}
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-                    <Metric label="Standard" value={formatUsd(merged.speedCost.standard)} />
-                    <Metric label="Fast" value={formatUsd(merged.speedCost.fast)} />
-                    <Metric label="Ultrafast" value={formatUsd(merged.speedCost.ultrafast)} />
-                    <Metric label="Speed premium" value={formatUsd(merged.speedCost.premium)} />
-                  </div>
-                </section>
-
-                {unpricedModels.length > 0 ? (
-                  <section className="flex flex-col gap-1">
-                    <h2 className="text-sm font-medium text-foreground">Unpriced</h2>
-                    <ul className="text-sm">
-                      {unpricedModels.map((model) => (
-                        <li
-                          key={`${model.provider}:${model.model}`}
-                          className="flex items-center justify-between gap-4 border-b border-border/50 py-2"
-                        >
-                          <span className="flex min-w-0 items-center gap-2 text-foreground">
-                            <ProviderMark provider={model.provider} className="size-3.5" />
-                            <span className="truncate">{model.model}</span>
-                          </span>
-                          <span className="flex shrink-0 items-center gap-4">
-                            <span className="text-muted-foreground tabular-nums">
-                              {formatTokens(model.unpricedTokens)} tokens
-                            </span>
-                            <InlineButton onClick={() => setPriceDialog({ model: model.model })}>
-                              Set price
-                            </InlineButton>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                {merged.totalTokens > 0 ? (
+                  <section className="grid gap-x-12 gap-y-8 lg:grid-cols-2">
+                    {metric === "tokens" ? (
+                      <UsageShareBar
+                        label="Tokens by type"
+                        segments={tokenTypeSegments(merged)}
+                        format={formatTokens}
+                      />
+                    ) : (
+                      <>
+                        <UsageShareBar
+                          label="Cost by type"
+                          segments={costTypeSegments(merged.categoryCost)}
+                          format={formatUsd}
+                        />
+                        {merged.speedCost.fast + merged.speedCost.ultrafast > 0 ? (
+                          <UsageShareBar
+                            label="Cost by speed"
+                            segments={speedCostSegments(merged.speedCost)}
+                            format={formatUsd}
+                            aside={<SpeedPremium premiumUsd={merged.speedCost.premium} />}
+                          />
+                        ) : null}
+                      </>
+                    )}
                   </section>
                 ) : null}
 
-                <section className="@container/usage-breakdown flex flex-col gap-3">
+                <section className="flex flex-col gap-3">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
                     <ToggleGroup
@@ -710,55 +699,70 @@ export function UsagePage() {
                   {breakdown === "model" ? (
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-border text-right text-xs whitespace-nowrap text-muted-foreground">
+                        <tr className="border-b border-border text-right text-xs text-muted-foreground">
+                          <th className="py-2 pr-3 text-left font-normal">#</th>
                           <th className="w-full py-2 text-left font-normal">Model</th>
-                          <th className="py-2 pl-4 font-normal">Cost</th>
-                          <th className="py-2 pl-4 font-normal">Share</th>
-                          {MODEL_DETAIL_COLUMNS.map((column) => (
-                            <th key={column.label} className={cn(MODEL_DETAIL_CELL, "font-normal")}>
-                              {column.label}
-                            </th>
-                          ))}
-                          <th className="py-2 pl-4 font-normal">Tokens</th>
+                          <th className="py-2 pl-6 font-normal">Cost</th>
+                          <th className="hidden py-2 pl-6 font-normal sm:table-cell">Share</th>
+                          <th className="py-2 pl-6 font-normal">Tokens</th>
                         </tr>
                       </thead>
                       <tbody>
                         {breakdownModels.length === 0 ? (
                           <tr>
-                            <td colSpan={11} className="py-6 text-center text-muted-foreground">
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
                               No activity in this window.
                             </td>
                           </tr>
                         ) : (
-                          breakdownModels.map((model) => (
-                            <tr
-                              key={`${model.provider}:${model.model}`}
-                              className="border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50"
-                            >
-                              <td className="py-2 text-left whitespace-normal text-foreground">
-                                <span className="flex items-center gap-2">
-                                  <ProviderMark provider={model.provider} className="size-3.5" />
-                                  {model.model}
-                                </span>
-                              </td>
-                              <td className="py-2 pl-4 text-foreground">
-                                {isModelCostUnknown(model) ? (
-                                  <span className="text-muted-foreground">Unpriced</span>
-                                ) : (
-                                  formatUsd(model.costUsd)
-                                )}
-                              </td>
-                              <td className="py-2 pl-4">
-                                {isModelCostUnknown(model) ? "" : formatPercent(model.costShare)}
-                              </td>
-                              {MODEL_DETAIL_COLUMNS.map((column) => (
-                                <td key={column.label} className={MODEL_DETAIL_CELL}>
-                                  {column.value(model)}
+                          breakdownModels.map((model, index) => {
+                            const key = `${model.provider}:${model.model}`;
+                            const value = metric === "tokens" ? model.totalTokens : model.costUsd;
+                            return (
+                              <tr
+                                key={key}
+                                className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50"
+                              >
+                                <td className="py-2.5 pr-3 text-left text-xs">{index + 1}</td>
+                                <td className="py-2.5 text-left whitespace-normal">
+                                  {/* The button's overlay makes the whole row open the model. */}
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedModelKey(key)}
+                                    className="flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring"
+                                  >
+                                    <ProviderMark provider={model.provider} className="size-3.5" />
+                                    {model.model}
+                                  </button>
+                                  <div aria-hidden className="mt-1.5 h-0.5 max-w-48">
+                                    <div
+                                      className="h-full rounded-full"
+                                      style={{
+                                        // A short minimum keeps tiny shares a dash, not a dot.
+                                        width:
+                                          value > 0 && breakdownPeak > 0
+                                            ? `max(0.5rem, ${(value / breakdownPeak) * 100}%)`
+                                            : 0,
+                                        backgroundColor:
+                                          PROVIDER_PRESENTATION[model.provider].color,
+                                      }}
+                                    />
+                                  </div>
                                 </td>
-                              ))}
-                              <td className="py-2 pl-4">{formatTokens(model.totalTokens)}</td>
-                            </tr>
-                          ))
+                                <td className="py-2.5 pl-6 text-foreground">
+                                  {isModelCostUnknown(model) ? (
+                                    <span className="text-muted-foreground">Unpriced</span>
+                                  ) : (
+                                    formatUsd(model.costUsd)
+                                  )}
+                                </td>
+                                <td className="hidden py-2.5 pl-6 sm:table-cell">
+                                  {isModelCostUnknown(model) ? "" : formatPercent(model.costShare)}
+                                </td>
+                                <td className="py-2.5 pl-6">{formatTokens(model.totalTokens)}</td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -831,6 +835,25 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
+      {selectedModel !== undefined && !showingLimits ? (
+        <UsageModelDialog
+          model={selectedModel}
+          environments={selectedEnvironments}
+          metric={metric === "tokens" ? "tokens" : "cost"}
+          chartWindow={{
+            days,
+            hours,
+            resolution: isPast24Hours ? "hour" : "day",
+            timeZone: window.timeZone,
+            referenceTime: window.untilTime,
+          }}
+          onSetPrice={() => {
+            setSelectedModelKey(null);
+            setPriceDialog({ model: selectedModel.model });
+          }}
+          onClose={() => setSelectedModelKey(null)}
+        />
+      ) : null}
       {priceDialog ? (
         <UsagePriceOverrides
           usage={environments}
@@ -844,33 +867,6 @@ export function UsagePage() {
     </SidebarInset>
   );
 }
-
-/** Columns the model table shows only when it is wide enough to keep them readable. */
-const MODEL_DETAIL_COLUMNS: readonly {
-  readonly label: string;
-  readonly value: (model: ModelTotals) => string;
-}[] = [
-  { label: "Input", value: (model) => formatTokens(model.tokens.uncachedInputTokens) },
-  { label: "Output", value: (model) => formatTokens(model.tokens.outputTokens) },
-  { label: "Cache read", value: (model) => formatTokens(model.tokens.cachedInputTokens) },
-  { label: "Cache write", value: (model) => formatTokens(model.tokens.cacheCreationTokens) },
-  { label: "Reasoning", value: (model) => formatTokens(model.tokens.reasoningTokens) },
-  {
-    label: "Cache hit",
-    value: (model) => {
-      const rate = cacheHitRate(model);
-      return rate === null ? "" : formatPercent(rate);
-    },
-  },
-  {
-    label: "$/1M",
-    value: (model) => {
-      const cost = costPerMillionTokens(model);
-      return cost === null ? "" : formatUsd(cost);
-    },
-  },
-];
-const MODEL_DETAIL_CELL = "hidden py-2 pl-4 @4xl/usage-breakdown:table-cell";
 
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
@@ -1262,10 +1258,12 @@ function UsageSkeleton() {
         />
       </section>
 
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-foreground">Cost</h2>
-        <MetricSkeletons labels={["Input", "Cache read", "Cache write", "Output"]} />
-        <MetricSkeletons labels={["Standard", "Fast", "Ultrafast", "Speed premium"]} />
+      <section className="grid gap-x-12 gap-y-8 lg:grid-cols-2">
+        <div className="flex flex-col gap-2.5">
+          <Skeleton className="h-5 w-28" />
+          <Skeleton className="h-2" />
+          <Skeleton className="h-4 w-72" />
+        </div>
       </section>
 
       <section className="flex flex-col gap-3">
