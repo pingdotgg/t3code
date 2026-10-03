@@ -1,6 +1,7 @@
 // The bridge intentionally treats MCP JSON-RPC messages as opaque JSON.
 // @effect-diagnostics preferSchemaOverJson:off
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
@@ -116,5 +117,106 @@ describe("AcpMcpOverAcpBridge", () => {
         .pipe(Effect.flip);
       expect(failure.message).toContain("exceeds 8 MiB");
     }),
+  );
+
+  it.effect("caps concurrent connects at 16 and reuses a freed slot", () =>
+    Effect.gen(function* () {
+      const firstEntered = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      let nextId = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.suspend(() => {
+          const connectionId = `connection-${++nextId}`;
+          if (nextId !== 1) return Effect.succeed(connectionId);
+          return Deferred.succeed(firstEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirst)),
+            Effect.as(connectionId),
+          );
+        }),
+        fetchImplementation: () => Promise.resolve(new Response(null, { status: 202 })),
+      });
+
+      expect(yield* bridge.connect({ serverId: "other" }).pipe(Effect.flip)).toMatchObject({
+        _tag: "AcpMcpOverAcpError",
+      });
+
+      const first = yield* bridge
+        .connect({ serverId: "t3-code" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstEntered);
+      const rest = yield* Effect.all(
+        Array.from({ length: 16 }, () =>
+          bridge
+            .connect({ serverId: "t3-code" })
+            .pipe(Effect.forkChild({ startImmediately: true })),
+        ),
+        { concurrency: "unbounded" },
+      );
+      yield* Deferred.succeed(releaseFirst, undefined);
+
+      const outcomes = yield* Effect.forEach([first, ...rest], (fiber) =>
+        Fiber.join(fiber).pipe(Effect.result),
+      );
+      const successes = outcomes.filter((outcome) => outcome._tag === "Success");
+      const failures = outcomes.filter((outcome) => outcome._tag === "Failure");
+      expect(successes).toHaveLength(16);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({
+        failure: {
+          _tag: "AcpMcpOverAcpError",
+          message: "Too many MCP-over-ACP connections.",
+        },
+      });
+
+      const connectionIds = successes.flatMap((outcome) =>
+        outcome._tag === "Success" ? [outcome.success.connectionId] : [],
+      );
+      expect(new Set(connectionIds).size).toBe(16);
+      yield* bridge.disconnect({ connectionId: connectionIds[0]! });
+      const replacement = yield* bridge.connect({ serverId: "t3-code" });
+      expect(connectionIds).not.toContain(replacement.connectionId);
+      expect(yield* bridge.connect({ serverId: "t3-code" }).pipe(Effect.flip)).toMatchObject({
+        _tag: "AcpMcpOverAcpError",
+        message: "Too many MCP-over-ACP connections.",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not consume a slot when connection allocation is interrupted", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      let nextId = 0;
+      const bridge = yield* makeAcpMcpOverAcpBridge({
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorization: "Bearer bridge-test",
+        allocateConnectionId: Effect.suspend(() => {
+          const connectionId = `connection-${++nextId}`;
+          if (nextId !== 1) return Effect.succeed(connectionId);
+          return Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(proceed)),
+            Effect.as(connectionId),
+          );
+        }),
+        fetchImplementation: () => Promise.resolve(new Response(null, { status: 202 })),
+      });
+
+      const hung = yield* bridge
+        .connect({ serverId: "t3-code" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(hung);
+
+      const connected = yield* Effect.all(
+        Array.from({ length: 16 }, () => bridge.connect({ serverId: "t3-code" })),
+      );
+      expect(connected).toHaveLength(16);
+      expect(yield* bridge.connect({ serverId: "t3-code" }).pipe(Effect.flip)).toMatchObject({
+        _tag: "AcpMcpOverAcpError",
+        message: "Too many MCP-over-ACP connections.",
+      });
+    }).pipe(Effect.scoped),
   );
 });

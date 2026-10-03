@@ -186,12 +186,14 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
             new AcpMcpOverAcpError(`Unknown ACP MCP server "${request.serverId}".`),
           );
         }
+        const connectionId = yield* options.allocateConnectionId;
+        const mutex = yield* Semaphore.make(1);
+        // Check size and insert without yielding so concurrent connects cannot both observe a free slot.
         if (connections.size >= MAX_CONNECTIONS) {
           return yield* Effect.fail(new AcpMcpOverAcpError("Too many MCP-over-ACP connections."));
         }
-        const connectionId = yield* options.allocateConnectionId;
         connections.set(connectionId, {
-          mutex: yield* Semaphore.make(1),
+          mutex,
           sessionId: null,
           protocolVersion: null,
           nextRequestId: 0,
