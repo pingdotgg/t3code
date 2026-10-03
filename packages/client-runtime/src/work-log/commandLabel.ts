@@ -1368,8 +1368,26 @@ export function commandProgramName(command: string, depth = 0): string | null {
   return commandProgramNameInternal(command, depth, "shell", MAX_COMMAND_SEGMENTS);
 }
 
-/** Removes a plain shell -c wrapper for display; callers retain the original for details. */
+// Escape bytes and other control characters render as invisible gaps; display
+// shows them as Unicode control pictures (ESC becomes ␛) instead. Tab, newline
+// and carriage return lay out as whitespace, so CRLF scripts stay unmarked.
+// oxlint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
+
+/**
+ * The command as rows show it: a plain shell -c wrapper removed and control
+ * characters made visible. Callers retain the original for details.
+ */
 export function commandDisplayText(command: string): string {
+  return withoutShellWrapper(command).replace(CONTROL_CHARACTERS, (character) =>
+    character === "\u007f" ? "␡" : String.fromCharCode(0x2400 + character.charCodeAt(0)),
+  );
+}
+
+// A wrapper whose quoting does not balance is kept: the script's end cannot be
+// known, which happens when Codex's secret redaction removes the backslash of
+// an escaped quote inside `-lc "…"`.
+function withoutShellWrapper(command: string): string {
   const trimmed = command.trim();
   const split = splitFirstShellCommand(trimmed);
   if (split.remainingCommand !== null) return trimmed;
@@ -1383,4 +1401,17 @@ export function commandDisplayText(command: string): string {
   // Positional arguments can affect the script; keep those invocations intact.
   if (scriptIndex === null || scriptIndex !== tokens.length - 1) return trimmed;
   return tokens[scriptIndex]?.trim() || trimmed;
+}
+
+const POWERSHELL_PROGRAMS = new Set(["powershell", "pwsh"]);
+
+/** The grammar to highlight a command with: PowerShell when pwsh or powershell runs it. */
+export function commandHighlightLanguage(command: string): "powershell" | "shellscript" {
+  const program = /^(?:&\s*)?(?:"([^"]*)"|'([^']*)'|(\S+))/u.exec(command.trim());
+  const name = (program?.[1] ?? program?.[2] ?? program?.[3] ?? "")
+    .split(/[\\/]/u)
+    .at(-1)
+    ?.toLowerCase()
+    .replace(/\.exe$/u, "");
+  return name && POWERSHELL_PROGRAMS.has(name) ? "powershell" : "shellscript";
 }
