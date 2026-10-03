@@ -90,6 +90,22 @@ const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("retains the expected title on a guarded metadata update", () => {
+    expect(
+      decodeOrchestrationV2Command({
+        type: "thread.metadata.update",
+        commandId: "repair-import-title",
+        threadId: "import:codex:native-thread",
+        title: "Prototype MetaApi trade replication",
+        expectedTitle: "<recommended_plugins>",
+        expectedTitleRegenerationRequestId: null,
+      }),
+    ).toMatchObject({
+      expectedTitle: "<recommended_plugins>",
+      expectedTitleRegenerationRequestId: null,
+    });
+  });
+
   it("carries command failure metadata through runtime and JSON schemas without output text", () => {
     const base = {
       id: "command-item",

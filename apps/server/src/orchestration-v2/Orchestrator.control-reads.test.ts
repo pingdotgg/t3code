@@ -49,6 +49,70 @@ const testLayer = Layer.mergeAll(
   ),
 );
 
+for (const scenario of ["unchanged", "renamed", "regenerating"] as const) {
+  it.effect(`guards an imported title repair against concurrent title changes (${scenario})`, () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("thread:guarded-import-title");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-import-title"),
+        threadId,
+        projectId: ProjectId.make("project:import-title"),
+        title: "<recommended_plugins>",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      if (scenario === "renamed") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("manual-import-title"),
+          threadId,
+          title: "My custom title",
+        });
+      }
+      if (scenario === "regenerating") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("regenerate-import-title"),
+          threadId,
+          regenerateTitle: true,
+        });
+      }
+      const repaired = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("repair-import-title"),
+          threadId,
+          title: "Prototype MetaApi trade replication",
+          expectedTitle: "<recommended_plugins>",
+          expectedTitleRegenerationRequestId: null,
+        })
+        .pipe(Effect.exit);
+      assert.equal(repaired._tag, scenario === "unchanged" ? "Success" : "Failure");
+      assert.equal(
+        (yield* orchestrator.getThreadRecords(threadId, [])).thread.title,
+        scenario === "renamed"
+          ? "My custom title"
+          : scenario === "regenerating"
+            ? "<recommended_plugins>"
+            : "Prototype MetaApi trade replication",
+      );
+      if (scenario === "regenerating") {
+        assert.equal(
+          (yield* orchestrator.getThreadRecords(threadId, [])).thread.titleRegeneration?.requestId,
+          "regenerate-import-title",
+        );
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+}
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
