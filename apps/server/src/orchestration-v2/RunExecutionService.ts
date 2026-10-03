@@ -1169,6 +1169,13 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
+          // A turn can wait days on a user answer or approval without any MCP
+          // traffic. Keep the credential alive while its event stream is open;
+          // the stream ends when the provider exits, so a dead one still expires.
+          // A failed touch must not end the race and abort event ingestion.
+          const keepMcpCredentialAlive = Effect.suspend(() =>
+            McpSessionRegistry.touchActiveMcpThread(input.run.threadId),
+          ).pipe(Effect.ignoreCause({ log: true }), Effect.delay("1 hour"), Effect.forever);
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -1324,6 +1331,7 @@ export const layer: Layer.Layer<
               ),
             ),
             Effect.ensuring(eventSubscription.close),
+            Effect.raceFirst(keepMcpCredentialAlive),
             Effect.forkDetach,
           );
 

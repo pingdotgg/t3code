@@ -28,6 +28,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -36,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -851,6 +853,85 @@ it.effect("refreshes MCP credential liveness before calling the provider", () =>
     assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
   }).pipe(Effect.provide(RunExecutionTestLayer)),
 );
+
+for (const [scenario, events, keepsAlive] of [
+  ["while the turn waits on the user", Stream.never, true],
+  ["only until the provider event stream ends", Stream.empty, false],
+] as const) {
+  it.effect(`refreshes MCP credential liveness ${scenario}`, () =>
+    Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      const lastTouchAt = yield* Ref.make(0);
+      const threadId = ThreadId.make("thread:run-execution-mcp-heartbeat");
+      const touchActiveMcpThread = vi
+        .spyOn(McpSessionRegistry, "touchActiveMcpThread")
+        .mockImplementation(() =>
+          Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.set(lastTouchAt, now))),
+        );
+
+      yield* Effect.gen(function* () {
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make("command:run-execution-mcp-heartbeat"),
+          appThread: { id: threadId } as OrchestrationV2AppThread,
+          providerSessionId: ProviderSessionId.make("session:run-execution-mcp-heartbeat"),
+          session: {
+            events,
+            startTurn: () => Effect.void,
+          } as unknown as ProviderAdapterV2SessionRuntime,
+          run: {
+            id: RunId.make("run:run-execution-mcp-heartbeat"),
+            threadId,
+            ordinal: 1,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          } as OrchestrationV2Run,
+          rootNode: {
+            id: NodeId.make("node:run-execution-mcp-heartbeat"),
+          } as OrchestrationV2ExecutionNode,
+          checkpointScope: {
+            id: CheckpointScopeId.make("checkpoint-scope:run-execution-mcp-heartbeat"),
+          } as OrchestrationV2CheckpointScope,
+          providerThread: {
+            id: ProviderThreadId.make("provider-thread:run-execution-mcp-heartbeat"),
+            driver,
+          } as OrchestrationV2ProviderThread,
+          attempt: {
+            id: RunAttemptId.make("attempt:run-execution-mcp-heartbeat"),
+            providerTurnId: null,
+          } as OrchestrationV2RunAttempt,
+          attemptId: RunAttemptId.make("attempt:run-execution-mcp-heartbeat"),
+          providerTurnOrdinal: 1,
+          message: {
+            messageId: MessageId.make("message:run-execution-mcp-heartbeat"),
+            text: "Ask me something and wait.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+        // The report in #14076 answered a question 44 hours into the turn.
+        yield* TestClock.adjust("44 hours");
+      }).pipe(Effect.ensuring(Effect.sync(() => touchActiveMcpThread.mockRestore())));
+
+      const sinceLastTouch = (yield* Clock.currentTimeMillis) - (yield* Ref.get(lastTouchAt));
+      assert.equal(sinceLastTouch < 24 * 60 * 60 * 1_000, keepsAlive);
+    }).pipe(Effect.provide(RunExecutionTestLayer)),
+  );
+}
 
 it.effect("starts the provider when checkpoint baseline capture fails", () =>
   Effect.gen(function* () {

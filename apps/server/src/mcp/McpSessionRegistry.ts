@@ -244,7 +244,8 @@ export const issueActiveMcpCredential = (
 
 /**
  * Refreshes the liveness of a thread's MCP credential. Called on every provider
- * turn so an active session is never mistaken for an abandoned one.
+ * turn, and hourly while its event stream is open, so an active session is
+ * never mistaken for an abandoned one.
  */
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
