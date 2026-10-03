@@ -67,6 +67,71 @@ describe("AcpMcpOverAcpBridge", () => {
     }),
   );
 
+  it.effect("discards the disconnect response body before checking HTTP status", () =>
+    Effect.gen(function* () {
+      const cases = [
+        { status: 500, expectError: true },
+        { status: 404, expectError: false },
+        { status: 200, expectError: false },
+      ] as const;
+
+      for (const [index, testCase] of cases.entries()) {
+        let cancelled = false;
+        const bridge = yield* makeAcpMcpOverAcpBridge({
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorization: "Bearer bridge-test",
+          allocateConnectionId: Effect.succeed(`connection-disconnect-${index}`),
+          fetchImplementation: async (_url, init) => {
+            const method = init?.method ?? "GET";
+            if (method === "DELETE") {
+              return new Response(
+                new ReadableStream({
+                  cancel() {
+                    cancelled = true;
+                  },
+                }),
+                { status: testCase.status },
+              );
+            }
+            const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+            const request = body as { readonly id?: unknown };
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: request.id,
+                result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} },
+              }),
+              {
+                headers: { "content-type": "application/json", "mcp-session-id": "session-42" },
+              },
+            );
+          },
+        });
+
+        const connected = yield* bridge.connect({ serverId: "t3-code" });
+        yield* bridge.message({
+          connectionId: connected.connectionId,
+          method: "initialize",
+        });
+        const disconnect = bridge.disconnect({ connectionId: connected.connectionId });
+        if (testCase.expectError) {
+          expect(yield* disconnect.pipe(Effect.flip)).toMatchObject({
+            _tag: "AcpMcpOverAcpError",
+            message: `T3 Code MCP endpoint rejected disconnect with HTTP ${testCase.status}.`,
+          });
+        } else {
+          expect(yield* disconnect).toEqual({});
+        }
+        expect(cancelled).toBe(true);
+        expect(
+          yield* bridge
+            .message({ connectionId: connected.connectionId, method: "tools/list" })
+            .pipe(Effect.flip),
+        ).toMatchObject({ _tag: "AcpMcpOverAcpError" });
+      }
+    }),
+  );
+
   it.effect("aborts an in-flight HTTP request when the ACP call is interrupted", () =>
     Effect.gen(function* () {
       const started = Promise.withResolvers<AbortSignal>();

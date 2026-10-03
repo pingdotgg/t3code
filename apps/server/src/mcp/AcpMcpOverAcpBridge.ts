@@ -164,6 +164,9 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
             }),
           catch: bridgeError,
         });
+        yield* Effect.promise(
+          () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
+        );
         if (!response.ok && response.status !== 404) {
           return yield* Effect.fail(
             new AcpMcpOverAcpError(
@@ -171,9 +174,6 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
             ),
           );
         }
-        yield* Effect.promise(
-          () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
-        );
       }
       return {};
     });
