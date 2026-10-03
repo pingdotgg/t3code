@@ -5,6 +5,12 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  createdByUnreadWindowEnd,
+  resolveUnreadBoundaryIndex,
+  type ThreadUnreadSnapshot,
+  type UnreadBoundaryCandidate,
+} from "@t3tools/client-runtime/state/thread-unread";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
   commandDisplayText,
@@ -192,6 +198,11 @@ type ThreadFeedEntryContent =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
+    }
+  | {
+      readonly type: "unread-boundary";
+      readonly id: string;
+      readonly createdAt: string;
     };
 
 export interface ThreadFeedLatestRun {
@@ -1143,6 +1154,40 @@ function settleSupersededReasoning(
   return settled;
 }
 
+let cachedUnreadBoundaryRow: Extract<ThreadFeedEntry, { readonly type: "unread-boundary" }> | null =
+  null;
+
+/** The "New" divider. One per feed, so its id is constant and it never remounts. */
+function unreadBoundaryRow(createdAt: string) {
+  if (cachedUnreadBoundaryRow?.createdAt !== createdAt) {
+    cachedUnreadBoundaryRow = { type: "unread-boundary", id: "unread-boundary", createdAt };
+  }
+  return cachedUnreadBoundaryRow;
+}
+
+/**
+ * A group is unread when the newest activity it had by the end of the unread
+ * window is; one the run adds later must not push the group out of the
+ * window. Messages only this client holds (pending sends, local feedback) are
+ * never unread.
+ */
+function unreadBoundaryCandidate(
+  entry: Extract<ThreadFeedEntry, { readonly type: "message" | "activity-group" }>,
+  snapshot: ThreadUnreadSnapshot,
+): UnreadBoundaryCandidate | null {
+  if (entry.type === "activity-group") {
+    const newest = entry.activities.findLast((activity) =>
+      createdByUnreadWindowEnd(activity, snapshot),
+    );
+    return { createdAt: newest?.createdAt ?? entry.createdAt, assistantRunId: null };
+  }
+  if (entry.message.projectedItem === undefined) return null;
+  return {
+    createdAt: entry.createdAt,
+    assistantRunId: entry.message.role === "assistant" ? entry.message.runId : null,
+  };
+}
+
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1151,10 +1196,21 @@ export function deriveThreadFeedPresentation(
   activeWorkStartedAt: string | null = null,
   /** The live work is a provider-native subagent's runless root turn. */
   runlessWorkActive = false,
+  /**
+   * Unread window frozen when the thread opened. Places the "New" divider.
+   * `hasMoreHistory` means the first loaded entry is not a trusted boundary.
+   */
+  unread: {
+    readonly snapshot: ThreadUnreadSnapshot;
+    readonly hasMoreHistory: boolean;
+  } | null = null,
 ): ThreadFeedEntry[] {
   const retainedFeed = feed.filter(
     (entry) =>
-      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
+      entry.type !== "run-fold" &&
+      entry.type !== "work-toggle" &&
+      entry.type !== "thinking" &&
+      entry.type !== "unread-boundary",
   );
   const sourceFeed = retainedFeed.map((entry, index) =>
     settleSupersededReasoning(entry, index === retainedFeed.length - 1),
@@ -1174,8 +1230,22 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
+  // The "New" divider goes above the first row shown for the boundary entry: a
+  // collapsed fold's header when the entry is hidden inside it, otherwise the
+  // first row of the entry itself or of the next one that renders anything.
+  let unreadBoundaryIndex =
+    unread === null
+      ? -1
+      : resolveUnreadBoundaryIndex(
+          sourceFeed.map((entry) => unreadBoundaryCandidate(entry, unread.snapshot)),
+          unread.snapshot,
+          { hasMoreHistory: unread.hasMoreHistory },
+        );
+  const unreadBoundaryEntry = sourceFeed[unreadBoundaryIndex];
+  let unreadBoundaryRowIndex = -1;
   const result: ThreadFeedEntry[] = [];
-  for (const entry of sourceFeed) {
+  for (const [index, entry] of sourceFeed.entries()) {
+    let entryRowStart = result.length;
     // A provider-native subagent works without a run: its null-run tail is
     // live only while that runless work is active.
     const isActiveTailGroup =
@@ -1207,6 +1277,16 @@ export function deriveThreadFeedPresentation(
         runFoldRowsCache.set(entry, row);
       }
       result.push(row);
+      if (expanded) {
+        // An expanded header is not one of this entry's rows.
+        entryRowStart = result.length;
+      } else if (
+        unreadBoundaryRowIndex < 0 &&
+        unreadBoundaryEntry !== undefined &&
+        fold.hiddenEntryIds.has(unreadBoundaryEntry.id)
+      ) {
+        unreadBoundaryRowIndex = entryRowStart;
+      }
     }
     if (!collapsedEntryIds.has(entry.id)) {
       if (
@@ -1229,17 +1309,38 @@ export function deriveThreadFeedPresentation(
           failedActivityGroupsCache.set(entry, rows);
         }
         result.push(...rows);
-        continue;
+      } else {
+        appendPresentedFeedEntry(
+          result,
+          entry,
+          expandedWorkGroupIds,
+          activeRunId,
+          isWorking,
+          isActiveTailGroup,
+        );
       }
-      appendPresentedFeedEntry(
-        result,
-        entry,
-        expandedWorkGroupIds,
-        activeRunId,
-        isWorking,
-        isActiveTailGroup,
-      );
     }
+    if (
+      unread !== null &&
+      unreadBoundaryRowIndex < 0 &&
+      unreadBoundaryIndex >= 0 &&
+      index >= unreadBoundaryIndex &&
+      result.length > entryRowStart
+    ) {
+      // The boundary entry rendered nothing, so the divider would fall to
+      // these rows. Rows from after the unread window are not unread: drop it.
+      if (
+        index > unreadBoundaryIndex &&
+        !createdByUnreadWindowEnd(unreadBoundaryCandidate(entry, unread.snapshot), unread.snapshot)
+      ) {
+        unreadBoundaryIndex = -1;
+      } else {
+        unreadBoundaryRowIndex = entryRowStart;
+      }
+    }
+  }
+  if (unreadBoundaryEntry !== undefined && unreadBoundaryRowIndex >= 0) {
+    result.splice(unreadBoundaryRowIndex, 0, unreadBoundaryRow(unreadBoundaryEntry.createdAt));
   }
   // Keep exactly one live slot while a run is working. When no tool row can
   // carry it yet (or the latest call failed), the slot reads "Thinking".

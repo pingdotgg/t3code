@@ -37,6 +37,7 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
+import type { ThreadUnreadSnapshot } from "@t3tools/client-runtime/state/thread-unread";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   resolveWorkEntryToolPresentation,
@@ -480,6 +481,8 @@ interface MessagesTimelineProps {
   historyControls?: MessagesTimelineHistoryControls;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  /** Unread window of the displayed thread, frozen when it opened. Null hides the "New" divider. */
+  unreadSnapshot?: ThreadUnreadSnapshot | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,6 +545,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
+  unreadSnapshot = null,
 }: MessagesTimelineProps) {
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
@@ -739,6 +743,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     readonly workspaceRoot: string | undefined;
     readonly projection: MessagesTimelineRowsProjection;
   } | null>(null);
+  const hasMoreHistory = historyControls?.hasMoreHistory === true;
   const rawRows = useMemo(() => {
     const previous = rowsProjectionRef.current;
     const projection = deriveMessagesTimelineRowsWithState(
@@ -755,6 +760,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         turnDiffSummaries,
         supportsConversationRollback,
         worktreeSetup,
+        unreadSnapshot,
+        hasMoreHistory,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
         ? previous.projection
@@ -778,6 +785,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     turnDiffSummaries,
     supportsConversationRollback,
     worktreeSetup,
+    unreadSnapshot,
+    hasMoreHistory,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   // Run status/timestamps churn on every stream event; the shared row context
@@ -1800,6 +1809,11 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "unread-boundary" ? (
+        <TimelineDivider label="New messages">
+          <span className="shrink-0">New</span>
+        </TimelineDivider>
+      ) : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1838,18 +1852,28 @@ function WorktreeSetupTimelineRow({
   );
 }
 
+/** A label centered between two thin lines. `label` is the separator's accessible name. */
+function TimelineDivider({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div
+      role="separator"
+      aria-label={label}
+      className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
+    >
+      <span className="h-px flex-1 bg-border/70" />
+      {children}
+      <span className="h-px flex-1 bg-border/70" />
+    </div>
+  );
+}
+
 function ContextCompactionTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
   return (
-    <div
-      role="separator"
-      aria-label={row.label}
-      className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
-    >
-      <span className="h-px flex-1 bg-border/70" />
+    <TimelineDivider label={row.label}>
       <span
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative shrink-0 overflow-hidden"
@@ -1867,8 +1891,7 @@ function ContextCompactionTimelineRow({
           </ActivityShimmerOverlay>
         ) : null}
       </span>
-      <span className="h-px flex-1 bg-border/70" />
-    </div>
+    </TimelineDivider>
   );
 }
 

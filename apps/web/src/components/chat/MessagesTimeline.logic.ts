@@ -43,6 +43,12 @@ import {
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import {
+  createdByUnreadWindowEnd,
+  resolveUnreadBoundaryIndex,
+  type ThreadUnreadSnapshot,
+  type UnreadBoundaryCandidate,
+} from "@t3tools/client-runtime/state/thread-unread";
+import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
   type T3McpToolPresentation,
@@ -551,6 +557,11 @@ type MessagesTimelineRowContent =
       createdAt: string;
       label: string;
       active: boolean;
+    }
+  | {
+      kind: "unread-boundary";
+      id: string;
+      createdAt: null;
     }
   | {
       kind: "message";
@@ -1167,6 +1178,23 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
   });
 }
 
+/** The "New" divider. One per timeline, so its id is constant and it never remounts. */
+const UNREAD_BOUNDARY_ROW = {
+  kind: "unread-boundary",
+  id: "unread-boundary",
+  createdAt: null,
+} as const;
+
+/** Messages only this client holds (optimistic sends, local feedback) are never unread. */
+function unreadBoundaryCandidate(entry: TimelineEntry): UnreadBoundaryCandidate | null {
+  if (entry.kind !== "message") return { createdAt: entry.createdAt, assistantRunId: null };
+  if (entry.projectedItem === undefined) return null;
+  return {
+    createdAt: entry.createdAt,
+    assistantRunId: entry.message.role === "assistant" ? entry.message.runId : null,
+  };
+}
+
 const supersededReasoningEntries = new WeakMap<TimelineEntry, TimelineEntry>();
 
 /** A steer or subsequent activity ends thinking even if the provider omits its completion. */
@@ -1209,6 +1237,10 @@ export function deriveMessagesTimelineRows(input: {
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** Unread window frozen when the thread opened. Places the "New" divider. */
+  unreadSnapshot?: ThreadUnreadSnapshot | null;
+  /** Older pages are not loaded, so the first entry is not a trusted boundary. */
+  hasMoreHistory?: boolean;
 }): MessagesTimelineRow[] {
   const timelineEntries = withoutSubagentDelegationRows(
     settleSupersededReasoning(input.timelineEntries),
@@ -1357,6 +1389,49 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt ?? null,
     });
   };
+  // The "New" divider goes above the row that shows the boundary entry. Rows
+  // are not entries: a collapsed fold stands in for the entries it hides, work
+  // entries share a group row, and some entries render nothing. So the loop
+  // records where each pass starts its rows and places the divider once the
+  // boundary entry has been consumed. Live rows never anchor it.
+  const unreadSnapshot = input.unreadSnapshot ?? null;
+  let unreadBoundaryIndex =
+    unreadSnapshot === null
+      ? -1
+      : resolveUnreadBoundaryIndex(timelineEntries.map(unreadBoundaryCandidate), unreadSnapshot, {
+          hasMoreHistory: input.hasMoreHistory === true,
+        });
+  const unreadBoundaryEntryId = timelineEntries[unreadBoundaryIndex]?.id;
+  let unreadBoundaryRowIndex = -1;
+  let entryRowStart = 0;
+  /** Index of the entry whose pass starts at `entryRowStart`. */
+  let rowsEntryIndex = 0;
+  /** Call once every entry before `nextIndex` has emitted its rows. */
+  const placeUnreadBoundary = (nextIndex: number) => {
+    if (
+      unreadSnapshot === null ||
+      unreadBoundaryRowIndex >= 0 ||
+      unreadBoundaryIndex < 0 ||
+      nextIndex <= unreadBoundaryIndex ||
+      nextRows.length <= entryRowStart
+    ) {
+      return;
+    }
+    // The boundary entry rendered nothing, so the divider would fall to these
+    // rows. Rows from after the unread window are not unread: drop it instead.
+    const rowsEntry = timelineEntries[rowsEntryIndex];
+    if (
+      rowsEntryIndex > unreadBoundaryIndex &&
+      (rowsEntry === undefined ||
+        !createdByUnreadWindowEnd(unreadBoundaryCandidate(rowsEntry), unreadSnapshot))
+    ) {
+      unreadBoundaryIndex = -1;
+      return;
+    }
+    unreadBoundaryRowIndex = entryRowStart;
+  };
+  const foldHidesUnreadBoundary = (fold: { hiddenEntryIds: ReadonlySet<string> }) =>
+    unreadBoundaryEntryId !== undefined && fold.hiddenEntryIds.has(unreadBoundaryEntryId);
   let hasActivityRow = false;
   let hasActiveCompaction = false;
   const appendActiveWorkRows = () => {
@@ -1379,6 +1454,8 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    placeUnreadBoundary(index);
+
     if (input.isWorking && index === activeTurnHeaderIndex) {
       appendWorkingRow();
     }
@@ -1386,6 +1463,8 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.id === activeWorkPlacementEntryId) {
       appendActiveWorkRows();
     }
+    entryRowStart = nextRows.length;
+    rowsEntryIndex = index;
 
     // The terminal interrupt result is the useful timeline marker. The
     // preceding request is transient bookkeeping and duplicates that marker.
@@ -1398,14 +1477,19 @@ export function deriveMessagesTimelineRows(input: {
 
     const turnFold = foldsByAnchorEntryId.get(timelineEntry.id);
     if (turnFold) {
+      const expanded = input.expandedRunIds?.has(turnFold.runId) ?? false;
       nextRows.push({
         kind: "turn-fold",
         id: `turn-fold:${turnFold.runId}`,
         createdAt: turnFold.createdAt,
         runId: turnFold.runId,
         label: turnFold.label,
-        expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        expanded,
       });
+      // A collapsed fold shows its hidden entries as this header. An expanded
+      // header is not one of this entry's rows.
+      if (expanded) entryRowStart = nextRows.length;
+      else if (foldHidesUnreadBoundary(turnFold)) unreadBoundaryIndex = index;
     }
 
     if (collapsedEntryIds.has(timelineEntry.id)) {
@@ -1414,6 +1498,7 @@ export function deriveMessagesTimelineRows(input: {
 
     const supersededFold = supersededFoldsByAnchorEntryId.get(timelineEntry.id);
     if (supersededFold) {
+      const expanded = input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false;
       nextRows.push({
         kind: "attempt-fold",
         id: `attempt-fold:${supersededFold.attemptId}`,
@@ -1421,8 +1506,10 @@ export function deriveMessagesTimelineRows(input: {
         runId: supersededFold.runId,
         attemptId: supersededFold.attemptId,
         label: "Superseded attempt",
-        expanded: input.expandedAttemptIds?.has(supersededFold.attemptId) ?? false,
+        expanded,
       });
+      if (expanded) entryRowStart = nextRows.length;
+      else if (foldHidesUnreadBoundary(supersededFold)) unreadBoundaryIndex = index;
     }
 
     if (collapsedSupersededEntryIds.has(timelineEntry.id)) {
@@ -1623,6 +1710,8 @@ export function deriveMessagesTimelineRows(input: {
             timelineEntry.projectedItem,
           ],
         };
+        // The merged card now shows this entry too.
+        entryRowStart = nextRows.length - 1;
         continue;
       }
       nextRows.push({
@@ -1670,6 +1759,11 @@ export function deriveMessagesTimelineRows(input: {
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });
+  }
+
+  placeUnreadBoundary(timelineEntries.length);
+  if (unreadBoundaryRowIndex >= 0) {
+    nextRows.splice(unreadBoundaryRowIndex, 0, UNREAD_BOUNDARY_ROW);
   }
 
   // Until the agent's turn is live, the setup card sits under the send with
@@ -1978,6 +2072,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
+    case "unread-boundary":
+      return true;
+
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
     case "thinking": {

@@ -17,6 +17,7 @@ export function resolveThreadFeedFixedItemSize(
       return WORK_GROUP_TOGGLE_HEIGHT;
     case "activity-group":
     case "message":
+    case "unread-boundary":
       return undefined;
   }
 }

@@ -98,6 +98,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  resolveThreadUnreadSession,
+  type ThreadUnreadSession,
+} from "@t3tools/client-runtime/state/thread-unread";
+import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
   shouldShowLoadEarlierControl,
@@ -1485,6 +1489,7 @@ function chatActionErrorMessage(error: unknown): string {
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
+const environmentShellIsLive = (state: { readonly status: string }) => state.status === "live";
 const noopHeldTurnDiff = (_turnId: RunId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
@@ -1690,6 +1695,31 @@ export default function ChatView(props: ChatViewProps) {
   const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const lastDispatchedVisitRef = useRef<string | null>(null);
   const lastVisitDispatchAtRef = useRef(0);
+  // The unread window behind the timeline's "New" divider. It is copied during
+  // render, so the visit effect below cannot mark the thread read first, and
+  // it stays frozen until the route changes thread or this view unmounts.
+  const routeShellIsLive = useAtomValue(
+    environmentShell.stateValueAtom(environmentId),
+    environmentShellIsLive,
+  );
+  const [storedUnreadSession, setUnreadSession] = useState<ThreadUnreadSession | null>(null);
+  const unreadSession = resolveThreadUnreadSession(storedUnreadSession, {
+    threadKey: routeThreadKey,
+    thread:
+      serverThread === null
+        ? null
+        : {
+            lastVisitedAt: resolveThreadLastVisitedAt(
+              serverThread.lastVisitedAt,
+              activeThreadLocalLastVisitedAt,
+            ),
+            latestRun: serverThread.latestRun,
+          },
+    synchronized: routeShellIsLive,
+  });
+  if (unreadSession !== storedUnreadSession) {
+    setUnreadSession(unreadSession);
+  }
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -3811,6 +3841,11 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
+  // While another thread's rows are still painted, its divider is not ours to draw.
+  const displayedUnreadSnapshot =
+    !paintOnlyDisplayedTimeline && unreadSession?.threadKey === displayedTimelineKey
+      ? unreadSession.snapshot
+      : null;
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
@@ -10764,6 +10799,7 @@ export default function ChatView(props: ChatViewProps) {
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}
+                unreadSnapshot={displayedUnreadSnapshot}
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}

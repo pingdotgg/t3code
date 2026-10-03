@@ -4889,3 +4889,221 @@ describe("failed turn transcript", () => {
     },
   );
 });
+
+describe("unread boundary row", () => {
+  const runId = RunId.make("turn-1");
+  // Committed messages carry their turn item; client-only ones do not.
+  const committed = { item: {} } as OrchestrationV2ProjectedTurnItem;
+  const at = (time: string) => `2026-06-20T${time}.000Z`;
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    time: string,
+    messageRunId: RunId | null = null,
+  ) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at(time),
+    projectedItem: committed,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text: id,
+      runId: messageRunId,
+      createdAt: at(time),
+      updatedAt: at(time),
+      streaming: false,
+    },
+  });
+  const clientOnlyMessage = (id: string, time: string) => {
+    const { projectedItem: _committed, ...entry } = message(id, "user", time);
+    return entry;
+  };
+  const work = (id: string, time: string) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at(time),
+    entry: { id, createdAt: at(time), runId, label: "Ran command", tone: "tool" as const },
+  });
+  const timelineEntries = [
+    message("user-entry", "user", "09:58:00"),
+    message("assistant-first-entry", "assistant", "09:59:00", runId),
+    work("work-entry-1", "10:01:00"),
+    work("work-entry-2", "10:02:00"),
+    message("assistant-final-entry", "assistant", "10:04:00", runId),
+  ];
+  const unreadSnapshot = { visitedAt: at("10:00:00"), runId, completedAt: at("10:05:00") };
+  const rowIds = (input: Partial<Parameters<typeof deriveMessagesTimelineRows>[0]>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      unreadSnapshot,
+      ...input,
+    }).map((row) => row.id);
+
+  it("sits above the fold header while the first unread entry is folded away", () => {
+    expect(rowIds({})).toEqual([
+      "user-entry",
+      "unread-boundary",
+      "turn-fold:turn-1",
+      "assistant-final-entry",
+    ]);
+  });
+
+  it("moves to the first unread row once the fold is expanded", () => {
+    expect(rowIds({ expandedRunIds: new Set([runId]) })).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "unread-boundary",
+      "work-toggle:work-entry-1",
+      "assistant-final-entry",
+    ]);
+    // The whole run is unread: collapsed it sits above the header, expanded below it.
+    const wholeRun = { ...unreadSnapshot, visitedAt: at("09:58:30") };
+    expect(rowIds({ unreadSnapshot: wholeRun }).slice(0, 3)).toEqual([
+      "user-entry",
+      "unread-boundary",
+      "turn-fold:turn-1",
+    ]);
+    expect(
+      rowIds({ unreadSnapshot: wholeRun, expandedRunIds: new Set([runId]) }).slice(0, 4),
+    ).toEqual(["user-entry", "turn-fold:turn-1", "unread-boundary", "assistant-first-entry"]);
+  });
+
+  it("sits above a work group whose later call is the first unread entry", () => {
+    expect(
+      rowIds({
+        expandedRunIds: new Set([runId]),
+        unreadSnapshot: { ...unreadSnapshot, visitedAt: at("10:01:30") },
+      }),
+    ).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "unread-boundary",
+      "work-toggle:work-entry-1",
+      "assistant-final-entry",
+    ]);
+  });
+
+  it.each([
+    ["an answer that was streaming at the last visit", at("10:04:30")],
+    ["Mark unread", "2026-06-20T10:04:59.999Z"],
+  ])("sits above the final answer for %s", (_label, visitedAt) => {
+    expect(rowIds({ unreadSnapshot: { ...unreadSnapshot, visitedAt } })).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "unread-boundary",
+      "assistant-final-entry",
+    ]);
+  });
+
+  it("renders nothing for a thread that opened read", () => {
+    expect(rowIds({ unreadSnapshot: null })).not.toContain("unread-boundary");
+  });
+
+  it("holds its place when a prompt and its answer arrive later", () => {
+    const rows = rowIds({
+      timelineEntries: [
+        ...timelineEntries,
+        message("later-user-entry", "user", "10:30:00"),
+        message("later-assistant-entry", "assistant", "10:30:30", RunId.make("turn-2")),
+        clientOnlyMessage("optimistic-entry", "10:31:00"),
+      ],
+    });
+    expect(rows.slice(0, 3)).toEqual(["user-entry", "unread-boundary", "turn-fold:turn-1"]);
+    expect(rows.filter((id) => id === "unread-boundary")).toHaveLength(1);
+  });
+
+  it("never marks a prompt this client just sent", () => {
+    // Its local clock can land inside the unread window; it is still not unread.
+    expect(
+      rowIds({
+        timelineEntries: [
+          message("user-entry", "user", "09:58:00"),
+          clientOnlyMessage("optimistic-entry", "10:02:00"),
+        ],
+      }),
+    ).toEqual(["user-entry", "optimistic-entry"]);
+  });
+
+  it("is not anchored by live rows when the boundary entry renders nothing", () => {
+    const interruptRequest = {
+      id: "interrupt-request-entry",
+      kind: "event" as const,
+      createdAt: at("10:01:00"),
+      projectedItem: {
+        item: { id: "interrupt-request-entry", type: "run_interrupt_request", runId },
+      } as OrchestrationV2ProjectedTurnItem,
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [message("user-entry", "user", "09:58:00"), interruptRequest],
+      isWorking: true,
+      activeTurnStartedAt: at("10:06:00"),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      unreadSnapshot,
+    });
+    expect(rows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+  });
+
+  it("does not fall onto a later prompt when the unread entry renders nothing", () => {
+    // The only unread entry is a call that never finished, which shows no row
+    // of its own. Collapsed, the fold header stands in for it.
+    const call = work("unfinished-entry", "10:01:00");
+    const opened = [
+      message("user-entry", "user", "09:58:00"),
+      { ...call, entry: { ...call.entry, toolLifecycleStatus: "inProgress" as const } },
+    ];
+    const laterTurn = [
+      message("later-user-entry", "user", "10:30:00"),
+      message("later-assistant-entry", "assistant", "10:31:00", RunId.make("turn-2")),
+    ];
+    expect(rowIds({ timelineEntries: [...opened, ...laterTurn] })).toEqual([
+      "user-entry",
+      "unread-boundary",
+      "turn-fold:turn-1",
+      "later-user-entry",
+      "later-assistant-entry",
+    ]);
+    // Expanded, nothing unread is on screen, and the later turn is not unread.
+    const expandedRunIds = new Set([runId]);
+    expect(rowIds({ timelineEntries: [...opened, ...laterTurn], expandedRunIds })).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "later-user-entry",
+      "later-assistant-entry",
+    ]);
+    expect(
+      rowIds({
+        timelineEntries: [...opened, clientOnlyMessage("optimistic-entry", "10:02:00")],
+        expandedRunIds,
+      }),
+    ).toEqual(["user-entry", "turn-fold:turn-1", "optimistic-entry"]);
+    // An answer from inside the window still takes the divider.
+    expect(
+      rowIds({
+        timelineEntries: [
+          ...opened,
+          message("assistant-final-entry", "assistant", "10:04:00", runId),
+          ...laterTurn,
+        ],
+        expandedRunIds,
+        unreadSnapshot: { ...unreadSnapshot, runId: RunId.make("turn-0") },
+      }).slice(0, 4),
+    ).toEqual(["user-entry", "turn-fold:turn-1", "unread-boundary", "assistant-final-entry"]);
+  });
+
+  it("waits for older pages instead of guessing at the top of a partial history", () => {
+    const page = timelineEntries.slice(2);
+    expect(rowIds({ timelineEntries: page, hasMoreHistory: true })).not.toContain(
+      "unread-boundary",
+    );
+    expect(rowIds({ timelineEntries: page, hasMoreHistory: false })[0]).toBe("unread-boundary");
+    // The older page arrives and the boundary resolves against the full run.
+    expect(rowIds({ hasMoreHistory: true }).slice(0, 2)).toEqual(["user-entry", "unread-boundary"]);
+  });
+});

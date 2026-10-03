@@ -287,6 +287,10 @@
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"
     },
+    "./state/thread-unread": {
+      "types": "./src/state/threadUnread.ts",
+      "default": "./src/state/threadUnread.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"

@@ -36,6 +36,7 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import type { ThreadUnreadSnapshot } from "@t3tools/client-runtime/state/thread-unread";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -287,6 +288,8 @@ export interface ThreadFeedProps {
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
+  /** Unread window frozen when the thread opened. Null hides the "New" divider. */
+  readonly unreadSnapshot?: ThreadUnreadSnapshot | null;
   readonly contentMaxWidth?: number;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
@@ -1558,6 +1561,10 @@ function renderFeedEntry(
     return <ThreadThinkingRow rowSizing={props.workRowSizing} iconSubtleColor={iconSubtleColor} />;
   }
 
+  if (entry.type === "unread-boundary") {
+    return <ThreadContextDivider label="New" accessibilityLabel="New messages" />;
+  }
+
   if (entry.type === "work-toggle") {
     return (
       <ThreadWorkGroupToggle
@@ -2598,6 +2605,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
+  const unreadSnapshot = props.unreadSnapshot ?? null;
+  const hasMoreHistory = props.historyControls?.hasMoreHistory === true;
   const presentedFeed = useMemo(
     () =>
       appendPendingThreadMessages(
@@ -2612,6 +2621,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ),
           props.activeWorkStartedAt,
           props.runlessWorkActive ?? false,
+          unreadSnapshot === null ? null : { snapshot: unreadSnapshot, hasMoreHistory },
         ),
         props.feed,
         props.queuedMessages,
@@ -2624,6 +2634,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.runlessWorkActive,
       props.feed,
       props.latestRun,
+      unreadSnapshot,
+      hasMoreHistory,
     ],
   );
   const setupAnchorIndex = presentedFeed.findIndex(
