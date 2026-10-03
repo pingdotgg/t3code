@@ -156,6 +156,87 @@ it("leaves already configured files unchanged, without creating a backup", async
   expect(await setup.apply(preview.id, "niri")).toEqual({ backupPath: null, warning: null });
   expect(await NodeFSP.readdir(directory)).toEqual(["config.kdl"]);
 });
+it("accepts an unchanged capture shortcut reported as a Lua callback", async () => {
+  const hypr = {
+    ...target(),
+    desktop: "hyprland" as const,
+    path: NodePath.join(directory, "bindings.lua"),
+  };
+  const before = `${captureConfigBinding("hyprland-lua", appId, "Ctrl+Shift+2")}\n`;
+  await NodeFSP.writeFile(hypr.path, before);
+  tools.hyprlandBindings.mockResolvedValue([
+    { modmask: 5, key: "2", dispatcher: "__lua", arg: "92" },
+  ]);
+
+  const preview = await setup.preview(hypr, install);
+  expect(preview.after).toBe(before);
+  expect(preview.shortcut).toBe("Ctrl+Shift+2");
+  expect(await setup.apply(preview.id, "hyprland")).toEqual({ backupPath: null, warning: null });
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+  expect((await NodeFSP.readdir(directory)).sort()).toEqual(["bindings.lua", "config.kdl"]);
+  expect(tools.reloadHyprland).not.toHaveBeenCalled();
+
+  const unchanged = await setup.preview(hypr, install);
+  await NodeFSP.appendFile(hypr.path, "-- edited elsewhere\n");
+  await expect(setup.apply(unchanged.id, "hyprland")).rejects.toThrow("changed since");
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before + "-- edited elsewhere\n");
+});
+it.each(["preview", "apply"] as const)(
+  "checks unchanged Hyprland .conf shortcuts for conflicts during %s",
+  async (stage) => {
+    const hypr = {
+      ...target(),
+      desktop: "hyprland" as const,
+      path: NodePath.join(directory, "hyprland.conf"),
+    };
+    const before = `${captureConfigBinding("hyprland", appId, "Ctrl+Shift+2")}\n`;
+    await NodeFSP.writeFile(hypr.path, before);
+    const ownBinding = {
+      modmask: 5,
+      key: "2",
+      dispatcher: "global",
+      arg: `${appId}:capture-window`,
+    };
+    tools.hyprlandBindings.mockResolvedValue([ownBinding]);
+    const unchanged = await setup.preview(hypr, install);
+    expect(unchanged.after).toBe(before);
+    expect(await setup.apply(unchanged.id, "hyprland")).toEqual({
+      backupPath: null,
+      warning: null,
+    });
+
+    const preview = stage === "apply" ? await setup.preview(hypr, install) : undefined;
+    tools.hyprlandBindings.mockResolvedValue([
+      ownBinding,
+      { modmask: 5, key: "2", dispatcher: "exec", arg: "kitty" },
+    ]);
+    await expect(
+      preview ? setup.apply(preview.id, "hyprland") : setup.preview(hypr, install),
+    ).rejects.toThrow("already used");
+    expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+    expect((await NodeFSP.readdir(directory)).sort()).toEqual(["config.kdl", "hyprland.conf"]);
+    expect(tools.reloadHyprland).not.toHaveBeenCalled();
+  },
+);
+it("rejects changing an existing capture shortcut to keys used by another Lua callback", async () => {
+  const hypr = {
+    ...target(),
+    desktop: "hyprland" as const,
+    path: NodePath.join(directory, "bindings.lua"),
+  };
+  const before = `${captureConfigBinding("hyprland-lua", appId, "Ctrl+Alt+Y")}\n`;
+  await NodeFSP.writeFile(hypr.path, before);
+  const request = { ...install, shortcut: "Ctrl+Shift+2" };
+  const occupied = [{ modmask: 5, key: "2", dispatcher: "__lua", arg: "93" }];
+  tools.hyprlandBindings.mockResolvedValue(occupied);
+  await expect(setup.preview(hypr, request)).rejects.toThrow("already used");
+
+  tools.hyprlandBindings.mockResolvedValue([]);
+  const preview = await setup.preview(hypr, request);
+  tools.hyprlandBindings.mockResolvedValue(occupied);
+  await expect(setup.apply(preview.id, "hyprland")).rejects.toThrow("already used");
+  expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe(before);
+});
 it("detects conflicts in included Niri configs without changing either file", async () => {
   await NodeFSP.appendFile(path, 'include "keys.kdl"\n');
   await NodeFSP.writeFile(NodePath.join(directory, "keys.kdl"), "binds { Shift+Ctrl+2 { quit; } }");
@@ -178,7 +259,7 @@ it("rejects a conflict from another Hyprland config or dynamic Lua bind", async 
   };
   await NodeFSP.writeFile(hypr.path, "-- user bindings\n");
   tools.hyprlandBindings.mockResolvedValue([
-    { modmask: 5, key: "2", dispatcher: "exec", arg: "kitty" },
+    { modmask: 5, key: "2", dispatcher: "__lua", arg: "92" },
   ]);
   await expect(setup.preview(hypr, install)).rejects.toThrow("already used");
   expect(await NodeFSP.readFile(hypr.path, "utf8")).toBe("-- user bindings\n");
