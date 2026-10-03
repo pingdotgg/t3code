@@ -284,13 +284,14 @@ describe("UsageAggregator", () => {
 });
 
 describe("resolveModelAliases", () => {
-  it("follows chains to the final model and drops loops", () => {
+  it("follows chains to the final model and drops chains that enter a loop", () => {
     expect(
       resolveModelAliases({
         "preview[1m]": "preview",
         preview: "example-model",
         loop: "back",
         back: "loop",
+        intoLoop: "loop",
         self: "self",
       }),
     ).toEqual(

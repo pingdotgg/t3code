@@ -98,7 +98,7 @@ export interface AggregateOptions {
 
 /**
  * Resolves user model mappings to their final target, so `a -> b` and
- * `b -> c` both land on `c`. A model whose chain loops back to it is left
+ * `b -> c` both land on `c`. A model whose chain enters a loop is left
  * unmapped.
  */
 export function resolveModelAliases(
@@ -112,7 +112,8 @@ export function resolveModelAliases(
       seen.add(target);
       target = aliases[target]!;
     }
-    if (target !== model) resolved.set(model, target);
+    // Stopping on a mapped model means the chain entered a loop.
+    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
   }
   return resolved;
 }
