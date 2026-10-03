@@ -14,8 +14,11 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { collectThreadContextReferences } from "@t3tools/shared/threadContext";
+import type { LegendListState } from "@legendapp/list/react";
 import { type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import type { PreviewMiniPlayerSource } from "../previewMiniPlayerStore";
+import type { RightPanelSurface } from "../rightPanelStore";
 import { isInsightActivity } from "../insights";
 import { Schema } from "effect";
 import { type AppState, type EnvironmentState, selectThreadExistsByRef, useStore } from "../store";
@@ -484,6 +487,76 @@ export function threadHasStarted(
 ): boolean {
   const hasMessages = options?.hasMessages ?? (thread?.messages.length ?? 0) > 0;
   return Boolean(thread && (thread.latestTurn !== null || hasMessages || thread.session !== null));
+}
+
+export function shouldClosePreviewMiniPlayer(input: {
+  readonly hasAuthoritativeServerState: boolean;
+  readonly sameTabOpenInPanel: boolean;
+  readonly tabExists: boolean;
+}): boolean {
+  return input.hasAuthoritativeServerState && !input.tabExists;
+}
+
+export function shouldRenderPreviewMiniPlayer(input: {
+  readonly source: PreviewMiniPlayerSource | null;
+  readonly panelOpen: boolean;
+  readonly panelSurface: RightPanelSurface | null;
+}): boolean {
+  if (input.source === null) return false;
+  if (input.source.kind === "browser") {
+    return !(
+      input.panelOpen &&
+      input.panelSurface?.kind === "preview" &&
+      input.panelSurface.resourceId === input.source.tabId
+    );
+  }
+  return !(
+    input.panelOpen &&
+    input.panelSurface?.kind === "device" &&
+    input.panelSurface.target?.hostId === input.source.hostId &&
+    input.panelSurface.target.deviceId === input.source.deviceId
+  );
+}
+
+export function getCopilotResumeCommand(
+  thread: Pick<Thread, "modelSelection" | "session"> | null,
+): string | null {
+  if (!thread) return null;
+  const session = thread.session;
+  if (!session) return null;
+  const isCopilotSession =
+    session.provider === "copilot" ||
+    session.providerInstanceId === "copilot" ||
+    thread.modelSelection.instanceId === "copilot";
+  if (!isCopilotSession) return null;
+
+  const resumeCursor = session.resumeCursor;
+  if (
+    typeof resumeCursor !== "object" ||
+    resumeCursor === null ||
+    !("sessionId" in resumeCursor) ||
+    typeof resumeCursor.sessionId !== "string"
+  ) {
+    return null;
+  }
+  const sessionId = resumeCursor.sessionId.trim();
+  return sessionId.length > 0 ? `copilot --resume=${sessionId}` : null;
+}
+
+export const SCROLL_TO_BOTTOM_THRESHOLD_PX = 8;
+
+type ScrollAtEndMetrics = Pick<
+  LegendListState,
+  "contentLength" | "isAtEnd" | "scroll" | "scrollLength"
+>;
+
+export function isScrollMetricsAtEnd(
+  metrics: ScrollAtEndMetrics,
+  thresholdPx = SCROLL_TO_BOTTOM_THRESHOLD_PX,
+): boolean {
+  if (metrics.isAtEnd) return true;
+  const remainingDistance = metrics.contentLength - metrics.scroll - metrics.scrollLength;
+  return Number.isFinite(remainingDistance) && remainingDistance <= thresholdPx;
 }
 
 export function resolveDraftCanonicalThreadRef(
