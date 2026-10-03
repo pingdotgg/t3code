@@ -62,9 +62,12 @@ export interface ConnectionCatalogEntry {
   readonly target: ConnectionTarget;
   readonly profile: Option.Option<ConnectionProfile>;
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;
-  /** False when the user switched the environment off: saved, but never connects. */
+  /** The user's persisted choice. False means saved, but never connects. */
   readonly enabled: boolean;
-  /** Discovery rejection stays visible while the saved connection is switched off. */
+  /**
+   * Runtime protocol rejection, never persisted. Pauses the connection without
+   * changing `enabled`, so it reconnects once the host is compatible again.
+   */
   readonly unsupportedReason?: string;
   /** The rejection came from an outdated host, which can still be updated remotely. */
   readonly serverUpdateRequired?: boolean;
