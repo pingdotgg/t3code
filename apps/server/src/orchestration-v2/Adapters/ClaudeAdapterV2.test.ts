@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import type {
   Query as ClaudeQuery,
@@ -477,13 +480,18 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     },
   } as const;
 
-  const withMcpSession = (threadId: ThreadId, run: () => void) => {
+  const withMcpSession = (
+    threadId: ThreadId,
+    run: () => void,
+    stdioWrapper?: { command: string; args: ReadonlyArray<string> },
+  ) => {
     McpProviderSession.setMcpProviderSession({
       environmentId: EnvironmentId.make(`environment-${threadId}`),
       threadId,
       providerSessionId: `mcp-session-${threadId}`,
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       endpoint: "http://127.0.0.1:43123/mcp",
+      stdioWrapper,
       authorizationHeader: "Bearer secret-claude-token",
       browserToolsAvailable: true,
     });
@@ -641,6 +649,60 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       );
       assert.notEqual(rotatedKey, initialKey);
     });
+  });
+
+  it("invalidates live-query reuse when MCP credentials rotate behind the stdio wrapper", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-wrapper-rotation");
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-wrapper-"));
+    const wrapper = NodePath.join(directory, "wrapper");
+    NodeFS.writeFileSync(wrapper, "", { mode: 0o700 });
+    const previous = process.env.T3_MCP_STDIO_WRAPPER;
+    process.env.T3_MCP_STDIO_WRAPPER = wrapper;
+    try {
+      withMcpSession(
+        threadId,
+        () => {
+          const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+            ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: "/workspace",
+            }),
+          );
+          const initial = ClaudeAdapterV2.claudeMcpQueryOverrides({
+            threadId,
+            readOnlySandbox: false,
+          });
+          const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, initial);
+
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make(`environment-${threadId}`),
+            threadId,
+            providerSessionId: `mcp-session-${threadId}`,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            stdioWrapper: { command: wrapper, args: [] },
+            authorizationHeader: "Bearer rotated-wrapper-token",
+            browserToolsAvailable: true,
+          });
+
+          const rotated = ClaudeAdapterV2.claudeMcpQueryOverrides({
+            threadId,
+            readOnlySandbox: false,
+          });
+          // The serialized config is identical: it only names the variables.
+          assert.deepEqual(rotated.mcpServers, initial.mcpServers);
+          const rotatedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, rotated);
+          assert.notEqual(rotatedKey, initialKey);
+          assert.isFalse(rotatedKey.includes("rotated-wrapper-token"));
+        },
+        { command: wrapper, args: [] },
+      );
+    } finally {
+      if (previous === undefined) delete process.env.T3_MCP_STDIO_WRAPPER;
+      else process.env.T3_MCP_STDIO_WRAPPER = previous;
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {

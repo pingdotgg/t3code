@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
 
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
@@ -20,17 +21,26 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
-  McpSessionRegistry.__testing
-    .make({
-      now,
-      livenessWindowMs: 100,
-    })
-    .pipe(
-      Effect.provideService(HttpServer.HttpServer, httpServer),
-      Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-      Effect.provide(NodeServices.layer),
+const makeRegistry = (
+  now: () => number,
+  httpServer = fakeHttpServer,
+  stdioWrapper?: { command: string; args: ReadonlyArray<string> },
+) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    return yield* McpSessionRegistry.__testing.make({ now, livenessWindowMs: 100 }).pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
+        ...config,
+        mcpStdioWrapper: stdioWrapper,
+      }),
     );
+  }).pipe(
+    Effect.provideService(HttpServer.HttpServer, httpServer),
+    Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+    Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-registry-" })),
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+  );
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {
@@ -178,5 +188,17 @@ it.effect("does not keep credentials of other threads alive", () =>
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("carries the validated startup wrapper into issued session configs", () =>
+  Effect.gen(function* () {
+    const stdioWrapper = { command: "/validated/startup-wrapper", args: ["--fixed"] };
+    const registry = yield* makeRegistry(() => 1_000, fakeHttpServer, stdioWrapper);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("wrapper-snapshot"),
+      providerInstanceId: ProviderInstanceId.make("pi"),
+    });
+    expect(issued.config.stdioWrapper).toEqual(stdioWrapper);
   }),
 );

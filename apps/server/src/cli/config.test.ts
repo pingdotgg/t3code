@@ -20,6 +20,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as McpStdioWrapper from "../mcp/McpStdioWrapper.ts";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
@@ -45,6 +46,7 @@ const makeDesktopBootstrap = (
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
+    mcpStdioWrapper: undefined,
     traceMinLevel: "Info",
     traceTimingEnabled: true,
     traceBatchWindowMs: 1_000,
@@ -1140,3 +1142,64 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 });
+
+it.effect.each([
+  ["relativePath", "private-operator/wrapper"],
+  ["notFound", "/private-operator-missing/wrapper"],
+  ["notExecutable", process.cwd()],
+  ["unmatchedQuote", '/private-operator/wrapper "'],
+  ["emptyCommand", ""],
+] as const)("server startup rejects wrapper category %s", ([category, value]) =>
+  Effect.gen(function* () {
+    const previous = process.env.T3_MCP_STDIO_WRAPPER;
+    process.env.T3_MCP_STDIO_WRAPPER = value;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env.T3_MCP_STDIO_WRAPPER;
+        else process.env.T3_MCP_STDIO_WRAPPER = previous;
+      }),
+    );
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wrapper-startup-" });
+    const result = yield* Effect.result(
+      resolveServerConfig(
+        {
+          mode: Option.some("desktop" as const),
+          port: Option.some(43123),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.some(baseDir),
+          devUrl: Option.some(new URL("http://127.0.0.1:5173")),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ),
+    );
+    assert.isTrue(result._tag === "Failure");
+    if (result._tag !== "Failure") return;
+    assert.instanceOf(result.failure, McpStdioWrapper.McpStdioWrapperConfigError);
+    const error = result.failure as McpStdioWrapper.McpStdioWrapperConfigError;
+    assert.equal(error.category, category);
+    assert.notInclude(error.message, "private-operator");
+    assert.notInclude(error.message, process.cwd());
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NetService.layer,
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            preserveEmptyStrings: true,
+            env: { T3_MCP_STDIO_WRAPPER: value },
+          }),
+        ),
+      ),
+    ),
+  ),
+);

@@ -117,6 +117,7 @@ import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanc
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveT3McpTransport } from "../../mcp/McpStdioWrapper.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
 import { turnScopedSelectionTransition } from "../ProviderSelectionTransition.ts";
@@ -966,26 +967,45 @@ export function claudeMcpQueryOverrides(input: {
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Values the stdio wrapper's ${VAR} references resolve from in the CLI environment. */
+  readonly mcpEnvironment?: Readonly<Record<string, string>>;
 } {
   const session = McpProviderSession.readMcpProviderSession(input.threadId);
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const transport = resolveT3McpTransport(session);
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      "t3-code": {
-        type: "http",
-        url: session.endpoint,
-        headers: {
-          Authorization: session.authorizationHeader,
-        },
-        timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
-      },
+      "t3-code":
+        transport.kind === "http"
+          ? {
+              type: "http",
+              url: session.endpoint,
+              headers: {
+                Authorization: session.authorizationHeader,
+              },
+              timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+            }
+          : {
+              type: "stdio",
+              command: transport.command,
+              args: [...transport.args],
+              // The SDK hands mcpServers to the CLI as a --mcp-config argument,
+              // which any local user can read from the process list. The CLI
+              // expands ${VAR} in that config, so only the names go on the
+              // command line and the values travel in the CLI's environment.
+              env: Object.fromEntries(
+                Object.keys(transport.env).map((name) => [name, `\${${name}}`]),
+              ),
+              timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+            },
     },
+    ...(transport.kind === "stdio" ? { mcpEnvironment: { ...transport.env } } : {}),
   };
 }
 
@@ -1561,6 +1581,7 @@ export function claudeEffectiveQueryPolicyKey(
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+    readonly mcpEnvironment?: Readonly<Record<string, string>>;
   },
 ): string {
   return JSON.stringify({
@@ -1571,6 +1592,16 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    // With the stdio wrapper, mcpServers holds only ${VAR} references, so a
+    // rotated endpoint or token must still replace the live process. Hash the
+    // values so the key never carries the credential itself.
+    ...(mcpOverrides.mcpEnvironment === undefined
+      ? {}
+      : {
+          mcpEnvironment: NodeCrypto.createHash("sha256")
+            .update(JSON.stringify(Object.entries(mcpOverrides.mcpEnvironment).sort()))
+            .digest("hex"),
+        }),
   });
 }
 
@@ -6858,7 +6889,7 @@ export function makeClaudeAdapterV2(
           nativeThreadId: string,
         ) {
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
-          const mcpOverrides = claudeMcpQueryOverrides({
+          const mcpQuery = claudeMcpQueryOverrides({
             threadId: turnInput.threadId,
             readOnlySandbox:
               sandboxPolicyKindForClaudeRuntimePolicy(turnInput.runtimePolicy) === "readOnly",
@@ -6866,7 +6897,8 @@ export function makeClaudeAdapterV2(
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const { mcpEnvironment, ...mcpOverrides } = mcpQuery;
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpQuery);
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -6942,7 +6974,10 @@ export function makeClaudeAdapterV2(
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
+            environment:
+              mcpEnvironment === undefined
+                ? adapterOptions.environment
+                : { ...(adapterOptions.environment ?? process.env), ...mcpEnvironment },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...mcpOverrides,
             permissionMode: queryPolicy.permissionMode,

@@ -108,6 +108,7 @@ import {
 } from "../../provider/Layers/codexLaunchArgs.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveT3McpTransport } from "../../mcp/McpStdioWrapper.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -1196,6 +1197,26 @@ export class CodexAppServerClientFactory extends Context.Service<
  */
 export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
 
+/** Codex `mcp_servers` entry for t3-code: a stdio wrapper command, or the HTTP endpoint. */
+function codexT3McpServerConfig(
+  session: Pick<McpProviderSession.McpProviderSessionConfig, "endpoint" | "authorizationHeader">,
+): Schema.Json {
+  const transport = resolveT3McpTransport(session);
+  if (transport.kind === "stdio") {
+    return {
+      command: transport.command,
+      args: [...transport.args],
+      env: { ...transport.env },
+    };
+  }
+  return {
+    url: session.endpoint,
+    http_headers: {
+      Authorization: session.authorizationHeader,
+    },
+  };
+}
+
 export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly modelSelection?: { readonly model: string };
@@ -1216,12 +1237,7 @@ export function codexThreadRuntimeParams(input: {
         ? {}
         : {
             mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
-              },
+              "t3-code": codexT3McpServerConfig(mcpSession),
             },
           }),
     },

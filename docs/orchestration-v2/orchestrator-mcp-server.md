@@ -54,6 +54,29 @@ The MCP HTTP server resolves the bearer token and supplies the resulting
 `McpInvocationScope` to tool handlers. Orchestration handlers additionally
 check the `orchestration` capability before reading or mutating state.
 
+## Operator stdio wrapper
+
+Set `T3_MCP_STDIO_WRAPPER` in the T3 server process to an absolute executable
+path plus optional fixed arguments. When it is set, each provider that can
+launch a stdio MCP server runs that command for `t3-code` instead of connecting
+to the HTTP endpoint itself. T3 passes the endpoint and the authorization value
+in `T3_MCP_URL` and `T3_MCP_AUTHORIZATION`. They are not placed on the command
+line. Arguments are split on whitespace, with quotes grouping one argument, and
+are not interpreted by a shell.
+
+A relative path, a missing or non-executable file, or a value that cannot be
+split refuses server startup. Leaving the variable unset keeps the HTTP injection below.
+Pi has no stdio MCP client and refuses to start a session that would have
+received `t3-code` while the variable is set. An external OpenCode server
+cannot launch a program on the T3 machine, so it refuses as well.
+
+The setting is validated once at startup, so changing it takes a
+server restart. It routes provider traffic through the wrapper; it is not an
+isolation boundary. The provider process still holds the endpoint and
+credential in its environment, so an agent running as the same OS user can
+reach the endpoint directly. Keeping an agent from bypassing the wrapper
+needs process or user separation outside T3.
+
 ## Provider Injection
 
 ### Codex V2

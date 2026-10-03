@@ -90,6 +90,7 @@ import {
 import {
   buildPiRpcLaunch,
   materializePiT3McpExtension,
+  piT3McpStdioWrapperRefusal,
   resolvePiLaunchArgs,
 } from "./piT3McpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
@@ -390,6 +391,14 @@ export function makePiAdapterV2(
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+      const stdioWrapperRefusal = piT3McpStdioWrapperRefusal(mcpSession);
+      if (stdioWrapperRefusal !== undefined) {
+        return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+          driver: PI_PROVIDER,
+          providerSessionId: input.providerSessionId,
+          cause: new Error(stdioWrapperRefusal),
+        });
+      }
       const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
         effect.pipe(
           Effect.provideService(FileSystem.FileSystem, options.fileSystem),

@@ -57,6 +57,11 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  McpStdioWrapperConfigError,
+  openCodeT3McpConfig,
+  resolveT3McpTransport,
+} from "../../mcp/McpStdioWrapper.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import {
@@ -969,18 +974,21 @@ export function makeOpenCodeAdapterV2(
         });
 
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const hasT3Mcp = mcpSession !== undefined && !connection.external;
+        const transport = mcpSession === undefined ? undefined : resolveT3McpTransport(mcpSession);
+        if (transport?.kind === "stdio" && connection.external) {
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: OPENCODE_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause: new McpStdioWrapperConfigError({ category: "externalServer" }),
+          });
+        }
+        const hasT3Mcp = transport !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
-        if (hasT3Mcp) {
+        if (hasT3Mcp && transport !== undefined) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",
-              config: {
-                type: "remote",
-                url: mcpSession.endpoint,
-                headers: { Authorization: mcpSession.authorizationHeader },
-                oauth: false,
-              },
+              config: openCodeT3McpConfig(mcpSession!),
             }),
           );
         }

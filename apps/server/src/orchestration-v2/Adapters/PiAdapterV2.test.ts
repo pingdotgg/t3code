@@ -484,6 +484,40 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("refuses a configured wrapper through the typed session-open error channel", () =>
+    Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-pi-wrapper"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer wrapper-token",
+        browserToolsAvailable: true,
+        stdioWrapper: { command: "/validated/wrapper", args: [] },
+      });
+      const fake = yield* makeFakePi;
+      let cleanupRan = false;
+      const result = yield* Effect.result(
+        openRuntime(fake).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              cleanupRan = true;
+            }),
+          ),
+        ),
+      );
+      assert.isTrue(cleanupRan);
+      assert.isTrue(result._tag === "Failure");
+      if (result._tag !== "Failure") return;
+      assert.equal(result.failure._tag, "ProviderAdapterOpenSessionError");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
+      Effect.scoped,
+      Effect.provide(testLayer),
+    ),
+  );
+
   it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
       McpProviderSession.setMcpProviderSession({

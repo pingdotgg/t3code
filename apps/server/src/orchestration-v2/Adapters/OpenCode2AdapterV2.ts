@@ -75,6 +75,11 @@ import {
   type OpenCodeRuntimeError,
 } from "../../provider/opencodeRuntime.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  McpStdioWrapperConfigError,
+  openCodeT3McpConfig,
+  resolveT3McpTransport,
+} from "../../mcp/McpStdioWrapper.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -3230,11 +3235,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
       const directory = turnInput.runtimePolicy.cwd ?? serverConfig.cwd;
       const name = t3McpServerName(turnInput.threadId);
+      const transport = mcpSession === undefined ? undefined : resolveT3McpTransport(mcpSession);
+      if (transport?.kind === "stdio" && connection.external) {
+        return yield* Effect.fail(new McpStdioWrapperConfigError({ category: "externalServer" }));
+      }
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
-        mcpSession === undefined || connection.external
+        transport === undefined || connection.external
           ? undefined
-          : { name, directory, credential: mcpSession.authorizationHeader };
+          : { name, directory, credential: mcpSession!.authorizationHeader, transport };
       if (
         state.mcp !== undefined &&
         (wanted === undefined ||
@@ -3246,27 +3255,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // T3's tools are an addition: a server that cannot add them still runs the turn.
       if (wanted !== undefined && state.mcp === undefined) {
-        const added = yield* client.mcp
+        const plainConfig = openCodeT3McpConfig(mcpSession!);
+        const config =
+          plainConfig.type === "local"
+            ? new Mcp.LocalConfig({
+                type: "local",
+                command: [...plainConfig.command],
+                environment: { ...plainConfig.environment },
+              })
+            : new Mcp.RemoteConfig(plainConfig);
+        const add = client.mcp
           .add({
             server: name,
             location: { directory },
-            config: new Mcp.RemoteConfig({
-              type: "remote",
-              url: mcpSession!.endpoint,
-              headers: { Authorization: wanted.credential },
-              oauth: false,
-            }),
+            config,
           })
-          .pipe(
-            Effect.timeout(INVENTORY_TIMEOUT),
-            Effect.as(true),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
-                Effect.as(false),
-              ),
-            ),
-          );
-        if (added) state.mcp = wanted;
+          .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.as(true));
+        // A configured wrapper is the only allowed path. A failed add must not
+        // continue the turn against the HTTP endpoint, or with the tools missing.
+        const added =
+          wanted.transport.kind === "stdio"
+            ? yield* add
+            : yield* add.pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+                    Effect.as(false),
+                  ),
+                ),
+              );
+        if (added) state.mcp = { name, directory, credential: wanted.credential };
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),

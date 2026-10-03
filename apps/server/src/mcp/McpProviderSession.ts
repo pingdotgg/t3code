@@ -1,10 +1,13 @@
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 
+import type { McpStdioWrapperCommand } from "./McpStdioWrapper.ts";
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
+  /** Validated startup snapshot; absent preserves the direct HTTP transport. */
+  readonly stdioWrapper?: McpStdioWrapperCommand | undefined;
   readonly endpoint: string;
   readonly authorizationHeader: string;
   /**

@@ -45,6 +45,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveT3McpTransport } from "../../mcp/McpStdioWrapper.ts";
 import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import {
@@ -205,6 +206,17 @@ export function cursorMcpServers(threadId: ThreadId): Record<string, McpServerCo
   const session = McpProviderSession.readMcpProviderSession(threadId);
   if (session === undefined) {
     return undefined;
+  }
+  const transport = resolveT3McpTransport(session);
+  if (transport.kind === "stdio") {
+    return {
+      "t3-code": {
+        type: "stdio",
+        command: transport.command,
+        args: [...transport.args],
+        env: { ...transport.env },
+      },
+    };
   }
   return {
     "t3-code": {

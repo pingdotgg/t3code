@@ -63,6 +63,7 @@ import {
   type AcpMcpOverAcpBridge,
 } from "../../mcp/AcpMcpOverAcpBridge.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { resolveT3McpTransport } from "../../mcp/McpStdioWrapper.ts";
 import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
@@ -684,12 +685,32 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
   if (session === undefined) {
     return { servers: [], acpServers: [] };
   }
+  const transport = resolveT3McpTransport(session);
   // Stdio is ACP's required baseline MCP transport. Agents that advertise
   // optional http support still routinely fail to wire injected http servers
   // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
   // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
   // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
   // travels via environment variables, never the command line.
+  //
+  // An operator wrapper replaces that bridge. The in-process HTTP bridge and
+  // the terminal fallback both talk to the endpoint directly, so neither
+  // receives the credential while the wrapper is configured.
+  if (transport.kind === "stdio") {
+    return {
+      servers: [
+        {
+          name: "t3-code",
+          command: transport.command,
+          args: [...transport.args],
+          env: Object.entries(transport.env).map(([name, value]) => ({ name, value })),
+        },
+      ],
+      // No ACP-native descriptor: an agent that advertises ACP MCP would pick
+      // it over the wrapper, and its in-process bridge has no credential here.
+      acpServers: [],
+    };
+  }
   return {
     servers: [
       {
@@ -715,14 +736,16 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
   };
 }
 
-function acpMcpServers(
+/** MCP servers for an ACP session: the stdio wrapper when configured, otherwise T3's built-in bridge. */
+export function acpMcpServers(
   threadId: ThreadId | null,
   self: SelfInvocation,
 ): ReadonlyArray<EffectAcpSchema.McpServer> {
   return acpMcpContext(threadId, self).servers;
 }
 
-function acpMcpActivation(threadId: ThreadId | null, self: SelfInvocation) {
+/** MCP servers handed to an ACP session, in stdio and ACP-native form. */
+export function acpMcpActivation(threadId: ThreadId | null, self: SelfInvocation) {
   const context = acpMcpContext(threadId, self);
   return { mcpServers: context.servers, acpMcpServers: context.acpServers };
 }

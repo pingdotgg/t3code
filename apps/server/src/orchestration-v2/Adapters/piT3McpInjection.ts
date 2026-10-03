@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import type { McpProviderSessionConfig } from "../../mcp/McpProviderSession.ts";
+import { resolveT3McpTransport, T3_MCP_STDIO_WRAPPER_ENV } from "../../mcp/McpStdioWrapper.ts";
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
@@ -246,6 +247,18 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   }
   return dest;
 });
+
+/** Pi's extension speaks HTTP. A configured stdio wrapper must not fall through to that. */
+export function piT3McpStdioWrapperRefusal(
+  session:
+    | Pick<McpProviderSessionConfig, "endpoint" | "authorizationHeader" | "stdioWrapper">
+    | undefined,
+): string | undefined {
+  if (session === undefined || resolveT3McpTransport(session).kind !== "stdio") {
+    return undefined;
+  }
+  return `Pi has no stdio MCP client, so ${T3_MCP_STDIO_WRAPPER_ENV} cannot be applied. Unset ${T3_MCP_STDIO_WRAPPER_ENV} or use a provider that launches stdio MCP servers.`;
+}
 
 export function buildPiRpcLaunch(input: {
   readonly launchArgs: ReadonlyArray<string>;

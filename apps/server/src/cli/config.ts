@@ -20,6 +20,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
+import * as McpStdioWrapper from "../mcp/McpStdioWrapper.ts";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
@@ -261,6 +262,7 @@ export const resolveServerConfig = (
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
+    const mcpStdioWrapper = yield* McpStdioWrapper.loadMcpStdioWrapper();
     const normalizedFlags = {
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
@@ -424,6 +426,7 @@ export const resolveServerConfig = (
     );
 
     const config: ServerConfig.ServerConfig["Service"] = {
+      mcpStdioWrapper,
       logLevel,
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,
