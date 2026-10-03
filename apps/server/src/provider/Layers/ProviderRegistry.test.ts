@@ -2476,6 +2476,113 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         }),
       );
 
+      it.effect("stamps instance appearance from config over driver snapshots", () =>
+        Effect.gen(function* () {
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const baseProvider = {
+            driver: claudeDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-29T10:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const;
+          // Both drivers report stale appearance, as a cached snapshot would.
+          const kimiProvider = {
+            ...baseProvider,
+            instanceId: ProviderInstanceId.make("claude_kimi"),
+            icon: "codex",
+            badgeLabel: "OLD",
+          } as const satisfies ServerProvider;
+          const plainProvider = {
+            ...baseProvider,
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            icon: "grok",
+            badgeLabel: "OLD",
+          } as const satisfies ServerProvider;
+          const makeInstance = (
+            provider: ServerProvider,
+            appearance?: ProviderInstance["appearance"],
+          ): ProviderInstance => ({
+            instanceId: provider.instanceId,
+            driverKind: provider.driver,
+            continuationIdentity: {
+              driverKind: provider.driver,
+              continuationKey: `${provider.driver}:instance:${provider.instanceId}`,
+            },
+            displayName: undefined,
+            appearance,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: provider.driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          });
+          const instances = [
+            makeInstance(kimiProvider, { icon: "initials", badgeLabel: "KI" }),
+            makeInstance(plainProvider),
+          ];
+          const changes = yield* PubSub.unbounded<void>();
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
+              listInstances: Effect.succeed(instances),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.fromPubSub(changes),
+              subscribeChanges: PubSub.subscribe(changes),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-appearance-",
+                }),
+              ),
+              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const providers = yield* registry.getProviders;
+            const appearanceOf = (instanceId: string) => {
+              const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+              return { icon: provider?.icon, badgeLabel: provider?.badgeLabel };
+            };
+            assert.deepStrictEqual(appearanceOf("claude_kimi"), {
+              icon: "initials",
+              badgeLabel: "KI",
+            });
+            assert.deepStrictEqual(appearanceOf("claudeAgent"), {
+              icon: undefined,
+              badgeLabel: undefined,
+            });
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       // This test intentionally avoids `mockCommandSpawnerLayer` so the real
       // `probeCodexAppServerProvider` path runs — including the full
       // `codex app-server` RPC handshake via `CodexClient.layerChildProcess`.

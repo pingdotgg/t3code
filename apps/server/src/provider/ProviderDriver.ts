@@ -74,6 +74,8 @@ export interface ProviderInstance {
   readonly continuationIdentity: ProviderContinuationIdentity;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
+  /** Set by the instance registry from config; drivers leave it unset. */
+  readonly appearance?: ProviderInstanceAppearance | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;
@@ -115,6 +117,12 @@ export interface ProviderInstance {
       readonly providerId: string;
     }) => Effect.Effect<void, AcpRegistryOperationError>;
   };
+}
+
+/** User-chosen glyph and badge text, stamped onto every published snapshot. */
+export interface ProviderInstanceAppearance {
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
 }
 
 export interface ProviderContinuationIdentity {

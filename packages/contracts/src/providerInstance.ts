@@ -125,11 +125,20 @@ export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  // Glyph override: a driver slug whose logo to draw, or
+  // `PROVIDER_INSTANCE_INITIALS_ICON` to draw the badge label instead.
+  // Clients fall back to the driver's own glyph for values they don't know.
+  icon: Schema.optional(TrimmedNonEmptyString),
+  // Text for the small chip over the glyph. Defaults to the name's initials.
+  badgeLabel: Schema.optional(TrimmedNonEmptyString),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),
 });
 export type ProviderInstanceConfig = typeof ProviderInstanceConfig.Type;
+
+/** `ProviderInstanceConfig.icon` value that draws the badge label as the glyph. */
+export const PROVIDER_INSTANCE_INITIALS_ICON = "initials";
 
 /** Atomic mutation for one provider-instance map entry. */
 export const ProviderInstanceMutation = Schema.Union([

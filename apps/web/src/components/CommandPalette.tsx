@@ -1409,6 +1409,7 @@ function OpenCommandPaletteDialog(props: {
               providerDisplayName={
                 thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
               }
+              providerIcon={providerEntry?.icon}
               acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
               acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
             />

@@ -297,7 +297,21 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  return Effect.succeed(stampSourceAppearance(source, snapshot));
+};
+
+// Appearance comes from instance config, not the driver. Strip it before
+// stamping so a cleared icon or badge never survives from a cached snapshot.
+const stampSourceAppearance = (
+  source: ProviderSnapshotSource,
+  snapshot: ServerProvider,
+): ServerProvider => {
+  const { icon: _icon, badgeLabel: _badgeLabel, ...rest } = snapshot;
+  return {
+    ...rest,
+    ...(source.appearance?.icon ? { icon: source.appearance.icon } : {}),
+    ...(source.appearance?.badgeLabel ? { badgeLabel: source.appearance.badgeLabel } : {}),
+  };
 };
 
 /**
@@ -317,6 +331,7 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
 const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
   instanceId: instance.instanceId,
   driverKind: instance.driverKind,
+  appearance: instance.appearance,
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,

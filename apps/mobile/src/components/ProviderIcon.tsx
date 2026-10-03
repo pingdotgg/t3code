@@ -1,7 +1,12 @@
 import { Image } from "expo-image";
 import { Path, Svg } from "react-native-svg";
 import { View } from "react-native";
-import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  isProviderInstanceInitialsIcon,
+  resolveProviderInstanceBadgeLabel,
+  resolveProviderInstanceGlyphDriver,
+} from "@t3tools/client-runtime/state/provider-instance-display";
+import type { ProviderDriverKind } from "@t3tools/contracts";
 import { useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
@@ -168,14 +173,41 @@ export function ProviderInstanceIcon(props: {
   readonly size?: number;
   readonly displayName: string;
   readonly accentColor?: string;
+  /** Chosen glyph: a driver slug with a logo, or the initials icon. */
+  readonly icon?: string;
+  readonly badgeLabel?: string;
   readonly showBadge?: boolean;
   readonly surfaceColor: string;
 }) {
+  const size = props.size ?? 16;
+  const badgeLabel = resolveProviderInstanceBadgeLabel(props);
+  const glyphProvider = props.provider
+    ? resolveProviderInstanceGlyphDriver({
+        driverKind: props.provider as ProviderDriverKind,
+        icon: props.icon,
+      })
+    : props.provider;
   return (
     <View style={{ position: "relative" }}>
-      <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
-      </View>
+      {isProviderInstanceInitialsIcon(props.icon) ? (
+        <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+          <Text
+            className={props.accentColor ? undefined : "text-foreground-muted"}
+            style={{
+              fontSize: size * 0.38,
+              fontWeight: "700",
+              lineHeight: size * 0.5,
+              color: props.accentColor,
+            }}
+          >
+            {badgeLabel}
+          </Text>
+        </View>
+      ) : (
+        <View style={{ opacity: 0.6 }}>
+          <ProviderIcon iconUrl={props.iconUrl} provider={glyphProvider} size={size} />
+        </View>
+      )}
       {props.showBadge ? (
         <View
           className={props.accentColor ? undefined : "bg-card"}
@@ -203,7 +235,7 @@ export function ProviderInstanceIcon(props: {
               color: props.accentColor ? "#ffffff" : undefined,
             }}
           >
-            {providerInstanceInitials(props.displayName)}
+            {badgeLabel}
           </Text>
         </View>
       ) : null}
