@@ -30,6 +30,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "./Orchestrator.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -128,7 +129,6 @@ export interface ThreadManagementWaitInput {
   readonly threadId: ThreadId;
   readonly runId?: RunId;
   readonly timeoutMs: number;
-  readonly pollIntervalMs?: number;
 }
 
 export interface ThreadManagementWaitResult {
@@ -609,6 +609,17 @@ const make = Effect.gen(function* () {
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
     Effect.gen(function* () {
+      const loadError = (cause: unknown) =>
+        new ThreadManagementProjectionLoadError({
+          projectId: input.projectId,
+          threadId: input.threadId,
+          cause,
+        });
+      // Taken before the first read, so a run update between that read and
+      // the subscription below still replays.
+      const afterSequence = yield* orchestrator
+        .getThreadEventSequence(input.threadId)
+        .pipe(Effect.mapError(loadError));
       const target = yield* getProjectThreadRecords(input, ["runs"]);
       const selectedRun =
         input.runId === undefined
@@ -627,23 +638,46 @@ const make = Effect.gen(function* () {
         return { threadId: input.threadId, run: selectedRun, timedOut: false };
       }
 
-      const wait = Effect.gen(function* () {
-        while (true) {
-          const current = yield* getProjectThreadRecords(input, ["runs"], {
-            runIds: [selectedRun.id],
-          });
-          const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
-          if (run === undefined) {
-            return yield* new ThreadManagementRunNotFoundError({
-              threadId: input.threadId,
-              runId: selectedRun.id,
-            });
-          }
-          if (isTerminalRunStatus(run.status)) return run;
-          yield* Effect.sleep(Duration.millis(Math.max(1, input.pollIntervalMs ?? 250)));
-        }
-      }).pipe(Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))));
-      const waited = yield* wait;
+      // Re-read the run only when the thread records a run update or its
+      // deletion, instead of polling the projection for up to an hour. Each
+      // stream keeps one event type, so transcript events never fill its buffer.
+      const wait = Stream.merge(
+        orchestrator.streamStoredEventsFrom({
+          threadId: input.threadId,
+          afterSequence,
+          eventType: "run.updated",
+        }),
+        orchestrator.streamStoredEventsFrom({
+          threadId: input.threadId,
+          afterSequence,
+          eventType: "thread.deleted",
+        }),
+      ).pipe(
+        Stream.mapError(loadError),
+        Stream.filter(
+          (stored) =>
+            stored.event.type !== "run.updated" || stored.event.payload.id === selectedRun.id,
+        ),
+        Stream.mapEffect(() =>
+          getProjectThreadRecords(input, ["runs"], { runIds: [selectedRun.id] }).pipe(
+            Effect.flatMap((current) => {
+              const run = current.runs.find((candidate) => candidate.id === selectedRun.id);
+              return run === undefined
+                ? Effect.fail(
+                    new ThreadManagementRunNotFoundError({
+                      threadId: input.threadId,
+                      runId: selectedRun.id,
+                    }),
+                  )
+                : Effect.succeed(run);
+            }),
+          ),
+        ),
+        Stream.filter((run) => isTerminalRunStatus(run.status)),
+        Stream.runHead,
+        Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+      );
+      const waited = Option.flatten(yield* wait);
       if (Option.isSome(waited)) {
         return { threadId: input.threadId, run: waited.value, timedOut: false };
       }
