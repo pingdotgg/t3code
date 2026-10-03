@@ -116,7 +116,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
-  --chat-content-max-width: 46rem;
+  --chat-appearance-max-width: 46rem;
+  --chat-content-max-width: var(--chat-appearance-max-width);
   --thread-details-panel-width: 19.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */
   --font-size-prompt-touch: max(var(--font-size-prompt, 1rem), 16px);
@@ -2019,14 +2020,14 @@ code {
   --diff-deletion-foreground: light-dark(var(--color-red-600), var(--color-red-400));
 }
 
-/* Chat width setting. Comfortable keeps the default --chat-content-max-width,
+/* Chat width setting. Comfortable keeps the default --chat-appearance-max-width,
    which sizes the timeline lane, the composer, and ChatCanvas's width probe. */
 :root[data-chat-width="wide"] {
-  --chat-content-max-width: 72rem;
+  --chat-appearance-max-width: 72rem;
 }
 
 :root[data-chat-width="full"] {
-  --chat-content-max-width: 100%;
+  --chat-appearance-max-width: 100%;
 }
 
 :root[data-diff-color-scheme="blue-orange"] {
