@@ -366,7 +366,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     });
   });
 
-  const scope = yield* Effect.scope;
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
@@ -388,7 +387,6 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       } satisfies AntigravityProviderState;
     });
     discoveredSkills.clear();
-    yield* managed.refresh.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
   });
 
   const snapshotForCwd = Effect.fn("AntigravityProvider.snapshotForCwd")(function* (
