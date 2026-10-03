@@ -44,6 +44,11 @@ const DEVICE_CODE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 const DEVICE_AUTHORIZATION_DEFAULT_INTERVAL = Duration.seconds(5);
 // RFC 8628 §3.5: a slow_down response means "add 5 seconds to the interval".
 const DEVICE_AUTHORIZATION_SLOW_DOWN_INCREMENT = Duration.seconds(5);
+// Upper bound for a single OAuth HTTP round trip (token endpoint, device
+// authorization endpoint). A wedged cloud endpoint would otherwise hang the
+// credential refresh under the manager's global semaphore — starving every
+// other caller — or dead-end login after the browser callback returned.
+const CLOUD_CLI_OAUTH_HTTP_TIMEOUT = Duration.seconds(10);
 const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
 
 function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
@@ -293,6 +298,9 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
   const response = yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
     HttpClientRequest.bodyUrlParams(params),
     httpClient.execute,
+    // The caller maps a timeout into its own failure path: refresh falls back
+    // to a fresh login, login reports an authorization error.
+    Effect.timeout(CLOUD_CLI_OAUTH_HTTP_TIMEOUT),
   );
   return yield* readTokenResponse(response, params);
 });
@@ -392,6 +400,10 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
         scope: metadata.scopes.join(" "),
       }),
       httpClient.execute,
+      Effect.timeout(CLOUD_CLI_OAUTH_HTTP_TIMEOUT),
+      Effect.catchTag("TimeoutError", (cause) =>
+        Effect.fail(new CloudCliAuthorizationError({ cause })),
+      ),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)),
     );
     // Clerk's advertised lifetime and interval are authoritative.
