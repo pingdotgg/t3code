@@ -19,7 +19,9 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
+  scheduleFromDraft,
   taskToDraft,
+  webhookUrl,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -165,6 +167,44 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("webhook scheduled tasks", () => {
+  const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
+  const webhookTask: ScheduledTask = {
+    ...legacyTask,
+    schedule: { type: "webhook", signature },
+    webhook: { path: "/api/hooks/legacy-task/token", url: null, hasSecret: true },
+  };
+
+  it("keeps a stored secret when the secret field is left blank", () => {
+    const draft = taskToDraft(webhookTask);
+    expect(draft.scheduleMode).toBe("webhook");
+    expect(draft.signatureSecret).toBe("");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook", signature });
+    expect(scheduleFromDraft({ ...draft, signatureSecret: " new " })).toEqual({
+      type: "webhook",
+      signature: { ...signature, secret: "new" },
+    });
+  });
+
+  it("drops the signature when it is switched off and offers GitHub's settings", () => {
+    const draft = taskToDraft({ ...webhookTask, schedule: { type: "webhook", signature: null } });
+    expect(draft.signatureEnabled).toBe(false);
+    expect(draft.signatureHeader).toBe("x-hub-signature-256");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "webhook", signature: null });
+  });
+
+  it("prefers the Connect URL and otherwise resolves the path on the environment", () => {
+    const endpoint = { path: "/api/hooks/id/token", url: null, hasSecret: false };
+    expect(webhookUrl({ ...endpoint, url: "https://relay/v1/hooks/e/id/token" }, null)).toBe(
+      "https://relay/v1/hooks/e/id/token",
+    );
+    expect(webhookUrl(endpoint, "https://box.tailnet.ts.net:3773/")).toBe(
+      "https://box.tailnet.ts.net:3773/api/hooks/id/token",
+    );
+    expect(webhookUrl(endpoint, null)).toBe("/api/hooks/id/token");
   });
 });
 

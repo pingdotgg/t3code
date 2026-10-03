@@ -3,6 +3,8 @@ import {
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
+  type ScheduledTaskUpsertSchedule,
+  type ScheduledTaskWebhookEndpoint,
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
@@ -43,7 +45,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-type ScheduleMode = "fixed" | "interval";
+export type ScheduleMode = "fixed" | "interval" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -71,6 +73,58 @@ export interface DraftState {
    * (reasoning, temperature, …) when the model itself is left unchanged.
    */
   readonly baseModelSelection: ModelSelection | null;
+  readonly signatureEnabled: boolean;
+  readonly signatureHeader: string;
+  readonly signatureEncoding: "hex" | "base64";
+  readonly signaturePrefix: string;
+  /** Write-only: empty keeps the secret already stored on the server. */
+  readonly signatureSecret: string;
+}
+
+/** GitHub's signature settings, the most common sender. */
+export const WEBHOOK_SIGNATURE_DEFAULTS = {
+  signatureHeader: "x-hub-signature-256",
+  signatureEncoding: "hex",
+  signaturePrefix: "sha256=",
+} as const;
+
+/** Prompt a new webhook task starts with: the whole request, which the user can narrow down. */
+export const DEFAULT_WEBHOOK_PROMPT = "Handle this webhook:\n{{request}}";
+
+export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule {
+  if (draft.scheduleMode === "webhook") {
+    const secret = draft.signatureSecret.trim();
+    return {
+      type: "webhook",
+      signature: draft.signatureEnabled
+        ? {
+            header: draft.signatureHeader.trim(),
+            encoding: draft.signatureEncoding,
+            prefix: draft.signaturePrefix,
+            ...(secret ? { secret } : {}),
+          }
+        : null,
+    };
+  }
+  if (draft.scheduleMode === "interval") {
+    const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
+    return { type: "interval", everyMs };
+  }
+  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
+  return {
+    type: "fixed_time",
+    timeOfDay: draft.timeOfDay || "09:00",
+    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+  };
+}
+
+/** The address a sender should call: the public Connect URL, else the path on this environment's address. */
+export function webhookUrl(
+  endpoint: ScheduledTaskWebhookEndpoint,
+  httpBaseUrl: string | null,
+): string {
+  if (endpoint.url !== null) return endpoint.url;
+  return httpBaseUrl ? new URL(endpoint.path, httpBaseUrl).href : endpoint.path;
 }
 
 export function taskToDraft(task: ScheduledTask): DraftState {
@@ -84,7 +138,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
+    scheduleMode:
+      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
@@ -105,6 +160,15 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     runtimeMode: task.runtimeMode,
     interactionMode: task.interactionMode,
     baseModelSelection: task.modelSelection,
+    ...(schedule.type === "webhook" && schedule.signature !== null
+      ? {
+          signatureEnabled: true,
+          signatureHeader: schedule.signature.header,
+          signatureEncoding: schedule.signature.encoding,
+          signaturePrefix: schedule.signature.prefix,
+        }
+      : { signatureEnabled: false, ...WEBHOOK_SIGNATURE_DEFAULTS }),
+    signatureSecret: "",
   };
 }
 
