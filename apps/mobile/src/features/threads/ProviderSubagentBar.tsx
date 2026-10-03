@@ -3,12 +3,12 @@ import {
   type ProviderSubagentStatus,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
-import { useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { RequestActionButton } from "./RequestActionButton";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 /**
  * Replaces the composer on a provider-native subagent thread. The provider
@@ -26,12 +26,7 @@ export function ProviderSubagentBar(props: {
   readonly onOpenParent: (() => void) | null;
 }) {
   const live = props.status !== null && isOrchestrationV2WorkActive(props.status.status);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) return;
-    const id = setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => clearInterval(id);
-  }, [live]);
+  const nowMs = useVisibleSecondClock(live);
   const statusLabel = formatProviderSubagentStatus(props.status, nowMs);
   const modelDescription =
     props.effortLabel === null ? props.modelLabel : `${props.modelLabel}, ${props.effortLabel}`;

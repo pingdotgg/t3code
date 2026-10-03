@@ -502,6 +502,9 @@ importers:
       babel-preset-expo:
         specifier: ~58.0.8
         version: 58.0.8(@babel/core@7.29.7)(@babel/runtime@7.29.7)(expo-widgets@58.0.11)(expo@58.0.2)(react-refresh@0.14.2)
+      jsdom:
+        specifier: ^30.0.1
+        version: 30.1.0(@noble/hashes@1.8.0)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
