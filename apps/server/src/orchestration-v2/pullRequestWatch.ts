@@ -42,8 +42,8 @@ function checksResult(checks: ReadonlyArray<PullRequestCheck>): "passing" | "fai
 /**
  * Compares a watched pull request with what its agent was last told. The check result is
  * reported once every check finished, and again after the head commit moves or checks run
- * again. Remarks count when someone other than the viewer or the pull request's author wrote
- * them: the agent posts as the viewer, so its own replies never wake it. `remarks` is null when
+ * again. Remarks count when someone other than the agent's own account wrote them, so its own
+ * replies never wake it. `remarks` is null when
  * the conversation could not be read; remarks then wait for a later pass.
  */
 export function evaluatePullRequestWatch(
@@ -54,8 +54,11 @@ export function evaluatePullRequestWatch(
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
   const result = checksResult(detail.checks);
-  // Hosts that report no head commit still show a push or a rerun as checks running again.
-  const restarted = headSha !== watch.headSha || (watch.checks !== null && result === null);
+  // Hosts that report no head commit still show a push or a rerun as checks running again. An
+  // empty list is not a rerun: a host can answer with one when its check read fails.
+  const restarted =
+    headSha !== watch.headSha ||
+    (watch.checks !== null && detail.checks.some((check) => check.status === "pending"));
 
   let checks = restarted ? null : watch.checks;
   if (result !== null && result !== checks) {
@@ -67,16 +70,16 @@ export function evaluatePullRequestWatch(
     checks = result;
   }
 
-  const own = new Set(
-    [detail.viewer, detail.author?.login].flatMap((login) => (login ? [login.toLowerCase()] : [])),
-  );
+  // The agent posts as the viewer. Where the host does not name one, the agent most likely
+  // opened the pull request, so its author stands in.
+  const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
   const through = Date.parse(watch.remarksThrough);
   // GitHub times are per second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
     const at = Date.parse(remark.createdAt);
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      !own.has(remark.author?.login.toLowerCase() ?? "")
+      remark.author?.login.toLowerCase() !== own
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });

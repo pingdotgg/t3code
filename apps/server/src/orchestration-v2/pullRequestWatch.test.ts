@@ -106,6 +106,24 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(again.next.remarkIds, [first.id, "late"]);
   });
 
+  it("does not treat a failed check read as a rerun", () => {
+    const failed = detail({ checks: [check("lint", "failure")] });
+    const reported = evaluatePullRequestWatch(watch(), failed, noRemarks);
+    const unreadable = evaluatePullRequestWatch(reported.next, detail({ checks: [] }), noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(unreadable.next, failed, noRemarks).changes, []);
+  });
+
+  it("wakes for the pull request's author when the agent is someone else", () => {
+    const contributor = detail({ author: { login: "contributor", name: null, avatarUrl: null } });
+    const reply = remark("contributor", "2026-10-02T12:06:00Z");
+    assert.deepEqual(evaluatePullRequestWatch(watch(), contributor, [reply]).changes, [
+      { kind: "remarks", remarks: [reply] },
+    ]);
+    // Without a viewer, the author is taken to be the agent.
+    const noViewer = detail({ viewer: undefined, author: contributor.author });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), noViewer, [reply]).changes, []);
+  });
+
   it("reports remarks from others once and never the agent's own", () => {
     const comments = [
       remark("agent-user", "2026-10-02T12:05:00Z", "Fixed in the latest push."),
