@@ -1373,6 +1373,28 @@ describe("composer and pull request shortcuts", () => {
     });
   }
 
+  it("cycles machines on each platform and leaves terminal input alone", () => {
+    for (const platform of ["MacIntel", "Win32", "Linux"]) {
+      const input = event({
+        key: "h",
+        altKey: true,
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform }),
+        "composer.cycleHost",
+      );
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+        null,
+      );
+    }
+  });
+
   const altEffortBindings = compileResolvedKeybindingsConfig([
     { key: "mod+alt+e", command: "composer.effort", when: "!terminalFocus" },
   ]);

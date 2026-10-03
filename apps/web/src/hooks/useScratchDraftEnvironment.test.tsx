@@ -154,6 +154,20 @@ describe("projectless machine selection", () => {
     );
     expect(result.pending).toBe(false);
   });
+  it("cycles from the machine a switch is heading to and wraps around", async () => {
+    const b = deferred();
+    state.open.mockReturnValueOnce(b.promise).mockResolvedValueOnce(project("c"));
+    act(() => result.cycleEnvironment());
+    act(() => result.cycleEnvironment());
+    expect(state.open.mock.calls.map(([id]) => id)).toEqual(["b", "c"]);
+    await act(async () => {
+      b.resolve(project("b"));
+      await b.promise;
+    });
+    act(() => renderer.update(<Probe activeProject={project("c")} />));
+    act(() => result.cycleEnvironment());
+    expect(state.open.mock.lastCall?.[0]).toBe("a");
+  });
   it("cancels a pending switch when the current machine is picked again", async () => {
     const next = deferred();
     state.open.mockReturnValue(next.promise);

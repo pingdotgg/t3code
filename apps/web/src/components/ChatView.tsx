@@ -7571,6 +7571,21 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "composer.cycleHost") {
+        if (envLocked || !draftId || !hasMultipleEnvironments) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (scratchDraftEnvironment.isScratchDraft) {
+          scratchDraftEnvironment.cycleEnvironment();
+          return;
+        }
+        const index = composerEnvironments.findIndex((env) => env.environmentId === environmentId);
+        const next = composerEnvironments[(index + 1) % composerEnvironments.length];
+        if (next) onEnvironmentChange(next.environmentId);
+        return;
+      }
+
       if (command === "composer.branch") {
         event.preventDefault();
         event.stopPropagation();
@@ -7660,6 +7675,13 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanel,
     toggleTerminalVisibility,
     composerRef,
+    composerEnvironments,
+    draftId,
+    environmentId,
+    envLocked,
+    hasMultipleEnvironments,
+    onEnvironmentChange,
+    scratchDraftEnvironment,
   ]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,

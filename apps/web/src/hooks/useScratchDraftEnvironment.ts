@@ -57,7 +57,7 @@ export function useScratchDraftEnvironment({
     [environments, primaryEnvironmentId],
   );
   // The latest switch wins: a slower, earlier one must not retarget the draft.
-  const latestRequestRef = useRef<object | null>(null);
+  const latestRequestRef = useRef<{ readonly environmentId: EnvironmentId } | null>(null);
   const [pending, setPending] = useState(false);
 
   const selectEnvironment = useCallback(
@@ -69,7 +69,7 @@ export function useScratchDraftEnvironment({
         setPending(false);
         return;
       }
-      const request = {};
+      const request = { environmentId };
       latestRequestRef.current = request;
       setPending(true);
       try {
@@ -106,11 +106,27 @@ export function useScratchDraftEnvironment({
     [activeProject, canSwitch, draftId, isScratchDraft, openScratchProject, settings],
   );
 
+  // Steps from the machine a switch is heading to, so repeated presses keep
+  // advancing while the previous one is still being prepared.
+  const cycleEnvironment = useCallback(() => {
+    if (availableEnvironments.length < 2) return;
+    const currentId = latestRequestRef.current?.environmentId ?? activeProject?.environmentId;
+    const index = availableEnvironments.findIndex((env) => env.environmentId === currentId);
+    const next = availableEnvironments[(index + 1) % availableEnvironments.length];
+    if (next) void selectEnvironment(next.environmentId);
+  }, [activeProject?.environmentId, availableEnvironments, selectEnvironment]);
+
   // Stable between renders so ChatView's callbacks and effects that depend on
   // it are not rebuilt on every streamed update.
   const visiblePending = isScratchDraft && pending;
   return useMemo(
-    () => ({ isScratchDraft, availableEnvironments, selectEnvironment, pending: visiblePending }),
-    [isScratchDraft, availableEnvironments, selectEnvironment, visiblePending],
+    () => ({
+      isScratchDraft,
+      availableEnvironments,
+      selectEnvironment,
+      cycleEnvironment,
+      pending: visiblePending,
+    }),
+    [isScratchDraft, availableEnvironments, selectEnvironment, cycleEnvironment, visiblePending],
   );
 }
