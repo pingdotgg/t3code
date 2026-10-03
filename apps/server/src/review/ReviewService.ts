@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -41,6 +42,7 @@ export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -93,6 +95,31 @@ export const make = Effect.gen(function* () {
       worktreesRoots.some((root) => isWithinRoot(candidate, root))
     ) {
       return;
+    }
+
+    // Registered projects can live outside the server's launch cwd. Read active
+    // project metadata only when neither configured root covers the request.
+    const projects = yield* projectStore.listShells().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to read registered project roots for review validation", {
+          operation,
+          cwd,
+          cause,
+        }).pipe(Effect.as([])),
+      ),
+    );
+    for (const project of projects) {
+      const root = yield* canonicalizePath(project.workspaceRoot).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to resolve a registered project root for review validation", {
+            workspaceRoot: project.workspaceRoot,
+            cause,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (root !== null && isWithinRoot(candidate, root)) {
+        return;
+      }
     }
 
     return yield* new VcsRepositoryDetectionError({
