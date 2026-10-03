@@ -19,9 +19,11 @@ import {
   collectLimitPools,
   displayLimitWindows,
   elapsedShare,
+  formatPaceHeadroom,
   formatResetsIn,
   limitsNotice,
   paceOf,
+  paceRemainingPercent,
   providersWithLimits,
   remainingPercent,
   usesChatGptSharing,
@@ -58,6 +60,7 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
 describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
+    expect(paceRemainingPercent(window, now)).toBe(40);
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
@@ -66,7 +69,14 @@ describe("pace", () => {
   it("has no pace without a reset or a duration", () => {
     expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
+    expect(paceRemainingPercent({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
+  });
+
+  it("phrases distance from even spending", () => {
+    expect(formatPaceHeadroom(24)).toBe("24% behind pace");
+    expect(formatPaceHeadroom(-7)).toBe("7% ahead of pace");
+    expect(formatPaceHeadroom(0)).toBe("On pace");
   });
 
   it("phrases the reset as a countdown", () => {
@@ -610,13 +620,13 @@ describe("pools", () => {
       now,
     );
     // Only a votes: 80% used, 80% elapsed.
-    expect(untimed[0]?.windows[0]?.pace).toBe("on");
+    expect(untimed[0]?.windows[0]?.paceHeadroomPercent).toBe(0);
     // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,
       usedPercent: 60,
-      pace: "under",
+      paceHeadroomPercent: 10,
     });
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
