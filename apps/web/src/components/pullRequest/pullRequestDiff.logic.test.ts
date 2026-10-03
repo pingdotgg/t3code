@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  reconcileDiffSlices,
+  type DiffSlice,
   toggleFileDiffFoldForViewed,
 } from "./pullRequestDiff.logic";
 
@@ -108,5 +110,41 @@ describe("toggleFileDiffFoldForViewed", () => {
   it("touches only the file that was ticked", () => {
     const toggled = new Set(["a.ts", "b.ts"]);
     expect([...toggleFileDiffFoldForViewed("a.ts", false, null, toggled)]).toEqual(["b.ts"]);
+  });
+});
+
+describe("reconcileDiffSlices", () => {
+  const slice = (cursor: string | null, patch: string, nextCursor: string | null): DiffSlice => ({
+    cursor,
+    patch,
+    truncated: false,
+    nextCursor,
+    omittedFileStats: [],
+  });
+  const loaded = [slice(null, "a", "2"), slice("2", "b", "3"), slice("3", "c", null)];
+
+  it("appends a page it has not seen", () => {
+    expect(reconcileDiffSlices(loaded.slice(0, 1), slice("2", "b", "3"))).toEqual({
+      cursor: "2",
+      slices: loaded.slice(0, 2),
+    });
+  });
+
+  it("keeps every page and walks to the next one while answers are unchanged", () => {
+    const first = reconcileDiffSlices(loaded, slice(null, "a", "2"));
+    expect(first).toEqual({ cursor: "2", slices: loaded });
+    expect(first.slices).toBe(loaded);
+    expect(reconcileDiffSlices(loaded, slice("2", "b", "3")).cursor).toBe("3");
+    expect(reconcileDiffSlices(loaded, slice("3", "c", null))).toEqual({
+      cursor: "3",
+      slices: loaded,
+    });
+  });
+
+  it("replaces a changed later page and drops the pages after it", () => {
+    expect(reconcileDiffSlices(loaded, slice("2", "b2", "3"))).toEqual({
+      cursor: "2",
+      slices: [loaded[0], slice("2", "b2", "3")],
+    });
   });
 });
