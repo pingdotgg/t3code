@@ -282,7 +282,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
-          subtitle="Inspect turn diffs, worktree changes, and base branch diff"
+          subtitle="Inspect changes, uncommitted edits, and turn diffs"
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };

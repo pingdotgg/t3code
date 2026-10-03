@@ -11,8 +11,8 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { RelayConfiguration } from "../Config.ts";
-import { FcmClient, layer } from "./FcmClient.ts";
+import * as RelayConfiguration from "../Config.ts";
+import * as FcmClient from "./FcmClient.ts";
 
 import * as WebCrypto from "../WebCrypto.ts";
 import * as FcmAssertionSigner from "./FcmAssertionSigner.ts";
@@ -47,7 +47,7 @@ const config = {
   cloudMintPublicKey: "unused",
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
-} satisfies RelayConfiguration["Service"];
+} satisfies RelayConfiguration.RelayConfiguration["Service"];
 const input = {
   token: "device-token",
   packageName: "com.t3tools.t3code.dev",
@@ -63,7 +63,7 @@ function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: R
       ? Effect.succeed(HttpClientResponse.fromWeb(request, response))
       : Effect.die("unexpected request");
   });
-  return layer.pipe(
+  return FcmClient.layer.pipe(
     Layer.provide(
       FcmAssertionSigner.layer.pipe(
         Layer.provide(Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle })),
@@ -71,7 +71,7 @@ function testLayer(requests: HttpClientRequest.HttpClientRequest[], responses: R
     ),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayConfiguration, config),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, config),
         Layer.succeed(HttpClient.HttpClient, http),
       ),
     ),
@@ -106,7 +106,7 @@ describe("FCM delivery", () => {
         return Effect.succeed(response);
       });
       yield* Effect.gen(function* () {
-        const client = yield* FcmClient;
+        const client = yield* FcmClient.FcmClient;
         const delivery = yield* client.send(input).pipe(Effect.flip, Effect.forkChild);
         yield* Deferred.await(started);
         yield* TestClock.adjust("10 seconds");
@@ -119,7 +119,7 @@ describe("FCM delivery", () => {
         expect(yield* client.send(input)).toEqual({ unregistered: false });
       }).pipe(
         Effect.provide(
-          layer.pipe(
+          FcmClient.layer.pipe(
             Layer.provide(
               FcmAssertionSigner.layer.pipe(
                 Layer.provide(
@@ -127,7 +127,7 @@ describe("FCM delivery", () => {
                 ),
               ),
             ),
-            Layer.provide(Layer.succeed(RelayConfiguration, config)),
+            Layer.provide(Layer.succeed(RelayConfiguration.RelayConfiguration, config)),
             Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
           ),
         ),
@@ -173,7 +173,7 @@ describe("FCM delivery", () => {
     () => {
       const requests: HttpClientRequest.HttpClientRequest[] = [];
       return Effect.gen(function* () {
-        const client = yield* FcmClient;
+        const client = yield* FcmClient.FcmClient;
         yield* client.send(input);
         yield* client.send({ ...input, alert: true });
         expect(requests.map((request) => request.url)).toEqual([
@@ -211,7 +211,7 @@ describe("FCM delivery", () => {
   it.effect("invalidates authorization after 401 and recognizes unregistered device tokens", () => {
     const requests: HttpClientRequest.HttpClientRequest[] = [];
     return Effect.gen(function* () {
-      const client = yield* FcmClient;
+      const client = yield* FcmClient.FcmClient;
       const first = yield* client.send(input).pipe(Effect.flip);
       expect(first.status).toBe(401);
       expect(yield* client.send(input)).toEqual({ unregistered: true });
@@ -243,7 +243,7 @@ describe("FCM delivery", () => {
   it.effect("rejects oversized data before contacting Firebase", () => {
     const requests: HttpClientRequest.HttpClientRequest[] = [];
     return Effect.gen(function* () {
-      const client = yield* FcmClient;
+      const client = yield* FcmClient.FcmClient;
       const error = yield* client
         .send({ ...input, data: { body: "漢".repeat(1500) } })
         .pipe(Effect.flip);

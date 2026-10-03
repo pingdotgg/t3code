@@ -14,6 +14,6 @@ export async function writeFileAtomically(file: File, contents: string): Promise
   tempFileSequence += 1;
   const temp = new FileConstructor(file.parentDirectory, `${file.name}.${tempFileSequence}.tmp`);
   temp.create({ intermediates: true, overwrite: true });
-  temp.write(contents);
+  await temp.write(contents);
   temp.moveSync(file, { overwrite: true });
 }

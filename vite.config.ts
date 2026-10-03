@@ -63,6 +63,7 @@ export default defineConfig({
     environment: "node",
     exclude: [
       "**/.repos/**",
+      "**/.t3/**",
       "**/node_modules/**",
       "**/dist/**",
       "**/dist-electron/**",
@@ -166,6 +167,7 @@ export default defineConfig({
       "t3code/no-inline-schema-compile": "warn",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
+      "t3code/no-test-in-loop": "error",
       "t3code/namespace-node-imports": "error",
     },
     overrides: [
@@ -313,6 +315,10 @@ export default defineConfig({
           "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
+          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
+          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
+          "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
+          "apps/mobile/src/features/threads/ThreadAgentsSheet.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
           "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
@@ -327,28 +333,6 @@ export default defineConfig({
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],
         },
       },
-      // Legacy manual Effect runners tracked as debt: no net-new occurrences.
-      // Lower a ceiling when you migrate a file, and delete its entry at zero.
-      ...Object.entries({
-        "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts": 42,
-        "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
-        "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts": 4,
-        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
-        "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
-        "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
-        "apps/server/src/orchestration/commandInvariants.test.ts": 5,
-        "apps/server/src/orchestration/projector.test.ts": 20,
-        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CodexSessionRuntime.test.ts": 5,
-        "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
-        "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
-        "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
-        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
-        "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
-      }).map(([file, maxOccurrences]) => {
-        const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
-        return { files: [file], rules: { "t3code/no-manual-effect-runtime-in-tests": rule } };
-      }),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

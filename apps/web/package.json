@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.44",
+  "version": "0.0.45",
   "private": true,
   "type": "module",
   "scripts": {
@@ -68,7 +68,7 @@
     "@types/compression": "^1.8.1",
     "@types/culori": "^4.0.1",
     "@types/mdast": "^4.0.4",
-    "@types/react": "~19.2.14",
+    "@types/react": "~19.3.0",
     "@types/react-dom": "~19.2.3",
     "@types/react-test-renderer": "19.1.0",
     "@vercel/config": "^0.3.0",
