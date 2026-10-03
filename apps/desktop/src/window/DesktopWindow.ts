@@ -2,6 +2,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -14,6 +15,7 @@ import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
@@ -116,6 +118,7 @@ export class DesktopWindow extends Context.Service<
     // window so a "macOS dock click" while the backend is down doesn't
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
+    readonly handleBackendFailed: (reason: string) => Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
     readonly prepareCaptureReveal: Effect.Effect<void>;
     readonly dispatchMenuAction: (
@@ -207,6 +210,30 @@ function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
   const track = shouldUseDarkColors ? "rgba(248,250,252,0.18)" : "rgba(31,41,55,0.18)";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">Connecting to WSL…</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+// server-child.log is NDJSON. Show only the last run's output without stack
+// frames so the failure dialog fits on screen; Copy Logs keeps the full file.
+export function summarizeBackendChildLog(logs: string): string {
+  let output: Array<string> = [];
+  for (const line of logs.split("\n")) {
+    if (line.trim() === "") continue;
+    let entry: { message?: unknown; annotations?: { text?: unknown } };
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      output.push(line);
+      continue;
+    }
+    if (entry.message === "backend child process failure output start") output = [];
+    if (typeof entry.annotations?.text === "string") output.push(entry.annotations.text);
+  }
+  return output
+    .join("\n")
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !/^\s+at /.test(line))
+    .join("\n")
+    .slice(-1_500);
 }
 
 export function isSameOriginRendererNavigation(input: {
@@ -322,6 +349,9 @@ export const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const electronDialog = yield* ElectronDialog.ElectronDialog;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const failureVisible = yield* Ref.make(false);
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -340,6 +370,45 @@ export const make = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
     if (Option.isSome(splash) && !splash.value.isDestroyed()) {
       splash.value.close();
+    }
+  });
+
+  const handleBackendFailed = Effect.fn("desktop.window.handleBackendFailed")(function* (
+    reason: string,
+  ) {
+    if (yield* Ref.getAndSet(failureVisible, true)) return;
+    const logPath = environment.path.join(environment.logDir, "server-child.log");
+    const logs = yield* fileSystem.readFileString(logPath).pipe(Effect.orElseSucceed(() => ""));
+    const detail = `${reason}\n\n${summarizeBackendChildLog(logs)}\n\nLogs: ${logPath}`;
+    while (true) {
+      const { response } = yield* electronDialog
+        .showMessageBox(
+          {
+            type: "error",
+            title: environment.displayName,
+            message: "T3 Code couldn't start",
+            detail,
+            buttons: ["Retry", "Copy Logs", "Quit"],
+            defaultId: 0,
+            cancelId: 2,
+            noLink: true,
+          },
+          Option.getOrUndefined(yield* electronWindow.currentMainOrFirst),
+        )
+        .pipe(
+          Effect.catch(() =>
+            electronDialog
+              .showErrorBox("T3 Code couldn't start", detail)
+              .pipe(Effect.as({ response: 2 })),
+          ),
+        );
+      if (response === 1) {
+        yield* electronShell.copyText(`${reason}\n\n${logs}\n\nLogs: ${logPath}`);
+        continue;
+      }
+      if (response === 0) yield* electronApp.relaunch({});
+      yield* electronApp.quit;
+      return;
     }
   });
 
@@ -753,6 +822,9 @@ export const make = Effect.gen(function* () {
         if (!isMainFrame) {
           return;
         }
+        if (!environment.isDevelopment && errorCode !== -3 && !window.isDestroyed()) {
+          runFork(handleBackendFailed(`${errorDescription} (${errorCode})\n${validatedURL}`));
+        }
         const retryInMs =
           environment.isDevelopment &&
           isRetryableDevelopmentRendererLoadFailure({
@@ -949,6 +1021,7 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopWindow.of({
+    handleBackendFailed,
     createMain,
     ensureMain,
     revealOrCreateMain,

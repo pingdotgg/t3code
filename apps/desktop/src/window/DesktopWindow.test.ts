@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -41,6 +42,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -226,6 +228,12 @@ function makeTestLayer(input: {
   readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
+  readonly production?: boolean;
+  readonly showMessageBox?: ElectronDialog.ElectronDialog["Service"]["showMessageBox"];
+  readonly copyText?: ElectronShell.ElectronShell["Service"]["copyText"];
+  readonly quit?: Effect.Effect<void>;
+  readonly relaunch?: ElectronApp.ElectronApp["Service"]["relaunch"];
+  readonly readLog?: Effect.Effect<string>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -286,12 +294,25 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        Layer.effect(
+          DesktopEnvironment.DesktopEnvironment,
+          Effect.gen(function* () {
+            const environment = yield* DesktopEnvironment.DesktopEnvironment;
+            return { ...environment, isDevelopment: !input.production };
+          }),
+        ).pipe(Layer.provide(desktopEnvironmentLayer)),
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
-        electronAppLayer,
+        Layer.mock(ElectronApp.ElectronApp)({
+          quit: input.quit ?? Effect.void,
+          ...(input.relaunch ? { relaunch: input.relaunch } : {}),
+        }),
+        FileSystem.layerNoop({ readFileString: () => input.readLog ?? Effect.succeed("") }),
+        Layer.mock(ElectronDialog.ElectronDialog)(
+          input.showMessageBox ? { showMessageBox: input.showMessageBox } : {},
+        ),
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
@@ -304,10 +325,12 @@ function makeTestLayer(input: {
               return true;
             }),
           openSystemSettings: () => Effect.succeed(true),
-          copyText: (text) =>
-            Effect.sync(() => {
-              input.copiedTexts?.push(text);
-            }),
+          copyText:
+            input.copyText ??
+            ((text) =>
+              Effect.sync(() => {
+                input.copiedTexts?.push(text);
+              })),
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
@@ -406,6 +429,8 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopClientSettingsLayer,
           desktopServerExposureLayer,
           electronAppLayer,
+          NodeServices.layer,
+          Layer.mock(ElectronDialog.ElectronDialog)({}),
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
@@ -544,6 +569,78 @@ describe("DesktopWindow", () => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("surfaces production load failures once and supports copying logs and retrying", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const dialogs = yield* Queue.unbounded<Electron.MessageBoxOptions>();
+      const responses = yield* Queue.unbounded<number>();
+      const copied = yield* Queue.unbounded<string>();
+      const quit = yield* Deferred.make<void>();
+      let relaunched = false;
+      const log = "Error: no such column: branch_pull_request_json";
+      const layer = makeTestLayer({
+        window: fake.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make(Option.none<Electron.BrowserWindow>()),
+        production: true,
+        readLog: Effect.succeed(log),
+        showMessageBox: (options) =>
+          Queue.offer(dialogs, options).pipe(
+            Effect.andThen(Queue.take(responses)),
+            Effect.map((response) => ({ response, checkboxChecked: false })),
+          ),
+        copyText: (text) => Queue.offer(copied, text).pipe(Effect.asVoid),
+        relaunch: () =>
+          Effect.sync(() => {
+            relaunched = true;
+          }),
+        quit: Deferred.succeed(quit, undefined).pipe(Effect.asVoid),
+      });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMain;
+        const fail = fake.webContentsListeners.get("did-fail-load")!;
+        fail({}, -3, "ERR_ABORTED", "t3code://app/", true);
+        fail({}, -9, "ERR_UNEXPECTED", "t3code://app/", false);
+        assert.equal(yield* Queue.size(dialogs), 0);
+        fail({}, -9, "ERR_UNEXPECTED", "t3code://app/", true);
+        const dialog = yield* Queue.take(dialogs);
+        assert.include(dialog.detail, log);
+        assert.include(dialog.detail, "ERR_UNEXPECTED (-9)");
+        assert.deepEqual(dialog.buttons, ["Retry", "Copy Logs", "Quit"]);
+        yield* desktopWindow.handleBackendFailed("code=1");
+        assert.equal(yield* Queue.size(dialogs), 0);
+        yield* Queue.offer(responses, 1);
+        assert.include(yield* Queue.take(copied), log);
+        yield* Queue.take(dialogs);
+        yield* Queue.offer(responses, 0);
+        yield* Deferred.await(quit);
+        assert.equal(relaunched, true);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it("summarizes the last backend run from the NDJSON child log", () => {
+    const entry = (message: string, text?: string) =>
+      JSON.stringify({ message, annotations: text === undefined ? {} : { text } });
+    const log = [
+      entry("backend child process failure output start"),
+      entry("backend child process output", "old run failure"),
+      entry("backend child process failure output end"),
+      entry("backend child process failure output start"),
+      entry(
+        "backend child process output",
+        "ERROR: SqlError: Failed to prepare statement\n    at catch (bin.mjs:1:1)\n  [cause]: Error: file is not a database\n",
+      ),
+      entry("backend child process failure output end"),
+    ].join("\n");
+
+    assert.equal(
+      DesktopWindow.summarizeBackendChildLog(log),
+      "ERROR: SqlError: Failed to prepare statement\n  [cause]: Error: file is not a database",
+    );
+  });
 
   it("leaves fullscreen before concealing a pending quit", () => {
     const fakeWindow = makeFakeBrowserWindow();
