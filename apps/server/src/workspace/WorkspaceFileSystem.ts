@@ -24,6 +24,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -205,6 +206,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+  const writeLock = yield* Semaphore.make(1);
 
   /**
    * Resolves the file a read targets. Workspace-relative paths must stay inside the
@@ -390,9 +392,38 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    let contents = input.contents;
-    if (input.replaceLines !== undefined) {
-      const current = yield* fileSystem.readFileString(target.absolutePath).pipe(
+    // Serialized so a `replaceLines` check still holds when its write lands: two clients
+    // applying to one file would otherwise both pass the check and the later write would
+    // drop the earlier edit.
+    yield* Effect.gen(function* () {
+      let contents = input.contents;
+      if (input.replaceLines !== undefined) {
+        const current = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: target.absolutePath,
+                operationPath: target.absolutePath,
+                operation: "read",
+                cause,
+              }),
+          ),
+        );
+        const replaced = replaceFileLines(current, input.replaceLines, input.contents);
+        if (!("contents" in replaced)) {
+          return yield* new WorkspaceFileLinesChangedError({
+            workspaceRoot: input.cwd,
+            relativePath: input.relativePath,
+            startLine: input.replaceLines.startLine,
+            endLine: input.replaceLines.endLine,
+            alreadyReplaced: replaced.alreadyReplaced,
+          });
+        }
+        contents = replaced.contents;
+      }
+      yield* fileSystem.writeFileString(target.absolutePath, contents).pipe(
         Effect.mapError(
           (cause) =>
             new WorkspaceFileSystemOperationError({
@@ -400,36 +431,12 @@ export const make = Effect.gen(function* () {
               relativePath: input.relativePath,
               resolvedPath: target.absolutePath,
               operationPath: target.absolutePath,
-              operation: "read",
+              operation: "write-file",
               cause,
             }),
         ),
       );
-      const replaced = replaceFileLines(current, input.replaceLines, input.contents);
-      if (!("contents" in replaced)) {
-        return yield* new WorkspaceFileLinesChangedError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          startLine: input.replaceLines.startLine,
-          endLine: input.replaceLines.endLine,
-          alreadyReplaced: replaced.alreadyReplaced,
-        });
-      }
-      contents = replaced.contents;
-    }
-    yield* fileSystem.writeFileString(target.absolutePath, contents).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: target.absolutePath,
-            operation: "write-file",
-            cause,
-          }),
-      ),
-    );
+    }).pipe(writeLock.withPermit);
     yield* workspaceEntries.refresh(input.cwd);
     return { relativePath: target.relativePath };
   });
