@@ -14,7 +14,7 @@ import {
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
-  it.each(["report.html", "report.HTM", "document.pdf?download=1"])(
+  it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
     "recognizes browser preview path %s",
     (path) => {
       expect(isWorkspaceBrowserPreviewPath(path)).toBe(true);
@@ -26,7 +26,9 @@ describe("workspace file previews", () => {
     "icon.png",
     "photo.JPEG",
     "animation.gif",
-    "vector.svg#mark",
+    "vector#mark.svg",
+    "photo?edited.JPEG",
+    "images#archive/icon.png",
     "texture.webp",
     "image.avif",
   ])("recognizes image preview path %s", (path) => {
@@ -34,12 +36,19 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(true);
   });
 
-  it.each(["README.md", "src/index.ts", "image.png.ts", "png"])(
-    "rejects non-preview path %s",
-    (path) => {
-      expect(isWorkspacePreviewEntryPath(path)).toBe(false);
-    },
-  );
+  it.each([
+    "README.md",
+    "src/index.ts",
+    "image.png.ts",
+    "png",
+    "image.png#notes.txt",
+    "image.svg?notes.txt",
+    "document.pdf?download=1",
+    "report.html#notes.txt",
+    "image%2Epng",
+  ])("rejects non-preview path %s", (path) => {
+    expect(isWorkspacePreviewEntryPath(path)).toBe(false);
+  });
 
   it("serves audio in place from the host like video and browser documents", () => {
     expect(isWorkspaceAudioPreviewPath("notes/recording.WAV")).toBe(true);
