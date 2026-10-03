@@ -6,6 +6,7 @@ import {
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
+  pullRequestEntryViewer,
   pullRequestEnvironmentSetKey,
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
@@ -1393,6 +1394,97 @@ describe('who "I" am, per server', () => {
         (row) => row.number,
       ),
     ).toEqual([1]);
+  });
+
+  it("keeps same-host project viewers distinct within and across environments", () => {
+    const rows = [
+      entry({ number: 1, projectId: "a" as ProjectId, author: byBilal }),
+      entry({ number: 2, projectId: "b" as ProjectId, author: { ...byBilal, login: "Octocat" } }),
+      entry({ number: 3, projectId: "b" as ProjectId, author: byBilal }),
+    ];
+    const viewers = { "github.com": "Bilal", "a github.com": "Bilal", "b github.com": "Octocat" };
+    const merged = mergePullRequestLists([
+      [ENV_1, answer(viewers, rows)],
+      [ENV_2, answer({ "github.com": "Other", "a github.com": "Other" }, [rows[0]!])],
+    ])!;
+    const authored = filterPullRequestsByInvolvement(merged.entries, merged.viewers, "authored");
+    expect(authored.map((row) => row.number)).toEqual([1, 2]);
+    expect(
+      groupPullRequestsByInvolvement(merged.entries, merged.viewers).find(
+        (group) => group.key === "authored",
+      )?.entries,
+    ).toEqual(authored);
+    expect(
+      merged.entries
+        .filter((row) =>
+          matchesPullRequestFilters(
+            row,
+            { author: "me" },
+            pullRequestEntryViewer(row, merged.viewers),
+          ),
+        )
+        .map((row) => row.number),
+    ).toEqual([1, 2]);
+    // A single-server snapshot has unprefixed project keys.
+    expect(
+      filterPullRequestsByInvolvement(rows, viewers, "authored").map((row) => row.number),
+    ).toEqual([1, 2]);
+  });
+
+  it("does not borrow a host viewer for a project omitted by a new server", () => {
+    const missing = entry({ number: 1, projectId: "missing" as ProjectId, author: byBilal });
+    const viewers = { "github.com": "Bilal", "known github.com": "Bilal" };
+    expect(pullRequestEntryViewer(missing, viewers)).toBeNull();
+    const merged = mergePullRequestLists([
+      [ENV_1, answer(viewers, [missing])],
+      [ENV_2, answer({ "github.com": "Bilal" }, [missing])],
+    ])!;
+    expect(merged.entries.map((row) => pullRequestEntryViewer(row, merged.viewers))).toEqual([
+      null,
+      "bilal",
+    ]);
+    expect(
+      filterPullRequestsByInvolvement(merged.entries, merged.viewers, "authored").map(
+        (row) => row.environmentId,
+      ),
+    ).toEqual([ENV_2]);
+  });
+
+  it("does not confuse an older environment key with an unscoped project key", () => {
+    const row = entry({ number: 1, projectId: "env-2" as ProjectId, author: byBilal });
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ "github.com": "Octocat" }, [row])],
+      [ENV_2, answer({ "github.com": "Bilal" }, [])],
+    ])!;
+    expect(pullRequestEntryViewer(merged.entries[0]!, merged.viewers)).toBe("octocat");
+  });
+
+  it("keeps spaces and percent signs in identity ids from colliding across environments", () => {
+    const merged = mergePullRequestLists([
+      [
+        "a" as EnvironmentId,
+        answer({ "github.com": "Bilal", "b%20c github.com": "Bilal" }, [
+          entry({ number: 1, projectId: "b c" as ProjectId, author: byBilal }),
+        ]),
+      ],
+      [
+        "a b" as EnvironmentId,
+        answer({ "github.com": "Octocat", "c github.com": "Octocat" }, [
+          entry({ number: 2, projectId: "c" as ProjectId, author: byBilal }),
+        ]),
+      ],
+      [
+        "a%20b" as EnvironmentId,
+        answer({ "github.com": "Bilal", "c github.com": "Bilal" }, [
+          entry({ number: 3, projectId: "c" as ProjectId, author: byBilal }),
+        ]),
+      ],
+    ])!;
+    expect(
+      filterPullRequestsByInvolvement(merged.entries, merged.viewers, "authored").map(
+        (row) => row.number,
+      ),
+    ).toEqual([1, 3]);
   });
 
   it("still reads a single server's host-keyed viewers, which is what a snapshot carries", () => {

@@ -65,6 +65,7 @@ const layer = it.layer(
       }),
     ),
     Layer.provideMerge(GitHubGraphQlBudget.layer),
+    Layer.provideMerge(SourceControlRateLimit.layer),
   ),
 );
 
@@ -247,7 +248,7 @@ it.effect(
       );
       const cli = yield* GitHubPullRequestCli.make.pipe(
         Effect.provideService(GitHubCli.GitHubCli, github),
-        Effect.provide(GitHubGraphQlBudget.layer),
+        Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer)),
       );
       const input = { cwd: "/repo", host: "github.com" };
       const first = yield* cli.withVerifiedCredential(input, (identity) =>
@@ -282,6 +283,175 @@ it.effect(
         accountId: "123",
         viewer: "same-account",
       });
+    }),
+);
+
+it.effect("does not verify a paused credential over the network and resumes after cooldown", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.make;
+    let token = "token-a";
+    const verified: string[] = [];
+    const cli = yield* GitHubPullRequestCli.make.pipe(
+      Effect.provideService(SourceControlRateLimit.SourceControlRateLimit, limits),
+      Effect.provide(
+        Layer.merge(
+          GitHubGraphQlBudget.layer,
+          Layer.mock(GitHubCli.GitHubCli)({
+            execute: (input) =>
+              Effect.sync(() => {
+                if (input.args[0] === "auth") return output(token);
+                verified.push(token);
+                return output('{"id":123,"login":"viewer"}');
+              }),
+          }),
+        ),
+      ),
+    );
+    const input = { cwd: "/repo", host: "github.com" };
+    yield* cli.withVerifiedCredential(input, () =>
+      limits.recordRateLimit({
+        provider: "github",
+        host: "github.com",
+        lease: 0,
+        retryAt: 20 * 60_000,
+      }),
+    );
+    // A cached identity does not spend quota and remains available to interactive routing.
+    assert.strictEqual(yield* cli.getViewerLogin(input), "viewer");
+    // Expire the ten-minute identity cache while this account remains paused.
+    yield* TestClock.adjust("11 minutes");
+    const paused = yield* Effect.flip(cli.getViewerLogin(input));
+    assert.strictEqual(paused._tag, "SourceControlRateLimitPausedError");
+    assert.deepStrictEqual(verified, ["token-a"]);
+    token = "token-b";
+    assert.strictEqual(yield* cli.getViewerLogin(input), "viewer");
+    assert.deepStrictEqual(verified, ["token-a", "token-b"]);
+    token = "token-a";
+    yield* TestClock.adjust("10 minutes");
+    assert.strictEqual(yield* cli.getViewerLogin(input), "viewer");
+    assert.deepStrictEqual(verified, ["token-a", "token-b", "token-a"]);
+  }),
+);
+
+it.effect.each([
+  ["github.com", false],
+  ["github.com", true],
+  ["github.example", false],
+  ["github.example", true],
+] as const)(
+  "pins workspace credentials for concurrent summaries, host and fallback=%s",
+  ([host, fallback]) =>
+    Effect.gen(function* () {
+      const commands: VcsProcess.VcsProcessInput[] = [];
+      const github = yield* GitHubCli.make.pipe(
+        Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer)),
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              commands.push(input);
+              const token = input.cwd === "/b" ? "token-b" : "token-a";
+              if (input.args[0] === "auth") return output(token);
+              if (input.args[1] === "user") return output('{"id":123,"login":"same-viewer"}');
+              if (
+                input.args.includes("query=query { rateLimit { cost limit remaining resetAt } }")
+              ) {
+                expect(["token-a", "token-b"]).toContain(input.env?.GH_TOKEN);
+                return output(
+                  encodeJson({
+                    data: {
+                      rateLimit: {
+                        cost: 1,
+                        limit: 5000,
+                        remaining: 4999,
+                        resetAt: "2099-01-01T00:00:00Z",
+                      },
+                    },
+                  }),
+                );
+              }
+              expect(input.env?.GH_TOKEN).toBe(token);
+              if (input.args[0] === "pr")
+                return output(
+                  encodeJson({
+                    ...coreResponse().data.repository.pullRequest,
+                    number: Number(input.args[2]),
+                    author: null,
+                    isDraft: false,
+                    additions: 1,
+                    deletions: 0,
+                    changedFiles: 1,
+                    mergedAt: null,
+                    closedAt: null,
+                    reviewDecision: null,
+                    mergeable: "MERGEABLE",
+                    reviewRequests: [],
+                    labels: [],
+                    statusCheckRollup: [],
+                    body: "",
+                  }),
+                );
+              const query = input.args.find((arg) => arg.startsWith("query=")) ?? "";
+              expect(query.includes("stack { number size baseRefName }")).toBe(
+                host === "github.com",
+              );
+              const data: Record<string, unknown> = {};
+              for (const match of query.matchAll(
+                /(s\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{ pullRequest\(number: (\d+)\)/g,
+              )) {
+                expect(match[2] === "b" ? "token-b" : "token-a").toBe(token);
+                data[match[1]!] = {
+                  pullRequest: {
+                    ...coreResponse().data.repository.pullRequest,
+                    number: Number(match[4]),
+                    author: null,
+                    isDraft: false,
+                    additions: 1,
+                    deletions: 0,
+                    changedFiles: 1,
+                    mergedAt: null,
+                    closedAt: null,
+                    reviewDecision: null,
+                    mergeable: "MERGEABLE",
+                    ...(host === "github.com" ? { stack: null } : {}),
+                  },
+                };
+              }
+              return output(encodeJson({ data: fallback ? {} : data }));
+            }).pipe(Effect.delay(input.args[0] === "auth" ? (input.cwd === "/b" ? 40 : 20) : 0)),
+        }),
+      );
+      const cli = yield* GitHubPullRequestCli.make.pipe(
+        Effect.provideService(GitHubCli.GitHubCli, github),
+        Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer)),
+      );
+      const reads = yield* Effect.forEach(
+        ["a", "b", "c", "a"],
+        (name, index) =>
+          cli.getPullRequestSummary({
+            cwd: `/${name}`,
+            repository: `${name}/repo`,
+            host,
+            number: index + 1,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("100 millis");
+      const summaries = yield* Fiber.join(reads);
+      expect(summaries.map((row) => row.number)).toEqual([1, 2, 3, 4]);
+      if (!fallback) {
+        expect(summaries.map((row) => row.stack)).toEqual(
+          host === "github.com"
+            ? [null, null, null, null]
+            : [undefined, undefined, undefined, undefined],
+        );
+      }
+      expect(
+        commands.filter((command) =>
+          command.args.some((arg) => arg.startsWith("query=query PullRequestSummaries")),
+        ),
+      ).toHaveLength(2);
+      expect(commands.filter((command) => command.args[0] === "auth")).toHaveLength(3);
+      expect(commands.filter((command) => command.args[0] === "pr")).toHaveLength(fallback ? 4 : 0);
     }),
 );
 
@@ -474,13 +644,16 @@ layer("GitHubPullRequestCli.layer", (it) => {
         closedAt: null,
         commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
       });
-      mockedExecute.mockReturnValueOnce(
+      mockedExecute.mockImplementation((input) =>
         Effect.succeed(
           output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
-            }),
+            input.args[0] === "auth"
+              ? "summary-credential"
+              : input.args[1] === "user"
+                ? '{"id":123,"login":"viewer"}'
+                : encodeJson({
+                    data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
+                  }),
           ),
         ),
       );
@@ -523,8 +696,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
-      expect(mockedExecute).toHaveBeenCalledOnce();
-      const document = callAt(0).args.at(-1) ?? "";
+      const graphql = mockedExecute.mock.calls.filter(([input]) => input.args[1] === "graphql");
+      expect(graphql).toHaveLength(1);
+      const document = graphql[0]![0].args.at(-1) ?? "";
       expect(document).toContain(
         's0: repository(owner: "acme", name: "web") { pullRequest(number: 7)',
       );
@@ -534,43 +708,46 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
   it.effect("reads a pull request the batch said nothing about on its own", () =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              // @effect-diagnostics-next-line preferSchemaOverJson:off
-              JSON.stringify({
-                number: 7,
-                title: "Reuse the summary",
-                url: "https://github.com/acme/web/pull/7",
-                author: { login: "octocat", name: "Octo Cat" },
-                baseRefName: "main",
-                headRefName: "feat/summary",
-                state: "OPEN",
-                isDraft: false,
-                mergeable: "MERGEABLE",
-                reviewDecision: "APPROVED",
-                additions: 12,
-                deletions: 3,
-                changedFiles: 2,
-                createdAt: "2026-08-20T00:00:00.000Z",
-                updatedAt: "2026-08-24T12:34:56.000Z",
-                reviewRequests: [],
-                labels: [],
-                statusCheckRollup: [
-                  {
-                    __typename: "CheckRun",
-                    status: "COMPLETED",
-                    conclusion: "SUCCESS",
-                    name: "ci",
-                  },
-                ],
-                body: "",
-              }),
-            ),
+      mockedExecute.mockImplementation((input) =>
+        Effect.succeed(
+          output(
+            input.args[0] === "auth"
+              ? "summary-credential"
+              : input.args[1] === "user"
+                ? '{"id":123,"login":"viewer"}'
+                : input.args[1] === "graphql"
+                  ? '{"data":{"s0":{"pullRequest":null}}}'
+                  : encodeJson({
+                      number: 7,
+                      title: "Reuse the summary",
+                      url: "https://github.com/acme/web/pull/7",
+                      author: { login: "octocat", name: "Octo Cat" },
+                      baseRefName: "main",
+                      headRefName: "feat/summary",
+                      state: "OPEN",
+                      isDraft: false,
+                      mergeable: "MERGEABLE",
+                      reviewDecision: "APPROVED",
+                      additions: 12,
+                      deletions: 3,
+                      changedFiles: 2,
+                      createdAt: "2026-08-20T00:00:00.000Z",
+                      updatedAt: "2026-08-24T12:34:56.000Z",
+                      reviewRequests: [],
+                      labels: [],
+                      statusCheckRollup: [
+                        {
+                          __typename: "CheckRun",
+                          status: "COMPLETED",
+                          conclusion: "SUCCESS",
+                          name: "ci",
+                        },
+                      ],
+                      body: "",
+                    }),
           ),
-        );
+        ),
+      );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const read = yield* cli
@@ -581,8 +758,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(summary.headBranch, "feat/summary");
       assert.strictEqual(summary.checksState, "passing");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(callAt(1).args).toEqual([
+      const views = mockedExecute.mock.calls.filter(([input]) => input.args[0] === "pr");
+      expect(views).toHaveLength(1);
+      expect(views[0]![0].args).toEqual([
         "pr",
         "view",
         "7",

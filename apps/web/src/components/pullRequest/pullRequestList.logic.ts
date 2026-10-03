@@ -69,8 +69,9 @@ export type PullRequestViewers = PullRequestListResult["viewers"];
 /** A row plus the environment that read it, where the caller has one to give. */
 type ScopedEntry = PullRequestListEntry & { readonly environmentId?: string };
 
+/** Scope a row's account to both its environment and workspace project. */
 const pullRequestViewerKey = (entry: ScopedEntry): string =>
-  `${entry.environmentId ?? ""} ${entry.host}`;
+  `${encodeURIComponent(entry.environmentId ?? "")} ${encodeURIComponent(entry.projectId)} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
   reviewRequested: "Review requested",
@@ -144,9 +145,27 @@ export function pullRequestEntryViewer(
   entry: ScopedEntry,
   viewers: PullRequestViewers,
 ): string | null {
-  // The environment's own answer first; a plain host key is what a single-environment listing
-  // still writes, and what the snapshot from one carries.
-  return normalize(viewers[pullRequestViewerKey(entry)] ?? viewers[entry.host]);
+  const unscoped = Object.hasOwn(viewers, entry.host);
+  const projectViewer =
+    viewers[pullRequestViewerKey(entry)] ??
+    (unscoped ? viewers[`${encodeURIComponent(entry.projectId)} ${entry.host}`] : undefined);
+  if (projectViewer !== undefined) return normalize(projectViewer);
+  // A new server deliberately omits unreadable projects. Do not borrow a healthy project's
+  // host viewer. Only answers without project identities use the legacy host fallback.
+  const prefix = !unscoped ? `${encodeURIComponent(entry.environmentId ?? "")} ` : "";
+  const hasProjectViewers = Object.keys(viewers).some(
+    (key) =>
+      key.startsWith(prefix) &&
+      key.endsWith(` ${entry.host}`) &&
+      key.slice(prefix.length).split(" ").length === 2,
+  );
+  return hasProjectViewers
+    ? null
+    : normalize(
+        viewers[`${encodeURIComponent(entry.environmentId ?? "")} ${entry.host}`] ??
+          viewers[`${entry.environmentId ?? ""} ${entry.host}`] ??
+          viewers[entry.host],
+      );
 }
 
 /**
@@ -713,7 +732,7 @@ export function mergePullRequestLists(
   let truncated = false;
   for (const [environmentId, answer] of answers) {
     for (const [host, login] of Object.entries(answer.viewers)) {
-      viewers[`${environmentId} ${host}`] = login;
+      viewers[`${encodeURIComponent(environmentId)} ${host}`] = login;
     }
     for (const provider of answer.providers) {
       const held = providers.get(provider.host);
