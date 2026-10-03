@@ -11008,6 +11008,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               phase={phase}
                               canInterrupt={canInterruptRunningThread}
+                              activeTurnIsCompaction={isCompacting}
                               isConnecting={isConnecting}
                               isSendBusy={isSendBusy || isSavingQueuedEdit || isResuming}
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}

@@ -69,4 +69,45 @@ describe("resolveComposerDispatchMode", () => {
     expect(alternateComposerDispatchAction("steer")).toBe("queue");
     expect(alternateComposerDispatchAction()).toBe("queue");
   });
+
+  it("queues automatic follow-ups while the active turn is compacting", () => {
+    expect(
+      resolveComposerDispatchMode({
+        running: true,
+        alternateModifier: false,
+        activeTurnIsCompaction: true,
+      }),
+    ).toBe("queue");
+    expect(
+      resolveComposerDispatchMode({
+        running: true,
+        alternateModifier: true,
+        activeTurnDefault: "steer",
+        activeTurnIsCompaction: true,
+      }),
+    ).toBe("queue");
+    expect(
+      resolveComposerDispatchMode({
+        running: false,
+        alternateModifier: false,
+        activeTurnIsCompaction: true,
+      }),
+    ).toBe("auto");
+  });
+
+  it("queues the alternate too while compacting, since the run cannot take a steer", () => {
+    expect(
+      resolveComposerDispatchMode({
+        running: true,
+        alternateModifier: true,
+        activeTurnDefault: "queue",
+        activeTurnIsCompaction: true,
+      }),
+    ).toBe("queue");
+    expect(alternateComposerDispatchAction("queue", true)).toBe("queue");
+  });
+
+  it("labels the alternate as queue while compacting", () => {
+    expect(alternateComposerDispatchAction("steer", true)).toBe("queue");
+  });
 });

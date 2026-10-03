@@ -1,4 +1,5 @@
 import {
+  ChatAttachment,
   CommandId,
   ModelSelection,
   type OrchestrationV2Command,
@@ -116,6 +117,35 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/** Native commands the provider executes as its own whole-turn task, so they
+ *  own the run they start and cannot take steering or a restart. */
+export function isNativeMaintenanceCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    (message.text.trim().toLowerCase() === "/compact" || message.text.trim() === "/logout")
+  );
+}
+
+/** Queue automatic follow-ups behind maintenance. Explicit steer and restart
+ *  keep their intent and receive the orchestrator's unavailable error. */
+function queueBehindMaintenanceRun(
+  projection: OrchestrationV2ThreadProjection,
+  decision: MessageDispatchMode,
+): MessageDispatchMode {
+  if (decision.type !== "steer_active" && decision.type !== "restart_active") return decision;
+  const targetRun = projection.runs.find((run) => run.id === decision.targetRunId);
+  const targetMessage =
+    targetRun === undefined
+      ? undefined
+      : projection.messages.find((message) => message.id === targetRun.userMessageId);
+  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+    ? { type: "queue_after_active" }
+    : decision;
+}
+
 /** Resolve client intent from the state serialized by the thread dispatch lock. */
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
@@ -153,13 +183,19 @@ export function resolveMessageDispatchIntent(
         );
   const capabilities = providerSession?.capabilities.turns;
   if (capabilities?.supportsActiveSteering === true) {
-    return { type: "steer_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "steer_active",
+      targetRunId: activeRun.id,
+    });
   }
   if (capabilities?.supportsQueuedMessages === true) {
     return { type: "queue_after_active" };
   }
   if (capabilities?.supportsSteeringByInterruptRestart === true) {
-    return { type: "restart_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "restart_active",
+      targetRunId: activeRun.id,
+    });
   }
   return { type: "queue_after_active" };
 }

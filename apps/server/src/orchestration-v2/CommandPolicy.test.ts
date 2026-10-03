@@ -3,6 +3,7 @@ import {
   CommandId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
+  MessageId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -34,6 +35,7 @@ function dispatchProjection(
   const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
   const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
   return {
+    messages: [],
     runs:
       sessionCapabilities === undefined
         ? []
@@ -138,6 +140,95 @@ it("targets the latest active run for explicit steer and restart intent", () => 
       "steer",
     ),
     { type: "start_immediately" },
+  );
+});
+
+it.each(["/compact", " /COMPACT ", "/logout"])(
+  "queues automatic follow-ups behind %s and preserves explicit intent",
+  (text) => {
+    const messageId = MessageId.make("command-policy-compaction-message");
+    const base = dispatchProjection(baseCapabilities);
+    const projection = {
+      ...base,
+      runs: base.runs.map((run) => ({ ...run, userMessageId: messageId })),
+      messages: [{ id: messageId, role: "user", text, attachments: [] }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const queueAfterActive = { type: "queue_after_active" };
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+      queueAfterActive,
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "steer",
+      ),
+      { type: "steer_active", targetRunId: activeRunId },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        projection,
+        { type: "start_immediately" },
+        "restart",
+      ),
+      { type: "restart_active", targetRunId: activeRunId },
+    );
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(projection, {
+        type: "steer_active",
+        targetRunId: activeRunId,
+      }),
+      { type: "steer_active", targetRunId: activeRunId },
+    );
+  },
+);
+
+it.each(["/Logout", "/LOGOUT"])("preserves ordinary delivery for %s", (text) => {
+  const messageId = MessageId.make("command-policy-mixed-case-message");
+  const base = dispatchProjection(baseCapabilities);
+  const projection = {
+    ...base,
+    runs: base.runs.map((run) => ({ ...run, userMessageId: messageId })),
+    messages: [{ id: messageId, role: "user", text, attachments: [] }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+});
+
+it("keeps steering an ordinary run alongside a compacted message in history", () => {
+  const messageId = MessageId.make("command-policy-ordinary-message");
+  const base = dispatchProjection(baseCapabilities);
+  const projection = {
+    ...base,
+    runs: base.runs.map((run) => ({ ...run, userMessageId: messageId })),
+    messages: [
+      { id: messageId, role: "user", text: "ship it", attachments: [] },
+      {
+        id: MessageId.make("command-policy-earlier-compaction"),
+        role: "user",
+        text: "/compact",
+        attachments: [],
+      },
+    ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "steer_active", targetRunId: activeRunId },
   );
 });
 
