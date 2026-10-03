@@ -17,6 +17,10 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 gh auth login
 ```
 
+**GitHub Enterprise Server** works the same way, whatever your install is called. Sign in with
+`gh auth login --hostname git.example.com`, and T3 Code recognizes projects on that host as GitHub
+even when the hostname says nothing about GitHub.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or
