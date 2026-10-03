@@ -61,75 +61,30 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
-  it("reports a check result once per head commit", () => {
-    const running = evaluatePullRequestWatch(watch(), detail(), noRemarks);
-    assert.deepEqual(running.changes, []);
-    assert.equal(running.next.headSha, "aaaaaaaaaa");
+  it("reports the check result once every check finished, once per run", () => {
+    const running = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
+    const waiting = evaluatePullRequestWatch(watch(), running, noRemarks);
+    assert.deepEqual(waiting.changes, []);
 
-    const failing = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
-    const failed = evaluatePullRequestWatch(running.next, failing, noRemarks);
+    const finished = detail({ checks: [check("lint", "failure"), check("test", "cancelled")] });
+    const failed = evaluatePullRequestWatch(waiting.next, finished, noRemarks);
     assert.deepEqual(failed.changes, [
-      { kind: "checks-failed", failed: [check("lint", "failure")], running: 1 },
+      { kind: "checks-failed", failed: [check("lint", "failure"), check("test", "cancelled")] },
     ]);
-    assert.deepEqual(evaluatePullRequestWatch(failed.next, failing, noRemarks).changes, []);
+    assert.deepEqual(evaluatePullRequestWatch(failed.next, finished, noRemarks).changes, []);
 
-    // The final result follows once the rest finish, so a second failure is not lost.
-    const finished = detail({ checks: [check("lint", "failure"), check("test", "failure")] });
-    const final = evaluatePullRequestWatch(failed.next, finished, noRemarks);
-    assert.deepEqual(final.changes, [
-      {
-        kind: "checks-failed",
-        failed: [check("lint", "failure"), check("test", "failure")],
-        running: 0,
-      },
+    // A rerun of one job shows as running again, so its result is reported even if it matches.
+    const rerun = evaluatePullRequestWatch(failed.next, running, noRemarks);
+    assert.equal(evaluatePullRequestWatch(rerun.next, finished, noRemarks).changes.length, 1);
+
+    // A push reports its own result, even when it finished between two passes.
+    const pushed = detail({ ...finished, headSha: "bbbbbbbbbb" });
+    assert.equal(evaluatePullRequestWatch(failed.next, pushed, noRemarks).changes.length, 1);
+
+    const passing = detail({ checks: [check("lint", "success"), check("test", "success")] });
+    assert.deepEqual(evaluatePullRequestWatch(failed.next, passing, noRemarks).changes, [
+      { kind: "checks-passed", count: 2 },
     ]);
-    // Rerunning one of them is not news until the rerun finishes, and then it is.
-    const rerunning = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
-    const quiet = evaluatePullRequestWatch(final.next, rerunning, noRemarks);
-    assert.deepEqual(quiet.changes, []);
-    assert.equal(
-      evaluatePullRequestWatch(quiet.next, finished, noRemarks).changes[0]?.kind,
-      "checks-failed",
-    );
-
-    // A push that fails the same way before a pass ever sees it pending is still news.
-    const pushed = detail({ ...failing, headSha: "bbbbbbbbbb" });
-    assert.equal(
-      evaluatePullRequestWatch(failed.next, pushed, noRemarks).changes[0]?.kind,
-      "checks-failed",
-    );
-
-    // A rerun that passes on the same head is news too.
-    const rerun = detail({ checks: [check("lint", "success"), check("test", "success")] });
-    assert.deepEqual(evaluatePullRequestWatch(failed.next, rerun, noRemarks).changes, [
-      { kind: "checks-passed", count: 2, neutral: [] },
-    ]);
-  });
-
-  it("reports a check that needs someone's action", () => {
-    const blocked = detail({
-      checks: [check("lint", "success"), check("deploy", "action-required")],
-    });
-    assert.deepEqual(evaluatePullRequestWatch(watch(), blocked, noRemarks).changes, [
-      { kind: "checks-failed", failed: [check("deploy", "action-required")], running: 0 },
-    ]);
-  });
-
-  it("reports a new run as news on hosts that send no head commit", () => {
-    const passing = detail({ headSha: undefined, checks: [check("ci", "success")] });
-    const passed = evaluatePullRequestWatch(watch({ wakes: 3 }), passing, noRemarks);
-    assert.equal(passed.changes[0]?.kind, "checks-passed");
-    const rerun = evaluatePullRequestWatch(
-      passed.next,
-      detail({ headSha: undefined, checks: [check("ci", "pending")] }),
-      noRemarks,
-    );
-    assert.deepEqual(rerun.changes, []);
-    assert.equal(rerun.next.wakes, 0);
-    assert.equal(
-      evaluatePullRequestWatch(rerun.next, passing, noRemarks).changes[0]?.kind,
-      "checks-passed",
-    );
   });
 
   it("keeps remarks for a later pass when the conversation was not read whole", () => {
@@ -192,21 +147,6 @@ describe("evaluatePullRequestWatch", () => {
     );
     assert.isFalse(result.exhausted);
     assert.equal(result.next.wakes, 0);
-  });
-
-  it("restarts the comment wake count when a partial rerun starts", () => {
-    const tired = watch({
-      headSha: "aaaaaaaaaa",
-      checks: "failed",
-      wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1,
-    });
-    const rerun = evaluatePullRequestWatch(
-      tired,
-      detail({ checks: [check("lint", "failure"), check("test", "pending")] }),
-      [remark("reviewer", "2026-10-02T12:10:00Z")],
-    );
-    assert.isFalse(rerun.exhausted);
-    assert.equal(rerun.next.wakes, 1);
   });
 
   it("stops after the wake limit unless the head moves", () => {

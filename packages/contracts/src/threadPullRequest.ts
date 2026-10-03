@@ -100,10 +100,10 @@ export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
  */
 export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
-  /** Head commit whose check result was last reported; null until one is. */
+  /** Head commit at the last pass; null where the host does not report one. */
   headSha: Schema.NullOr(TrimmedNonEmptyString),
-  /** Last reported result: `failing` while other checks still run, `failed` once all finished. */
-  checks: Schema.NullOr(Schema.Literals(["passing", "failing", "failed"])),
+  /** The check result last reported for that commit. */
+  checks: Schema.NullOr(Schema.Literals(["passing", "failed"])),
   /** Remarks from others created up to this host time were reported. */
   remarksThrough: IsoDateTime,
   /** Remarks created exactly at `remarksThrough` that were reported, so a late one still counts. */

@@ -7,26 +7,16 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Wakes in a row that bring only new comments. A check result, a conflict, or a push resets the
- * count, so this only stops a chatty bot looping an agent that is replying to it.
+ * Wakes in a row that bring only comments. Check, conflict, or push news resets the count, so
+ * this only stops a chatty bot looping an agent that is replying to it.
  */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
 export type PullRequestWatchChange =
-  | {
-      readonly kind: "checks-failed";
-      readonly failed: ReadonlyArray<PullRequestCheck>;
-      /** Checks still running; a later report follows once they finish. */
-      readonly running: number;
-    }
-  | {
-      readonly kind: "checks-passed";
-      readonly count: number;
-      /** Finished without a verdict, which on GitLab can mean a manual job waits on someone. */
-      readonly neutral: ReadonlyArray<PullRequestCheck>;
-    }
+  | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
+  | { readonly kind: "checks-passed"; readonly count: number }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "conflicting" };
 
@@ -42,24 +32,19 @@ export interface PullRequestWatchReport {
 // "action-required" is a finished check that needs someone, so the agent hears about it.
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
-const isRunningCheck = (check: PullRequestCheck) => check.status === "pending";
 
-function checksOutcome(
-  checks: ReadonlyArray<PullRequestCheck>,
-): "passing" | "failing" | "failed" | "pending" | null {
-  if (checks.length === 0) return null;
-  const running = checks.some(isRunningCheck);
-  if (checks.some(isFailedCheck)) return running ? "failing" : "failed";
-  return running ? "pending" : "passing";
+/** The result once every check finished; null while one still runs or there are none. */
+function checksResult(checks: ReadonlyArray<PullRequestCheck>): "passing" | "failed" | null {
+  if (checks.length === 0 || checks.some((check) => check.status === "pending")) return null;
+  return checks.some(isFailedCheck) ? "failed" : "passing";
 }
 
 /**
- * Compares a watched pull request with what its agent was last told. A check result is
- * reported as soon as any check fails or once every check passed, and again only after the
- * head commit moves or the checks start over. Remarks count when someone other than the
- * viewer or the pull request's author wrote them: the agent posts as the viewer, so its own
- * replies never wake it. `remarks` is null when the conversation could not be read whole;
- * remarks are then left for a later pass rather than skipped.
+ * Compares a watched pull request with what its agent was last told. The check result is
+ * reported once every check finished, and again after the head commit moves or checks run
+ * again. Remarks count when someone other than the viewer or the pull request's author wrote
+ * them: the agent posts as the viewer, so its own replies never wake it. `remarks` is null when
+ * the conversation could not be read; remarks then wait for a later pass.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
@@ -68,39 +53,25 @@ export function evaluatePullRequestWatch(
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
-  const outcome = checksOutcome(detail.checks);
-  // Hosts that report no head commit still show a push or a rerun as checks starting over.
-  const restarted =
-    headSha !== watch.headSha ||
-    (watch.checks !== null && (outcome === "pending" || outcome === null));
+  const result = checksResult(detail.checks);
+  // Hosts that report no head commit still show a push or a rerun as checks running again.
+  const restarted = headSha !== watch.headSha || (watch.checks !== null && result === null);
 
   let checks = restarted ? null : watch.checks;
-  // An early failure is reported while other checks run, and the final result once they finish.
-  // A rerun that leaves another failure in place is recorded quietly and reported when it ends.
-  const rerun = checks === "failed" && outcome === "failing";
-  if (rerun) {
-    checks = "failing";
-  } else if (outcome !== null && outcome !== "pending" && outcome !== checks) {
+  if (result !== null && result !== checks) {
     changes.push(
-      outcome === "passing"
-        ? {
-            kind: "checks-passed",
-            count: detail.checks.length,
-            neutral: detail.checks.filter((check) => check.status === "neutral"),
-          }
-        : {
-            kind: "checks-failed",
-            failed: detail.checks.filter(isFailedCheck),
-            running: detail.checks.filter(isRunningCheck).length,
-          },
+      result === "passing"
+        ? { kind: "checks-passed", count: detail.checks.length }
+        : { kind: "checks-failed", failed: detail.checks.filter(isFailedCheck) },
     );
-    checks = outcome;
+    checks = result;
   }
 
   const own = new Set(
     [detail.viewer, detail.author?.login].flatMap((login) => (login ? [login.toLowerCase()] : [])),
   );
   const through = Date.parse(watch.remarksThrough);
+  // GitHub times are per second, so remarks at the boundary time are told apart by ID.
   const fresh = (remarks ?? []).filter((remark) => {
     const at = Date.parse(remark.createdAt);
     return (
@@ -124,9 +95,8 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
 
-  // A new check run, a push, or any check or conflict news is progress, so the count restarts.
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
-  const progress = restarted || rerun || (changes.length > 0 && !commentsOnly);
+  const progress = restarted || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
   return {
     changes,
@@ -164,7 +134,7 @@ function changeLines(
   switch (change.kind) {
     case "checks-failed":
       return [
-        `- Checks failed${context.commit}${change.running > 0 ? ` (${change.running} still running)` : ""}:`,
+        `- Checks failed${context.commit}:`,
         ...listed(
           change.failed,
           (check) =>
@@ -174,11 +144,6 @@ function changeLines(
     case "checks-passed":
       return [
         `- All ${change.count} ${change.count === 1 ? "check" : "checks"} finished without a failure${context.commit}.`,
-        ...listed(
-          change.neutral,
-          (check) =>
-            `  - ${check.name} (neutral, may be waiting on someone)${check.url ? ` ${check.url}` : ""}`,
-        ),
       ];
     case "remarks":
       return [

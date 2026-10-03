@@ -2205,7 +2205,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.deepEqual(yield* watchOf, started);
 
-      const recorded = { ...started, headSha: "abc123", checks: "failing" as const, wakes: 1 };
+      const recorded = { ...started, headSha: "abc123", checks: "failed" as const, wakes: 1 };
       yield* orchestrator.dispatch({
         type: "thread.pull-request-watch.sync",
         commandId: CommandId.make("pr-watch-record"),
@@ -2248,7 +2248,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("wakes a watched thread once for failed checks and a late thread reply", () =>
+  it.effect("wakes a watched thread once for failed checks and a review comment", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-pull-request-watch-wake");
@@ -2345,38 +2345,24 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
             NodeServices.layer,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () => Effect.succeed(detail),
-              // A long review thread: its later replies only arrive through threadComments.
               activity: () =>
-                Effect.succeed({
-                  comments: [],
-                  commentCount: 11,
-                  commentsTruncated: true,
-                  reviewThreads: [
-                    {
-                      id: "thread-1",
-                      path: "src/index.ts",
-                      line: 1,
-                      side: "right",
-                      isResolved: false,
-                      isOutdated: false,
-                      comments: [],
-                      nextCommentsCursor: "page-2",
-                    },
-                  ],
-                  commits: [],
-                }),
-              threadComments: () =>
                 Effect.succeed({
                   comments: [
                     {
-                      id: "late-reply",
+                      id: "review-1",
+                      kind: "review-comment",
                       author: { login: "reviewer", name: null, avatarUrl: null },
                       body: "One more thing.",
                       createdAt: "2999-01-01T00:00:00.000Z",
                       url: null,
+                      path: "src/index.ts",
+                      reviewState: null,
                     },
                   ],
-                  nextCursor: null,
+                  commentCount: 1,
+                  commentsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
                 }),
             }),
           ),

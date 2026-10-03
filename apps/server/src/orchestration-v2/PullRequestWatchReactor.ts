@@ -2,8 +2,6 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Notification,
-  type PullRequestComment,
-  type PullRequestThreadCommentsResult,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
@@ -25,9 +23,6 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
-
-/** Extra comment pages read per review thread; a longer thread leaves the read incomplete. */
-const THREAD_PAGES = 5;
 
 const logFailure =
   (message: string, fields: Record<string, unknown>) =>
@@ -113,63 +108,13 @@ export const make = Effect.gen(function* () {
     );
     if (detail.state !== "open") return yield* record(null);
 
-    // GitHub sends the first comments of each review thread; the rest are read here so a late
-    // reply in a long thread still counts.
-    const longThreads = activity.reviewThreads.filter(
-      (reviewThread) => reviewThread.nextCommentsCursor !== undefined,
-    );
-    const rest = yield* Effect.forEach(
-      longThreads,
-      (reviewThread) =>
-        Effect.gen(function* () {
-          const comments: Array<PullRequestComment> = [];
-          let cursor: string | null | undefined = reviewThread.nextCommentsCursor;
-          for (let page = 0; cursor != null && page < THREAD_PAGES; page += 1) {
-            const result: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
-              ...reference,
-              threadId: reviewThread.id,
-              cursor,
-            });
-            for (const comment of result.comments) {
-              comments.push({
-                ...comment,
-                kind: "review-comment",
-                path: reviewThread.path,
-                reviewState: null,
-              });
-            }
-            cursor = result.nextCursor;
-          }
-          return { comments, whole: cursor == null };
-        }).pipe(
-          // A failed page only leaves the remarks for a later pass; checks still count now.
-          Effect.catchCauseIf(
-            (cause) => !Cause.hasInterruptsOnly(cause),
-            () => Effect.succeed({ comments: [], whole: false }),
-          ),
-        ),
-      { concurrency: 2 },
-    );
-    // A truncated conversation with no long thread to explain it is a degraded read.
-    const whole =
-      (!activity.commentsTruncated || longThreads.length > 0) && rest.every((read) => read.whole);
-    const remarks = whole ? [...activity.comments, ...rest.flatMap((read) => read.comments)] : null;
-
-    // GitHub names the head commit; elsewhere the newest commit stands in, so a push still reads
-    // as one. Azure DevOps reports neither, and relies on checks starting over.
-    const newest = activity.commits.reduce<(typeof activity.commits)[number] | undefined>(
-      (latest, commit) =>
-        latest === undefined || Date.parse(commit.committedDate) > Date.parse(latest.committedDate)
-          ? commit
-          : latest,
-      undefined,
-    );
-    const headSha = detail.headSha ?? newest?.oid;
-    const report = evaluatePullRequestWatch(
-      watch,
-      { ...detail, ...(headSha === undefined ? {} : { headSha }) },
-      remarks,
-    );
+    // A degraded read (GitHub's review thread query failed) is truncated with no long thread to
+    // explain it, and would skip review comments, so remarks wait for a later pass. Replies past
+    // the first ten of a long review thread are not read.
+    const degraded =
+      activity.commentsTruncated &&
+      !activity.reviewThreads.some((reviewThread) => reviewThread.nextCommentsCursor !== undefined);
+    const report = evaluatePullRequestWatch(watch, detail, degraded ? null : activity.comments);
     if (report.changes.length > 0) {
       return yield* record(
         report.exhausted ? null : report.next,
@@ -186,7 +131,7 @@ export const make = Effect.gen(function* () {
   });
 
   const sweep = Effect.gen(function* () {
-    const threads = yield* projections.getThreadsWatchingPullRequests();
+    const threads = yield* projections.getThreadsWithPullRequests();
     yield* Effect.forEach(
       threads.flatMap((thread) =>
         visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) =>
