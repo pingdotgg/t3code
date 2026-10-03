@@ -62,6 +62,7 @@
 - `git ls-remote` only advertises commit IDs. Source-update checks must obtain missing remote history before local ancestry comparison; disable ref mapping, tags, submodules, and `FETCH_HEAD` writes so polling never moves a user's checkout or tracking refs.
 - Chat thread URLs can outlive a desktop backend port or advertise a LAN address while the client uses loopback. Resolve private-network aliases by their explicitly registered environment ID and protocol without contacting the alias; preserve exact-origin environment bindings and keep public websites and pairing URLs external.
 - Work-log display paths must use verbatim provider candidates, not Git-normalized changed paths: absolute patch paths are rejected without a cwd. Prefer raw input/ACP locations over shortened previews, and never treat JSON output as a filename.
+- Work-log evidence sections must inherit the tool font setting, including load controls and status/output text; a nested `text-xs` breaks user-selected sizing. Check computed font sizes at non-default settings.
 - Keep visited work-log bodies local to their virtual timeline row, lazy before first expansion, and hidden after collapse. Preserve mounted details through closing/reversal so output parsing and DOM reconstruction do not interrupt the animation.
 - Command labels must come from input metadata, never a tool's output/detail fallback. Repeated completed work may be folded for display, but preserve every call and keep distinct commands, paths, turns, active calls, and failures separate.
 - Packaged desktop startup builds cloud runtime services eagerly; `CloudRuntimeLayerLive` must provide its own auth control plane, server environment, orchestration, repository identity, and persistence dependencies, and startup logs should include a clear cloud-runtime-ready marker.
@@ -421,7 +422,7 @@
 - Once `ChatMarkdown` reads the workspace entries index, its browser suite must mock `projectFilesQueryState`; the `environmentApi` mock alone fails the import.
 - `@pierre/trees` captures `useFileTree` options once at construction, so live data (selection guards, row decorations) must flow through refs; `collapse-non-matches` is type-only with no runtime branch — use `expand-matches` for hierarchy-preserving filter. The tree opens its own `Search…` overlay whenever the model search value is set, so a panel-owned filter input must hide `[data-file-tree-search-container]` via tree CSS. Row decorations render as bare spans — style them through the `div[data-item-section='decoration']` lane wrapper.
 - Stopping a `pnpm dev` wrapper does not stop its backend/watch children, and a surviving backend keeps the isolated state-dir lock so the next server fails to claim it with `ECONNREFUSED` proxies. Kill the backend processes (same worktree cwd), never another worktree's.
-- Automation snapshots must capture through the guest's CDP target, not native `capturePage()`: a cold/hidden guest can return a zero-sized native image while DOM evaluation still works. Validate decoded pixels and preserve page diagnostics when reporting the typed visual-capture failure.
+- Automation snapshots must prefer the guest's CDP target; a cold/hidden guest can return a zero-sized native `capturePage()` image while DOM evaluation still works. If CDP fails, accept native capture only when it is non-empty, and preserve page diagnostics when both paths fail.
 - Offline CLI project/auth commands always resolve to the `userdata` flavor database and can never target the `dev` one (project commands reject `--dev-url`); seed `pnpm dev` state through the running server's API or `--auto-bootstrap-project-from-cwd`, and confirm which flavor database a seed landed in before concluding the UI is empty.
 
 ## Checkpoint and snapshot atomicity
@@ -436,6 +437,7 @@
 ## MCP schemas and auth bootstrap
 
 - No-argument MCP parameters need an object-only schema, such as `Schema.Record(Schema.String, Schema.Never)`; `Schema.Struct({})` exports an object/array union. Strict clients validate the whole tool list and drop the server if any tool has a non-object top-level `inputSchema.type`. Do not add unused parameters to satisfy provider schema checks.
+- MCP `structuredContent` must be an object for strict clients; wrap list results in a named array field instead of returning a top-level array.
 - Auth bootstrap cache writes must belong to the current in-flight promise so reset cannot be undone by an older completion. Import auth test dependencies before test execution, not inside a timed test or its cleanup.
 - Direct HTTP authorization must use shared token-only renewal, not relay connection establishment; cached reads must mint no socket tickets or depend on relay availability, while rejected-token retries retain single-flight and account-identity guards.
 

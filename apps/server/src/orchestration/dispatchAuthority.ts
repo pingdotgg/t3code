@@ -17,15 +17,66 @@ export function activeDispatchTurnId(delegation: ThreadDelegation): string | nul
   return (delegation.dispatchTurnId as string | null | undefined) ?? null;
 }
 
+export type ExecutionProvenance = "unfenced" | "superseded" | "unproven" | "authorized";
+
 /**
- * Fences an attempt-scoped child report against the delegation's active
- * execution generation.
+ * The generation fence, shared by child-report admission and parent-waking
+ * lifecycle notification so the two cannot disagree about authorized proof.
+ * Terminality is the caller's rule: a settled delegation reports `unfenced`.
  *
  * Identity model: the logical assignment survives retries; the dispatch
  * identifies one authorized execution; the turn proves which execution is
- * reporting. Provenance must arrive WITH the report from the reporting
- * execution's context — the classifier never substitutes live thread state.
- *
+ * reporting. Provenance must arrive WITH the signal from the reporting
+ * execution's context — this classifier never substitutes live thread state.
+ */
+export function classifyExecutionProvenance(input: {
+  readonly delegation: ThreadDelegation | null | undefined;
+  readonly claimedDispatchId?: string | null | undefined;
+  readonly claimedTurnId?: string | null | undefined;
+}): ExecutionProvenance {
+  const delegation = input.delegation;
+  if (delegation == null) {
+    return "unfenced";
+  }
+  if (delegation.completedAt !== null) {
+    return "unfenced";
+  }
+  const activeTurn = activeDispatchTurnId(delegation);
+  if (activeTurn === null) {
+    // Rejected even when unfenced: a report must not invent a generation.
+    if (
+      input.claimedDispatchId !== null &&
+      input.claimedDispatchId !== undefined &&
+      input.claimedDispatchId !== activeDispatchId(delegation)
+    ) {
+      return "superseded";
+    }
+    if (delegation.dispatchId === undefined) {
+      return "unfenced";
+    }
+    // A minted dispatch with no bound turn cannot authorize state changes.
+    // This covers both the initial startup window and replacement windows:
+    // only session binding can establish the execution's authoritative pair.
+    return "unproven";
+  }
+  if (input.claimedTurnId === null || input.claimedTurnId === undefined) {
+    // Turn-absent callers (pre-fence integrations) cannot prove execution.
+    return "unproven";
+  }
+  if (input.claimedTurnId !== activeTurn) {
+    return "superseded";
+  }
+  if (
+    input.claimedDispatchId !== null &&
+    input.claimedDispatchId !== undefined &&
+    input.claimedDispatchId !== activeDispatchId(delegation)
+  ) {
+    return "superseded";
+  }
+  return "authorized";
+}
+
+/**
  * - `accepted`: authoritative execution (or genuinely pre-fence history).
  * - `stale`: superseded execution, missing proof, unminted claim, or novel
  *   report on closed work. No task, wait, or queue mutation.
@@ -43,41 +94,18 @@ export function classifyChildReport(input: {
   if (input.delegation.completedAt !== null) {
     return "stale";
   }
-  const activeTurn = activeDispatchTurnId(input.delegation);
-  if (activeTurn === null) {
-    const activeDispatch = activeDispatchId(input.delegation);
-    // A minted dispatch with no bound turn cannot authorize state changes.
-    // This covers both the initial startup window and replacement windows:
-    // only session binding can establish the execution's authoritative pair.
-    if (
-      input.claimedDispatchId !== null &&
-      input.claimedDispatchId !== undefined &&
-      input.claimedDispatchId !== activeDispatch
-    ) {
-      return "stale";
-    }
-    if (activeDispatch !== null) {
-      return input.kind === "progress" ? "accepted" : "stale";
-    }
-    return "accepted";
-  }
-  if (input.claimedTurnId === null || input.claimedTurnId === undefined) {
-    // Turn-absent callers (pre-fence integrations) cannot prove execution.
-    // Progress mutates nothing, so history stays complete; anything that
-    // would mutate task state requires proof.
-    return input.kind === "progress" ? "accepted" : "stale";
-  }
-  if (input.claimedTurnId !== activeTurn) {
-    return "stale";
-  }
-  if (
-    input.claimedDispatchId !== null &&
-    input.claimedDispatchId !== undefined &&
-    input.claimedDispatchId !== activeDispatchId(input.delegation)
-  ) {
-    return "stale";
-  }
-  return "accepted";
+  const provenance = classifyExecutionProvenance({
+    delegation: input.delegation,
+    claimedDispatchId: input.claimedDispatchId,
+    claimedTurnId: input.claimedTurnId,
+  });
+  // Unproven progress stays accepted: it mutates nothing.
+  const unprovenIsAcceptable = input.kind === "progress";
+  return provenance === "authorized" ||
+    provenance === "unfenced" ||
+    (provenance === "unproven" && unprovenIsAcceptable)
+    ? "accepted"
+    : "stale";
 }
 
 /**
@@ -169,6 +197,71 @@ export function childReportDedupeKey(input: {
     return `report:${input.childThreadId}:${input.assignmentId}:${input.reportId}`;
   }
   return `report:${input.childThreadId}:${input.dispatchId}:${input.assignmentId}:${input.reportId}`;
+}
+
+/**
+ * Single derivation of a report's assignment, generation and idempotency key.
+ * The decider and the engine's durable receipt must agree or a retried report is
+ * admitted twice instead of replaying its recorded verdict. Callers must not
+ * re-derive the assignment and dispatch fallbacks themselves.
+ */
+export function childReportIdentity<
+  TAssignmentId extends ThreadDelegation["assignmentId"],
+  TDispatchId extends string,
+>(input: {
+  readonly childThreadId: string;
+  readonly delegation: ThreadDelegation | null | undefined;
+  readonly claimedAssignmentId?: TAssignmentId | null | undefined;
+  readonly claimedDispatchId?: TDispatchId | null | undefined;
+  readonly originTurnId?: string | null | undefined;
+  readonly reportId: string;
+}): {
+  readonly assignmentId: TAssignmentId | ThreadDelegation["assignmentId"];
+  readonly dispatchId: TDispatchId | NonNullable<ThreadDelegation["dispatchId"]> | undefined;
+  readonly reportKey: string;
+} | null {
+  const assignmentId = input.claimedAssignmentId ?? input.delegation?.assignmentId;
+  if (assignmentId === null || assignmentId === undefined) {
+    return null;
+  }
+  const dispatchId = input.claimedDispatchId ?? input.delegation?.dispatchId ?? undefined;
+  return {
+    assignmentId,
+    dispatchId,
+    reportKey: childReportDedupeKey({
+      childThreadId: input.childThreadId,
+      dispatchId,
+      originTurnId: input.originTurnId,
+      assignmentId,
+      reportId: input.reportId,
+    }),
+  };
+}
+
+/**
+ * Report key as written by the pre-unification engine and by migration 090's
+ * backfill, which read the dispatch off the report's claimed provenance without
+ * inheriting the delegation's generation. Keeps those receipts reachable on
+ * replay; null when the two derivations already agree.
+ */
+export function legacyChildReportKey(input: {
+  readonly childThreadId: string;
+  readonly claimedDispatchId?: string | null | undefined;
+  readonly originTurnId?: string | null | undefined;
+  readonly assignmentId: string;
+  readonly reportId: string;
+  readonly resolvedDispatchId: string | null | undefined;
+}): string | null {
+  if (input.claimedDispatchId === input.resolvedDispatchId) {
+    return null;
+  }
+  return childReportDedupeKey({
+    childThreadId: input.childThreadId,
+    dispatchId: input.claimedDispatchId,
+    originTurnId: input.originTurnId,
+    assignmentId: input.assignmentId,
+    reportId: input.reportId,
+  });
 }
 
 /**

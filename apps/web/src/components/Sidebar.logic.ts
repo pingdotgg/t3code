@@ -23,7 +23,7 @@ import {
   hasUnseenThreadCompletion,
   resolveThreadSemanticStatus,
 } from "@t3tools/client-runtime/state/thread-status";
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+import { canSettle, effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -805,12 +805,22 @@ function resolveSettledSortTimestampMs(thread: SidebarThreadSummary): number {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
-/**
- * Collapsed-project single-row counterpart to `partitionSettledSidebarRows`:
- * the active route renders alone while its project is collapsed, so the same
- * root-status rule applies — a pill (failed turn, unseen completion) keeps
- * the row full-strength even when the settled override survives.
- */
+export function resolveSettleMenuItems(input: {
+  readonly status: ThreadStatusPill | null;
+  readonly thread: SidebarThreadSummary;
+  readonly settlementSupported: boolean;
+  readonly now: string;
+}): ReadonlyArray<{ readonly id: "settle" | "reopen"; readonly label: string }> {
+  if (!input.settlementSupported) return [];
+  if (isCollapsedSettledRow({ status: input.status, thread: input.thread, now: input.now })) {
+    return [{ id: "reopen", label: "Reopen thread" }];
+  }
+  if (canSettle(input.thread, { now: input.now })) {
+    return [{ id: "settle", label: "Settle thread" }];
+  }
+  return [];
+}
+
 export function isCollapsedSettledRow(input: {
   readonly status: ThreadStatusPill | null;
   readonly thread: SidebarThreadSummary;

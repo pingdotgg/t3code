@@ -76,7 +76,7 @@ import {
   type SidebarThreadFilter,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
-import { usePrimaryEnvironmentId } from "../environments/primary";
+import { usePrimaryEnvironmentDescriptor, usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { reportClientError } from "../lib/clientLogger";
@@ -174,6 +174,7 @@ import {
   isContextMenuPointerDown,
   isCollapsedSettledRow,
   isThreadContextDragOutsideList,
+  resolveSettleMenuItems,
   resolveFilteredSidebarProjects,
   resolvePinnedDragEndShouldReorder,
   resolveProjectExpanded,
@@ -232,7 +233,7 @@ import {
   selectVisibleThreadRows,
   type SidebarThreadRowView,
 } from "../sidebarThreadTree";
-import { compactSidebarTimeLabel } from "./SidebarV2.logic";
+import { compactSidebarTimeLabel, resolveThreadLifecycleSupport } from "./SidebarV2.logic";
 import { SidebarHoverThreadPrewarmer } from "./SidebarThreadPrewarmer";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
@@ -2707,6 +2708,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProject, project],
   );
 
+  const { settleThread, unsettleThread } = useThreadActions();
+  const primaryDescriptor = usePrimaryEnvironmentDescriptor();
+  const remoteEnvironmentDescriptors = useSavedEnvironmentRuntimeStore((state) => state.byId);
+  const lifecycleSupport = useMemo(
+    () =>
+      resolveThreadLifecycleSupport([
+        primaryDescriptor,
+        ...Object.values(remoteEnvironmentDescriptors).map((saved) => saved.descriptor),
+      ]),
+    [primaryDescriptor, remoteEnvironmentDescriptors],
+  );
+
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       try {
@@ -2943,6 +2956,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      const settleMenuItems = resolveSettleMenuItems({
+        status: threadStatusByKey.get(threadKey) ?? null,
+        thread,
+        settlementSupported: lifecycleSupport.get(thread.environmentId)?.settlement === true,
+        now: new Date().toISOString(),
+      });
       const clicked = await api.contextMenu.show(
         [
           { id: "new-subchat", label: "New subchat" },
@@ -2954,6 +2973,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(isThreadActivelyWorking(thread.latestTurn, thread.session)
             ? []
             : [{ id: "archive", label: "Archive" }]),
+          ...settleMenuItems,
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -3012,6 +3032,34 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         await attemptArchiveThread(threadRef);
         return;
       }
+      if (clicked === "settle") {
+        try {
+          await settleThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to settle thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+      if (clicked === "reopen") {
+        try {
+          await unsettleThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to reopen thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
       if (clicked !== "delete") return;
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -3034,9 +3082,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       createSubchatForThread,
       decoupleThread,
       deleteThread,
+      lifecycleSupport,
       markThreadUnread,
       memberProjectByScopedKey,
       project.cwd,
+      settleThread,
+      threadStatusByKey,
+      unsettleThread,
     ],
   );
 

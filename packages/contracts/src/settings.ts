@@ -52,6 +52,10 @@ export const DEFAULT_CODE_FONT_SIZE: FontSize = 13 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_STATUS_LINE_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
+export const FILE_PREVIEW_LINE_SPACING_VALUES = [1.2, 1.35, 1.5, 1.65, 1.8] as const;
+export const FilePreviewLineSpacing = Schema.Literals(FILE_PREVIEW_LINE_SPACING_VALUES);
+export type FilePreviewLineSpacing = typeof FilePreviewLineSpacing.Type;
+export const DEFAULT_FILE_PREVIEW_LINE_SPACING: FilePreviewLineSpacing = 1.5;
 export const DEFAULT_SIDEBAR_FONT_SIZE: FontSize = 11 as FontSize;
 /** Sidebar metadata (project, worktree, branch, PR, timestamps) sits a deliberate step
     below the thread title so the title stays the row's anchor. */
@@ -297,6 +301,9 @@ export const ClientSettingsSchema = Schema.Struct({
   codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
   composerMetaFontSize: FontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_META_FONT_SIZE)),
+  ),
+  filePreviewLineSpacing: FilePreviewLineSpacing.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FILE_PREVIEW_LINE_SPACING)),
   ),
   inputFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_INPUT_FONT_SIZE))),
   messagePreviewLineLimits: MessagePreviewLineLimits.pipe(
@@ -874,6 +881,7 @@ export const ClientSettingsPatch = Schema.Struct({
   statusLineFontSize: Schema.optionalKey(FontSize),
   codeFontSize: Schema.optionalKey(FontSize),
   composerMetaFontSize: Schema.optionalKey(FontSize),
+  filePreviewLineSpacing: Schema.optionalKey(FilePreviewLineSpacing),
   inputFontSize: Schema.optionalKey(FontSize),
   messagePreviewLineLimits: Schema.optionalKey(MessagePreviewLineLimits),
   sidebarFontSize: Schema.optionalKey(FontSize),

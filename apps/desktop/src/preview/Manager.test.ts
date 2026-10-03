@@ -1244,6 +1244,62 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("falls back to a valid native screenshot when CDP capture fails", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("captured-native-png");
+        const image = makeTestCapturedPreviewImage(png, 640, 480);
+        const capturePage = vi.fn(async () => image);
+        const sendCommand = vi.fn(async (method: string) => {
+          if (method === "Runtime.evaluate") {
+            return {
+              result: {
+                value: {
+                  url: "https://example.com/",
+                  title: "Example",
+                  loading: false,
+                  visibleText: "Rendered page diagnostics",
+                  interactiveElements: [],
+                },
+              },
+            };
+          }
+          if (method === "Page.captureScreenshot") {
+            throw new Error("CDP screenshot capture is unavailable");
+          }
+          return undefined;
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42, undefined, sendCommand));
+
+        yield* manager.createTab("tab_snapshot_native_fallback");
+        yield* manager.registerWebview("tab_snapshot_native_fallback", 42);
+        const snapshotFiber = yield* manager
+          .automationSnapshot("tab_snapshot_native_fallback")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          yield* TestClock.adjust(200);
+          yield* Effect.yieldNow;
+        }
+        const snapshot = yield* Fiber.join(snapshotFiber);
+
+        expect(
+          sendCommand.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
+        ).toHaveLength(3);
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(snapshot).toMatchObject({
+          visibleText: "Rendered page diagnostics",
+          screenshot: {
+            data: png.toString("base64"),
+            width: 640,
+            height: 480,
+          },
+        });
+        expect(snapshot.screenshotCaptureFailure).toBeUndefined();
+      }),
+    ),
+  );
+
   effectIt.effect(
     "retains page diagnostics and releases control after stalled screenshot capture",
     () =>
@@ -1308,6 +1364,7 @@ describe("PreviewManager", () => {
             },
             diagnosticsSummary: expect.stringContaining("visibleText: 25 chars"),
           });
+          expect(capturePage).toHaveBeenCalledOnce();
           expect(
             sendCommand.mock.calls.filter(([method]) => method === "Page.captureScreenshot"),
           ).toHaveLength(3);
@@ -1319,7 +1376,7 @@ describe("PreviewManager", () => {
             width: 1280,
             height: 800,
           });
-          expect(capturePage).not.toHaveBeenCalled();
+          expect(capturePage).toHaveBeenCalledOnce();
         }),
       ),
   );
