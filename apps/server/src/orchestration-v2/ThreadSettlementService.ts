@@ -162,6 +162,9 @@ export function resolveAutoSettlementAt(input: {
   readonly nowMs: number;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
+  readonly autoSettleScope?: "all" | "without-pr";
+  /** The thread's branch has not been looked up yet, so `pullRequest: null` is not an answer. */
+  readonly pullRequestLookupPending?: boolean;
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -196,6 +199,15 @@ export function resolveAutoSettlementAt(input: {
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
   }
+  if (
+    input.autoSettleScope === "without-pr" &&
+    (input.pullRequestLookupPending === true ||
+      pullRequest !== null ||
+      links.length > 0 ||
+      thread.linkedPullRequest != null ||
+      thread.branchPullRequest != null)
+  )
+    return null;
   if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
   return activityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
     ? DateTime.makeUnsafe(activityAtMs)
@@ -229,6 +241,7 @@ export function autoSettlementSettingsKey(
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    settings.sidebarAutoSettleScope,
     // Only entries that touch settlement, in a stable order, so a project
     // override on an unrelated key does not queue a sweep. JSON drops
     // undefined, so inherit (absent) and never (null) need distinct marks.
@@ -236,7 +249,8 @@ export function autoSettlementSettingsKey(
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined,
+          entry.sidebarAutoSettleAfterDays !== undefined ||
+          entry.sidebarAutoSettleScope !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -245,6 +259,7 @@ export function autoSettlementSettingsKey(
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
+        entry.sidebarAutoSettleScope ?? "inherit",
       ]),
   ]);
 }
@@ -281,7 +296,11 @@ export const make = Effect.gen(function* () {
     const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
-      function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+      function* (
+        thread: (typeof candidates)[number],
+        pullRequest: SettlementPullRequest | null,
+        pullRequestLookupPending = false,
+      ) {
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -293,6 +312,8 @@ export const make = Effect.gen(function* () {
           nowMs: DateTime.toEpochMillis(decisionNow),
           autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
+          autoSettleScope: currentSettings.sidebarAutoSettleScope,
+          pullRequestLookupPending,
         });
         if (settledAt === null) return thread;
         const uuid = yield* crypto.randomUUIDv4;
@@ -318,11 +339,15 @@ export const make = Effect.gen(function* () {
         ),
     );
 
-    // Inactivity is entirely projection-backed. Complete those decisions before
-    // a source-control lookup can delay or fail an otherwise eligible thread.
+    // Inactivity is projection-backed. Complete those decisions before a
+    // source-control lookup can delay or fail an otherwise eligible thread.
+    // The "without-pr" scope is the exception: a branch's pull request may not
+    // have reached the projection yet, so those threads wait for the lookup
+    // below instead of settling on a stale answer.
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
-      (thread) => settleThread(thread, null),
+      (thread) =>
+        settleThread(thread, null, thread.branch !== null && projects.has(thread.projectId)),
       { concurrency: 8 },
     ))
       .filter((thread) => thread !== null)
