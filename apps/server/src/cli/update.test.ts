@@ -11,7 +11,7 @@ import {
   HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 
-import { repointLauncher, resolveLauncherPath } from "./update.ts";
+import { repointLauncher, repointLauncherAfterSelfUpdate, resolveLauncherPath } from "./update.ts";
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
@@ -104,6 +104,76 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       assert.equal(bare, launcher);
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("moves the install bin launcher off the version a self-update left", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const baseDir = path.join(root, ".t3");
+      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      const installed = path.join(root, ".local/bin/t3");
+      const pinned = path.join(root, "pinned/t3");
+      for (const file of [exe("1.0.0"), exe("1.5.0"), exe("2.0.0")]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      yield* fs.makeDirectory(path.dirname(installed), { recursive: true });
+      yield* fs.symlink(exe("1.0.0"), installed);
+      yield* fs.makeDirectory(path.dirname(pinned), { recursive: true });
+      yield* fs.symlink(exe("1.5.0"), pinned);
+
+      yield* repointLauncherAfterSelfUpdate({
+        baseDir,
+        fromVersion: "1.0.0",
+        targetVersion: "2.0.0",
+      }).pipe(
+        Effect.provideService(HostProcessEnvironment, {
+          HOME: root,
+          PATH: path.dirname(pinned),
+        }),
+      );
+
+      assert.equal(yield* fs.readLink(installed), exe("2.0.0"));
+      assert.equal(yield* fs.readLink(pinned), exe("1.5.0"));
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("still moves the PATH launcher when the install bin one cannot be rewritten", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const baseDir = path.join(root, ".t3");
+      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      const installed = path.join(root, ".local/bin/t3");
+      const onPath = path.join(root, "bin/t3");
+      for (const file of [exe("1.0.0"), exe("2.0.0")]) {
+        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+        yield* fs.writeFileString(file, "");
+      }
+      for (const link of [installed, onPath]) {
+        yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+        yield* fs.symlink(exe("1.0.0"), link);
+      }
+      yield* fs.chmod(path.dirname(installed), 0o555);
+
+      yield* repointLauncherAfterSelfUpdate({
+        baseDir,
+        fromVersion: "1.0.0",
+        targetVersion: "2.0.0",
+      }).pipe(
+        Effect.provideService(HostProcessEnvironment, {
+          HOME: root,
+          PATH: path.dirname(onPath),
+        }),
+        Effect.ensuring(fs.chmod(path.dirname(installed), 0o755).pipe(Effect.orDie)),
+      );
+
+      assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
+      assert.equal(yield* fs.readLink(onPath), exe("2.0.0"));
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 });

@@ -194,6 +194,49 @@ export const resolveLauncherPath = Effect.gen(function* () {
 });
 
 /**
+ * A launcher-managed self-update never runs through the user's `t3`, so once
+ * it commits, the new server moves the install script's launcher (in
+ * `T3CODE_INSTALL_BIN_DIR`, `~/.local/bin`, or on PATH) off the version it
+ * updated from. A launcher on any other version is left alone.
+ */
+export const repointLauncherAfterSelfUpdate = Effect.fn(
+  "cli.update.repoint_launcher_after_self_update",
+)(function* (input: {
+  readonly baseDir: string;
+  readonly fromVersion: string;
+  readonly targetVersion: string;
+}) {
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const environment = yield* HostProcessEnvironment;
+  const installBinDir =
+    environment["T3CODE_INSTALL_BIN_DIR"] ||
+    (environment["HOME"] ? path.join(environment["HOME"], ".local", "bin") : undefined);
+  const onPath = yield* resolveLauncherPath.pipe(Effect.provideService(HostProcessInvokedAs, "t3"));
+  const candidates = new Set([
+    ...(installBinDir === undefined ? [] : [path.join(installBinDir, "t3")]),
+    ...(onPath === undefined ? [] : [onPath]),
+  ]);
+  const from = pinnedRuntimePaths(path, input.baseDir, input.fromVersion, platform);
+  const target = pinnedRuntimePaths(path, input.baseDir, input.targetVersion, platform);
+  for (const launchedAs of candidates) {
+    yield* repointLauncher({
+      launchedAs,
+      // Ownership scoped to the previous version: a `t3` pinned elsewhere stays put.
+      versionsDir: from.versionDir,
+      targetEntryPath: target.entryPath,
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not move the t3 command to the updated version", {
+          launchedAs,
+          cause,
+        }),
+      ),
+    );
+  }
+});
+
+/**
  * On Windows a `.cmd` shim is what PATH resolves, but the executable it runs
  * only ever sees its own path. Walk PATH for a `t3.cmd` whose target is the
  * running executable; that is the launcher the install script wrote.

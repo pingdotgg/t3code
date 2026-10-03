@@ -26,6 +26,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
+import { repointLauncherAfterSelfUpdate } from "./cli/update.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { flushCompileCache } from "./compileCache.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -595,6 +596,17 @@ const make = (options?: StartupOptions) =>
       );
 
       const updateOutcome = yield* launcher.prepareTrial;
+      if (updateOutcome?.status === "committed") {
+        yield* repointLauncherAfterSelfUpdate({
+          baseDir: serverConfig.baseDir,
+          fromVersion: updateOutcome.fromVersion,
+          targetVersion: updateOutcome.targetVersion,
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not move the t3 command to the updated version", { cause }),
+          ),
+        );
+      }
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {
         environmentId: environment.environmentId,
