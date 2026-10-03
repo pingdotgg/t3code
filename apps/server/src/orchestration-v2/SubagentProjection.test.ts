@@ -166,6 +166,28 @@ function taskFixture() {
   return { projection: { ...projection, runs: [run] }, run };
 }
 
+it("reports the run that ended last, not the highest ordinal", () => {
+  const { projection, run } = taskFixture();
+  // A restart continuation (ordinal 4) ran ahead of held queued runs 2 and 3.
+  const ended = (ordinal: number, completedAt: string): OrchestrationV2Run => ({
+    ...run,
+    id: RunId.make(`run:${ordinal}`),
+    ordinal,
+    completedAt: DateTime.makeUnsafe(completedAt),
+  });
+  const progress = delegatedTaskProgress({
+    ...projection,
+    runs: [
+      { ...run, status: "cancelled" },
+      ended(4, "2026-07-24T10:00:00.000Z"),
+      ended(2, "2026-07-24T10:05:00.000Z"),
+      ended(3, "2026-07-24T10:10:00.000Z"),
+    ],
+  });
+  assert.equal(progress.state, "result_available");
+  assert.equal(progress.resultRun?.ordinal, 3);
+});
+
 it("waits for nested work and retains the report across monitor acknowledgements", () => {
   const { projection, run } = taskFixture();
   assert.equal(

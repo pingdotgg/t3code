@@ -6,6 +6,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerActivation from "../serverActivation.ts";
 import * as Scheduler from "./Scheduler.ts";
 
 it.effect("keeps other sources running after a source defects", () =>
@@ -83,4 +84,27 @@ it.effect("unregisters closed sources and interrupts their in-flight work", () =
     yield* Queue.take(receipts);
     assert.equal(yield* Ref.get(runs), 1);
   }).pipe(Effect.provide(Scheduler.layer)),
+);
+
+it.effect("holds due work and the clock until startup recovery activates the server", () =>
+  Effect.gen(function* () {
+    const activation = yield* Deferred.make<void>();
+    const runs = yield* Ref.make(0);
+    const ran = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const scheduler = yield* Scheduler.Scheduler;
+      yield* scheduler.register(
+        "due",
+        Ref.update(runs, (n) => n + 1).pipe(Effect.andThen(Deferred.succeed(ran, undefined))),
+      );
+      yield* TestClock.adjust("10 seconds");
+      assert.equal(yield* Ref.get(runs), 0);
+      yield* Deferred.succeed(activation, undefined);
+      yield* Deferred.await(ran);
+    }).pipe(
+      Effect.provide(Scheduler.layer),
+      Effect.provideService(ServerActivation.ServerActivation, Deferred.await(activation)),
+    );
+    assert.isAtLeast(yield* Ref.get(runs), 1);
+  }),
 );

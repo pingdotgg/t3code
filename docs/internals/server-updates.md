@@ -61,7 +61,9 @@ stopped backends and replays the failure for the same token.
 Restart continuation is an environment-owned preference, off by default. The
 [v2 recovery service](../../apps/server/src/orchestration-v2/ProviderRuntimeRecoveryService.ts)
 requires matching durable run, provider thread, session, and native resume identity.
-Ordinary queued work, finished runs, and background-only work do not qualify.
+Queued runs never started, so recovery holds them and continues the run they wait
+behind. A finished run qualifies only when the restart cancelled its background work;
+its continuation tells the provider what will not report back.
 
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.
@@ -71,7 +73,16 @@ closing providers, then reconciles after ingestion has stopped so a late complet
 cannot be overwritten by a stale cancellation.
 
 The [continuation handler](../../apps/server/src/orchestration-v2/RestartContinuation.ts)
-rechecks the preference, archive state, provider selection, and newer user work before
-dispatching. Stable command and message IDs prevent duplicate submissions after an
-outbox retry. Codex resumes without adding provider prompt text; other adapters receive
-the continuation message through their normal turn path.
+rechecks the preference, archive state, provider selection, newer user work, a stop
+the user requested, and maintenance turns such as `/compact` before dispatching. Stable
+command and message IDs prevent duplicate submissions after an outbox retry. Codex
+resumes without adding provider prompt text unless the turn lost background work;
+other adapters receive the continuation message through their normal turn path.
+
+Delegated tasks (`delegate_task` child threads) are reconciled as their own threads,
+never as the parent's background work. The orchestrator settles child results and
+completion deliveries in a startup pass after reconciliation, because the terminal-run
+listener ignores reconciliation's cancellations. A cancelled child whose restart
+continuation is still pending in the outbox is not a result yet; the continuation's run
+settles it, or the handler settles it when it declines to continue. Schedulers wait for
+activation so they cannot start runs that reconciliation would then cancel.
