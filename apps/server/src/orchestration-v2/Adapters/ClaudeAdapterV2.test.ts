@@ -7,6 +7,7 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
@@ -45,6 +46,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { Tool } from "effect/unstable/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -55,7 +58,9 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
+import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Event,
@@ -861,6 +866,22 @@ describe("ClaudeAdapterV2 context usage", () => {
       updatedAt: "2026-08-29T00:00:00.000Z",
     });
   });
+
+  it("reads the context window from the model catalog", () => {
+    const maxTokens = (model: string, options: ModelSelection["options"] = []) =>
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1 },
+        { instanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId, model, options },
+        "2026-08-29T00:00:00.000Z",
+      ).maxTokens;
+
+    // Opus 4.8 has a fixed 1M window in the catalog.
+    assert.equal(maxTokens("claude-opus-4-8"), 1_000_000);
+    // Opus 4.6 follows its 200k/1m selection.
+    assert.equal(maxTokens("claude-opus-4-6", [{ id: "contextWindow", value: "200k" }]), 200_000);
+    assert.equal(maxTokens("claude-opus-4-6", [{ id: "contextWindow", value: "1m" }]), 1_000_000);
+    assert.equal(maxTokens("custom-claude-model"), 200_000);
+  });
 });
 
 describe("ClaudeAdapterV2 session permissions", () => {
@@ -1025,6 +1046,75 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
   );
 });
 
+describe("ClaudeAgentSdkQueryRunner forkSession", () => {
+  it.effect("forks a session stored under the instance CLAUDE_CONFIG_DIR", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-fork-config-",
+        });
+        const projectDir = path.join(configDir, "projects", "-repo");
+        const sessionId = "11111111-1111-4111-8111-111111111111";
+        const entry = (uuid: string, parentUuid: string | null, message: unknown) => ({
+          type: parentUuid === null ? "user" : "assistant",
+          uuid,
+          parentUuid,
+          sessionId,
+          cwd: "/repo",
+          isSidechain: false,
+          timestamp: "2026-10-01T00:00:00.000Z",
+          message,
+        });
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, `${sessionId}.jsonl`),
+          [
+            entry("aaaaaaaa-0000-4000-8000-000000000001", null, {
+              role: "user",
+              content: "hello",
+            }),
+            entry("aaaaaaaa-0000-4000-8000-000000000002", "aaaaaaaa-0000-4000-8000-000000000001", {
+              role: "assistant",
+              content: [{ type: "text", text: "hi" }],
+            }),
+          ]
+            .map((line) => JSON.stringify(line))
+            .join("\n"),
+        );
+
+        const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+        const forked = yield* runner.forkSession({
+          sessionId,
+          options: {},
+          environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+          threadId: ThreadId.make("thread-claude-fork-config-dir"),
+          providerSessionId: ProviderSessionId.make("provider-session-claude-fork-config-dir"),
+        });
+
+        assert.notEqual(forked.sessionId, sessionId);
+        assert.isTrue(yield* fileSystem.exists(path.join(projectDir, `${forked.sessionId}.jsonl`)));
+      }),
+    ).pipe(
+      Effect.provide(
+        ClaudeAdapterV2.claudeAgentSdkQueryRunnerLiveLayer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("ClaudeAdapterV2 approval cancellation", () => {
   it.effect("observes an approval signal that was already aborted", () =>
     Effect.gen(function* () {
@@ -1065,10 +1155,10 @@ describe("ClaudeAdapterV2 approval cancellation", () => {
 });
 
 describe("ClaudeAdapterV2 executable path", () => {
-  it.effect("expands ~ in the configured binary path for the SDK", () =>
+  // Opens one turn and returns the executable path the SDK query received.
+  const sdkExecutablePath = (binaryPath: string) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const path = yield* Path.Path;
         const executablePaths: Array<string | undefined> = [];
         const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
           {
@@ -1076,7 +1166,7 @@ describe("ClaudeAdapterV2 executable path", () => {
             displayName: undefined,
             environment: [],
             enabled: true,
-            config: { ...DEFAULT_CLAUDE_SETTINGS, binaryPath: "~/bin/claude" },
+            config: { ...DEFAULT_CLAUDE_SETTINGS, binaryPath },
           },
           {},
         ).pipe(
@@ -1125,10 +1215,29 @@ describe("ClaudeAdapterV2 executable path", () => {
             attachments: [],
           }),
         );
-
-        assert.deepEqual(executablePaths, [path.join(NodeOS.homedir(), "bin", "claude")]);
+        return executablePaths;
       }),
-    ).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)));
+
+  it.effect("expands ~ in the configured binary path for the SDK", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      assert.deepEqual(yield* sdkExecutablePath("~/bin/claude"), [
+        path.join(NodeOS.homedir(), "bin", "claude"),
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("follows a Windows npm launcher shim to the real executable", () =>
+    Effect.gen(function* () {
+      const executable = "C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe";
+      const executablePaths = yield* sdkExecutablePath("claude").pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, () => "C:\\npm\\claude.cmd"),
+        Effect.provideService(ClaudeExecutableFileCheck, (filePath) => filePath === executable),
+      );
+      assert.deepEqual(executablePaths, [executable]);
+    }),
   );
 });
 
@@ -1584,6 +1693,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         const forkCalls: Array<{
           readonly sessionId: string;
           readonly options: unknown;
+          readonly environment: NodeJS.ProcessEnv;
           readonly threadId: ThreadId;
           readonly providerSessionId: ProviderSessionId;
         }> = [];
@@ -1677,6 +1787,7 @@ describe("ClaudeAdapterV2 native fork", () => {
               dir: "/workspace",
               upToMessageId: "assistant-message-cursor",
             },
+            environment: {},
             threadId: targetThreadId,
             providerSessionId,
           },

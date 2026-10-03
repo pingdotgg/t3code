@@ -2,13 +2,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  IsoDateTime,
   NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
+  type RuntimeMode,
+  type ScheduledTask,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -1035,5 +1040,126 @@ describe("OrchestratorMcpService provider resolution", () => {
           }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
         }
       }),
+  );
+});
+
+describe("OrchestratorMcpService scheduled tasks", () => {
+  it.effect("lets a restricted agent edit or delete only tasks with no more access", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:mcp-scheduled-caller");
+      const projectId = ProjectId.make("project:mcp-scheduled");
+      const timestamp = IsoDateTime.make("2026-07-01T09:00:00.000Z");
+      const fullAccessThreadId = ThreadId.make("thread:mcp-scheduled-full-access");
+      const makeTask = (
+        id: string,
+        runtimeMode: RuntimeMode,
+        threadId: ThreadId | null = null,
+      ): ScheduledTask => ({
+        id: ScheduledTaskId.make(id),
+        title: id,
+        prompt: "check the build",
+        enabled: false,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId,
+        workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-terra" },
+        runtimeMode,
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: "never",
+        lastRunError: null,
+        runCount: 0,
+      });
+      const fullAccessTask = makeTask("scheduled-task:full-access", "full-access");
+      const restrictedTask = makeTask("scheduled-task:restricted", "approval-required");
+      // Saved as restricted, but it runs in a full-access thread.
+      const boundTask = makeTask("scheduled-task:bound", "approval-required", fullAccessThreadId);
+      const writes = yield* Ref.make<ReadonlyArray<string>>([]);
+      const caller = {
+        thread: {
+          id: threadId,
+          projectId,
+          archivedAt: null,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        },
+      } as unknown as OrchestrationV2ThreadProjection;
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(caller),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === fullAccessThreadId
+                ? ({
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                  } as OrchestrationV2ThreadShell)
+                : null,
+            ),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [fullAccessTask, restrictedTask, boundTask] }),
+          upsert: (input) =>
+            Ref.update(writes, (all) => [...all, `upsert:${input.id}`]).pipe(
+              Effect.as({ task: { ...restrictedTask, enabled: input.enabled } }),
+            ),
+          delete: (input) =>
+            Ref.update(writes, (all) => [...all, `delete:${input.id}`]).pipe(
+              Effect.as({ id: input.id }),
+            ),
+        }),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-scheduled"),
+        threadId,
+        providerSessionId: "provider-session:mcp-scheduled",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const updateError = yield* service
+          .updateScheduledTask(scope, {
+            scheduledTaskId: fullAccessTask.id,
+            prompt: "push to main",
+            enabled: true,
+          })
+          .pipe(Effect.flip);
+        assert.equal(updateError.code, "capability_denied");
+        const deleteError = yield* service
+          .deleteScheduledTask(scope, { scheduledTaskId: fullAccessTask.id })
+          .pipe(Effect.flip);
+        assert.equal(deleteError.code, "capability_denied");
+        const boundError = yield* service
+          .updateScheduledTask(scope, { scheduledTaskId: boundTask.id, prompt: "push to main" })
+          .pipe(Effect.flip);
+        assert.equal(boundError.code, "capability_denied");
+        assert.deepStrictEqual(yield* Ref.get(writes), []);
+
+        const updated = yield* service.updateScheduledTask(scope, {
+          scheduledTaskId: restrictedTask.id,
+          enabled: true,
+        });
+        assert.isTrue(updated.enabled);
+        yield* service.deleteScheduledTask(scope, { scheduledTaskId: restrictedTask.id });
+        assert.deepStrictEqual(yield* Ref.get(writes), [
+          `upsert:${restrictedTask.id}`,
+          `delete:${restrictedTask.id}`,
+        ]);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+    }),
   );
 });

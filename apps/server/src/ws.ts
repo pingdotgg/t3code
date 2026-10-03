@@ -2388,10 +2388,22 @@ const makeWsRpcLayer = (
             providerAuth.complete(input, currentSessionId),
             { "rpc.aggregate": "provider" },
           ),
-        [WS_METHODS.chatGptReconnectProfile]: (input) => providerAuth.reconnectProfile(input),
-        [WS_METHODS.chatGptImportProfile]: (input) => providerAuth.importProfile(input),
+        [WS_METHODS.chatGptReconnectProfile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.chatGptReconnectProfile,
+            providerAuth.reconnectProfile(input),
+            { "rpc.aggregate": "provider" },
+          ),
+        [WS_METHODS.chatGptImportProfile]: (input) =>
+          observeRpcEffect(WS_METHODS.chatGptImportProfile, providerAuth.importProfile(input), {
+            "rpc.aggregate": "provider",
+          }),
         [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
-          subscribeChatGptHandoff(input, currentSessionId),
+          observeRpcStream(
+            WS_METHODS.chatGptHandoffSubscribe,
+            subscribeChatGptHandoff(input, currentSessionId),
+            { "rpc.aggregate": "provider" },
+          ),
         [WS_METHODS.codexAuthCallbackSubscribe]: (input) =>
           observeRpcStream(
             WS_METHODS.codexAuthCallbackSubscribe,
@@ -3718,12 +3730,39 @@ const makeWsRpcLayer = (
     }),
   );
 
+// Built once per server, not per connection: every client shares the provider
+// update guard, the agent session scan, and the source-control discovery state.
+const sharedWsRpcServicesLayer = Layer.mergeAll(
+  AgentSessionScanner.layer,
+  ProviderMaintenanceRunner.layer,
+  SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      SourceControlProviderRegistry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            AzureDevOpsCli.layer,
+            BitbucketApi.layer,
+            GitHubCli.layer,
+            GitLabCli.layer,
+            ForgejoCli.layer,
+          ),
+        ),
+        Layer.provideMerge(GitVcsDriver.layer),
+        Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+      ),
+    ),
+  ),
+);
+
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
+    const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+    const providerMaintenance = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+    const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3776,31 +3815,23 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              Layer.provide(AgentSessionScanner.layer),
-              Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                Layer.succeed(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
+              ),
+              Layer.provide(
+                Layer.succeed(
+                  ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+                  providerMaintenance,
+                ),
+              ),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(
-                SourceControlDiscovery.layer.pipe(
-                  Layer.provide(
-                    SourceControlProviderRegistry.layer.pipe(
-                      Layer.provide(
-                        Layer.mergeAll(
-                          AzureDevOpsCli.layer,
-                          BitbucketApi.layer,
-                          GitHubCli.layer,
-                          GitLabCli.layer,
-                          ForgejoCli.layer,
-                        ),
-                      ),
-                      Layer.provideMerge(GitVcsDriver.layer),
-                      Layer.provide(
-                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
-                      ),
-                    ),
-                  ),
+                Layer.succeed(
+                  SourceControlDiscovery.SourceControlDiscovery,
+                  sourceControlDiscovery,
                 ),
               ),
             ),
@@ -3819,4 +3850,4 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       ),
     );
   }),
-);
+).pipe(Layer.provide(sharedWsRpcServicesLayer));

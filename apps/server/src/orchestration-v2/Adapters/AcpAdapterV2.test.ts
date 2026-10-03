@@ -3212,6 +3212,113 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect("activates a saved session with session/resume when the flavor prefers it", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          preferResumeSession: true,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const firstThreadId = ThreadId.make("thread-acp-prefer-resume:first");
+      const secondThreadId = ThreadId.make("thread-acp-prefer-resume:second");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } satisfies ModelSelection;
+      const runtime = yield* adapter.openSession({
+        threadId: firstThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prefer-resume"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const firstProviderThread = yield* runtime.ensureThread({
+        threadId: firstThreadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: firstThreadId,
+          providerThread: firstProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      const secondProviderThread: OrchestrationV2ProviderThread = {
+        ...firstProviderThread,
+        id: ProviderThreadId.make("provider-thread-acp-prefer-resume:second"),
+        appThreadId: secondThreadId,
+        nativeThreadRef: {
+          driver: ACP_TEST_DRIVER,
+          nativeId: "mock-session-2",
+          strength: "strong",
+        },
+        status: "idle",
+      };
+      yield* runtime.resumeThread({
+        providerThread: secondProviderThread,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId: secondThreadId,
+          providerThread: secondProviderThread,
+          instanceId,
+          runtimePolicy,
+          modelSelection,
+          now,
+          ordinal: 2,
+        }),
+      );
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+
+      // ACP v2 sends a load as `session/resume` with `replayFrom`; a plain
+      // resume skips the slow history replay.
+      const activations = Array.from(yield* Queue.takeAll(protocolEvents))
+        .filter(
+          (event) =>
+            event.direction === "outgoing" &&
+            (rawProtocolMethod(event) === "session/load" ||
+              rawProtocolMethod(event) === "session/resume"),
+        )
+        .map((event) => ({
+          method: rawProtocolMethod(event),
+          replayFrom: rawProtocolRequestParam(event, "replayFrom"),
+        }));
+      assert.deepStrictEqual(activations, [{ method: "session/resume", replayFrom: undefined }]);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.live("terminalizes an empty successful foreground Bash tool when the turn completes", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

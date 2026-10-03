@@ -47,6 +47,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { layer as runtimeRequestServiceLayer } from "./RuntimeRequestService.ts";
 import { layerWithLegacyImporter as threadManagementServiceLayer } from "./ThreadManagementService.ts";
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
+import * as TemporaryBranchRename from "./TemporaryBranchRename.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
@@ -146,21 +147,6 @@ const runExecutionServiceProvided = runExecutionServiceLayer.pipe(
   ),
 );
 
-const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
-  Layer.provide(
-    Layer.mergeAll(
-      contextHandoffServiceProvided,
-      eventSinkProvided,
-      idAllocatorLayer,
-      projectionStoreLayer,
-      providerSessionManagerProvided,
-      providerAuthServiceProvided,
-      runExecutionServiceProvided,
-      runtimePolicyProvided,
-    ),
-  ),
-);
-
 const providerTurnControlServiceProvided = providerTurnControlServiceLayer.pipe(
   Layer.provide(Layer.merge(projectionStoreLayer, providerSessionManagerProvided)),
 );
@@ -235,6 +221,25 @@ const agentSessionImporterProvided = agentSessionImporterLayer.pipe(
 const threadManagementProvided = threadManagementServiceLayer.pipe(
   Layer.provide(Layer.merge(orchestratorProvided, legacyV1ThreadImporterProvided)),
 );
+// One instance, so launch and the first run start share its once-per-thread guard.
+const temporaryBranchRenameProvided = TemporaryBranchRename.layer.pipe(
+  Layer.provide(Layer.merge(threadManagementProvided, TextGeneration.layer)),
+);
+const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      contextHandoffServiceProvided,
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+      providerSessionManagerProvided,
+      providerAuthServiceProvided,
+      runExecutionServiceProvided,
+      runtimePolicyProvided,
+      temporaryBranchRenameProvided,
+    ),
+  ),
+);
 export const ProjectSetupScriptRunnerLayerLive = projectSetupScriptRunnerLayer.pipe(
   Layer.provide(ProjectServiceLayerLive),
 );
@@ -250,6 +255,7 @@ const threadLaunchProvided = threadLaunchServiceLayer.pipe(
       threadManagementProvided,
       commandReceiptStoreProvided,
       idAllocatorLayer,
+      temporaryBranchRenameProvided,
     ),
   ),
 );

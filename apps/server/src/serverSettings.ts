@@ -51,6 +51,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { keepWatching } from "./restartingWatch.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -1213,11 +1214,11 @@ const make = Effect.gen(function* () {
       Stream.debounce(Duration.millis(100)),
     );
 
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* keepWatching({
+      label: "Settings",
+      watch: Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely),
+      revalidate: revalidateAndEmitSafely,
+    }).pipe(Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {

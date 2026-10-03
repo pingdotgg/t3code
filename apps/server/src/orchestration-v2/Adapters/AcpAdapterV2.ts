@@ -6094,14 +6094,15 @@ export function makeAcpAdapterV2(
           }
           const activationOptions = acpMcpActivation(threadId, self);
           prepareTerminalEnvironment(threadId, sessionId);
-          const activated = canLoadSession
-            ? yield* runtime.loadSession(sessionId, activationOptions)
-            : canResumeSession
+          const activated =
+            canResumeSession && (flavor.preferResumeSession === true || !canLoadSession)
               ? yield* runtime.resumeSession(sessionId, activationOptions)
-              : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver,
-                  detail: `ACP driver cannot load or resume session ${sessionId}`,
-                });
+              : canLoadSession
+                ? yield* runtime.loadSession(sessionId, activationOptions)
+                : yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: `ACP driver cannot load or resume session ${sessionId}`,
+                  });
           rememberTerminalEnvironment(activated.sessionId, threadId);
           return activated;
         });

@@ -13,20 +13,35 @@ const [Effect, Layer, FileSystem] = await Promise.all([
   load("FileSystem"),
 ]);
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
-const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
-  await Promise.all([
-    app("orchestration-v2/ProviderTurnStartService"),
-    app("orchestration-v2/ProjectionStore"),
-    app("orchestration-v2/RunExecutionService"),
-    app("orchestration-v2/ProviderSessionManager"),
-    app("orchestration-v2/RuntimePolicy"),
-    app("orchestration-v2/IdAllocator"),
-    app("orchestration-v2/EventSink"),
-    app("orchestration-v2/ContextHandoffService"),
-    app("git/GitWorkflowService"),
-    app("project/ProjectService"),
-    app("provider/Services/ProviderAuthService"),
-  ]);
+const [
+  Start,
+  Projection,
+  Run,
+  Sessions,
+  Policy,
+  Id,
+  Sink,
+  Handoff,
+  Git,
+  Project,
+  Auth,
+  Settings,
+  BranchRename,
+] = await Promise.all([
+  app("orchestration-v2/ProviderTurnStartService"),
+  app("orchestration-v2/ProjectionStore"),
+  app("orchestration-v2/RunExecutionService"),
+  app("orchestration-v2/ProviderSessionManager"),
+  app("orchestration-v2/RuntimePolicy"),
+  app("orchestration-v2/IdAllocator"),
+  app("orchestration-v2/EventSink"),
+  app("orchestration-v2/ContextHandoffService"),
+  app("git/GitWorkflowService"),
+  app("project/ProjectService"),
+  app("provider/Services/ProviderAuthService"),
+  app("serverSettings"),
+  app("orchestration-v2/TemporaryBranchRename"),
+]);
 let current;
 let fullReads = 0;
 const liveRuns = [];
@@ -49,6 +64,8 @@ const dependencies = Layer.mergeAll(
   Layer.mock(Git.GitWorkflowService)({}),
   Layer.mock(Project.ProjectService)({}),
   Layer.mock(Auth.ProviderAuthService)({}),
+  Layer.mock(Settings.ServerSettingsService)({}),
+  Layer.mock(BranchRename.TemporaryBranchRename)({ rename: () => Effect.void }),
   Layer.mock(Projection.ProjectionStoreV2)({
     getThreadProjection: () =>
       Effect.sync(() => {

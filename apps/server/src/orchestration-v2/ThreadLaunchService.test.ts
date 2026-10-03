@@ -55,6 +55,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
+import * as TemporaryBranchRename from "./TemporaryBranchRename.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -183,8 +184,13 @@ function makeHarness(options: HarnessOptions = {}) {
         folderForThread: () => Effect.succeed(Option.none()),
       }),
   );
+  const branchRename = TemporaryBranchRename.layer.pipe(
+    Layer.provide(Layer.merge(externalServices, threadManagement)),
+  );
   const launch = ThreadLaunch.layer.pipe(
-    Layer.provide(Layer.mergeAll(externalServices, threadManagement, receipts, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(externalServices, threadManagement, receipts, IdAllocator.layer, branchRename),
+    ),
   );
   const projectedProjects = Layer.mock(ProjectStore.ProjectStoreV2)({
     get: (requestedProjectId) =>
@@ -1118,6 +1124,7 @@ it.effect("renames a temporary t3code/<hash> branch off the provisioning critica
           Effect.andThen(Deferred.await(allowBranchName)),
           Effect.as({ branch: "generated-branch" }),
         ),
+      serverSettings: { worktreeSubmodules: "top-level" },
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1132,6 +1139,7 @@ it.effect("renames a temporary t3code/<hash> branch off the provisioning critica
       );
       yield* Deferred.await(branchNameStarted);
       assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "t3code/abcd1234");
+      assert.equal(harness.createWorktree.mock.calls[0]?.[1]?.submodules, "top-level");
       yield* waitUntil(() =>
         threads
           .getThreadProjection(launched.threadId)

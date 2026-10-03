@@ -4,9 +4,10 @@
  * "{} script" affordance.
  *
  * Containment rules (lifted from the reviewed #3650 inspection service):
- * - the resolved realpath must live under ~/.claude/projects (where the
- *   Claude harness persists workflow scripts) — realpath re-containment
- *   defeats symlink escapes, including a symlinked leaf file;
+ * - the resolved realpath must live under the `projects` dir of a configured
+ *   Claude instance (where the Claude harness persists workflow scripts) —
+ *   realpath re-containment defeats symlink escapes, including a symlinked
+ *   leaf file;
  * - only .js leaf files are served;
  * - reads are size-capped rather than failed, with a truncation marker.
  *
@@ -14,17 +15,42 @@
  * never trusted beyond these checks.
  */
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { OrchestrationGetWorkflowScriptError } from "@t3tools/contracts";
+import { ClaudeSettings, OrchestrationGetWorkflowScriptError } from "@t3tools/contracts";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
+import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const SCRIPT_BYTE_CAP = 256 * 1024;
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 
-function scriptsRoot(): string {
-  return NodePath.join(NodeOS.homedir(), ".claude", "projects");
-}
+// Each Claude instance can set its own home or CLAUDE_CONFIG_DIR, and a
+// thread's workflow may come from any of them (subagents included).
+const claudeProjectsRoots = Effect.fn("orchestration.claudeProjectsRoots")(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) => service.getSettings),
+  );
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const roots = new Set<string>();
+  for (const instance of Object.values(deriveProviderInstanceConfigMap(settings))) {
+    if (instance.driver !== "claudeAgent") continue;
+    const config = decodeClaudeSettings(instance.config ?? {});
+    if (Option.isNone(config)) continue;
+    const home = yield* resolveClaudeHomePath(
+      config.value,
+      mergeProviderInstanceEnvironment(instance.environment, hostEnvironment),
+    );
+    roots.add(NodePath.join(home, "projects"));
+  }
+  return [...roots];
+});
 
 export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(function* (input: {
   readonly scriptPath: string;
@@ -38,15 +64,28 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
     });
   }
 
-  const root = yield* Effect.tryPromise({
-    try: () => NodeFSP.realpath(scriptsRoot()),
-    catch: (cause) =>
-      new OrchestrationGetWorkflowScriptError({
-        reason: "root-unavailable",
-        scriptPath: requested,
-        cause,
-      }),
-  });
+  const roots = yield* claudeProjectsRoots().pipe(
+    Effect.flatMap((candidates) =>
+      Effect.promise(() =>
+        Promise.all(candidates.map((root) => NodeFSP.realpath(root).catch(() => null))),
+      ),
+    ),
+    Effect.map((resolvedRoots) => resolvedRoots.filter((root) => root !== null)),
+    Effect.mapError(
+      (cause) =>
+        new OrchestrationGetWorkflowScriptError({
+          reason: "root-unavailable",
+          scriptPath: requested,
+          cause,
+        }),
+    ),
+  );
+  if (roots.length === 0) {
+    return yield* new OrchestrationGetWorkflowScriptError({
+      reason: "root-unavailable",
+      scriptPath: requested,
+    });
+  }
 
   // Realpath the FILE itself (not just its directory): a symlink named
   // like a script inside a contained directory must not escape.
@@ -60,7 +99,7 @@ export const readWorkflowScript = Effect.fn("orchestration.readWorkflowScript")(
       }),
   });
 
-  if (resolved !== root && !resolved.startsWith(`${root}${NodePath.sep}`)) {
+  if (!roots.some((root) => resolved === root || resolved.startsWith(`${root}${NodePath.sep}`))) {
     return yield* new OrchestrationGetWorkflowScriptError({
       reason: "outside-root",
       scriptPath: resolved,

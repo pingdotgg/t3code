@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   NodeId,
+  PlanId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -485,6 +486,53 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
 
       const replaced = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(replaced.providerTurns[0]?.tokenUsage, replacementUsage);
+    }),
+  );
+
+  it.effect("reports an unreadable plan row as a read error, not a defect", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:bad-plan-row");
+      const planId = PlanId.make("plan:bad-plan-row");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bad-plan-row:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:bad-plan-row"),
+          title: "Bad plan row",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_plans
+          (plan_id, thread_id, run_id, node_id, kind, status, payload_json)
+        VALUES (${planId}, ${threadId}, NULL, 'node:bad-plan-row', 'proposed', 'active', '{not json')
+      `;
+
+      const error = yield* projectionStore.getPlan(threadId, planId).pipe(Effect.flip);
+      assert.equal(error._tag, "ProjectionStoreReadError");
     }),
   );
 

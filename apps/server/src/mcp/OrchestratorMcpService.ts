@@ -1184,6 +1184,44 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  // Agents may edit or delete only tasks that run with no more access than
+  // their own live thread. Otherwise a restricted agent could rewrite a task
+  // that the scheduler runs with full access. An unbound task runs with its
+  // saved modes; a bound one runs in its thread with that thread's modes.
+  const requireScheduledTaskAuthority = (
+    caller: OrchestrationV2ThreadProjection["thread"],
+    task: ScheduledTask,
+  ) =>
+    Effect.gen(function* () {
+      const boundThread =
+        task.threadId === null || task.threadId === caller.id
+          ? null
+          : yield* threadManagement
+              .getThreadShell(task.threadId)
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "orchestration_error",
+                    `Unable to read thread ${task.threadId}: ${errorMessage(error)}`,
+                  ),
+                ),
+              );
+      const allowed =
+        caller.archivedAt === null &&
+        [task, ...(boundThread === null ? [] : [boundThread])].every(
+          (required) =>
+            runtimeModeRank(caller.runtimeMode) >= runtimeModeRank(required.runtimeMode) &&
+            interactionModeRank(caller.interactionMode) >=
+              interactionModeRank(required.interactionMode),
+        );
+      if (!allowed) {
+        return yield* failure(
+          "capability_denied",
+          `Scheduled task ${task.id} needs a live calling thread with at least the modes it runs with.`,
+        );
+      }
+    });
+
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
@@ -1253,6 +1291,7 @@ const make = Effect.gen(function* () {
           parent.thread.projectId,
           input.scheduledTaskId,
         );
+        yield* requireScheduledTaskAuthority(parent.thread, existing);
         const threadId =
           input.bindToCurrentThread === undefined
             ? existing.threadId
@@ -1298,6 +1337,7 @@ const make = Effect.gen(function* () {
           parent.thread.projectId,
           input.scheduledTaskId,
         );
+        yield* requireScheduledTaskAuthority(parent.thread, existing);
         yield* scheduledTasks
           .delete({ id: existing.id })
           .pipe(

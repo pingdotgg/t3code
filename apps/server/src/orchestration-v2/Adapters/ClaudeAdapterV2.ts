@@ -33,7 +33,7 @@ import type {
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
 import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
@@ -81,6 +81,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -92,13 +93,13 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
-  resolveClaudeCatalogContextWindow,
   resolveClaudeCatalogContextWindowTokens,
 } from "../../provider/ClaudeModelCatalog.ts";
 import {
@@ -107,6 +108,7 @@ import {
   shouldPersistProviderEvent,
 } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
+import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
 import {
   claudeRateLimitEventToUpdate,
   type ClaudeScopedLimitNames,
@@ -137,13 +139,12 @@ import {
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
-function claudeContextWindow(modelSelection: ModelSelection): number | null {
-  if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
-    return 1_000_000;
-  }
-  return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
-    ? 1_000_000
-    : 200_000;
+// The catalog knows fixed windows (Opus 4.7, 4.8) and the selected option for
+// models with a 200k/1m choice. Unknown and custom models fall back to 200k.
+function claudeContextWindow(modelSelection: ModelSelection): number {
+  return (
+    resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) ?? 200_000
+  );
 }
 
 export function claudeProviderTurnTokenUsage(
@@ -376,6 +377,8 @@ export class ClaudeAgentSdkQueryRunner extends Context.Service<
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
   readonly options: ForkSessionOptions;
+  /** The instance environment; its CLAUDE_CONFIG_DIR locates the session files. */
+  readonly environment: NodeJS.ProcessEnv;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -579,15 +582,74 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
   };
 }
 
+const encodeClaudeHistoryOptions = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ sessionId: Schema.String })),
+);
+
+/**
+ * SDK history helpers read session files through `process.env`. A fork for an
+ * instance with its own CLAUDE_CONFIG_DIR runs in the history worker process
+ * with that instance's environment, so the server's environment never changes
+ * while other providers run.
+ */
+const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(function* (
+  input: ClaudeAgentSdkSessionForkInput,
+) {
+  // The single executable has no Node to run a sibling script, so it hosts
+  // the worker as a hidden subcommand of itself.
+  const workerArguments = (yield* HostProcessIsExecutable)
+    ? ["__claude-history"]
+    : [
+        yield* Path.Path.pipe(
+          Effect.flatMap((path) =>
+            path.fromFileUrl(
+              new URL(
+                import.meta.url.endsWith(".ts")
+                  ? "../../claude-history-worker.ts"
+                  : "./claude-history-worker.mjs",
+                import.meta.url,
+              ),
+            ),
+          ),
+        ),
+      ];
+  const result = yield* spawnAndCollect(
+    process.execPath,
+    ChildProcess.make(
+      process.execPath,
+      [
+        ...workerArguments,
+        "forkSession",
+        input.sessionId,
+        encodeClaudeHistoryOptions(input.options),
+      ],
+      { env: { ...input.environment, ELECTRON_RUN_AS_NODE: "1" } },
+    ),
+  ).pipe(Effect.timeout("30 seconds"));
+  if (result.code !== 0) {
+    return yield* new ClaudeAgentSdkQueryRunnerError({
+      method: "forkSession",
+      cause: result.stderr || "Claude history worker failed.",
+    });
+  }
+  return yield* decodeClaudeHistoryFork(result.stdout);
+});
+
 export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | Path.Path
+  | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
@@ -716,10 +778,16 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
             options: input.options,
           },
         });
-        const result = yield* Effect.tryPromise({
-          try: () => forkClaudeSession(input.sessionId, input.options),
-          catch: (cause) => queryRunnerError(cause, "forkSession"),
-        });
+        const fork: Effect.Effect<ForkSessionResult, unknown> =
+          input.environment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR
+            ? Effect.tryPromise(() => forkClaudeSession(input.sessionId, input.options))
+            : forkClaudeSessionInWorker(input).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.provideService(Path.Path, path),
+              );
+        const result = yield* fork.pipe(
+          Effect.mapError((cause) => queryRunnerError(cause, "forkSession")),
+        );
         yield* logProtocolEvent({
           direction: "incoming",
           stage: "decoded",
@@ -7588,6 +7656,7 @@ export function makeClaudeAdapterV2(
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
+                environment: adapterOptions.environment,
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
               });
@@ -7666,9 +7735,15 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const baseEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
+    // The SDK spawns this path directly, so Windows `claude` and `claude.cmd`
+    // must resolve to the real executable first.
+    const binaryPath = yield* resolveClaudeSdkExecutablePath(
+      expandHomePath(config.binaryPath),
+      claudeEnvironment,
+    );
     return makeClaudeAdapterV2({
       instanceId,
-      settings: { ...config, enabled, binaryPath: expandHomePath(config.binaryPath) },
+      settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,

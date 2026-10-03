@@ -28,19 +28,18 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { buildTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
-import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
+import * as TemporaryBranchRename from "./TemporaryBranchRename.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -149,13 +148,12 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const git = yield* GitWorkflow.GitWorkflowService;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const textGeneration = yield* TextGeneration.TextGeneration;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const branchRename = yield* TemporaryBranchRename.TemporaryBranchRename;
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -229,41 +227,6 @@ const make = Effect.gen(function* () {
       });
     }
     yield* Effect.gen(function* () {
-      const initialMessage = input.initialMessage;
-      const generateBranchNameFor = (cwd: string, message: ThreadLaunchInitialMessage) =>
-        Effect.gen(function* () {
-          const settings = resolveProjectSettings(
-            yield* serverSettings.getSettings,
-            input.projectId,
-          ).settings;
-          const modelSelection =
-            settings.sourceControlWriterModelSelection === null
-              ? settings.textGenerationModelSelection
-              : ServerSettings.resolveSourceControlWriterModelSelection(
-                  settings,
-                  yield* providerRegistry.getProviders,
-                );
-          return yield* textGeneration
-            .generateBranchName({
-              naming: {
-                mode: settings.branchNamingMode,
-                prefix: settings.branchNamePrefix,
-                instructions: settings.branchNameInstructions,
-              },
-              cwd,
-              message: message.text,
-              attachments: message.attachments,
-              ...(message.context ? { context: message.context } : {}),
-              modelSelection,
-            })
-            .pipe(
-              Effect.map((result) => ({
-                branch: result.branch,
-                exactName: settings.branchNamingMode === "custom",
-              })),
-            );
-        });
-
       // The server owns worktree naming: without an explicit branch, provision
       // under a temporary `t3code/<hash>` name so the worktree never waits on
       // name generation, then rename in the background below.
@@ -330,6 +293,14 @@ const make = Effect.gen(function* () {
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        // Best effort: a settings read failure falls back to the checkout's t3.json.
+        const submodules = yield* serverSettings.getSettings.pipe(
+          Effect.map(
+            (settings) =>
+              resolveProjectSettings(settings, input.projectId).settings.worktreeSubmodules,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
         const worktree = yield* git
           .createWorktree(
             {
@@ -340,6 +311,7 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              submodules,
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {
@@ -370,44 +342,19 @@ const make = Effect.gen(function* () {
 
       // Rename temporary branches (server-invented above, or sent by clients
       // that name worktrees themselves) in the background so generation latency
-      // never delays provisioning or the provider turn. The temporary name
-      // simply sticks if generation or the rename fails.
-      if (
-        worktreePath !== null &&
-        branch !== null &&
-        initialMessage !== undefined &&
-        isTemporaryWorktreeBranch(branch)
-      ) {
-        const oldBranch = branch;
-        const worktreeCwd = worktreePath;
-        yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
-          Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git.renameBranch({
-              cwd: worktreeCwd,
-              oldBranch,
-              newBranch,
-              ...(exactName ? { exactName: true } : {}),
-            }),
-          ),
-          Effect.flatMap((renamed) =>
-            threads.dispatch({
-              type: "thread.metadata.update",
-              commandId: CommandId.make(`${input.commandId}:branch-rename`),
-              threadId,
-              branch: renamed.branch,
-              worktreePath: worktreeCwd,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Thread worktree branch rename failed", {
-              commandId: input.commandId,
-              threadId,
-              oldBranch,
-              cause,
-            }),
-          ),
-          Effect.forkIn(preparationScope),
-        );
+      // never delays provisioning or the provider turn. Without a first message
+      // here, the thread's first run start renames it instead.
+      if (input.initialMessage !== undefined) {
+        yield* branchRename
+          .rename({
+            threadId,
+            projectId: input.projectId,
+            commandId: input.commandId,
+            branch,
+            worktreePath,
+            message: input.initialMessage,
+          })
+          .pipe(Effect.forkIn(preparationScope));
       }
 
       const cwd = worktreePath ?? project.workspaceRoot;

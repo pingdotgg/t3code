@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -27,6 +28,7 @@ import * as Schema from "effect/Schema";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -36,6 +38,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TemporaryBranchRename from "./TemporaryBranchRename.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -130,6 +133,8 @@ it("does not commit running state when inherited background routing cannot be re
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        ServerSettings.ServerSettingsService.layerTest({ worktreeSubmodules: "none" }),
+        Layer.mock(TemporaryBranchRename.TemporaryBranchRename)({}),
       ),
     ),
   );
@@ -142,14 +147,104 @@ it("does not commit running state when inherited background routing cannot be re
     expect(error._tag).toBe("ProviderTurnStartError");
     expect(projectionReadCount).toBe(2);
     expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/provider-turn-start-project" });
-    expect(createWorktree).toHaveBeenCalledWith({
-      cwd: "/tmp/provider-turn-start-project",
-      refName: "feature/restore",
-      path: "/tmp/missing-provider-turn-start-worktree",
-    });
+    expect(createWorktree).toHaveBeenCalledWith(
+      {
+        cwd: "/tmp/provider-turn-start-project",
+        refName: "feature/restore",
+        path: "/tmp/missing-provider-turn-start-worktree",
+      },
+      { submodules: "none" },
+    );
     expect(writeIfRunCurrent).not.toHaveBeenCalled();
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+// The thread's first run was a /compact, so this is the first prompt to reach the provider.
+it("names a temporary worktree branch from the first run that reaches the provider", async () => {
+  const threadId = ThreadId.make("thread_provider_turn_start_branch_name");
+  const runId = RunId.make("run_provider_turn_start_branch_name");
+  const messageId = MessageId.make("message_provider_turn_start_branch_name");
+  const rootNodeId = NodeId.make("node_provider_turn_start_branch_name");
+  const attemptId = RunAttemptId.make("attempt_provider_turn_start_branch_name");
+  const providerThreadId = ProviderThreadId.make("provider_thread_provider_turn_start_branch_name");
+  const checkpointScopeId = CheckpointScopeId.make("checkpoint_scope_provider_turn_start_branch");
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("project_provider_turn_start_branch_name"),
+      branch: "t3code/1a2b3c4d",
+      worktreePath: "/tmp/provider-turn-start-branch-name",
+    },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        userMessageId: messageId,
+        ordinal: 2,
+      },
+    ],
+    nodes: [{ id: rootNodeId, checkpointScopeId }],
+    attempts: [{ id: attemptId }],
+    providerThreads: [
+      {
+        id: providerThreadId,
+        providerSessionId: ProviderSessionId.make("provider_session_branch_name"),
+      },
+    ],
+    messages: [{ id: messageId, text: "Fix the login bug", attachments: [] }],
+    checkpointScopes: [{ id: checkpointScopeId }],
+    contextHandoffs: [],
+    contextTransfers: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  await Effect.gen(function* () {
+    const renamed = yield* Deferred.make<TemporaryBranchRename.TemporaryBranchRenameInput>();
+    const layer = ProviderTurnStart.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(true) } as never),
+          Layer.mock(GitWorkflow.GitWorkflowService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: false }),
+            // Stops the start right after the rename is forked.
+            getRuntimeRecoveryProjection: () =>
+              Effect.fail(
+                new ProjectionStore.ProjectionStoreReadError({ threadId, cause: "stop" }),
+              ),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderAuthService.ProviderAuthService)({
+            tryHandlePromptCommand: () => Effect.succeed(false),
+          }),
+          Layer.mock(RunExecutionService.RunExecutionServiceV2)({}),
+          Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+          ServerSettings.ServerSettingsService.layerTest(),
+          Layer.mock(TemporaryBranchRename.TemporaryBranchRename)({
+            rename: (input) => Deferred.succeed(renamed, input).pipe(Effect.asVoid),
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
+        .start({ threadId, runId })
+        .pipe(Effect.ignore);
+      expect(yield* Deferred.await(renamed)).toMatchObject({
+        threadId,
+        branch: "t3code/1a2b3c4d",
+        worktreePath: "/tmp/provider-turn-start-branch-name",
+        message: { text: "Fix the login bug" },
+      });
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.runPromise);
 });
 
 function makeLocalCommandHarness(input: {
@@ -493,6 +588,8 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: () => Effect.succeed({} as never),
         }),
+        ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(TemporaryBranchRename.TemporaryBranchRename)({}),
       ),
     ),
   );

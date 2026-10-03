@@ -40,6 +40,7 @@ import * as Context from "effect/Context";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
+import { keepWatching } from "./restartingWatch.ts";
 import * as ServerConfig from "./config.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -577,11 +578,11 @@ const make = Effect.gen(function* () {
       Stream.debounce(Duration.millis(100)),
     );
 
-    yield* Stream.runForEach(debouncedKeybindingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* keepWatching({
+      label: "Keybindings",
+      watch: Stream.runForEach(debouncedKeybindingsEvents, () => revalidateAndEmitSafely),
+      revalidate: revalidateAndEmitSafely,
+    }).pipe(Effect.forkIn(watcherScope), Effect.asVoid);
   });
 
   const start = Effect.gen(function* () {

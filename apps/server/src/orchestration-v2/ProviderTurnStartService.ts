@@ -1,5 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -15,14 +16,17 @@ import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -47,6 +51,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as TemporaryBranchRename from "./TemporaryBranchRename.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -95,6 +100,8 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ServerSettings.ServerSettingsService
+  | TemporaryBranchRename.TemporaryBranchRename
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -109,6 +116,10 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const branchRename = yield* TemporaryBranchRename.TemporaryBranchRename;
+    const backgroundScope = yield* Scope.make("sequential");
+    yield* Effect.addFinalizer(() => Scope.close(backgroundScope, Exit.void));
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -470,13 +481,22 @@ export const layer: Layer.Layer<
               worktreePath,
               branch,
             });
+            // Best effort like the rest of this recovery: a settings read
+            // failure falls back to the checkout's t3.json.
+            const submodules = yield* serverSettings.getSettings.pipe(
+              Effect.map(
+                (settings) =>
+                  resolveProjectSettings(settings, projection.thread.projectId).settings
+                    .worktreeSubmodules,
+              ),
+              Effect.orElseSucceed(() => null),
+            );
             yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
               Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
+                gitWorkflow.createWorktree(
+                  { cwd: project.workspaceRoot, refName: branch, path: worktreePath },
+                  { submodules },
+                ),
               ),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
@@ -491,6 +511,20 @@ export const layer: Layer.Layer<
           }
         }
       }
+      // A run that reaches the provider names a still-temporary worktree branch
+      // from its message, for threads launched without one. Commands handled
+      // above, such as /compact, return first and never name it. The service attempts
+      // each thread once, in the background so naming never delays the turn.
+      yield* branchRename
+        .rename({
+          threadId: projection.thread.id,
+          projectId: projection.thread.projectId,
+          commandId: CommandId.make(run.id),
+          branch,
+          worktreePath,
+          message,
+        })
+        .pipe(Effect.forkIn(backgroundScope));
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,
       ): ReturnType<typeof RunExecutionService.selectInheritedBackgroundTurnItems> =>

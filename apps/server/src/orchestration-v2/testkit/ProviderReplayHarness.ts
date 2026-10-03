@@ -15,6 +15,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as TemporaryBranchRename from "../TemporaryBranchRename.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -374,6 +375,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         }),
         runExecutionServiceProvided,
         runtimeLayer,
+        serverSettingsLayer,
+        // Replay threads have no temporary worktree branch to name.
+        Layer.mock(TemporaryBranchRename.TemporaryBranchRename)({ rename: () => Effect.void }),
       ),
     ),
   );
