@@ -401,16 +401,34 @@ export function TerminalViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const attachTarget = useMemo(
+    () => ({
+      environmentId,
+      input: {
+        threadId,
+        terminalId,
+        cwd,
+        ...(worktreePath !== undefined ? { worktreePath } : {}),
+        ...(runtimeEnvKey
+          ? { env: Object.fromEntries(JSON.parse(runtimeEnvKey) as Array<[string, string]>) }
+          : {}),
+        ...(providerInstanceId ? { providerInstanceId } : {}),
+      },
+    }),
+    [environmentId, threadId, terminalId, cwd, worktreePath, runtimeEnvKey, providerInstanceId],
+  );
+  // Readiness belongs to this launch context, so a replacement cannot attach
+  // using the previous surface while its own font and WASM are still loading.
+  const [readySurface, setReadySurface] = useState<{
+    target: typeof attachTarget;
+    terminal: GhosttyTerminalSurface;
+  } | null>(null);
+  const attachedSurface = readySurface?.target === attachTarget ? readySurface.terminal : null;
+  const readAttachGrid = useCallback(() => attachedSurface?.gridSize() ?? null, [attachedSurface]);
   const terminalSession = useAttachedTerminalSession({
     environmentId,
-    terminal: {
-      threadId,
-      terminalId,
-      cwd,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { env: runtimeEnv } : {}),
-      ...(providerInstanceId ? { providerInstanceId } : {}),
-    },
+    terminal: attachedSurface ? attachTarget.input : null,
+    readGrid: readAttachGrid,
   });
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
@@ -489,7 +507,7 @@ export function TerminalViewport({
     let selectionActions: ReturnType<typeof observeSelectionActions> | null = null;
 
     const setup = async (): Promise<(() => void) | null> => {
-      const setupFont = terminalFontRef.current;
+      let setupFont = terminalFontRef.current;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
@@ -513,19 +531,22 @@ export function TerminalViewport({
         terminal.dispose();
         return null;
       }
-      terminal.setVisible(visibleRef.current);
-      // The theme observer is not installed yet, so re-read the theme in case
-      // the app toggled light/dark while the WASM surface was loading.
-      terminal.setTheme(terminalThemeFromApp(mount));
       setupTerminal = terminal;
-      terminalRef.current = terminal;
-      // Client settings hydrate asynchronously; a font preference that landed
-      // while the surface was loading found terminalRef null, so its setFont
-      // was dropped. Re-apply whatever is current once the terminal exists.
-      const currentFont = terminalFontRef.current;
-      if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
-        void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
+      // Preferences may hydrate while WASM or the font loads. Finish the
+      // current measurement before allowing the first attach to use its grid.
+      while (terminalFontRef.current !== setupFont) {
+        setupFont = terminalFontRef.current;
+        await terminal.setFont(terminalFontOptions(setupFont.family, setupFont.size));
+        if (cancelled) {
+          terminal.dispose();
+          return null;
+        }
       }
+      terminal.setVisible(visibleRef.current);
+      // The theme observer is not installed yet, so re-read the current theme.
+      terminal.setTheme(terminalThemeFromApp(mount));
+      terminalRef.current = terminal;
+      setReadySurface({ target: attachTarget, terminal });
       const latestSession = latestSessionRef.current;
       previousSessionRef.current = latestSession;
       const initialOutput = readTerminalOutputUpdate(
@@ -591,7 +612,7 @@ export function TerminalViewport({
           position,
           clipboardText: selectionText,
           selection: {
-            terminalId,
+            terminalId: attachTarget.input.terminalId,
             terminalLabel: readTerminalLabel(),
             lineStart,
             lineEnd,
@@ -814,7 +835,7 @@ export function TerminalViewport({
           });
           return;
         }
-        const target = resolvePathLinkTarget(text, cwd);
+        const target = resolvePathLinkTarget(text, attachTarget.input.cwd);
         void (async () => {
           const result = await openTerminalPath(target);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -920,7 +941,7 @@ export function TerminalViewport({
       teardown?.();
       if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [attachTarget]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -945,6 +966,12 @@ export function TerminalViewport({
     writeTerminalOutputUpdate(terminal, outputUpdate);
     outputCursorRef.current = outputUpdate.cursor;
     terminal.clearSelection();
+    // Layout can change while an attach is in flight. Reconcile after retained
+    // output is replayed, but do not let history clears resize a shared PTY.
+    if (outputUpdate.type === "reset" && outputUpdate.data.length > 0) {
+      const grid = terminal.gridSize();
+      if (grid) void resizeTerminal(grid.cols, grid.rows);
+    }
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);

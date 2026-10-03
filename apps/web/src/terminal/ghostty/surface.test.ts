@@ -383,6 +383,39 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkActivate).not.toHaveBeenCalled();
   });
 
+  it("reports no grid until the mount has a size, then the measured grid", async () => {
+    const harness = createHarness();
+    harness.mount.clientWidth = 0;
+    const surface = await harness.create();
+    expect(surface.gridSize()).toBeNull();
+    harness.mount.clientWidth = 168;
+    harness.resize();
+    const grid = surface.gridSize();
+    expect(grid).toEqual({ cols: surface.cols, rows: surface.rows });
+    expect(grid!.cols).toBeGreaterThan(1);
+    harness.mount.clientWidth = 0;
+    harness.resize();
+    expect(surface.gridSize()).toBeNull();
+  });
+
+  it("does not offer a hidden surface's stale grid for PTY sizing", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const visibleGrid = surface.gridSize();
+    expect(visibleGrid).not.toBeNull();
+
+    surface.setVisible(false);
+    harness.mount.clientWidth = 0;
+    harness.resize();
+    expect(surface.gridSize()).toBeNull();
+
+    harness.mount.clientWidth = 336;
+    surface.setVisible(true);
+    expect(surface.gridSize()?.cols).toBeGreaterThan(visibleGrid!.cols);
+    surface.dispose();
+    expect(surface.gridSize()).toBeNull();
+  });
+
   it("stops zero-size mounts and repaints when the same size returns", async () => {
     const harness = createHarness();
     const surface = await harness.create();
