@@ -9,6 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   hasCompatibleOrchestrationProtocol,
   resolveAvailableEditorsForConfig,
+  resolveOpenDiscoveryForConfig,
   shouldUseBoundedThreadSnapshot,
 } from "./ws.ts";
 
@@ -46,5 +47,32 @@ it.effect("does not block server config when editor discovery never resolves", (
     const availableEditors = yield* Fiber.join(responseFiber);
     yield* Deferred.await(discoveryInterrupted);
     assert.deepEqual(availableEditors, []);
+  }),
+);
+
+it.effect("runs editor and remote open target discovery side by side for server config", () =>
+  Effect.gen(function* () {
+    // Each discovery finishes only once the other has started, so a config
+    // that ran them one after another would never resolve.
+    const editorsStarted = yield* Deferred.make<void>();
+    const targetsStarted = yield* Deferred.make<void>();
+
+    const discovery = yield* resolveOpenDiscoveryForConfig({
+      editors: Deferred.succeed(editorsStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(targetsStarted)),
+        Effect.as(["file-manager" as const]),
+      ),
+      fileManagerRevealKind: Effect.succeed("finder" as const),
+      remoteOpenTargets: Deferred.succeed(targetsStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(editorsStarted)),
+        Effect.as([]),
+      ),
+    });
+
+    assert.deepEqual(discovery, {
+      availableEditors: ["file-manager"],
+      fileManagerRevealKind: "finder",
+      remoteOpenTargets: [],
+    });
   }),
 );
