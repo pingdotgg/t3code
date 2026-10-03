@@ -17,8 +17,8 @@ import {
   normalizeModelSlug,
 } from "@t3tools/shared/model";
 import { memo, useCallback } from "react";
-import { BrainIcon, ZapIcon } from "lucide-react";
-import { UltrafastIcon } from "../Icons";
+import { BrainIcon } from "lucide-react";
+import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import {
   Menu,
   MenuGroup,
@@ -501,34 +501,11 @@ export function buildTraitsTriggerDisplay(input: {
   let speedIcon: "fast" | "ultrafast" | null = null;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
-    if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
-      speedIcon = descriptor.currentValue === true ? "fast" : null;
-      fastModeFallbackLabel = speedIcon ? "Fast" : "Normal";
+    const speed = getTraitsSpeedDisplay(input.provider, descriptor);
+    if (speed) {
+      speedIcon = speed.speedIcon;
+      fastModeFallbackLabel = speed.label;
       continue;
-    }
-    if (
-      input.provider === "codex" &&
-      descriptor.id === "serviceTier" &&
-      descriptor.type === "select"
-    ) {
-      const currentValue = getProviderOptionCurrentValue(descriptor);
-      const fastTier = descriptor.options.find(({ label }) => label === "Fast");
-      const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
-      if (
-        ((fastTier || ultrafastTier) && currentValue === "default") ||
-        (fastTier && currentValue === fastTier.id) ||
-        (ultrafastTier && currentValue === ultrafastTier.id)
-      ) {
-        speedIcon =
-          ultrafastTier && currentValue === ultrafastTier.id
-            ? "ultrafast"
-            : fastTier && currentValue === fastTier.id
-              ? "fast"
-              : null;
-        fastModeFallbackLabel =
-          descriptor.options.find(({ id }) => id === currentValue)?.label ?? "Normal";
-        continue;
-      }
     }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
@@ -612,21 +589,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   const speedLabel = speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on";
   const accessibleLabel = speedIcon ? `${triggerLabel}, ${speedLabel}` : triggerLabel;
   const fastModeIcon = speedIcon ? (
-    <>
-      <ComposerControlIcon
-        icon={speedIcon === "ultrafast" ? UltrafastIcon : ZapIcon}
-        size={size}
-        className={cn(
-          "fill-current opacity-80",
-          size === "xs"
-            ? "text-current"
-            : provider === "claudeAgent"
-              ? "text-[#d97757]"
-              : "text-foreground",
-        )}
-      />
-      <span className="sr-only">{speedLabel}</span>
-    </>
+    <TraitsSpeedIcon provider={provider} speedIcon={speedIcon} size={size} />
   ) : null;
 
   const isCodexStyle = provider === "codex";
