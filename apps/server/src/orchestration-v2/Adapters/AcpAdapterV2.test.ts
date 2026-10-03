@@ -56,6 +56,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
   extractXAiAcpSubagentEndNotice,
@@ -903,6 +904,99 @@ describe("AcpAdapterV2", () => {
         restoredBuild.methods,
         "session/set_config_option",
         "Build should restore the native mode that T3 temporarily replaced for Plan",
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.live("reapplies a selection after a switch away from it failed partway", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-partial-selection-reapply");
+      const threadId = ThreadId.make("thread-acp-partial-selection-reapply");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            // The model switch lands, then the agent rejects the mode step.
+            environment: { T3_ACP_FAIL_SET_MODE_CONFIG_OPTION: "1" },
+          }),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const selectionA = { instanceId, model: "composer-2" } as const;
+      const selectionB = {
+        instanceId,
+        model: "composer-2[fast=true]",
+        options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "code" }],
+      } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-partial-selection"),
+        modelSelection: selectionA,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: selectionA,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turnInput = (ordinal: number, modelSelection: ModelSelection) =>
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal,
+          modelSelection,
+        });
+
+      const switchToB = yield* Effect.exit(runtime.startTurn(turnInput(1, selectionB)));
+      assert.isTrue(Exit.isFailure(switchToB), "the agent rejected B's mode step");
+      yield* Queue.clear(protocolEvents);
+
+      yield* runtime.startTurn(turnInput(2, selectionA));
+      yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runDrain,
+      );
+      const modelSetsBeforePrompt: Array<unknown> = [];
+      while (true) {
+        const event = yield* Queue.take(protocolEvents);
+        if (event.direction !== "outgoing") continue;
+        const method = rawProtocolMethod(event);
+        if (method === "session/prompt") break;
+        if (
+          method === "session/set_config_option" &&
+          rawProtocolRequestParam(event, "configId") === "model"
+        ) {
+          modelSetsBeforePrompt.push(rawProtocolRequestParam(event, "value"));
+        }
+      }
+      assert.deepEqual(
+        modelSetsBeforePrompt,
+        ["composer-2"],
+        "the native model was left on B, so the turn on A must set it back first",
       );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
