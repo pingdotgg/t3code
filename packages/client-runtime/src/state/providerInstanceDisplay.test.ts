@@ -175,4 +175,10 @@ describe("shouldShowInstanceBadge", () => {
     const entry = { driverKind: claude, icon: "initials", accentColor: "#ff8800" };
     expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(false);
   });
+
+  it("does not count an initials glyph as sharing its driver's logo", () => {
+    const claudeLogo = { driverKind: claude };
+    const initials = { driverKind: claude, icon: "initials" };
+    expect(shouldShowInstanceBadge(claudeLogo, [claudeLogo, initials])).toBe(false);
+  });
 });

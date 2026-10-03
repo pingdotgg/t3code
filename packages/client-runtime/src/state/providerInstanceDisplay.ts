@@ -148,6 +148,7 @@ export function shouldShowInstanceBadge(
   const glyphKey = instanceGlyphKey(entry);
   let sharedGlyphCount = 0;
   for (const candidate of entries) {
+    if (isProviderInstanceInitialsIcon(candidate.icon)) continue;
     if (instanceGlyphKey(candidate) !== glyphKey) continue;
     if (++sharedGlyphCount > 1) return true;
   }

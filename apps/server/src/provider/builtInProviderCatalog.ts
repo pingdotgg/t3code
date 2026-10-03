@@ -1,7 +1,5 @@
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
-import type { ProviderInstanceAppearance } from "./ProviderDriver.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 export type ProviderSnapshotSource = {
@@ -13,7 +11,6 @@ export type ProviderSnapshotSource = {
   readonly instanceId: ProviderInstanceId;
   /** Driver implementation kind. */
   readonly driverKind: ProviderDriverKind;
-  readonly appearance?: Effect.Effect<ProviderInstanceAppearance> | undefined;
   readonly getSnapshot: ServerProviderShape["getSnapshot"];
   readonly refresh: ServerProviderShape["refresh"];
   readonly streamChanges: Stream.Stream<ServerProvider>;

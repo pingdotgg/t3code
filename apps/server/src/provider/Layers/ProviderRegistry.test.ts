@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -2585,17 +2586,21 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             });
 
             // The registry restyles in place and announces a change.
+            const restyledList = yield* registry.streamChanges.pipe(
+              Stream.filter((list) =>
+                list.some(
+                  (provider) => provider.instanceId === "claude_kimi" && provider.icon === "codex",
+                ),
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
             yield* Ref.set(kimiAppearance, { icon: "codex", badgeLabel: undefined });
             yield* PubSub.publish(changes, undefined);
-            let restyled = (yield* registry.getProviders).find(
+            const restyled = Option.getOrThrow(yield* Fiber.join(restyledList)).find(
               (provider) => provider.instanceId === "claude_kimi",
             );
-            for (let attempt = 0; attempt < 50 && restyled?.icon !== "codex"; attempt += 1) {
-              yield* Effect.yieldNow;
-              restyled = (yield* registry.getProviders).find(
-                (provider) => provider.instanceId === "claude_kimi",
-              );
-            }
             assert.deepStrictEqual(
               { icon: restyled?.icon, badgeLabel: restyled?.badgeLabel },
               { icon: "codex", badgeLabel: undefined },

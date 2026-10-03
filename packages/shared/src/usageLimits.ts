@@ -695,6 +695,8 @@ export function collectProviderUsageLimits(
           : { instanceId: provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.icon ? { icon: provider.icon } : {}),
+      ...(provider.badgeLabel ? { badgeLabel: provider.badgeLabel } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
       limits: showHubCredits
         ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
