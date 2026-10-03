@@ -3,15 +3,22 @@ import {
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  EnvironmentId,
+  ProviderInstanceId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as Layer from "effect/Layer";
+import * as RpcTest from "effect/unstable/rpc/RpcTest";
 
 import {
   RPC_REQUIRED_SCOPES,
   requiredScopeForRpcMethod,
   requiredScopeForDeviceList,
+  rpcScopeAuthorizationLayer,
 } from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
@@ -115,4 +122,86 @@ it("requires operate permission for tool updates even alongside a read-only chec
     AuthOrchestrationOperateScope,
   );
   expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
+});
+
+describe("RPC scope middleware", () => {
+  const tested = [
+    WS_METHODS.serverProbe,
+    WS_METHODS.chatGptReconnectProfile,
+    WS_METHODS.chatGptImportProfile,
+    WS_METHODS.chatGptHandoffSubscribe,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+        !(tested as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  const instanceId = ProviderInstanceId.make("codex");
+
+  it.effect("rejects operate RPCs from a read-only session before their handlers run", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
+            group.toLayerHandler(WS_METHODS.chatGptReconnectProfile, () =>
+              Effect.sync(() => handled.push("reconnect")).pipe(Effect.as(null)),
+            ),
+            group.toLayerHandler(WS_METHODS.chatGptImportProfile, () =>
+              Effect.sync(() => handled.push("import")).pipe(Effect.andThen(Effect.never)),
+            ),
+            group.toLayerHandler(WS_METHODS.chatGptHandoffSubscribe, () =>
+              Stream.fromEffect(Effect.sync(() => handled.push("handoff"))).pipe(
+                Stream.flatMap(() => Stream.never),
+              ),
+            ),
+          ),
+        ),
+        Effect.provide(rpcScopeAuthorizationLayer([AuthOrchestrationReadScope])),
+      );
+
+      expect(yield* client[WS_METHODS.serverProbe]({})).toEqual({});
+      const denied = {
+        _tag: "EnvironmentAuthorizationError",
+        requiredScope: AuthOrchestrationOperateScope,
+      };
+      expect(
+        yield* client[WS_METHODS.chatGptReconnectProfile]({ instanceId, methodId: "chatgpt" }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[WS_METHODS.chatGptImportProfile]({
+          instanceId,
+          profile: {
+            registration: { clientId: "oaiapp_test" },
+            credentials: {
+              clientId: "oaiapp_test",
+              accessToken: "access-token",
+              refreshToken: null,
+              idToken: "id-token",
+              issuer: "https://auth.openai.com",
+              expiresAt: 0,
+              earliestRefreshAt: null,
+              scopes: [],
+              subject: "user-1",
+              email: null,
+            },
+          },
+        }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* client[WS_METHODS.chatGptHandoffSubscribe]({
+          instanceId,
+          environmentId: EnvironmentId.make("environment-1"),
+          attemptId: "attempt-1",
+          returnUrl: "https://app.t3.codes",
+          profile: null,
+        }).pipe(Stream.runDrain, Effect.flip),
+      ).toMatchObject(denied);
+      expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
 });
