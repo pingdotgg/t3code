@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 
 import {
+  buildOpenCodeServeArgs,
   openCodeRuntimeErrorDetail,
   parseModelsCliOutput,
   parseAgentListCliOutput,
@@ -259,5 +260,36 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("buildOpenCodeServeArgs", () => {
+  // `opencode serve` rejects unknown flags by printing usage and exiting 1, so
+  // every argument here must be one the subcommand actually accepts. Scoping a
+  // workspace happens per request through the SDK client's `directory`, not
+  // through server argv.
+  const SERVE_FLAGS = new Set(["--port", "--hostname", "--mDNS", "--mDNS-domain", "--cors"]);
+
+  it("passes only flags the serve subcommand accepts", () => {
+    const args = buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 });
+
+    NodeAssert.deepEqual(args, ["serve", "--hostname=127.0.0.1", "--port=41234"]);
+    for (const arg of args.slice(1)) {
+      const flag = arg.slice(0, arg.indexOf("=") === -1 ? undefined : arg.indexOf("="));
+      NodeAssert.ok(
+        SERVE_FLAGS.has(flag),
+        `\`opencode serve\` rejects ${flag}; it prints usage and exits 1`,
+      );
+    }
+  });
+
+  it("keeps workspace scoping out of server argv", () => {
+    // `--dir` belongs to `opencode run`/`web`/`attach`. On `serve` it is an
+    // unknown flag, which failed every workspace skill probe with exit code 1.
+    NodeAssert.ok(
+      !buildOpenCodeServeArgs({ hostname: "127.0.0.1", port: 41234 }).some((arg) =>
+        arg.startsWith("--dir"),
+      ),
+    );
   });
 });
