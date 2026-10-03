@@ -28,13 +28,13 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const out = call("ghostty_wasm_alloc_u8_array", 8);
+    const out = call("ghostty_wasm_alloc", 8);
     expect(call("ghostty_build_info", 10, out)).toBe(0);
     const view = new DataView(memory.buffer, out, 8);
     const embeddedRevision = new TextDecoder().decode(
       new Uint8Array(memory.buffer, view.getUint32(0, true), view.getUint32(4, true)),
     );
-    call("ghostty_wasm_free_u8_array", out, 8);
+    call("ghostty_wasm_free", out, 8);
     expect(embeddedRevision).toBe(pinnedVersion.trim());
   });
 
@@ -54,32 +54,39 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const jsonPointer = call("ghostty_type_json");
     const jsonBytes = new Uint8Array(memory.buffer, jsonPointer);
     const jsonEnd = jsonBytes.indexOf(0);
-    const layouts = JSON.parse(new TextDecoder().decode(jsonBytes.subarray(0, jsonEnd))) as Record<
-      string,
-      { size: number }
-    >;
-    const optionsSize = layouts.GhosttyTerminalOptions?.size;
-    expect(optionsSize).toBe(8);
-    if (optionsSize === undefined) throw new Error("GhosttyTerminalOptions layout is missing");
+    const manifest = JSON.parse(new TextDecoder().decode(jsonBytes.subarray(0, jsonEnd))) as {
+      schema: number;
+      types: Record<
+        string,
+        { kind: string; size: number; type?: string; fields?: Record<string, { type: string }> }
+      >;
+    };
+    // The runtime reads struct layouts from this manifest; pin the shape it
+    // depends on so an upstream manifest change fails here, not in a browser.
+    expect(manifest.schema).toBe(1);
+    expect(manifest.types.GhosttyStyle?.kind).toBe("struct");
+    // Mode reads go through a struct whose first member is an alias type; the
+    // runtime follows that alias to the primitive it stores.
+    expect(manifest.types.GhosttyTerminalModeConfig).toMatchObject({ kind: "struct", size: 4 });
+    expect(manifest.types.GhosttyTerminalModeConfig?.fields?.mode?.type).toBe("GhosttyMode");
+    expect(manifest.types.GhosttyMode).toMatchObject({ kind: "alias", type: "u16" });
 
     for (let iteration = 0; iteration < 25; iteration += 1) {
-      const options = call("ghostty_wasm_alloc_u8_array", optionsSize);
-      const optionsView = new DataView(memory.buffer, options, optionsSize);
-      optionsView.setUint16(0, 80, true);
-      optionsView.setUint16(2, 24, true);
-      optionsView.setUint32(4, 5_000, true);
       const terminalSlot = call("ghostty_wasm_alloc_opaque");
-      expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+      expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
       const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+      const scrollback = call("ghostty_wasm_alloc", 4);
+      new DataView(memory.buffer, scrollback, 4).setUint32(0, 5_000, true);
+      expect(call("ghostty_terminal_set", terminal, 28, scrollback)).toBe(0);
+      call("ghostty_wasm_free", scrollback, 4);
 
       const input = new TextEncoder().encode("e\u0301 👨‍👩‍👧‍👦 العربية\r\n");
-      const inputPointer = call("ghostty_wasm_alloc_u8_array", input.length);
+      const inputPointer = call("ghostty_wasm_alloc", input.length);
       new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
       call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
-      call("ghostty_wasm_free_u8_array", inputPointer, input.length);
+      call("ghostty_wasm_free", inputPointer, input.length);
       call("ghostty_terminal_free", terminal);
       call("ghostty_wasm_free_opaque", terminalSlot);
-      call("ghostty_wasm_free_u8_array", options, optionsSize);
     }
   });
 
@@ -92,13 +99,9 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
-    const options = alloc(8);
-    const optionsView = new DataView(memory.buffer, options, 8);
-    optionsView.setUint16(0, 80, true);
-    optionsView.setUint16(2, 24, true);
+    const alloc = (size: number) => call("ghostty_wasm_alloc", size);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     const renderStateSlot = call("ghostty_wasm_alloc_opaque");
     expect(call("ghostty_render_state_new", 0, renderStateSlot)).toBe(0);
@@ -115,13 +118,13 @@ describe("vendored libghostty-vt WebAssembly", () => {
       const pointer = alloc(bytes.length);
       new Uint8Array(memory.buffer, pointer, bytes.length).set(bytes);
       call("ghostty_terminal_vt_write", terminal, pointer, bytes.length);
-      call("ghostty_wasm_free_u8_array", pointer, bytes.length);
+      call("ghostty_wasm_free", pointer, bytes.length);
     };
     const setDefaultCursorBlink = (blink: boolean) => {
       const value = alloc(1);
       new Uint8Array(memory.buffer, value, 1)[0] = blink ? 1 : 0;
       expect(call("ghostty_terminal_set", terminal, 23, value)).toBe(0);
-      call("ghostty_wasm_free_u8_array", value, 1);
+      call("ghostty_wasm_free", value, 1);
     };
 
     // Ghostty's own default is a steady cursor, so the blink the web terminal
@@ -141,19 +144,15 @@ describe("vendored libghostty-vt WebAssembly", () => {
     write("\u001b[?12h");
     expect(blinking()).toBe(true);
 
-    // RIS restores Ghostty's built-in steady default rather than the embedder's,
-    // which is why the core reapplies the option around a session replay.
+    // RIS restores the embedder default, so the blink survives a full reset.
     call("ghostty_terminal_reset", terminal);
-    expect(blinking()).toBe(false);
-    setDefaultCursorBlink(true);
     expect(blinking()).toBe(true);
 
-    call("ghostty_wasm_free_u8_array", scratch, 4);
+    call("ghostty_wasm_free", scratch, 4);
     call("ghostty_render_state_free", renderState);
     call("ghostty_wasm_free_opaque", renderStateSlot);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    call("ghostty_wasm_free_u8_array", options, 8);
   });
 
   it("reports and scrolls the viewport with Ghostty's scrollbar state", async () => {
@@ -165,15 +164,14 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
-    const options = alloc(8);
-    const optionsView = new DataView(memory.buffer, options, 8);
-    optionsView.setUint16(0, 80, true);
-    optionsView.setUint16(2, 10, true);
-    optionsView.setUint32(4, 1_000, true);
+    const alloc = (size: number) => call("ghostty_wasm_alloc", size);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 10)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
+    const scrollback = alloc(4);
+    new DataView(memory.buffer, scrollback, 4).setUint32(0, 1_000, true);
+    expect(call("ghostty_terminal_set", terminal, 28, scrollback)).toBe(0);
+    call("ghostty_wasm_free", scrollback, 4);
     const input = new TextEncoder().encode(
       Array.from({ length: 50 }, (_, index) => `${index + 1}\r\n`).join(""),
     );
@@ -196,12 +194,11 @@ describe("vendored libghostty-vt WebAssembly", () => {
     expect(call("ghostty_terminal_get", terminal, 9, scrollbar)).toBe(0);
     expect(Number(scrollbarView.getBigUint64(8, true))).toBe(36);
 
-    call("ghostty_wasm_free_u8_array", scroll, 24);
-    call("ghostty_wasm_free_u8_array", scrollbar, 24);
-    call("ghostty_wasm_free_u8_array", inputPointer, input.length);
+    call("ghostty_wasm_free", scroll, 24);
+    call("ghostty_wasm_free", scrollbar, 24);
+    call("ghostty_wasm_free", inputPointer, input.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    call("ghostty_wasm_free_u8_array", options, 8);
   });
 
   it("routes terminal-generated replies through the shared callback table", async () => {
@@ -230,17 +227,13 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const callbackIndex = table.length;
     table.grow(1, trampoline.exports.ghostty_write_pty as CallableFunction);
     const call = (name: string, ...args: number[]) => (main.exports[name] as WasmFunction)(...args);
-    const options = call("ghostty_wasm_alloc_u8_array", 8);
-    const optionsView = new DataView(memory.buffer, options, 8);
-    optionsView.setUint16(0, 80, true);
-    optionsView.setUint16(2, 24, true);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     call("ghostty_terminal_set", terminal, 0, 1);
     call("ghostty_terminal_set", terminal, 1, callbackIndex);
     const query = new TextEncoder().encode("\u001b[5n");
-    const queryPointer = call("ghostty_wasm_alloc_u8_array", query.length);
+    const queryPointer = call("ghostty_wasm_alloc", query.length);
     new Uint8Array(memory.buffer, queryPointer, query.length).set(query);
     call("ghostty_terminal_vt_write", terminal, queryPointer, query.length);
 
@@ -254,10 +247,9 @@ describe("vendored libghostty-vt WebAssembly", () => {
     call("ghostty_terminal_set", terminal, 1, callbackIndex);
     call("ghostty_terminal_vt_write", terminal, queryPointer, query.length);
     expect(reply).toBe("\u001b[0n");
-    call("ghostty_wasm_free_u8_array", queryPointer, query.length);
+    call("ghostty_wasm_free", queryPointer, query.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    call("ghostty_wasm_free_u8_array", options, 8);
   });
 
   it("formats the active selection with Ghostty's copy semantics", async () => {
@@ -269,33 +261,29 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const options = call("ghostty_wasm_alloc_u8_array", 8);
-    const optionsView = new DataView(memory.buffer, options, 8);
-    optionsView.setUint16(0, 80, true);
-    optionsView.setUint16(2, 24, true);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     const input = new TextEncoder().encode("a\r\n\r\nb");
-    const inputPointer = call("ghostty_wasm_alloc_u8_array", input.length);
+    const inputPointer = call("ghostty_wasm_alloc", input.length);
     new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
     call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
 
-    const selection = call("ghostty_wasm_alloc_u8_array", 32);
+    const selection = call("ghostty_wasm_alloc", 32);
     new DataView(memory.buffer, selection, 32).setUint32(0, 32, true);
     expect(call("ghostty_terminal_select_all", terminal, selection)).toBe(0);
     expect(call("ghostty_terminal_set", terminal, 21, selection)).toBe(0);
-    const formatOptions = call("ghostty_wasm_alloc_u8_array", 16);
+    const formatOptions = call("ghostty_wasm_alloc", 16);
     const formatView = new DataView(memory.buffer, formatOptions, 16);
     formatView.setUint32(0, 16, true);
     formatView.setUint8(8, 1);
     formatView.setUint8(9, 1);
-    const written = call("ghostty_wasm_alloc_usize");
+    const written = call("ghostty_wasm_alloc", 4);
     expect(
       call("ghostty_terminal_selection_format_buf", terminal, formatOptions, 0, 0, written),
     ).toBe(-3);
     const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
-    const output = call("ghostty_wasm_alloc_u8_array", outputSize);
+    const output = call("ghostty_wasm_alloc", outputSize);
     expect(
       call(
         "ghostty_terminal_selection_format_buf",
@@ -310,14 +298,13 @@ describe("vendored libghostty-vt WebAssembly", () => {
       "a\n\nb",
     );
 
-    call("ghostty_wasm_free_u8_array", output, outputSize);
-    call("ghostty_wasm_free_usize", written);
-    call("ghostty_wasm_free_u8_array", formatOptions, 16);
-    call("ghostty_wasm_free_u8_array", selection, 32);
-    call("ghostty_wasm_free_u8_array", inputPointer, input.length);
+    call("ghostty_wasm_free", output, outputSize);
+    call("ghostty_wasm_free", written, 4);
+    call("ghostty_wasm_free", formatOptions, 16);
+    call("ghostty_wasm_free", selection, 32);
+    call("ghostty_wasm_free", inputPointer, input.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    call("ghostty_wasm_free_u8_array", options, 8);
   });
 
   it("formats a cell-drag selection installed from screen grid refs", async () => {
@@ -329,14 +316,10 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
-    const free = (pointer: number, size: number) =>
-      call("ghostty_wasm_free_u8_array", pointer, size);
-    const options = alloc(8);
-    new DataView(memory.buffer, options, 8).setUint16(0, 80, true);
-    new DataView(memory.buffer, options, 8).setUint16(2, 24, true);
+    const alloc = (size: number) => call("ghostty_wasm_alloc", size);
+    const free = (pointer: number, size: number) => call("ghostty_wasm_free", pointer, size);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, options)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     const input = new TextEncoder().encode("hello\r\nworld");
     const inputPointer = alloc(input.length);
@@ -371,7 +354,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     formatView.setUint32(0, 16, true);
     formatView.setUint8(8, 1);
     formatView.setUint8(9, 1);
-    const written = call("ghostty_wasm_alloc_usize");
+    const written = call("ghostty_wasm_alloc", 4);
     expect(
       call("ghostty_terminal_selection_format_buf", terminal, formatOptions, 0, 0, written),
     ).toBe(-3);
@@ -392,7 +375,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     );
 
     free(output, outputSize);
-    call("ghostty_wasm_free_usize", written);
+    call("ghostty_wasm_free", written, 4);
     free(formatOptions, 16);
     free(selection, 32);
     free(end, 12);
@@ -400,7 +383,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(inputPointer, input.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    free(options, 8);
   });
 
   it("uses Ghostty for mouse encoding, word selection, and OSC 8 hit testing", async () => {
@@ -412,16 +394,11 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
-    const free = (pointer: number, size: number) =>
-      call("ghostty_wasm_free_u8_array", pointer, size);
+    const alloc = (size: number) => call("ghostty_wasm_alloc", size);
+    const free = (pointer: number, size: number) => call("ghostty_wasm_free", pointer, size);
 
-    const terminalOptions = alloc(8);
-    const terminalOptionsView = new DataView(memory.buffer, terminalOptions, 8);
-    terminalOptionsView.setUint16(0, 80, true);
-    terminalOptionsView.setUint16(2, 24, true);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     const input = new TextEncoder().encode(
       "\u001b[?1000h\u001b[?1006h\u001b]8;;https://t3.codes/docs\u001b\\linked\u001b]8;;\u001b\\ plain",
@@ -430,28 +407,34 @@ describe("vendored libghostty-vt WebAssembly", () => {
     new Uint8Array(memory.buffer, inputPointer, input.length).set(input);
     call("ghostty_terminal_vt_write", terminal, inputPointer, input.length);
 
+    // GhosttyTerminalModeConfig: u16 mode id (high bit set for ANSI modes),
+    // then the bool value the library fills in.
+    const modeConfig = alloc(4);
+    const readDecPrivateMode = (mode: number) => {
+      new DataView(memory.buffer, modeConfig, 4).setUint16(0, mode, true);
+      new Uint8Array(memory.buffer, modeConfig, 4)[2] = 1;
+      expect(call("ghostty_terminal_get", terminal, 37, modeConfig)).toBe(0);
+      return new Uint8Array(memory.buffer, modeConfig, 4)[2];
+    };
     const modeFlag = alloc(1);
     new Uint8Array(memory.buffer, modeFlag, 1)[0] = 0;
     expect(call("ghostty_terminal_get", terminal, 11, modeFlag)).toBe(0);
     expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(1);
-    new Uint8Array(memory.buffer, modeFlag, 1)[0] = 1;
-    expect(call("ghostty_terminal_mode_get", terminal, 1003, modeFlag)).toBe(0);
-    expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(0);
+    expect(readDecPrivateMode(1003)).toBe(0);
     const anyEventInput = new TextEncoder().encode("\u001b[?1003h");
     const anyEventPointer = alloc(anyEventInput.length);
     new Uint8Array(memory.buffer, anyEventPointer, anyEventInput.length).set(anyEventInput);
     call("ghostty_terminal_vt_write", terminal, anyEventPointer, anyEventInput.length);
-    expect(call("ghostty_terminal_mode_get", terminal, 1003, modeFlag)).toBe(0);
-    expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(1);
+    expect(readDecPrivateMode(1003)).toBe(1);
     const anyEventReset = new TextEncoder().encode("\u001b[?1003l\u001b[?1000h");
     const anyEventResetPointer = alloc(anyEventReset.length);
     new Uint8Array(memory.buffer, anyEventResetPointer, anyEventReset.length).set(anyEventReset);
     call("ghostty_terminal_vt_write", terminal, anyEventResetPointer, anyEventReset.length);
-    expect(call("ghostty_terminal_mode_get", terminal, 1003, modeFlag)).toBe(0);
-    expect(new Uint8Array(memory.buffer, modeFlag, 1)[0]).toBe(0);
+    expect(readDecPrivateMode(1003)).toBe(0);
     free(anyEventResetPointer, anyEventReset.length);
     free(anyEventPointer, anyEventInput.length);
     free(modeFlag, 1);
+    free(modeConfig, 4);
 
     const point = alloc(24);
     const pointView = new DataView(memory.buffer, point, 24);
@@ -462,7 +445,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     new DataView(memory.buffer, gridRef, 12).setUint32(0, 12, true);
     expect(call("ghostty_terminal_grid_ref", terminal, point, gridRef)).toBe(0);
 
-    const written = call("ghostty_wasm_alloc_usize");
+    const written = call("ghostty_wasm_alloc", 4);
     expect(call("ghostty_grid_ref_hyperlink_uri", gridRef, 0, 0, written)).toBe(-3);
     const hyperlinkSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
     const hyperlink = alloc(hyperlinkSize);
@@ -587,13 +570,12 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(selection, 32);
     free(wordOptions, 24);
     free(hyperlink, hyperlinkSize);
-    call("ghostty_wasm_free_usize", written);
+    call("ghostty_wasm_free", written, 4);
     free(gridRef, 12);
     free(point, 24);
     free(inputPointer, input.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    free(terminalOptions, 8);
   });
 
   it("encodes modified printable keys in Kitty keyboard mode", async () => {
@@ -605,16 +587,11 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const memory = instance.exports.memory as WebAssembly.Memory;
     const call = (name: string, ...args: number[]) =>
       (instance.exports[name] as WasmFunction)(...args);
-    const alloc = (size: number) => call("ghostty_wasm_alloc_u8_array", size);
-    const free = (pointer: number, size: number) =>
-      call("ghostty_wasm_free_u8_array", pointer, size);
+    const alloc = (size: number) => call("ghostty_wasm_alloc", size);
+    const free = (pointer: number, size: number) => call("ghostty_wasm_free", pointer, size);
 
-    const terminalOptions = alloc(8);
-    const terminalOptionsView = new DataView(memory.buffer, terminalOptions, 8);
-    terminalOptionsView.setUint16(0, 80, true);
-    terminalOptionsView.setUint16(2, 24, true);
     const terminalSlot = call("ghostty_wasm_alloc_opaque");
-    expect(call("ghostty_terminal_new", 0, terminalSlot, terminalOptions)).toBe(0);
+    expect(call("ghostty_terminal_new", 0, terminalSlot, 80, 24)).toBe(0);
     const terminal = new DataView(memory.buffer).getUint32(terminalSlot, true);
     const kittyMode = new TextEncoder().encode("\u001b[>1u");
     const kittyModePointer = alloc(kittyMode.length);
@@ -640,7 +617,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     new Uint8Array(memory.buffer, textPointer, text.length).set(text);
     call("ghostty_key_event_set_utf8", keyEvent, textPointer, text.length);
 
-    const written = call("ghostty_wasm_alloc_usize");
+    const written = call("ghostty_wasm_alloc", 4);
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(-3);
     const outputSize = new DataView(memory.buffer, written, 4).getUint32(0, true);
     const output = alloc(outputSize);
@@ -703,7 +680,7 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(remappedOutput, remappedOutputSize);
     free(remappedTextPointer, remappedText.length);
     free(output, outputSize);
-    call("ghostty_wasm_free_usize", written);
+    call("ghostty_wasm_free", written, 4);
     free(textPointer, text.length);
     call("ghostty_key_event_free", keyEvent);
     call("ghostty_key_encoder_free", keyEncoder);
@@ -712,6 +689,5 @@ describe("vendored libghostty-vt WebAssembly", () => {
     free(kittyModePointer, kittyMode.length);
     call("ghostty_terminal_free", terminal);
     call("ghostty_wasm_free_opaque", terminalSlot);
-    free(terminalOptions, 8);
   });
 });
