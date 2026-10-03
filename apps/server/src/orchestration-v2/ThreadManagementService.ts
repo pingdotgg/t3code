@@ -23,6 +23,7 @@ import {
   type ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import { modelSelectionCommandType, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -306,6 +307,14 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  readonly configureModelSelection: (
+    input: ThreadManagementProvenance & {
+      readonly projectId: ProjectId;
+      readonly threadId: ThreadId;
+      readonly commandId: CommandId;
+      readonly modelSelection: ModelSelection;
+    },
+  ) => Effect.Effect<{ readonly sequence: number }, ThreadManagementFailure>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -518,6 +527,49 @@ const make = Effect.gen(function* () {
           ),
       ),
     );
+
+  const configureModelSelection = Effect.fn(
+    "orchestrationV2.threadManagement.configureModelSelection",
+  )(function* (input: Parameters<ThreadManagementServiceShape["configureModelSelection"]>[0]) {
+    const target = yield* getProjectThreadRecords(input, ["runs", "providerTurns"]);
+    const activeRun = latestActiveRun(target);
+    if (
+      modelSelectionsEqual(
+        activeRun?.modelSelection ?? target.thread.modelSelection,
+        input.modelSelection,
+      )
+    ) {
+      return { sequence: yield* orchestrator.getThreadEventSequence(input.threadId) };
+    }
+    if (activeRun === undefined) {
+      return yield* orchestrator.dispatch({
+        type: modelSelectionCommandType(target.thread.providerInstanceId, input.modelSelection),
+        commandId: input.commandId,
+        threadId: input.threadId,
+        modelSelection: input.modelSelection,
+      });
+    }
+    if (latestSteerableRun(target)?.id !== activeRun.id) {
+      return yield* new ThreadManagementNoSteerableRunError({
+        threadId: input.threadId,
+        mode: "restart",
+      });
+    }
+    // Persist the replacement input with the selection before interrupting the
+    // calling turn, which may never receive its configure tool result.
+    return yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      messageId: MessageId.make(`${input.commandId}:model-continuation`),
+      text: "The requested model change has been applied. Continue the unfinished user request from where the previous turn stopped. Do not repeat the model change if the requested selection is already active.",
+      attachments: [],
+      modelSelection: input.modelSelection,
+      dispatchMode: { type: "restart_active", targetRunId: activeRun.id },
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    });
+  });
 
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = (input) =>
     Effect.gen(function* () {
@@ -733,6 +785,7 @@ const make = Effect.gen(function* () {
     getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
+    configureModelSelection,
     waitForThread,
     interruptThread,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
