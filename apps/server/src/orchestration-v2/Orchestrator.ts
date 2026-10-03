@@ -47,6 +47,7 @@ import {
   RunId,
   ThreadLinkedPullRequest,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
@@ -393,6 +394,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "runtime-request.delivery.fail":
     case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "checkpoint.rollback.fail":
@@ -427,6 +429,8 @@ function pendingThreadTitleGenerationEffect(
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
+const RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE =
+  "T3 Code could not confirm that your answer reached the agent. If the run stays stuck, stop it and try again.";
 
 function isBlockingRun(run: OrchestrationV2Run): boolean {
   return (
@@ -7000,6 +7004,72 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
+  /**
+   * Records an answer whose delivery to the provider failed. Dispatch resolved the
+   * request before delivery, and a failed delivery does not show whether the
+   * provider is still waiting, so the answer stays saved and the timeline shows
+   * the failure instead of a run that spins with nothing to answer.
+   */
+  const dispatchRuntimeRequestDeliveryFail = (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "runtime-request.delivery.fail" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) =>
+    Effect.gen(function* () {
+      const context = yield* projectionStore
+        .getRuntimeResponseContext(command.threadId, command.requestId)
+        .pipe(mapDispatchError(command));
+      const requestNode = context.node;
+      if (context.request === undefined || requestNode === undefined) return;
+      // The session may already be detached; the failure is recorded either way.
+      const providerSession = context.session;
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        ...(requestNode.runId === null ? {} : { runId: requestNode.runId }),
+        nodeId: requestNode.id,
+        ...(providerSession === undefined
+          ? {}
+          : {
+              driver: providerSession.driver,
+              providerInstanceId: providerSession.providerInstanceId,
+            }),
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`turn-item:runtime-request-delivery-failure:${command.commandId}`),
+          threadId: command.threadId,
+          runId: requestNode.runId,
+          nodeId: requestNode.id,
+          providerThreadId: requestNode.providerThreadId,
+          providerTurnId: requestNode.providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal({ thread }),
+          status: "failed",
+          title: "Answer delivery not confirmed",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: {
+            class: "transport_error",
+            message: RUNTIME_REQUEST_DELIVERY_FAILED_MESSAGE,
+            code: null,
+            retryable: null,
+          },
+        },
+      });
+    });
+
   const dispatchThreadUserInputDismiss = (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.user-input.dismiss" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -9325,6 +9395,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
+        break;
+      case "runtime-request.delivery.fail":
+        yield* dispatchRuntimeRequestDeliveryFail(command, events);
         break;
       case "thread.user-input.dismiss":
         yield* dispatchThreadUserInputDismiss(command, events, effects);
