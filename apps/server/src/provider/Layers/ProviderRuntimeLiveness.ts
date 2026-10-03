@@ -3,7 +3,6 @@
  *
  * @module ProviderRuntimeLivenessLive
  */
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import { Effect, Layer, Ref } from "effect";
 
 import {
@@ -12,11 +11,13 @@ import {
   type ProviderThreadRuntimeObservation,
 } from "../Services/ProviderRuntimeLiveness.ts";
 
-/** Terminal-per-turn provider events: the turn has a known outcome. */
-const SETTLING_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set([
-  "turn.completed",
-  "turn.aborted",
-]);
+/**
+ * Threads stop emitting once their work is done, so entries must not be kept
+ * forever. Comfortably longer than the reaper's settled-turn hold (10 min) so a
+ * genuinely stuck thread is still observable when a sweep asks, and long enough
+ * that a settled turn survives several sweeps.
+ */
+const RETENTION_MS = 2 * 60 * 60 * 1000;
 
 /**
  * Only the turn the projection currently calls active is ever queried, so a
@@ -25,23 +26,8 @@ const SETTLING_EVENT_TYPES: ReadonlySet<ProviderRuntimeEvent["type"]> = new Set(
  */
 const MAX_SETTLED_TURNS = 8;
 
-/** Same bound for per-turn activity: only the active turn is ever queried. */
-const MAX_TRACKED_TURNS = 8;
-
-/**
- * Threads stop emitting once their work is done, so entries must not be kept
- * forever. Comfortably longer than the reaper's inactivity threshold (30 min)
- * so a genuinely stuck thread is still observable when a sweep asks.
- */
-export const PROVIDER_RUNTIME_LIVENESS_RETENTION_MS = 2 * 60 * 60 * 1000;
-
-/**
- * `record` runs on the ingestion funnel for every event, including every
- * `content.delta`, so it must stay O(1). The sweep over all entries is
- * amortized behind this interval instead of running per event. `prune` exists
- * for callers that must not depend on unrelated provider traffic.
- */
-const PRUNE_INTERVAL_MS = 60 * 1000;
+/** Records between expiry sweeps, amortizing the O(threads) pass. */
+const PRUNE_BATCH_SIZE = 256;
 
 interface MutableObservation {
   lastEventAtMs: number;
@@ -51,105 +37,73 @@ interface MutableObservation {
    * `ProviderRuntimeIngestion` falls back to the session's active turn.
    */
   lastStartedTurnId: string | null;
-  /**
-   * Settled turn id -> when the settle was observed. Insertion-ordered.
-   */
+  /** Settled turn id -> when the settle was observed. Insertion-ordered. */
   readonly settledTurns: Map<string, number>;
-  /**
-   * Last event seen per turn id, so a reconciler can ask "is the provider still
-   * reporting *this turn*" rather than "is the provider still reporting for
-   * this thread". Thread-level silence is the wrong signal: a background agent
-   * or a later turn keeps emitting for the same thread and would otherwise
-   * grant an unbounded reprieve to a projection stuck on an older turn.
-   */
-  readonly turnActivity: Map<string, number>;
 }
 
 interface LedgerState {
   readonly entries: Map<string, MutableObservation>;
-  lastPruneAtMs: number;
-}
-
-function newObservation(nowMs: number): MutableObservation {
-  return {
-    lastEventAtMs: nowMs,
-    lastStartedTurnId: null,
-    settledTurns: new Map(),
-    turnActivity: new Map(),
-  };
-}
-
-/** Bounded insertion-ordered map helper: refresh `key`, drop the oldest overflow. */
-function touchBounded(map: Map<string, number>, key: string, valueMs: number, limit: number): void {
-  map.delete(key);
-  map.set(key, valueMs);
-  while (map.size > limit) {
-    const oldest = map.keys().next();
-    if (oldest.done === true) break;
-    map.delete(oldest.value);
-  }
+  /** Number of `record` calls since the last sweep. */
+  sincePrune: number;
 }
 
 const makeProviderRuntimeLiveness = Effect.gen(function* () {
-  const stateRef = yield* Ref.make<LedgerState>({
-    entries: new Map(),
-    lastPruneAtMs: 0,
-  });
+  const stateRef = yield* Ref.make<LedgerState>({ entries: new Map(), sincePrune: 0 });
 
-  const sweepExpired = (state: LedgerState, nowMs: number): void => {
-    for (const [threadId, observation] of state.entries) {
-      if (nowMs - observation.lastEventAtMs > PROVIDER_RUNTIME_LIVENESS_RETENTION_MS) {
-        state.entries.delete(threadId);
-      }
-    }
-  };
-
-  // Entries are mutated in place under `Ref.modify`, the single exclusive
-  // access point for this state, and `observe` copies the settled tail out
-  // before returning. Nothing else aliases these objects, so a per-event Map
-  // copy would be pure overhead on the hot path.
+  // `record` runs on the ingestion funnel for every event including every
+  // `content.delta`, so it must stay O(1). Entries are mutated in place under
+  // `Ref.modify`, the single exclusive access point for this state, and
+  // `observe` copies the tail out before returning, so nothing else aliases
+  // these objects. The expiry sweep is amortized across a batch of records
+  // rather than running per event.
   const record: ProviderRuntimeLivenessShape["record"] = (event) =>
     Ref.modify(stateRef, (state): [void, LedgerState] => {
       const nowMs = Date.now();
       const threadId = event.threadId;
-      const observation = state.entries.get(threadId) ?? newObservation(nowMs);
+      const observation = state.entries.get(threadId) ?? {
+        lastEventAtMs: nowMs,
+        lastStartedTurnId: null,
+        settledTurns: new Map<string, number>(),
+      };
 
       if (event.type === "turn.started" && event.turnId !== undefined) {
         observation.lastStartedTurnId = event.turnId;
       }
 
-      if (SETTLING_EVENT_TYPES.has(event.type)) {
-        // Adapters legitimately omit `turnId` on terminal events:
-        // `ClaudeAdapter.completeTurn` emits one whenever `context.turnState`
-        // is unset, and `CodexSessionRuntime.readRouteFields` returns
-        // `turnId: undefined` from its default branch for any unlisted method.
-        // `ProviderRuntimeIngestion` settles those against the session's active
-        // turn; the ledger has no projection access, so it settles the turn the
-        // provider last announced. Trusting `event.turnId` alone would leave
-        // those turns unrecorded and let the reaper interrupt a finished turn.
+      // Adapters legitimately omit `turnId` on terminal events:
+      // `ClaudeAdapter.completeTurn` emits one whenever `context.turnState` is
+      // unset, and `CodexSessionRuntime.readRouteFields` returns
+      // `turnId: undefined` from its default branch for any unlisted method.
+      // `ProviderRuntimeIngestion` settles those against the session's active
+      // turn; this ledger has no projection access, so it settles the turn the
+      // provider last announced. Trusting `event.turnId` alone would leave those
+      // turns unrecorded and let the reaper interrupt a finished turn.
+      if (event.type === "turn.completed" || event.type === "turn.aborted") {
         const settledTurnId = event.turnId ?? observation.lastStartedTurnId;
         if (settledTurnId !== null) {
           // A resumed session can re-report a terminal event for a turn already
-          // in the tail; `touchBounded` keeps insertion order stable for a repeat.
-          touchBounded(observation.settledTurns, settledTurnId, nowMs, MAX_SETTLED_TURNS);
+          // in the tail; delete-then-set keeps insertion order stable.
+          observation.settledTurns.delete(settledTurnId);
+          observation.settledTurns.set(settledTurnId, nowMs);
+          // Map iteration is insertion-ordered, so this drops the oldest ids.
+          for (const oldest of observation.settledTurns.keys()) {
+            if (observation.settledTurns.size <= MAX_SETTLED_TURNS) break;
+            observation.settledTurns.delete(oldest);
+          }
         }
-      }
-
-      // Per-turn activity is only credited when the event names its turn. A turnId-less
-      // event still proves the thread is alive, but not that *this* turn is
-      // progressing, so it must not extend a per-turn reprieve. Attributing it
-      // to the last announced turn is what let a background agent's events keep
-      // a projection stuck on an older turn held indefinitely.
-      if (event.turnId !== undefined) {
-        touchBounded(observation.turnActivity, event.turnId, nowMs, MAX_TRACKED_TURNS);
       }
 
       observation.lastEventAtMs = nowMs;
       state.entries.set(threadId, observation);
 
-      if (nowMs - state.lastPruneAtMs >= PRUNE_INTERVAL_MS) {
-        state.lastPruneAtMs = nowMs;
-        sweepExpired(state, nowMs);
+      state.sincePrune += 1;
+      if (state.sincePrune >= PRUNE_BATCH_SIZE) {
+        state.sincePrune = 0;
+        for (const [expiredThreadId, expired] of state.entries) {
+          if (nowMs - expired.lastEventAtMs > RETENTION_MS) {
+            state.entries.delete(expiredThreadId);
+          }
+        }
       }
 
       return [undefined, state];
@@ -160,28 +114,11 @@ const makeProviderRuntimeLiveness = Effect.gen(function* () {
       Effect.map((state): ProviderThreadRuntimeObservation | null => {
         const observation = state.entries.get(threadId);
         if (observation === undefined) return null;
-        return {
-          lastEventAtMs: observation.lastEventAtMs,
-          settledTurns: new Map(observation.settledTurns),
-          lastEventAtMsByTurn: new Map(observation.turnActivity),
-        };
+        return { settledTurns: new Map(observation.settledTurns) };
       }),
     );
 
-  const prune: ProviderRuntimeLivenessShape["prune"] = () =>
-    Ref.modify(stateRef, (state): [void, LedgerState] => {
-      state.lastPruneAtMs = Date.now();
-      sweepExpired(state, state.lastPruneAtMs);
-      return [undefined, state];
-    });
-
-  const forget: ProviderRuntimeLivenessShape["forget"] = (threadId) =>
-    Ref.modify(stateRef, (state): [void, LedgerState] => {
-      state.entries.delete(threadId);
-      return [undefined, state];
-    });
-
-  return { record, observe, prune, forget } satisfies ProviderRuntimeLivenessShape;
+  return { record, observe } satisfies ProviderRuntimeLivenessShape;
 });
 
 export const ProviderRuntimeLivenessLive = Layer.effect(

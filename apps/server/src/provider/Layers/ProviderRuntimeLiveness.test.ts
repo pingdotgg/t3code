@@ -1,7 +1,6 @@
 import {
   EventId,
   ProviderDriverKind,
-  RuntimeTaskId,
   ThreadId,
   TurnId,
   type ProviderRuntimeEvent,
@@ -137,7 +136,6 @@ describe("ProviderRuntimeLivenessLive", () => {
     );
 
     expect(observation?.settledTurns.size).toBe(0);
-    expect(observation?.lastEventAtMs).toBeGreaterThan(0);
   });
 
   it("keeps observations scoped per thread", async () => {
@@ -198,74 +196,5 @@ describe("ProviderRuntimeLivenessLive", () => {
     );
 
     expect(settledTurns).toEqual(new Set([turnId]));
-  });
-
-  it("scopes per-turn activity to the turn an event names", async () => {
-    // A turnId-less event proves the thread is alive but not that any
-    // particular turn is progressing, so it must not extend a per-turn
-    // reprieve — that is what let a background agent keep a projection stuck on
-    // an older turn held forever.
-    const activity = await withLiveness((liveness) =>
-      Effect.gen(function* () {
-        yield* liveness.record(
-          runtimeEvent({
-            type: "item.updated",
-            turnId,
-            payload: { itemType: "command_execution" },
-          }),
-        );
-        yield* liveness.record(
-          runtimeEvent({
-            type: "task.progress",
-            payload: {
-              taskId: RuntimeTaskId.make("background-agent-1"),
-              description: "Background agent",
-            },
-          }),
-        );
-        const observation = yield* liveness.observe(threadId);
-        return {
-          // The named turn is credited; the thread is alive but turnless events
-          // credited nothing.
-          namedTurn: observation?.lastEventAtMsByTurn.get(turnId) !== undefined,
-          trackedTurns: observation?.lastEventAtMsByTurn.size ?? 0,
-        };
-      }),
-    );
-
-    expect(activity).toEqual({ namedTurn: true, trackedTurns: 1 });
-  });
-
-  it("bounds per-turn activity to the most recent turns", async () => {
-    const trackedTurns = await withLiveness((liveness) =>
-      Effect.gen(function* () {
-        for (let index = 0; index < 12; index += 1) {
-          yield* liveness.record(
-            runtimeEvent({
-              type: "item.updated",
-              turnId: TurnId.make(`turn-activity-${index}`),
-              payload: { itemType: "command_execution" },
-            }),
-          );
-        }
-        return (yield* liveness.observe(threadId))?.lastEventAtMsByTurn.size ?? 0;
-      }),
-    );
-
-    expect(trackedTurns).toBe(8);
-  });
-
-  it("forgets a thread's observation on request", async () => {
-    const observation = await withLiveness((liveness) =>
-      Effect.gen(function* () {
-        yield* liveness.record(
-          runtimeEvent({ type: "turn.completed", turnId, payload: { state: "completed" } }),
-        );
-        yield* liveness.forget(threadId);
-        return yield* liveness.observe(threadId);
-      }),
-    );
-
-    expect(observation).toBeNull();
   });
 });

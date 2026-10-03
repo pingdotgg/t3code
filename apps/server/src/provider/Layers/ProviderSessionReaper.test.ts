@@ -3,7 +3,6 @@ import {
   EventId,
   MessageId,
   ProjectId,
-  RuntimeTaskId,
   ThreadId,
   TurnId,
   ProviderDriverKind,
@@ -156,10 +155,7 @@ describe("ProviderSessionReaper", () => {
     readonly activeSessions?: ReadonlyArray<ProviderSession>;
     readonly listSessionsImplementation?: ProviderServiceShape["listSessions"];
     readonly sweepIntervalMs?: number;
-    readonly settledTurnGraceMs?: number;
     readonly settledTurnHoldMs?: number;
-    /** Backdate ledger observations so a settle looks older than it is. */
-    readonly observationAgeMs?: number;
     /** Provider runtime events replayed into the liveness ledger before the reaper starts. */
     readonly observedRuntimeEvents?: ReadonlyArray<ProviderRuntimeEvent>;
     /** Overrides the projection the reaper's pre-dispatch re-read observes. */
@@ -256,9 +252,6 @@ describe("ProviderSessionReaper", () => {
     const layer = makeProviderSessionReaperLive({
       inactivityThresholdMs: 1_000,
       sweepIntervalMs: input.sweepIntervalMs ?? 60_000,
-      ...(input.settledTurnGraceMs === undefined
-        ? {}
-        : { settledTurnGraceMs: input.settledTurnGraceMs }),
       ...(input.settledTurnHoldMs === undefined
         ? {}
         : { settledTurnHoldMs: input.settledTurnHoldMs }),
@@ -758,7 +751,6 @@ describe("ProviderSessionReaper", () => {
     const now = new Date().toISOString();
     const harness = await createHarness({
       sweepIntervalMs: 100,
-      settledTurnGraceMs: 0,
       settledTurnHoldMs: 60_000,
       // The provider is idle, so the bare mismatch check would reap.
       activeSessions: [],
@@ -799,7 +791,6 @@ describe("ProviderSessionReaper", () => {
     const now = new Date().toISOString();
     const harness = await createHarness({
       sweepIntervalMs: 100,
-      settledTurnGraceMs: 0,
       // Any settle older than this no longer excuses the mismatch.
       settledTurnHoldMs: 0,
       activeSessions: [],
@@ -843,8 +834,6 @@ describe("ProviderSessionReaper", () => {
     const now = new Date().toISOString();
     const harness = await createHarness({
       sweepIntervalMs: 100,
-      // Grace exhausted, so only the settled-turn signal can hold this.
-      settledTurnGraceMs: 0,
       settledTurnHoldMs: 60_000,
       activeSessions: [],
       observedRuntimeEvents: [
@@ -895,124 +884,6 @@ describe("ProviderSessionReaper", () => {
     expect(harness.dispatchedCommands).toEqual([]);
   });
 
-  it("holds a stale active turn while the provider is still reporting events", async () => {
-    const threadId = ThreadId.make("thread-reaper-provider-active");
-    const turnId = TurnId.make("turn-reaper-provider-active");
-    const now = new Date().toISOString();
-    const harness = await createHarness({
-      sweepIntervalMs: 100,
-      // Long enough that a just-recorded event is still inside the grace.
-      settledTurnGraceMs: 60_000,
-      activeSessions: [],
-      observedRuntimeEvents: [
-        {
-          eventId: EventId.make("evt-reaper-provider-active"),
-          provider: ProviderDriverKind.make("claudeAgent"),
-          threadId,
-          createdAt: now,
-          type: "item.updated",
-          turnId,
-          payload: { itemType: "command_execution" },
-        } satisfies ProviderRuntimeEvent,
-      ],
-      readModel: makeReadModel([
-        {
-          id: threadId,
-          session: {
-            threadId,
-            status: "running",
-            providerName: "claudeAgent",
-            runtimeMode: "full-access",
-            activeTurnId: turnId,
-            lastError: null,
-            updatedAt: now,
-          },
-        },
-      ]),
-    });
-    await persistRuntimeBinding(threadId, now, "resume-provider-active");
-
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
-    await waitFor(() => harness.sweeps() >= 3);
-    await Effect.runPromise(Scope.close(scope, Exit.void));
-    scope = null;
-
-    expect(harness.dispatchedCommands).toEqual([]);
-  });
-
-  // The thread-scoped silence signal was the second unbounded hold: a
-  // background agent or a later turn keeps emitting for the same thread, so a
-  // projection stuck on an older turn was held forever and never recovered.
-  it("does not let unrelated thread traffic hold a stale active turn", async () => {
-    const threadId = ThreadId.make("thread-reaper-unrelated-traffic");
-    const stuckTurnId = TurnId.make("turn-reaper-unrelated-stuck");
-    const now = new Date().toISOString();
-    const harness = await createHarness({
-      sweepIntervalMs: 100,
-      settledTurnGraceMs: 60_000,
-      // No settle for the stuck turn, so only the silence signal could hold it.
-      settledTurnHoldMs: 0,
-      activeSessions: [],
-      observedRuntimeEvents: [
-        // The provider has already moved on to a later turn; every event below
-        // belongs to that turn or to the thread, none to the stuck one.
-        {
-          eventId: EventId.make("evt-reaper-unrelated-next-turn"),
-          provider: ProviderDriverKind.make("claudeAgent"),
-          threadId,
-          createdAt: now,
-          type: "turn.started",
-          turnId: TurnId.make("turn-reaper-unrelated-next"),
-          payload: {},
-        } satisfies ProviderRuntimeEvent,
-        {
-          eventId: EventId.make("evt-reaper-unrelated-progress"),
-          provider: ProviderDriverKind.make("claudeAgent"),
-          threadId,
-          createdAt: now,
-          type: "task.progress",
-          payload: {
-            taskId: RuntimeTaskId.make("background-agent-1"),
-            description: "Background agent",
-          },
-        } satisfies ProviderRuntimeEvent,
-      ],
-      readModel: makeReadModel([
-        {
-          id: threadId,
-          // The projection is still stuck naming the earlier turn.
-          session: {
-            threadId,
-            status: "running",
-            providerName: "claudeAgent",
-            runtimeMode: "full-access",
-            activeTurnId: stuckTurnId,
-            lastError: null,
-            updatedAt: now,
-          },
-        },
-      ]),
-    });
-    await persistRuntimeBinding(threadId, now, "resume-unrelated-traffic");
-
-    const reaper = await runtime!.runPromise(Effect.service(ProviderSessionReaper));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
-    await waitFor(() => harness.sweeps() >= 3);
-    await Effect.runPromise(Scope.close(scope, Exit.void));
-    scope = null;
-
-    // Thread-level traffic is fresh, so a thread-scoped signal would hold this
-    // on every sweep and the thread would never recover.
-    expect(harness.dispatchedCommands.length).toBeGreaterThan(0);
-    expect(harness.dispatchedCommands.at(-1)).toMatchObject({
-      type: "thread.session.set",
-      session: { status: "interrupted" },
-    });
-  });
-
   it("holds a stale active turn whose projection advanced during the sweep", async () => {
     const threadId = ThreadId.make("thread-reaper-projection-advanced");
     const turnId = TurnId.make("turn-reaper-projection-advanced");
@@ -1028,7 +899,6 @@ describe("ProviderSessionReaper", () => {
     });
     const harness = await createHarness({
       sweepIntervalMs: 100,
-      settledTurnGraceMs: 0,
       activeSessions: [],
       // The projection caught up between the sweep's snapshot and the pre-dispatch
       // re-read: the turn finished and a different one is now active.
