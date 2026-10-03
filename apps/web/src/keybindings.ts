@@ -80,6 +80,12 @@ const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Semicolon: ";",
   Slash: "/",
 };
+// Unshifted mod plus these characters is zoom, which the desktop menu and
+// browsers own. Layouts that type them on another punctuation key (German "+"
+// sits where US "]" is) must not also fire the shortcut bound to that key's US
+// character. Shifted presses keep the physical fallback, so US Ctrl+Shift+=
+// still matches `mod+shift+=`.
+const ZOOM_LAYOUT_KEYS = new Set(["+", "=", "-"]);
 
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
@@ -87,9 +93,12 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
-export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
+export function shortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey">,
+): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
+  if (!event.shiftKey && ZOOM_LAYOUT_KEYS.has(layoutKey)) return layoutKey;
   const physicalKey = event.code ? EVENT_CODE_SHORTCUT_KEYS[event.code] : undefined;
   return physicalKey ?? layoutKey;
 }

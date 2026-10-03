@@ -997,6 +997,54 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("leaves mod plus a zoom character to zoom on layouts that type it elsewhere", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("]"), command: "navigation.forward" },
+      { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
+      {
+        shortcut: modShortcut("+"),
+        command: "preview.zoomIn",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+    ]);
+    // German layouts type "+" on the key US layouts label "]".
+    const germanPlus = event({ key: "+", code: "BracketRight", ctrlKey: true });
+
+    assert.isNull(resolveShortcutCommand(germanPlus, keybindings, { platform: "Win32" }));
+    assert.strictEqual(
+      resolveShortcutCommand(germanPlus, keybindings, {
+        platform: "Win32",
+        context: { previewFocus: true },
+      }),
+      "preview.zoomIn",
+    );
+    // Shift on that key types "*", which still falls back to the physical "]".
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "*", code: "BracketRight", ctrlKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "Win32" },
+      ),
+      "thread.next",
+    );
+  });
+
+  it("keeps the physical key for shifted zoom characters", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("=", { shiftKey: true }), command: "diff.toggle" },
+    ]);
+
+    // US layouts type "+" with Shift on the Equal key.
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Equal", ctrlKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "Win32" },
+      ),
+      "diff.toggle",
+    );
+  });
+
   it("does not let a punctuation position shadow a Latin layout key", () => {
     const keybindings = compile([
       { shortcut: modShortcut("m"), command: "diff.toggle" },
