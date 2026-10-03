@@ -152,3 +152,35 @@ describe("selectionTouchesMentionBoundary", () => {
     ).toBe(true);
   });
 });
+
+describe("thread context segments", () => {
+  it("parses inline thread references into atomic thread-context segments", () => {
+    expect(
+      splitPromptIntoComposerSegments("see [Auth](t3-context://v1/thread/ctx-1) please"),
+    ).toEqual([
+      { type: "text", text: "see " },
+      { type: "thread-context", contextId: "ctx-1", label: "Auth" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("keeps multiple thread references in order without swallowing surrounding text", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        "[A](t3-context://v1/thread/ctx-a) plus [B](t3-context://v1/thread/ctx-b)",
+      ),
+    ).toEqual([
+      { type: "thread-context", contextId: "ctx-a", label: "A" },
+      { type: "text", text: " plus " },
+      { type: "thread-context", contextId: "ctx-b", label: "B" },
+    ]);
+  });
+
+  it("does not parse mention tokens inside a thread reference label", () => {
+    const segments = splitPromptIntoComposerSegments("[a@b](t3-context://v1/thread/ctx-9) ");
+    expect(segments).toEqual([
+      { type: "thread-context", contextId: "ctx-9", label: "a@b" },
+      { type: "text", text: " " },
+    ]);
+  });
+});

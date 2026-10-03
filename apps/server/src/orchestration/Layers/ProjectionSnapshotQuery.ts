@@ -7,6 +7,7 @@ import {
   MessageOrigin,
   NonNegativeInt,
   OrchestrationCheckpointFile,
+  OrchestrationMessageContext,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
   OrchestrationQueuedTurn,
@@ -65,7 +66,11 @@ import { ProjectionWorkflowRepository } from "../../persistence/Services/Project
 import { ProjectionWorkflowRepositoryLive } from "../../persistence/Layers/ProjectionWorkflows.ts";
 import { RepositoryIdentityResolver } from "../../project/Services/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
-import { MAX_THREAD_ACTIVITIES, MAX_THREAD_MESSAGES } from "../projection/ProjectionPolicy.ts";
+import {
+  MAX_THREAD_ACTIVITIES,
+  MAX_THREAD_MESSAGES,
+  reconcileLatestTurnWithSession,
+} from "../projection/ProjectionPolicy.ts";
 // Per-thread cap for background-agent runs in shell snapshots.
 const MAX_BACKGROUND_AGENT_RUNS_PER_THREAD = 100;
 import {
@@ -122,6 +127,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -130,6 +136,7 @@ const ProjectionQueuedTurnDbRowSchema = ProjectionQueuedTurn.mapFields(
     attachments: Schema.fromJsonString(Schema.Array(ChatAttachment)),
     origin: Schema.NullOr(Schema.fromJsonString(MessageOrigin)),
     modelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
 );
 const WorkspaceBindingDbSchema = Schema.NullOr(
@@ -248,6 +255,7 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
     files: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
     agentTouchedPaths: Schema.fromJsonString(Schema.Array(TrimmedNonEmptyString)),
     turnFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    transitionFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
@@ -449,6 +457,7 @@ function mapQueuedTurnRow(
       role: "user",
       text: row.text,
       attachments: row.attachments,
+      ...(row.context !== null && row.context !== undefined ? { context: row.context } : {}),
     },
     ...(row.origin !== null ? { origin: row.origin } : {}),
     ...(row.modelSelection !== null ? { modelSelection: row.modelSelection } : {}),
@@ -467,33 +476,6 @@ function mapQueuedTurnRow(
     updatedAt: row.updatedAt,
     failedAt: row.failedAt,
     failureMessage: row.failureMessage,
-  };
-}
-
-function reconcileLatestTurnWithSession(
-  latestTurn: OrchestrationLatestTurn | null,
-  session: OrchestrationSession | null,
-): OrchestrationLatestTurn | null {
-  if (session?.status !== "running" || session.activeTurnId === null) {
-    return latestTurn;
-  }
-
-  if (latestTurn?.turnId === session.activeTurnId) {
-    return {
-      ...latestTurn,
-      state: "running",
-      startedAt: latestTurn.startedAt ?? session.updatedAt,
-      completedAt: null,
-    };
-  }
-
-  return {
-    turnId: session.activeTurnId,
-    state: "running",
-    requestedAt: session.updatedAt,
-    startedAt: session.updatedAt,
-    completedAt: null,
-    assistantMessageId: null,
   };
 }
 
@@ -692,6 +674,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           messages.text,
           messages.attachments_json AS "attachments",
           messages.origin_json AS "origin",
+          messages.context_json AS "context",
           messages.is_streaming AS "isStreaming",
           messages.created_at AS "createdAt",
           messages.updated_at AS "updatedAt"
@@ -732,6 +715,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           messages.text,
           messages.attachments_json AS "attachments",
           messages.origin_json AS "origin",
+          messages.context_json AS "context",
           messages.is_streaming AS "isStreaming",
           messages.created_at AS "createdAt",
           messages.updated_at AS "updatedAt"
@@ -778,6 +762,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           origin_json AS "origin",
+          context_json AS "context",
           model_selection_json AS "modelSelection",
           title_seed AS "titleSeed",
           runtime_mode AS "runtimeMode",
@@ -904,6 +889,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     s.provider_thread_id AS "providerThreadId",
     s.runtime_mode AS "runtimeMode",
     s.active_turn_id AS "activeTurnId",
+    s.active_message_id AS "activeMessageId",
     COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
     s.last_error AS "lastError",
     s.updated_at AS "updatedAt"
@@ -957,6 +943,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1254,6 +1241,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           messages.text,
           messages.attachments_json AS "attachments",
           messages.origin_json AS "origin",
+          messages.context_json AS "context",
           messages.is_streaming AS "isStreaming",
           messages.created_at AS "createdAt",
           messages.updated_at AS "updatedAt"
@@ -1282,6 +1270,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           origin_json AS "origin",
+          context_json AS "context",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1323,6 +1312,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           text,
           attachments_json AS "attachments",
           origin_json AS "origin",
+          context_json AS "context",
           model_selection_json AS "modelSelection",
           title_seed AS "titleSeed",
           runtime_mode AS "runtimeMode",
@@ -1678,6 +1668,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           s.provider_instance_id AS "providerInstanceId",
           s.runtime_mode AS "runtimeMode",
           s.active_turn_id AS "activeTurnId",
+          s.active_message_id AS "activeMessageId",
           COALESCE(s.resume_cursor_json, r.resume_cursor_json) AS "resumeCursor",
           s.last_error AS "lastError",
           s.updated_at AS "updatedAt"
@@ -1732,6 +1723,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           checkpoint_files_json AS "files",
           checkpoint_agent_touched_paths_json AS "agentTouchedPaths",
           checkpoint_turn_files_json AS "turnFiles",
+          checkpoint_transition_files_json AS "transitionFiles",
           assistant_message_id AS "assistantMessageId",
           completed_at AS "completedAt"
         FROM projection_turns
@@ -1895,6 +1887,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   text: row.text,
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   ...(row.origin !== null ? { origin: row.origin } : {}),
+                  ...(row.context !== null && row.context !== undefined
+                    ? { context: row.context }
+                    : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
                   createdAt: row.createdAt,
@@ -1943,6 +1938,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   files: row.files,
                   agentTouchedPaths: row.agentTouchedPaths,
                   turnFiles: row.turnFiles,
+                  transitionFiles: row.transitionFiles,
                   assistantMessageId: row.assistantMessageId,
                   completedAt: row.completedAt,
                 });
@@ -1986,19 +1982,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
-                sessionsByThread.set(row.threadId, {
-                  threadId: row.threadId,
-                  status: row.status,
-                  providerName: row.providerName,
-                  ...(row.providerInstanceId !== null
-                    ? { providerInstanceId: row.providerInstanceId }
-                    : {}),
-                  runtimeMode: row.runtimeMode,
-                  activeTurnId: row.activeTurnId,
-                  ...(row.resumeCursor !== null ? { resumeCursor: row.resumeCursor } : {}),
-                  lastError: row.lastError,
-                  updatedAt: row.updatedAt,
-                });
+                sessionsByThread.set(row.threadId, mapSessionRow(row));
               }
 
               const repositoryIdentities = new Map(
@@ -2544,6 +2528,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             files: row.files,
             agentTouchedPaths: row.agentTouchedPaths,
             turnFiles: row.turnFiles,
+            transitionFiles: row.transitionFiles,
             assistantMessageId: row.assistantMessageId,
             completedAt: row.completedAt,
           }),
@@ -2871,6 +2856,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             message,
             row.attachments !== null ? { attachments: row.attachments } : {},
             row.origin !== null ? { origin: row.origin } : {},
+            row.context !== null && row.context !== undefined ? { context: row.context } : {},
           );
         }),
         proposedPlans: proposedPlanRows.map((row) => ({
@@ -2897,6 +2883,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           files: row.files,
           agentTouchedPaths: row.agentTouchedPaths,
           turnFiles: row.turnFiles,
+          transitionFiles: row.transitionFiles,
           assistantMessageId: row.assistantMessageId,
           completedAt: row.completedAt,
         })),
@@ -3176,6 +3163,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         execute: () => sql`
           SELECT message_id AS "messageId", thread_id AS "threadId", turn_id AS "turnId",
             role, text, attachments_json AS "attachments", origin_json AS "origin",
+            context_json AS "context",
             is_streaming AS "isStreaming", created_at AS "createdAt", updated_at AS "updatedAt"
           FROM projection_thread_messages
           WHERE thread_id = ${thread.value.id} AND (
@@ -3200,6 +3188,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updatedAt: row.updatedAt,
           ...(row.attachments !== null ? { attachments: row.attachments } : {}),
           ...(row.origin !== null ? { origin: row.origin } : {}),
+          ...(row.context !== null && row.context !== undefined ? { context: row.context } : {}),
         }));
       return { thread: thread.value, messages, page: pageFor(messages, rows.length > limit) };
     }).pipe(

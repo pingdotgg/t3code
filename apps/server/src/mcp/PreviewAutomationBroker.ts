@@ -30,6 +30,7 @@ import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -79,7 +80,7 @@ interface ClientConnection {
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly focusOrder: number;
-  readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
+  readonly queue: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
 }
 
 interface PendingRequest {
@@ -418,32 +419,47 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const closeConnection = Effect.fn("PreviewAutomationBroker.closeConnection")(function* (
     queue: ClientConnection["queue"],
     disconnected: ReadonlyArray<PendingRequest>,
+    completeStream = false,
   ) {
+    if (completeStream) {
+      // Drop this generation's buffered commands and finish cleanly so a live
+      // desktop can register again after a request timeout.
+      yield* Queue.clear(queue);
+      yield* Queue.end(queue);
+    } else {
+      // Replaced registrations must not reconnect and displace their successor.
+      yield* Queue.shutdown(queue);
+    }
     yield* Effect.forEach(
       disconnected,
       ({ deferred, context }) =>
         Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
       { discard: true },
     );
-    yield* Queue.shutdown(queue);
   });
 
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
     clientId: string,
     queue: ClientConnection["queue"],
+    completeStream = false,
   ) {
-    const disconnected = yield* SynchronizedRef.modify(state, (current) => {
+    yield* SynchronizedRef.modifyEffect(state, (current) => {
+      // An old stream finalizer must not close a newer registration.
+      if (current.clients.get(clientId)?.queue !== queue) {
+        return Effect.succeed([undefined, current] as const);
+      }
       const removed = removeConnectionFromState(current, clientId, queue);
-      return [removed.disconnected, removed.state] as const;
+      return closeConnection(queue, removed.disconnected, completeStream).pipe(
+        Effect.as([undefined, removed.state] as const),
+      );
     });
-    yield* closeConnection(queue, disconnected);
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
     host: PreviewAutomationHost,
   ) {
     const clientId = host.clientId;
-    const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent>();
+    const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent, Cause.Done>();
     const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     yield* Queue.offer(queue, { type: "connected", connectionId });
     const connection: ClientConnection = {
@@ -861,19 +877,29 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       });
     }
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
-      const offered = yield* Queue.offer(connection.queue, {
-        type: "request",
-        connectionId: connection.connectionId,
-        request: {
-          requestId,
-          threadId: input.scope.threadId,
-          tabId: requestContext.tabId,
-          tabIdExplicit: input.tabId !== undefined,
-          operation: input.operation,
-          input: input.input,
-          ...(preparedManagedAuth ? { managedTargetAuth: preparedManagedAuth.payload } : {}),
-          timeoutMs: requestTimeoutMs,
-        },
+      const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
+        // A route can outlive its generation while another request evicts it.
+        // Serialize the live-generation check and offer with queue closure.
+        if (
+          current.clients.get(connection.clientId)?.queue !== connection.queue ||
+          !current.pending.has(requestId)
+        ) {
+          return Effect.succeed([false, current] as const);
+        }
+        return Queue.offer(connection.queue, {
+          type: "request",
+          connectionId: connection.connectionId,
+          request: {
+            requestId,
+            threadId: input.scope.threadId,
+            tabId: requestContext.tabId,
+            tabIdExplicit: input.tabId !== undefined,
+            operation: input.operation,
+            input: input.input,
+            ...(preparedManagedAuth ? { managedTargetAuth: preparedManagedAuth.payload } : {}),
+            timeoutMs: requestTimeoutMs,
+          },
+        }).pipe(Effect.map((wasOffered) => [wasOffered, current] as const));
       });
       if (!offered) {
         const completion = yield* Deferred.poll(deferred);
@@ -884,7 +910,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       }
       const result = yield* Deferred.await(deferred).pipe(Effect.timeoutOption(requestTimeoutMs));
       return yield* Option.match(result, {
-        onNone: () => Effect.fail(new PreviewAutomationTimeoutError(requestContext)),
+        onNone: () =>
+          disconnect(connection.clientId, connection.queue, true).pipe(
+            Effect.andThen(new PreviewAutomationTimeoutError(requestContext)),
+          ),
         onSome: (value) => Effect.succeed(value as A),
       });
     });

@@ -2,10 +2,15 @@ import {
   CommandId,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationProject,
   type OrchestrationThread,
   type WorkspaceBinding,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
@@ -132,6 +137,42 @@ describe("admitWorkspaceCommand", () => {
       ),
     )) as { readonly workspaceBinding?: WorkspaceBinding };
     expect(admitted.workspaceBinding).toEqual(binding);
+  });
+
+  it("rejects handoff and meta.update targeting the project checkout", async () => {
+    // The project checkout is reserved for the human: these commands must
+    // fail before claiming ownership, never admit the main checkout as the
+    // thread's workspace.
+    const projectRoot = await mkdtemp(join(tmpdir(), "admission-project-"));
+    execFileSync("git", ["init", projectRoot], { stdio: "ignore" });
+    try {
+      const projectId = "admission-project";
+      const deps: WorkspaceAdmissionDeps = {
+        findThread: () => ({ id: threadId, projectId }) as OrchestrationThread,
+        findProject: () => ({ id: projectId, workspaceRoot: projectRoot }) as OrchestrationProject,
+        claimOwnership: () => Effect.die(new Error("must reject before claiming ownership")),
+        hasCleanupReservationByPath: () => Effect.succeed(false),
+      };
+      const commands = [
+        {
+          type: "thread.workspace.handoff",
+          commandId,
+          threadId,
+          branch: "handoff-branch",
+          worktreePath: projectRoot,
+        },
+        { type: "thread.meta.update", commandId, threadId, worktreePath: projectRoot },
+      ] as Array<OrchestrationCommand>;
+      for (const command of commands) {
+        const failure = await Effect.runPromise(
+          admitWorkspaceCommand(deps, command).pipe(Effect.flip),
+        );
+        expect(failure).toBeInstanceOf(OrchestrationCommandInvariantError);
+        expect((failure as Error).message).toContain("reserved for the human");
+      }
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

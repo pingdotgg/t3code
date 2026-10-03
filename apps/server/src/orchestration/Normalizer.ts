@@ -1,8 +1,9 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import {
   type ClientOrchestrationCommand,
   type OrchestrationCommand,
   OrchestrationDispatchCommandError,
+  OrchestrationMessageContext,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 
@@ -81,6 +82,12 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
     }
 
     if (command.type !== "thread.turn.start" && command.type !== "thread.queued-turn.create") {
+      if (command.type === "thread.queued-turn.update" && command.context !== undefined) {
+        return {
+          ...command,
+          context: yield* validateMessageContext(command.context),
+        } satisfies OrchestrationCommand;
+      }
       return command as OrchestrationCommand;
     }
 
@@ -172,6 +179,9 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         message: {
           ...command.message,
           attachments: normalizedAttachments,
+          ...(command.message.context !== undefined
+            ? { context: yield* validateMessageContext(command.message.context) }
+            : {}),
         },
       } satisfies OrchestrationCommand;
     }
@@ -181,6 +191,24 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       message: {
         ...command.message,
         attachments: normalizedAttachments,
+        ...(command.message.context !== undefined
+          ? { context: yield* validateMessageContext(command.message.context) }
+          : {}),
       },
     } satisfies OrchestrationCommand;
   });
+
+const decodeMessageContext = Schema.decodeUnknownEffect(OrchestrationMessageContext);
+
+const validateMessageContext = (
+  context: unknown,
+): Effect.Effect<typeof OrchestrationMessageContext.Type, OrchestrationDispatchCommandError> =>
+  decodeMessageContext(context).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestrationDispatchCommandError({
+          message:
+            "Invalid thread context: records must carry unique, well-formed thread identity.",
+        }),
+    ),
+  );

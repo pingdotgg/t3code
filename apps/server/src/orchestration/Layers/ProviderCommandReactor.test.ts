@@ -17,6 +17,7 @@ import {
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -28,6 +29,10 @@ import { Deferred, Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
+import {
+  ServerEnvironment,
+  type ServerEnvironmentShape,
+} from "../../environment/Services/ServerEnvironment.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
@@ -435,6 +440,12 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+      Layer.provideMerge(
+        Layer.succeed(ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("env-provider-command-reactor-test")),
+          getDescriptor: Effect.die("ServerEnvironment.getDescriptor is unused in this test"),
+        } satisfies ServerEnvironmentShape),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -573,6 +584,7 @@ describe("ProviderCommandReactor", () => {
         checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/thread-1/${input.commandId}`),
         status: "ready",
         files: [],
+        transitionFiles: [],
         agentTouchedPaths: [],
         turnFiles: [],
         checkpointTurnCount: 1,

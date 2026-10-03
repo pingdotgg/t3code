@@ -1,5 +1,6 @@
 import type {
   OrchestrationCommand,
+  OrchestrationMessage,
   OrchestrationQueuedTurn,
   OrchestrationProject,
   OrchestrationReadModel,
@@ -119,20 +120,17 @@ export function requireThread(input: {
   );
 }
 
-export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
-  if (thread.latestTurn?.state === "running") {
-    return true;
-  }
-
-  if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
-    return true;
-  }
-
-  const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
+// Shared by the two probes below: they ask different questions but must agree on
+// which messages count as "the provider never got a turn". Takes the message the
+// caller already resolved rather than re-scanning `thread.messages`.
+function hasFailedTurnStart(
+  thread: OrchestrationThread,
+  latestUserMessage: OrchestrationMessage | undefined,
+): boolean {
   if (!latestUserMessage) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
+  return thread.activities.some((activity) => {
     if (
       activity.kind !== "provider.turn.start.failed" ||
       activity.createdAt < latestUserMessage.createdAt
@@ -148,7 +146,22 @@ export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
         : null;
     return messageId === null || messageId === latestUserMessage.id;
   });
-  if (failedTurnStart) {
+}
+
+export function threadHasInFlightTurn(thread: OrchestrationThread): boolean {
+  if (thread.latestTurn?.state === "running") {
+    return true;
+  }
+
+  if (thread.session?.status === "running" && thread.session.activeTurnId !== null) {
+    return true;
+  }
+
+  const latestUserMessage = thread.messages.findLast((message) => message.role === "user");
+  if (!latestUserMessage) {
+    return false;
+  }
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   if (thread.latestTurn === null || thread.latestTurn.completedAt === null) {
@@ -174,23 +187,7 @@ export function threadHasQueuedTurnStart(
   ) {
     return false;
   }
-  const failedTurnStart = thread.activities.some((activity) => {
-    if (
-      activity.kind !== "provider.turn.start.failed" ||
-      activity.createdAt < latestUserMessage.createdAt
-    ) {
-      return false;
-    }
-    const messageId =
-      typeof activity.payload === "object" &&
-      activity.payload !== null &&
-      "messageId" in activity.payload &&
-      typeof activity.payload.messageId === "string"
-        ? activity.payload.messageId
-        : null;
-    return messageId === null || messageId === latestUserMessage.id;
-  });
-  if (failedTurnStart) {
+  if (hasFailedTurnStart(thread, latestUserMessage)) {
     return false;
   }
   return thread.latestTurn === null || thread.latestTurn.completedAt === null

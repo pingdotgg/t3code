@@ -2299,6 +2299,10 @@ const make = Effect.gen(function* () {
                 ? providerTurnFiles
                 : mergeProviderTurnDiffFiles(existingCheckpoint.turnFiles, providerTurnFiles);
             const agentTouchedPaths = [...new Set(turnFiles.map((file) => file.path))];
+            const transitionFiles =
+              existingCheckpoint === undefined
+                ? providerTurnFiles
+                : mergeProviderTurnDiffFiles(existingCheckpoint.transitionFiles, providerTurnFiles);
             const assistantMessageId = MessageId.make(
               `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
             );
@@ -2314,6 +2318,7 @@ const make = Effect.gen(function* () {
                 CheckpointRef.make(`provider-diff:${event.eventId}`),
               status: "speculative",
               files: [],
+              transitionFiles,
               agentTouchedPaths,
               turnFiles,
               assistantMessageId,

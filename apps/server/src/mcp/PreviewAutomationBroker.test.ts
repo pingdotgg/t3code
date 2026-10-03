@@ -10,6 +10,7 @@ import {
   PreviewAutomationNoSupportedHostError,
   PreviewAutomationPinnedHostUnsupportedOperationError,
   PreviewAutomationTargetNotEditableError,
+  PreviewAutomationTimeoutError,
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
@@ -42,6 +43,68 @@ const ManagedPreviewAuthTest = Layer.succeed(
 );
 const makeBroker = PreviewAutomationBroker.make.pipe(
   Effect.provide(Layer.merge(ManagedPreviewAuthTest, NodeServices.layer)),
+);
+
+it.effect("evicts a timed-out host and discards its buffered actions", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const firstRequestReceived = yield* Deferred.make<void>();
+      const releaseConsumer = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      const consumer = yield* Stream.runForEach(yield* broker.connect(makeHost()), (event) => {
+        if (event.type === "connected") return Effect.void;
+        operations.push(event.request.operation);
+        if (operations.length === 1) {
+          return Deferred.succeed(firstRequestReceived, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseConsumer)),
+          );
+        }
+        return Effect.void;
+      }).pipe(Effect.forkScoped);
+      const first = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "snapshot",
+          input: {},
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+
+      yield* Deferred.await(firstRequestReceived);
+      const buffered = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: {},
+          timeoutMs: 10_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      // Let the unbounded queue receive the second request while its consumer is
+      // still blocked handling the first one.
+      for (let attempt = 0; attempt < 10; attempt += 1) yield* Effect.yieldNow;
+
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(first)).toBeInstanceOf(PreviewAutomationTimeoutError);
+      for (let attempt = 0; attempt < 100 && buffered.pollUnsafe() === undefined; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      const bufferedExit = buffered.pollUnsafe();
+      expect(bufferedExit?._tag).toBe("Success");
+      if (bufferedExit?._tag === "Success") {
+        expect(bufferedExit.value).toBeInstanceOf(PreviewAutomationClientDisconnectedError);
+        expect(bufferedExit.value).toMatchObject({ operation: "click", timeoutMs: 10_000 });
+        expect(bufferedExit.value.message).toContain("host generation was evicted");
+      }
+
+      yield* Deferred.succeed(releaseConsumer, undefined);
+      for (let attempt = 0; attempt < 100 && consumer.pollUnsafe() === undefined; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+      expect(consumer.pollUnsafe()?._tag).toBe("Success");
+      expect(operations).toEqual(["snapshot"]);
+    }),
+  ),
 );
 
 const scope = {
