@@ -355,7 +355,23 @@ export function useSelectedThreadGitActions() {
               },
             });
             if (AsyncResult.isFailure(syncResult)) {
-              return AsyncResult.failure(syncResult.cause);
+              // The action itself landed, so reporting a failure here would hand the commit
+              // sheet its draft back and invite a duplicate commit.
+              const error = Cause.squash(syncResult.cause);
+              const message =
+                error instanceof Error ? error.message : "Failed to update the thread.";
+              setPendingConnectionError(message);
+              showGitActionResult({
+                type: "error",
+                title: "Thread branch not updated",
+                description: message,
+                // Single notification slot: this replaces the success one, so a PR the action
+                // just opened would otherwise lose its only link.
+                prUrl:
+                  result.value.toast.cta.kind === "open_pr"
+                    ? result.value.toast.cta.url
+                    : undefined,
+              });
             }
           } else {
             await refreshSelectedThreadGitStatus({ quiet: true, cwd });

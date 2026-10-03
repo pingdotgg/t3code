@@ -5950,7 +5950,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         Effect.map((error) => error.message),
       );
 
-      expect(errorMessage).toContain("Git command failed in GitVcsDriver.commit.commit");
+      expect(errorMessage).toContain("The pre-commit hook rejected the commit (exit code 1).");
       expect(errorMessage).not.toContain("hook: fail");
       expect(events).toEqual(
         expect.arrayContaining([
@@ -5963,11 +5963,66 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             text: "hook: fail",
           }),
           expect.objectContaining({
+            kind: "hook_finished",
+            hookName: "pre-commit",
+            exitCode: 1,
+          }),
+          expect.objectContaining({
             kind: "action_failed",
             phase: "commit",
           }),
         ]),
       );
+    }),
+  );
+
+  it.effect("names the rejecting hook without a progress reporter", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hook-failure.txt"), "broken\n");
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\nexit 3\n",
+        { mode: 0o755 },
+      );
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("The pre-commit hook rejected the commit (exit code 3).");
+    }),
+  );
+
+  it.effect("reports the hook exit code when the hook itself runs git", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "hook-failure.txt"), "broken\n");
+      // The nested git inherits GIT_TRACE2_EVENT and numbers its own children from zero, so its
+      // child_exit used to be mistaken for the hook's own.
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".git", "hooks", "pre-commit"),
+        "#!/bin/sh\ngit -c alias.t3probe='!exit 0' t3probe\nexit 7\n",
+        { mode: 0o755 },
+      );
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("The pre-commit hook rejected the commit (exit code 7).");
     }),
   );
 

@@ -547,10 +547,14 @@ const addCurrentSpanEvent = (name: string, attributes: Record<string, unknown>) 
     }),
   );
 
+// GIT_TRACE2_EVENT is inherited by the git processes a hook itself runs, and child_id only
+// counts children within one process, so it alone lets a nested git's child_exit consume the
+// outer hook's entry. sid is per-process, so the pair identifies the child.
 function trace2ChildKey(record: Record<string, unknown>): string | null {
   const childId = record.child_id;
   if (typeof childId === "number" || typeof childId === "string") {
-    return String(childId);
+    const sid = record.sid;
+    return typeof sid === "string" && sid.length > 0 ? `${sid}\n${childId}` : String(childId);
   }
   const hookName = record.hook_name;
   return typeof hookName === "string" && hookName.trim().length > 0 ? hookName.trim() : null;
@@ -564,11 +568,7 @@ const decodeTrace2Record = decodeJsonResult(Trace2Record);
 const createTrace2Monitor = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   progress: GitVcsDriver.ExecuteGitProgress | undefined,
-): Effect.fn.Return<
-  Trace2Monitor,
-  PlatformError.PlatformError,
-  Scope.Scope | FileSystem.FileSystem | Path.Path
-> {
+): Effect.fn.Return<Trace2Monitor, never, Scope.Scope | FileSystem.FileSystem | Path.Path> {
   if (!progress?.onHookStarted && !progress?.onHookFinished) {
     return {
       env: {},
@@ -578,10 +578,27 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const traceFilePath = yield* fs.makeTempFileScoped({
-    prefix: `t3code-git-trace2-${process.pid}-`,
-    suffix: ".json",
-  });
+  // The monitor only observes; its setup failing must not take down the git command
+  // it observes, so an unwritable temp dir degrades to running without hook reporting.
+  const traceFilePath = yield* fs
+    .makeTempFileScoped({
+      prefix: `t3code-git-trace2-${process.pid}-`,
+      suffix: ".json",
+    })
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning(
+          `GitVcsDriver.trace2: hook monitoring disabled for ${input.operation} in ${input.cwd}: failed to create the trace file`,
+          cause,
+        ).pipe(Effect.as(null)),
+      ),
+    );
+  if (traceFilePath === null) {
+    return {
+      env: {},
+      flush: Effect.void,
+    };
+  }
   const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
   const traceTailState = yield* Ref.make<TraceTailState>({
     processedChars: 0,
@@ -603,10 +620,6 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
       return;
     }
 
-    if (traceRecord.success.child_class !== "hook") {
-      return;
-    }
-
     const event = traceRecord.success.event;
     const childKey = trace2ChildKey(traceRecord.success);
     if (childKey === null) {
@@ -621,6 +634,9 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
     }
 
     if (event === "child_start") {
+      if (traceRecord.success.child_class !== "hook") {
+        return;
+      }
       const now = yield* DateTime.now;
       hookStartByChildKey.set(childKey, { hookName, startedAtMs: DateTime.toEpochMillis(now) });
       yield* addCurrentSpanEvent("git.hook.started", {
@@ -633,21 +649,22 @@ const createTrace2Monitor = Effect.fnUntraced(function* (
     }
 
     if (event === "child_exit") {
+      if (!started) {
+        return;
+      }
       hookStartByChildKey.delete(childKey);
-      const code = traceRecord.success.exitCode;
+      const code = traceRecord.success.code;
       const exitCode = typeof code === "number" && Number.isInteger(code) ? code : null;
       const now = yield* DateTime.now;
-      const durationMs = started
-        ? Math.max(0, DateTime.toEpochMillis(now) - started.startedAtMs)
-        : null;
+      const durationMs = Math.max(0, DateTime.toEpochMillis(now) - started.startedAtMs);
       yield* addCurrentSpanEvent("git.hook.finished", {
-        hookName: started?.hookName ?? hookName,
+        hookName: started.hookName,
         exitCode,
         durationMs,
       });
       if (progress.onHookFinished) {
         yield* progress.onHookFinished({
-          hookName: started?.hookName ?? hookName,
+          hookName: started.hookName,
           exitCode,
           durationMs,
         });
@@ -855,14 +872,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
           Effect.provideService(Path.Path, path),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new GitCommandError({
-                ...gitCommandContext(commandInput),
-                detail: "Failed to create Git trace monitor.",
-                cause,
-              }),
-          ),
         );
         const child = yield* commandSpawner
           .spawn(
