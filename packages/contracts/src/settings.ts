@@ -45,6 +45,12 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+// "locale" lays calendars out by the locale's week and keeps "Next week"
+// snoozes on Monday; an explicit day drives both.
+export const FirstDayOfWeek = Schema.Literals(["locale", "sunday", "monday"]);
+export type FirstDayOfWeek = typeof FirstDayOfWeek.Type;
+const DEFAULT_FIRST_DAY_OF_WEEK: FirstDayOfWeek = "locale";
+
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
@@ -484,6 +490,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  firstDayOfWeek: FirstDayOfWeek.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FIRST_DAY_OF_WEEK)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
@@ -1784,6 +1793,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  firstDayOfWeek: Schema.optionalKey(FirstDayOfWeek),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

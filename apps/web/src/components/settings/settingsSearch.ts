@@ -348,6 +348,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "first-day-of-week",
+    title: "First day of the week",
+    to: "/settings/general",
+    searchTerms: ["week start sunday monday calendar date picker snooze next week"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",

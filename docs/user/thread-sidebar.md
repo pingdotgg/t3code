@@ -212,3 +212,7 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+**Next week** wakes the thread at 9 AM on the first day of your work week, Monday by
+default. On web and desktop, change it in **Settings → General → First day of the week**;
+the same setting decides which day the **Custom…** calendar starts on.

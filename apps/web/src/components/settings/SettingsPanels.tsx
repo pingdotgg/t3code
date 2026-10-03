@@ -45,6 +45,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  FirstDayOfWeek,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -201,6 +202,13 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   wide: "Wide",
   full: "Full",
 };
+
+const FIRST_DAY_OF_WEEK_LABELS: Record<FirstDayOfWeek, string> = {
+  locale: "System default",
+  sunday: "Sunday",
+  monday: "Monday",
+};
+const isFirstDayOfWeek = Schema.is(FirstDayOfWeek);
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
@@ -548,6 +556,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.firstDayOfWeek !== DEFAULT_UNIFIED_SETTINGS.firstDayOfWeek
+        ? ["First day of the week"]
+        : []),
       ...(settings.notificationMode !== DEFAULT_UNIFIED_SETTINGS.notificationMode
         ? ["Thread notifications"]
         : []),
@@ -707,6 +718,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
+      settings.firstDayOfWeek,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
@@ -783,6 +795,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      firstDayOfWeek: DEFAULT_UNIFIED_SETTINGS.firstDayOfWeek,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
@@ -2516,6 +2529,51 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("first-day-of-week")}
+          description="Used for date pickers and the “Next week” snooze."
+          resetAction={
+            settings.firstDayOfWeek !== DEFAULT_UNIFIED_SETTINGS.firstDayOfWeek ? (
+              <SettingResetButton
+                label="first day of the week"
+                onClick={() =>
+                  updateSettings({
+                    firstDayOfWeek: DEFAULT_UNIFIED_SETTINGS.firstDayOfWeek,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.firstDayOfWeek}
+              onValueChange={(value) => {
+                if (isFirstDayOfWeek(value)) {
+                  updateSettings({ firstDayOfWeek: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="First day of the week"
+              >
+                <SelectValue>{FIRST_DAY_OF_WEEK_LABELS[settings.firstDayOfWeek]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="locale">
+                  {FIRST_DAY_OF_WEEK_LABELS.locale}
+                </SelectItem>
+                <SelectItem hideIndicator value="sunday">
+                  {FIRST_DAY_OF_WEEK_LABELS.sunday}
+                </SelectItem>
+                <SelectItem hideIndicator value="monday">
+                  {FIRST_DAY_OF_WEEK_LABELS.monday}
                 </SelectItem>
               </SelectPopup>
             </Select>
