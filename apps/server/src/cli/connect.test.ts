@@ -1,20 +1,28 @@
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Terminal from "effect/Terminal";
+import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 
+import * as CliTokenManager from "../cloud/CliTokenManager.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as BootService from "../cloud/bootService.ts";
 import {
   acquireRelayClientForLink,
   headlessSessionConfig,
   reportCloudDisconnectResults,
+  unlinkRelayEnvironment,
 } from "./connect.ts";
 import { recoverServiceOnboardingOffer } from "./service.ts";
 
@@ -139,6 +147,47 @@ it.effect("reuses an available relay client executable without prompting", () =>
 
     assert.deepEqual(Option.getOrThrow(result), managedExecutable);
     assert.equal(promptCalls, 0);
+  }),
+);
+
+it.effect("fails instead of hanging when the relay unlink request stalls", () =>
+  Effect.gen(function* () {
+    const tokens = CliTokenManager.CloudCliTokenManager.of({
+      get: Effect.die("unexpected token get"),
+      getExisting: Effect.succeedSome({
+        accessToken: "access-token-1",
+        refreshToken: "refresh-token-1",
+        expiresAtEpochMs: 1_800_000_000_000,
+      }),
+      hasCredential: Effect.succeed(true),
+      store: () => Effect.void,
+      clear: Effect.void,
+    });
+    const environment = ServerEnvironment.ServerEnvironmentIdentity.of({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+    });
+
+    const fiber = yield* unlinkRelayEnvironment().pipe(
+      Effect.provideService(CliTokenManager.CloudCliTokenManager, tokens),
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.never),
+      ),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_RELAY_URL: "https://relay.example.test" },
+          }),
+        ),
+      ),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust(Duration.seconds(5));
+    const result = yield* Fiber.join(fiber);
+
+    assert.equal(result._tag, "TimeoutError");
   }),
 );
 

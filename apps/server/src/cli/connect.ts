@@ -328,7 +328,8 @@ const logCloudDisconnectFailure = (
     }),
   );
 
-const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(function* () {
+/** Exported for tests: the relay half of `t3 connect disconnect`. */
+export const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(function* () {
   const tokens = yield* CliTokenManager.CloudCliTokenManager;
   const token = yield* tokens.getExisting;
   if (Option.isNone(token)) {
@@ -344,6 +345,10 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
   ).pipe(
     HttpClientRequest.bearerToken(token.value.accessToken),
     httpClient.execute,
+    // Mirror runLiveCloudUnlink: a wedged relay must not hang `t3 connect
+    // disconnect` (and its local cleanup) forever. The caller already absorbs
+    // failure via Effect.exit.
+    Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
     Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
     withRelayClientTracing,
