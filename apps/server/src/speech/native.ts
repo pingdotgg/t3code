@@ -52,8 +52,43 @@ process.on("message", async (message) => {
       stream = session = undefined;
       process.send({ type: "t3-speech-reply", ok: true });
     } else if (message.kind === "transcribe") {
-      const result = await model.transcribe(message.pcm, message.options);
-      process.send({ type: "t3-speech-reply", ok: true, text: result.text });
+      // Leave unbounded models alone. Use headroom for output-bound models:
+      // maxAudioMs is an estimate, so dense speech may still need smaller pieces.
+      const limit = model.capabilities.maxAudioMs;
+      const chunkSamples = limit > 0 ? Math.max(4000, Math.floor(limit * 16 / 2)) : message.pcm.length;
+      const texts = [];
+      const transcribe = async (pcm) => {
+        try {
+          const result = await model.transcribe(pcm, message.options);
+          texts.push(result.text);
+        } catch (error) {
+          if ((error?.constructor?.name !== "OutputTruncated" &&
+               error?.constructor?.name !== "InputTooLong") || pcm.length <= 4000) throw error;
+          const middle = Math.floor(pcm.length / 2);
+          await transcribe(pcm.subarray(0, middle));
+          await transcribe(pcm.subarray(middle));
+        }
+      };
+      let offset = 0;
+      while (offset < message.pcm.length) {
+        let end = Math.min(offset + chunkSamples, message.pcm.length);
+        if (end < message.pcm.length) {
+          // Prefer the quietest 20 ms frame in the final quarter of the window.
+          let quietest = Infinity;
+          const windowEnd = end;
+          for (let start = offset + Math.floor(chunkSamples * 0.75); start + 320 <= windowEnd; start += 320) {
+            let energy = 0;
+            for (let i = start; i < start + 320; i++) energy += message.pcm[i] ** 2;
+            if (energy < quietest) {
+              quietest = energy;
+              end = start + 160;
+            }
+          }
+        }
+        await transcribe(message.pcm.subarray(offset, end));
+        offset = end;
+      }
+      process.send({ type: "t3-speech-reply", ok: true, text: texts.join(" ").trim() });
     }
   } catch (error) {
     process.send({

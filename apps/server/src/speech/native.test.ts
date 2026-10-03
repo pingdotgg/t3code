@@ -22,8 +22,60 @@ it("ignores unrelated device probe messages and returns GPU devices", async () =
   ]);
 });
 
-const fixture = (transcribe: string) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
+const fixture = (transcribe: string, maxAudioMs = 0) =>
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs} }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
+
+it("transcribes a five-minute clip in bounded pieces without dropping samples", async () => {
+  const model = await loadNativeSpeechModel(
+    "unused.gguf",
+    new AbortController().signal,
+    fixture(
+      `async (pcm) => {
+      if (pcm.length > 388000) throw new Error("oversized call");
+      return { text: String(pcm.reduce((sum, sample) => sum + sample, 0)) };
+    }`,
+      48500,
+    ),
+  );
+  try {
+    const pcm = new Float32Array(16000 * 300).fill(1);
+    const result = await model.transcribe(pcm, { timestamps: "none" });
+    expect(
+      result.text
+        .split(" ")
+        .map(Number)
+        .reduce((sum, value) => sum + value, 0),
+    ).toBe(pcm.length);
+    expect(result.text.split(" ").length).toBeGreaterThan(1);
+  } finally {
+    await model.dispose();
+  }
+});
+
+it.each(["OutputTruncated", "InputTooLong"])(
+  "retries %s pieces instead of returning partial text",
+  async (name) => {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      fixture(`async (pcm) => {
+      if (pcm.length > 4000) {
+        const error = new (class ${name} extends Error {})();
+        error.partialResult = { text: "incomplete" };
+        throw error;
+      }
+      return { text: String(pcm.length) };
+    }`),
+    );
+    try {
+      expect(await model.transcribe(new Float32Array(16000), { timestamps: "none" })).toEqual({
+        text: "4000 4000 4000 4000",
+      });
+    } finally {
+      await model.dispose();
+    }
+  },
+);
 
 it("raises the speech worker's Koffi stack before loading the binding", async () => {
   const koffiPath = NodeModule.createRequire(import.meta.resolve("transcribe-cpp")).resolve(

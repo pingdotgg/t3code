@@ -223,6 +223,11 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
+  private retryRecording: {
+    uri: string;
+    draft: VoiceDraftSnapshot;
+    transcription: PreparedVoiceTranscription;
+  } | null = null;
 
   constructor(dependencies: VoiceInputControllerDependencies<WithPostProcessing>) {
     this.dependencies = dependencies;
@@ -261,6 +266,14 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       const abortController = new AbortController();
       this.transcriptionAbortController = abortController;
 
+      if (this.retryRecording) {
+        this.recordingUri = this.retryRecording.uri;
+        this.capturedDraft = this.retryRecording.draft;
+        this.transcription = this.retryRecording.transcription;
+        this.retryRecording = null;
+        await this.finishRecording(true, this.recordingUri);
+        return;
+      }
       const transcriber = this.dependencies.getTranscriber();
       if (!transcriber) {
         this.setError("Voice transcription is not available.", null);
@@ -327,6 +340,8 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       case "idle":
         return;
       case "error":
+        this.retryRecording = null;
+        this.deleteOwnedRecordings();
         this.setState(IDLE_STATE);
         return;
       case "preparing":
@@ -400,6 +415,10 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
   }
 
   dispose(): void {
+    if (this.state.phase === "error") {
+      this.cancel();
+      return;
+    }
     if (this.state.phase === "recording") {
       this.discardRecording(null);
       return;
@@ -418,7 +437,8 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     alreadyStopped: boolean,
     completedUri: string | null,
   ): Promise<void> {
-    if (this.finishing || this.state.phase !== "recording") return;
+    if (this.finishing || (this.state.phase !== "recording" && this.state.phase !== "preparing"))
+      return;
     this.finishing = true;
     const operationToken = this.operationToken;
     this.setState({ phase: "transcribing", error: null, errorAction: null });
@@ -452,6 +472,9 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
         );
       } catch (error) {
         if (this.isCurrent(operationToken)) {
+          if (!transcription.streaming && recordingUri) {
+            this.retryRecording = { uri: recordingUri, draft: capturedDraft, transcription };
+          }
           this.setError(transcriptionErrorMessage(error), "retry");
         }
         return;
@@ -539,12 +562,7 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
       this.rememberRecordingUri(this.dependencies.recorder.uri);
     } catch {}
     this.recordingUri = null;
-    for (const uri of this.ownedRecordingUris) {
-      try {
-        this.dependencies.deleteRecording(uri);
-      } catch {}
-    }
-    this.ownedRecordingUris.clear();
+    this.deleteOwnedRecordings();
     await this.releaseAudioSession();
     releaseSession(this.sessionToken);
     this.sessionToken = null;
@@ -553,6 +571,19 @@ export class VoiceInputController<WithPostProcessing extends boolean = false> {
     this.transcriptionAbortController = null;
     this.postProcessingAbortController = null;
     this.skipPostProcessingRequested = false;
+  }
+
+  private deleteOwnedRecordings(): void {
+    for (const uri of this.ownedRecordingUris) {
+      if (uri === this.retryRecording?.uri) continue;
+      try {
+        this.dependencies.deleteRecording(uri);
+      } catch {
+        // The cache may already have removed a failed or interrupted recording.
+      }
+    }
+    this.ownedRecordingUris.clear();
+    if (this.retryRecording) this.ownedRecordingUris.add(this.retryRecording.uri);
   }
 
   private rememberRecordingUri(uri: string | null): void {
