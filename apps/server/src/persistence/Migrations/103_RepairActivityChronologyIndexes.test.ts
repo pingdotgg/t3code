@@ -25,6 +25,7 @@ it.effect("repairs skipped chronology indexes above the existing migration high-
       [110, "ActivityPayloadBlobs"],
       [111, "RemoveRedundantProjectionIndexes"],
       [112, "RequeuePullRequestGatedWorktreeCleanup"],
+      [113, "QueueHoldAndShutdownMarker"],
     ]);
     yield* repair;
     assert.deepStrictEqual(yield* runMigrations(), []);

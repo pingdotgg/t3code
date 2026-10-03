@@ -2,6 +2,7 @@ import {
   ChatAttachment,
   IsoDateTime,
   MessageId,
+  NonNegativeInt,
   MessageOrigin,
   ModelSelection,
   OrchestrationProposedPlanId,
@@ -30,6 +31,12 @@ export const ProjectionQueuedTurn = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /**
+   * Per-thread delivery order. Null only for rows replayed from an event log
+   * written before explicit ordering existed; the create path assigns
+   * `max(existing) + 1` so appends stay FIFO.
+   */
+  queuePosition: Schema.NullOr(NonNegativeInt),
   failedAt: Schema.NullOr(IsoDateTime),
   failureMessage: Schema.NullOr(Schema.String),
 });

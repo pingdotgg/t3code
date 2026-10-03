@@ -124,6 +124,8 @@ export interface Thread {
   messages: ChatMessage[];
   proposedPlans: ProposedPlan[];
   queuedTurns?: OrchestrationQueuedTurn[];
+  /** Set while crash recovery holds the queue; cleared on explicit resume. */
+  queueHeldAt?: string | null;
   error: string | null;
   createdAt: string;
   archivedAt: string | null;

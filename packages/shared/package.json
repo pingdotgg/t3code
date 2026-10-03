@@ -327,6 +327,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./queuedTurnOrder": {
+      "types": "./src/queuedTurnOrder.ts",
+      "import": "./src/queuedTurnOrder.ts"
     }
   },
   "scripts": {

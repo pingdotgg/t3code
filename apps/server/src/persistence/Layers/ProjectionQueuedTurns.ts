@@ -50,6 +50,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id,
         created_at,
         updated_at,
+        queue_position,
         failed_at,
         failure_message
       )
@@ -68,6 +69,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         ${row.sourceProposedPlanId},
         ${row.createdAt},
         ${row.updatedAt},
+        ${row.queuePosition},
         ${row.failedAt},
         ${row.failureMessage}
       )
@@ -86,6 +88,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id = excluded.source_proposed_plan_id,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at,
+        queue_position = excluded.queue_position,
         failed_at = excluded.failed_at,
         failure_message = excluded.failure_message
     `,
@@ -110,6 +113,7 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id AS "sourceProposedPlanId",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
+        queue_position AS "queuePosition",
         failed_at AS "failedAt",
         failure_message AS "failureMessage"
       FROM projection_queued_turns
@@ -137,11 +141,12 @@ const makeProjectionQueuedTurnRepository = Effect.gen(function* () {
         source_proposed_plan_id AS "sourceProposedPlanId",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
+        queue_position AS "queuePosition",
         failed_at AS "failedAt",
         failure_message AS "failureMessage"
       FROM projection_queued_turns
       WHERE thread_id = ${threadId}
-      ORDER BY created_at ASC, queued_turn_id ASC
+      ORDER BY queue_position IS NULL, queue_position ASC, created_at ASC, queued_turn_id ASC
     `,
   });
 

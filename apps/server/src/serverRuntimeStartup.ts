@@ -10,6 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import {
+  Cause,
   Data,
   Deferred,
   Effect,
@@ -34,6 +35,7 @@ import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReac
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { ServerShutdownMarkerRepository } from "./persistence/Services/ServerShutdownMarker.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { readCliDesiredCloudLink } from "./cloud/CliState.ts";
@@ -348,6 +350,7 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents;
   const serverSettings = yield* ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment;
+  const shutdownMarker = yield* ServerShutdownMarkerRepository;
   const agentAwarenessRelay = yield* AgentAwarenessRelay;
 
   const commandGate = yield* makeCommandGate;
@@ -366,6 +369,18 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       reason: Exit.isSuccess(exit) ? "success" : "failure",
       ...(Exit.isFailure(exit) ? { cause: exit.cause } : {}),
     }),
+  );
+  // A clean exit tells the next boot that nothing was lost, so it resumes
+  // queued messages normally. Only an absent marker makes the next boot treat
+  // the queue as crash-recovered and hold it for the user to release.
+  yield* Effect.addFinalizer(() =>
+    shutdownMarker.recordCleanShutdown(new Date().toISOString()).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to record clean shutdown", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    ),
   );
 
   const startup = Effect.gen(function* () {

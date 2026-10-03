@@ -95,6 +95,49 @@ function makeHandoffCommand(input: {
   } as const;
 }
 
+/**
+ * A thread with three queued messages, each created through the real decider so
+ * the queue carries the positions the create path assigns.
+ */
+async function makeQueuedReadModel(input: {
+  readonly now: string;
+  readonly threadId: ThreadId;
+  readonly count: number;
+}) {
+  let readModel = await makeThreadReadModel({ now: input.now, threadId: input.threadId });
+  const queuedTurnIds: QueuedTurnId[] = [];
+  for (let index = 0; index < input.count; index += 1) {
+    const id = asQueuedTurnId(`queued-${index}`);
+    const createdAt = new Date(Date.parse(input.now) + index * 1_000).toISOString();
+    const planned = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.create",
+          commandId: CommandId.make(`cmd-queue-${index}`),
+          threadId: input.threadId,
+          queuedTurnId: id,
+          message: {
+            messageId: asMessageId(`message-${index}`),
+            role: "user",
+            text: `queued ${index}`,
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          createdAt,
+        },
+        readModel,
+      }),
+    );
+    const events = Array.isArray(planned) ? planned : [planned];
+    for (const event of events) {
+      readModel = await Effect.runPromise(projectEvent(readModel, event as OrchestrationEvent));
+    }
+    queuedTurnIds.push(id);
+  }
+  return { readModel, queuedTurnIds };
+}
+
 describe("decider queued turns", () => {
   it("preserves pull request monitor provenance on queued turns", async () => {
     const now = "2026-03-01T00:00:00.000Z";
@@ -1090,5 +1133,194 @@ describe("decider redundant workspace handoff", () => {
 
     const events = Array.isArray(result) ? result : [result];
     expect(events.map((event) => event.type)).toContain("thread.message-sent");
+  });
+});
+
+describe("queued turn queue hold and ordering", () => {
+  const now = "2026-03-01T00:00:00.000Z";
+
+  it("assigns appending positions so enqueue order is preserved", async () => {
+    const threadId = asThreadId("thread-queue-append");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    const positions = (readModel.threads[0]!.queuedTurns ?? []).map((turn) => [
+      turn.id,
+      turn.queuePosition,
+    ]);
+    expect(positions).toEqual([
+      [queuedTurnIds[0], 0],
+      [queuedTurnIds[1], 1],
+      [queuedTurnIds[2], 2],
+    ]);
+  });
+
+  it("holds a populated queue and is a no-op when already held", async () => {
+    const threadId = asThreadId("thread-queue-hold");
+    const { readModel } = await makeQueuedReadModel({ now, threadId, count: 2 });
+
+    const held = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    const heldEvents = Array.isArray(held) ? held : [held];
+    expect(heldEvents).toHaveLength(1);
+    expect(heldEvents[0]!.type).toBe("thread.queue-held");
+
+    const heldReadModel = await Effect.runPromise(
+      projectEvent(readModel, heldEvents[0] as OrchestrationEvent),
+    );
+    const again = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-again"),
+          threadId,
+          heldAt: now,
+        },
+        readModel: heldReadModel,
+      }),
+    );
+    // Crash recovery re-sweeps on every boot; re-holding must not fail.
+    expect(Array.isArray(again) ? again : [again]).toEqual([]);
+  });
+
+  it("does not hold an empty queue", async () => {
+    const threadId = asThreadId("thread-queue-hold-empty");
+    const readModel = await makeThreadReadModel({ now, threadId });
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-empty"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    expect(Array.isArray(result) ? result : [result]).toEqual([]);
+  });
+
+  it("releases only a held queue", async () => {
+    const threadId = asThreadId("thread-queue-release");
+    const { readModel } = await makeQueuedReadModel({ now, threadId, count: 1 });
+
+    const notHeld = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.release",
+          commandId: CommandId.make("cmd-release-unheld"),
+          threadId,
+          releasedAt: now,
+        },
+        readModel,
+      }),
+    );
+    expect(Array.isArray(notHeld) ? notHeld : [notHeld]).toEqual([]);
+
+    const held = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.hold",
+          commandId: CommandId.make("cmd-hold-for-release"),
+          threadId,
+          heldAt: now,
+        },
+        readModel,
+      }),
+    );
+    const heldEvents = Array.isArray(held) ? held : [held];
+    const heldReadModel = await Effect.runPromise(
+      projectEvent(readModel, heldEvents[0] as OrchestrationEvent),
+    );
+
+    const released = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queue.release",
+          commandId: CommandId.make("cmd-release"),
+          threadId,
+          releasedAt: now,
+        },
+        readModel: heldReadModel,
+      }),
+    );
+    const releasedEvents = Array.isArray(released) ? released : [released];
+    expect(releasedEvents).toHaveLength(1);
+    expect(releasedEvents[0]!.type).toBe("thread.queue-released");
+  });
+
+  it("reorders the whole queue and persists the new order", async () => {
+    const threadId = asThreadId("thread-queue-reorder");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    const reordered = queuedTurnIds.toReversed();
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.queued-turn.reorder",
+          commandId: CommandId.make("cmd-reorder"),
+          threadId,
+          orderedQueuedTurnIds: reordered,
+          reorderedAt: now,
+        },
+        readModel,
+      }),
+    );
+    const events = Array.isArray(result) ? result : [result];
+    expect(events[0]!.type).toBe("thread.queued-turn-reordered");
+
+    const afterReorder = await Effect.runPromise(
+      projectEvent(readModel, events[0] as OrchestrationEvent),
+    );
+    expect((afterReorder.threads[0]!.queuedTurns ?? []).map((turn) => turn.id)).toEqual(reordered);
+  });
+
+  it("rejects a partial order so a restart cannot rebuild a different one", async () => {
+    const threadId = asThreadId("thread-queue-reorder-partial");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 3 });
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.reorder",
+            commandId: CommandId.make("cmd-reorder-partial"),
+            threadId,
+            orderedQueuedTurnIds: queuedTurnIds.slice(0, 2),
+            reorderedAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow(/every queued turn exactly once/);
+  });
+
+  it("rejects an order that repeats a queued turn", async () => {
+    const threadId = asThreadId("thread-queue-reorder-duplicate");
+    const { readModel, queuedTurnIds } = await makeQueuedReadModel({ now, threadId, count: 2 });
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.queued-turn.reorder",
+            commandId: CommandId.make("cmd-reorder-duplicate"),
+            threadId,
+            orderedQueuedTurnIds: [queuedTurnIds[0]!, queuedTurnIds[0]!],
+            reorderedAt: now,
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow(/every queued turn exactly once/);
   });
 });

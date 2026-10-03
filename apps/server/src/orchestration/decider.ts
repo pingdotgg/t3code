@@ -29,6 +29,7 @@ import {
   requireThread,
   requireThreadAbsent,
   requireThreadNotArchived,
+  nextQueuePosition,
   requireQueuedTurn,
   requireThreadReadyForTurnStart,
   requireThreadWithInFlightTurn,
@@ -3462,6 +3463,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         ...(origin !== undefined ? { origin } : {}),
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
+        // Appending must never reorder the existing queue: the new turn takes
+        // the next position rather than sorting by its own creation time.
+        queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
         failedAt: null,
         failureMessage: null,
       };
@@ -3937,6 +3941,95 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurnId: command.queuedTurnId,
           failureMessage: command.failureMessage,
           failedAt: command.failedAt,
+        },
+      };
+    }
+
+    case "thread.queue.hold": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Holding an empty or already-held queue is a no-op rather than an error:
+      // crash recovery sweeps every thread it sees, and repeat boots must not
+      // fail on the state a previous boot already wrote.
+      if ((thread.queuedTurns ?? []).length === 0 || thread.queueHeldAt != null) {
+        return [];
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.heldAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queue-held",
+        payload: {
+          threadId: command.threadId,
+          heldAt: command.heldAt,
+        },
+      };
+    }
+
+    case "thread.queue.release": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.queueHeldAt == null) {
+        return [];
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.releasedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queue-released",
+        payload: {
+          threadId: command.threadId,
+          releasedAt: command.releasedAt,
+        },
+      };
+    }
+
+    case "thread.queued-turn.reorder": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const queuedTurns = thread.queuedTurns ?? [];
+      const current = new Set(queuedTurns.map((queuedTurn) => queuedTurn.id));
+      const requested = new Set(command.orderedQueuedTurnIds);
+      // The order must be a permutation of the live queue. A partial order
+      // would silently drop the omitted turns' positions, so the next boot
+      // would rebuild a different order than the user last saw.
+      if (
+        requested.size !== current.size ||
+        current.size !== command.orderedQueuedTurnIds.length ||
+        !command.orderedQueuedTurnIds.every((queuedTurnId) => current.has(queuedTurnId))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Reorder for thread '${command.threadId}' must list every queued turn exactly once.`,
+        });
+      }
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.reorderedAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.queued-turn-reordered",
+        payload: {
+          threadId: command.threadId,
+          orderedQueuedTurnIds: command.orderedQueuedTurnIds,
+          reorderedAt: command.reorderedAt,
         },
       };
     }

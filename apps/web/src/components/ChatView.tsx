@@ -4041,6 +4041,53 @@ function ChatViewBody(
     [activeThreadId, environmentId, setThreadError],
   );
 
+  const onReleaseQueue = useCallback(() => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThreadId) return;
+    void api.orchestration
+      .dispatchCommand({
+        type: "thread.queue.release",
+        commandId: newCommandId(),
+        threadId: activeThreadId,
+        releasedAt: new Date().toISOString(),
+      })
+      .catch((err: unknown) => {
+        setThreadError(
+          activeThreadId,
+          err instanceof Error ? err.message : "Failed to resume the queued messages.",
+        );
+      });
+  }, [activeThreadId, environmentId, setThreadError]);
+
+  const onMoveQueuedTurn = useCallback(
+    (queuedTurnId: QueuedTurnId, direction: -1 | 1) => {
+      const api = readEnvironmentApi(environmentId);
+      const current = activeThread?.queuedTurns ?? [];
+      if (!api || !activeThreadId) return;
+      const from = current.findIndex((queuedTurn) => queuedTurn.id === queuedTurnId);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= current.length) return;
+      const orderedQueuedTurnIds = current.map((queuedTurn) => queuedTurn.id);
+      const [moved] = orderedQueuedTurnIds.splice(from, 1);
+      orderedQueuedTurnIds.splice(to, 0, moved!);
+      void api.orchestration
+        .dispatchCommand({
+          type: "thread.queued-turn.reorder",
+          commandId: newCommandId(),
+          threadId: activeThreadId,
+          orderedQueuedTurnIds,
+          reorderedAt: new Date().toISOString(),
+        })
+        .catch((err: unknown) => {
+          setThreadError(
+            activeThreadId,
+            err instanceof Error ? err.message : "Failed to reorder queued messages.",
+          );
+        });
+    },
+    [activeThread?.queuedTurns, activeThreadId, environmentId, setThreadError],
+  );
+
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
       const api = readEnvironmentApi(environmentId);
@@ -5488,6 +5535,7 @@ function ChatViewBody(
                     pendingApprovals={pendingApprovals}
                     pendingUserInputs={pendingUserInputs}
                     queuedTurns={activeThread.queuedTurns ?? []}
+                    queueHeldAt={activeThread.queueHeldAt ?? null}
                     activePendingProgress={activePendingProgress}
                     activePendingResolvedAnswers={activePendingResolvedAnswers}
                     activePendingIsResponding={activePendingIsResponding}
@@ -5525,6 +5573,8 @@ function ChatViewBody(
                     onRespondToApproval={onRespondToApproval}
                     onUpdateQueuedTurn={onUpdateQueuedTurn}
                     onDeleteQueuedTurn={onDeleteQueuedTurn}
+                    onMoveQueuedTurn={onMoveQueuedTurn}
+                    onReleaseQueue={onReleaseQueue}
                     onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
                     onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
                     onPreviousActivePendingUserInputQuestion={

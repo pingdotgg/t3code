@@ -19,6 +19,7 @@ import {
   type PullRequestMonitorSnapshot,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -27,6 +28,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { QueuedTurnReactor } from "../Services/QueuedTurnReactor.ts";
+import { ServerShutdownMarkerRepository } from "../../persistence/Services/ServerShutdownMarker.ts";
 import { QueuedTurnReactorLive } from "./QueuedTurnReactor.ts";
 
 const now = "2026-03-01T00:00:00.000Z";
@@ -320,6 +322,8 @@ async function runReactor(
     readonly waitAfterStartMs?: number;
     readonly firstDispatchDelayMs?: number;
     readonly snapshotDelayMs?: number;
+    /** Whether the previous server process exited cleanly. Defaults to true. */
+    readonly previousShutdownWasClean?: boolean;
     readonly snapshotError?: PullRequestOperationError;
     readonly onRetryQueuedDelivery?: (deliveryId: string) => void;
     readonly retryQueuedDeliveryError?: PullRequestMonitorError;
@@ -403,6 +407,42 @@ async function runReactor(
                 : thread,
             ),
           };
+        } else if (command.type === "thread.queue.hold") {
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId ? { ...thread, queueHeldAt: command.heldAt } : thread,
+            ),
+          };
+        } else if (command.type === "thread.queue.release") {
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId ? { ...thread, queueHeldAt: null } : thread,
+            ),
+          };
+        } else if (command.type === "thread.queued-turn.reorder") {
+          const positions = new Map(
+            command.orderedQueuedTurnIds.map((queuedTurnId, index) => [queuedTurnId, index]),
+          );
+          readModel = {
+            ...readModel,
+            threads: readModel.threads.map((thread) =>
+              thread.id === command.threadId
+                ? {
+                    ...thread,
+                    queuedTurns: (thread.queuedTurns ?? [])
+                      .map((queuedTurn) => {
+                        const queuePosition = positions.get(queuedTurn.id);
+                        return queuePosition === undefined
+                          ? queuedTurn
+                          : { ...queuedTurn, queuePosition };
+                      })
+                      .toSorted(compareQueuedTurns),
+                  }
+                : thread,
+            ),
+          };
         } else if (command.type === "thread.queued-turn.update") {
           readModel = {
             ...readModel,
@@ -454,10 +494,21 @@ async function runReactor(
       listReports: () => Effect.die("unused"),
     }),
   );
+  // Defaults to a clean previous shutdown so existing cases drain as before;
+  // crash-recovery cases opt in explicitly.
+  const previousShutdownWasClean = options?.previousShutdownWasClean ?? true;
+  const shutdownMarkerLayer = Layer.succeed(
+    ServerShutdownMarkerRepository,
+    ServerShutdownMarkerRepository.of({
+      beginSession: () => Effect.sync(() => previousShutdownWasClean),
+      recordCleanShutdown: () => Effect.void,
+    }),
+  );
   const layer = QueuedTurnReactorLive.pipe(
     Layer.provide(engineLayer),
     Layer.provide(pullRequestLayer(snapshot, options?.snapshotError, options?.snapshotDelayMs)),
     Layer.provide(feedbackLayer),
+    Layer.provide(shutdownMarkerLayer),
     Layer.provideMerge(
       ServerSettingsService.layerTest({
         copilotAutomaticPrFeedback: {
@@ -503,6 +554,114 @@ async function runReactor(
 }
 
 describe("QueuedTurnReactor", () => {
+  it("holds queued messages after a crash and does not dispatch them", async () => {
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: false,
+    });
+
+    const holds = commands.filter((command) => command.type === "thread.queue.hold");
+    expect(holds).toHaveLength(1);
+    expect(holds[0]).toMatchObject({ threadId });
+    // The whole point of holding: nothing reaches the provider until the user
+    // says so, even though the queue is otherwise eligible.
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  it("drains queued messages on startup after a clean shutdown", async () => {
+    const commands = await runReactor(queuedReadModel(), monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queue.hold")).toBe(false);
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(true);
+  });
+
+  it("drains a held queue once the release lands", async () => {
+    const held = heldQueueReadModel();
+    const commands = await runReactor(held, monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+      resume: {
+        readModel: releasedQueueReadModel(held),
+        event: queueReleasedEvent(threadId, "2026-01-01T00:00:06.000Z"),
+      },
+    });
+
+    expect(
+      commands.some(
+        (command) =>
+          command.type === "thread.queued-turn.dispatch" && command.queuedTurnId === queuedTurnId,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps a held queue from draining on later unrelated events", async () => {
+    const held = heldQueueReadModel();
+    const commands = await runReactor(held, monitorSnapshot("head"), {
+      previousShutdownWasClean: true,
+      resume: {
+        readModel: held,
+        event: queueMetaUpdatedEvent(threadId),
+      },
+      waitAfterStartMs: 40,
+    });
+
+    expect(commands.some((command) => command.type === "thread.queued-turn.dispatch")).toBe(false);
+  });
+
+  const heldAt = "2026-01-01T00:00:05.000Z";
+
+  function withQueueHeldAt(
+    state: OrchestrationReadModel,
+    queueHeldAt: string | null,
+  ): OrchestrationReadModel {
+    return {
+      ...state,
+      threads: state.threads.map((thread) =>
+        thread.id === threadId ? { ...thread, queueHeldAt } : thread,
+      ),
+    };
+  }
+
+  function heldQueueReadModel(): OrchestrationReadModel {
+    return withQueueHeldAt(queuedReadModel(), heldAt);
+  }
+
+  function releasedQueueReadModel(state: OrchestrationReadModel): OrchestrationReadModel {
+    return withQueueHeldAt(state, null);
+  }
+
+  function queueReleasedEvent(targetThreadId: ThreadId, releasedAt: string): OrchestrationEvent {
+    return {
+      sequence: 2,
+      eventId: EventId.make("queue-released"),
+      aggregateKind: "thread",
+      aggregateId: targetThreadId,
+      occurredAt: releasedAt,
+      commandId: CommandId.make("queue-released"),
+      causationEventId: null,
+      correlationId: CommandId.make("queue-released"),
+      metadata: {},
+      type: "thread.queue-released",
+      payload: { threadId: targetThreadId, releasedAt },
+    };
+  }
+
+  function queueMetaUpdatedEvent(targetThreadId: ThreadId): OrchestrationEvent {
+    return {
+      sequence: 2,
+      eventId: EventId.make("queue-meta-updated"),
+      aggregateKind: "thread",
+      aggregateId: targetThreadId,
+      occurredAt: now,
+      commandId: CommandId.make("queue-meta-updated"),
+      causationEventId: null,
+      correlationId: CommandId.make("queue-meta-updated"),
+      metadata: {},
+      type: "thread.meta-updated",
+      payload: { threadId: targetThreadId, updatedAt: now },
+    };
+  }
+
   it("reconciles unavailable child assignments on startup", async () => {
     const base = delegatedReadModel();
     const parent = base.threads[0]!;

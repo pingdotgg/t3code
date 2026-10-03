@@ -465,6 +465,7 @@ function mapQueuedTurnRow(
       : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ...(row.queuePosition !== null ? { queuePosition: row.queuePosition } : {}),
     failedAt: row.failedAt,
     failureMessage: row.failureMessage,
   };
@@ -582,6 +583,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     settled_override AS "settledOverride",
     settled_at AS "settledAt",
     snoozed_until AS "snoozedUntil",
+    queue_held_at AS "queueHeldAt",
     snoozed_at AS "snoozedAt",
     pinned_at AS "pinnedAt",
     pin_order_key AS "pinOrderKey",
@@ -786,10 +788,16 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           source_proposed_plan_id AS "sourceProposedPlanId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          queue_position AS "queuePosition",
           failed_at AS "failedAt",
           failure_message AS "failureMessage"
         FROM projection_queued_turns
-        ORDER BY thread_id ASC, created_at ASC, queued_turn_id ASC
+        ORDER BY
+          thread_id ASC,
+          queue_position IS NULL,
+          queue_position ASC,
+          created_at ASC,
+          queued_turn_id ASC
       `,
   });
 
@@ -1202,6 +1210,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           threads.settled_override AS "settledOverride",
           threads.settled_at AS "settledAt",
           threads.snoozed_until AS "snoozedUntil",
+          threads.queue_held_at AS "queueHeldAt",
           threads.snoozed_at AS "snoozedAt",
           threads.pinned_at AS "pinnedAt",
           threads.pin_order_key AS "pinOrderKey",
@@ -2068,6 +2077,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   settledAt: row.settledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  queueHeldAt: row.queueHeldAt,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey,
                   titleRegeneration: mapTitleRegeneration(row),
@@ -2301,6 +2311,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     settledAt: row.settledAt,
                     snoozedUntil: row.snoozedUntil,
                     snoozedAt: row.snoozedAt,
+                    queueHeldAt: row.queueHeldAt,
                     pinnedAt: row.pinnedAt,
                     pinOrderKey: row.pinOrderKey,
                     titleRegeneration: mapTitleRegeneration(row),
@@ -2650,6 +2661,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             settledAt: threadRow.value.settledAt,
             snoozedUntil: threadRow.value.snoozedUntil,
             snoozedAt: threadRow.value.snoozedAt,
+            queueHeldAt: threadRow.value.queueHeldAt,
             pinnedAt: threadRow.value.pinnedAt,
             pinOrderKey: threadRow.value.pinOrderKey,
             titleRegeneration: mapTitleRegeneration(threadRow.value),
@@ -2852,6 +2864,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         settledAt: threadRow.value.settledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        queueHeldAt: threadRow.value.queueHeldAt,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey,
         titleRegeneration: mapTitleRegeneration(threadRow.value),

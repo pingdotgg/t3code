@@ -42,6 +42,7 @@ function render(
   return renderToStaticMarkup(
     <QueuedMessagesPanel
       queuedTurns={queuedTurns}
+      queueHeldAt={null}
       policyBlocks={policyBlocks}
       editingQueuedTurnId={null}
       editingText=""
@@ -49,6 +50,8 @@ function render(
       onCancelEditingQueuedTurn={() => {}}
       onSaveEditingQueuedTurn={() => {}}
       onDeleteQueuedTurn={() => {}}
+      onMoveQueuedTurn={() => {}}
+      onReleaseQueue={() => {}}
     />,
   );
 }
@@ -57,12 +60,15 @@ function renderEditing(queuedTurn: OrchestrationQueuedTurn) {
   return renderToStaticMarkup(
     <QueuedMessagesPanel
       queuedTurns={[queuedTurn]}
+      queueHeldAt={null}
       editingQueuedTurnId={queuedTurn.id}
       editingText={queuedTurn.message.text}
       onStartEditingQueuedTurn={() => {}}
       onCancelEditingQueuedTurn={() => {}}
       onSaveEditingQueuedTurn={() => {}}
       onDeleteQueuedTurn={() => {}}
+      onMoveQueuedTurn={() => {}}
+      onReleaseQueue={() => {}}
     />,
   );
 }
@@ -86,12 +92,15 @@ describe("QueuedMessagesPanel", () => {
             ],
           }),
         ]}
+        queueHeldAt={null}
         editingQueuedTurnId={null}
         editingText=""
         onStartEditingQueuedTurn={() => {}}
         onCancelEditingQueuedTurn={() => {}}
         onSaveEditingQueuedTurn={() => {}}
         onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
       />,
     );
     expect(html).toBe("");

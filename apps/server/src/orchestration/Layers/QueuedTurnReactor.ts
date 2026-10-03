@@ -20,6 +20,7 @@ import {
 import { PullRequestMonitorFeedbackService } from "../../pullRequestMonitor/PullRequestMonitorFeedbackService.ts";
 import { computeReadiness } from "../../pullRequestMonitor/readiness.ts";
 import { buildWakePrompt } from "../../pullRequestMonitor/wakePrompt.ts";
+import { ServerShutdownMarkerRepository } from "../../persistence/Services/ServerShutdownMarker.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { QueuedTurnReactor, type QueuedTurnReactorShape } from "../Services/QueuedTurnReactor.ts";
 import {
@@ -28,6 +29,7 @@ import {
 } from "../commandInvariants.ts";
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { isAutomaticChildNudgeBlocked } from "../childNudging.ts";
+import { compareQueuedTurns } from "@t3tools/shared/queuedTurnOrder";
 import { childWaitIsSatisfied, evaluateChildFollowUp } from "@t3tools/shared/childFollowUp";
 import {
   delegationSettlementNotBefore,
@@ -100,6 +102,9 @@ function canChangeDelegationSettlement(event: OrchestrationEvent): boolean {
     case "thread.queued-turn-dispatched":
     case "thread.queued-turn-failed":
     case "thread.queued-turn-updated":
+    case "thread.queued-turn-reordered":
+    case "thread.queue-held":
+    case "thread.queue-released":
     case "thread.session-set":
     case "thread.turn-start-requested":
     case "thread.unarchived":
@@ -167,6 +172,7 @@ function indexReadModel(readModel: OrchestrationReadModel): ThreadReadModelIndex
 
 const makeQueuedTurnReactor = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const shutdownMarker = yield* ServerShutdownMarkerRepository;
   const pullRequests = yield* PullRequestService;
   const monitorFeedback = yield* PullRequestMonitorFeedbackService;
   const serverSettings = yield* ServerSettingsService;
@@ -222,6 +228,8 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         yield* scheduleChildWake(threadId, wait.deadlineAt, "wait-deadline", wait.generationId);
       }
       const queuedTurns = thread?.queuedTurns ?? [];
+      // isThreadReadyForQueuedDispatch already refuses a held queue, so a
+      // crash-recovered queue waits here until an explicit release.
       if (queuedTurns.length === 0 || !isThreadReadyForQueuedDispatch(thread)) {
         return;
       }
@@ -248,7 +256,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       eligibleTurns.sort((left, right) => {
         const leftUser = left.origin === undefined ? 0 : 1;
         const rightUser = right.origin === undefined ? 0 : 1;
-        return leftUser - rightUser || left.createdAt.localeCompare(right.createdAt);
+        return leftUser - rightUser || compareQueuedTurns(left, right);
       });
       let nextQueuedTurn = eligibleTurns[0];
       if (eligibleTurns.some((turn) => turn.origin?.kind === "pull-request-monitor")) {
@@ -539,6 +547,40 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
     );
   };
 
+  /**
+   * Hold every thread that still has queued messages after an unclean exit.
+   *
+   * A queued prompt is explicit user intent to run *after* whatever the thread
+   * was doing. If the process died mid-turn that intent may be stale — the user
+   * may have moved on, or the turn it was meant to follow is gone — so firing
+   * it unprompted on boot is worse than one extra click. A clean shutdown needs
+   * no hold: nothing was lost, so a planned restart resumes normally.
+   */
+  const holdQueuedThreadsAfterCrash = Effect.gen(function* () {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const heldAt = new Date().toISOString();
+    yield* Effect.forEach(
+      readModel.threads.filter((thread) => (thread.queuedTurns ?? []).length > 0),
+      (thread) =>
+        orchestrationEngine
+          .dispatch({
+            type: "thread.queue.hold",
+            commandId: serverCommandId("queue.hold-after-crash"),
+            threadId: thread.id,
+            heldAt,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("failed to hold queued turns after crash recovery", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
+      { concurrency: 1, discard: true },
+    );
+  });
+
   const drainQueuedThreads = Effect.gen(function* () {
     const readModel = yield* orchestrationEngine.getReadModel();
     yield* Effect.forEach(
@@ -746,6 +788,19 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         }),
       ),
     );
+    // Order matters: the hold must be durable before the first drain attempt,
+    // or a crash-recovered queue would fire during startup.
+    const previousShutdownWasClean = yield* shutdownMarker.beginSession().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("could not read the shutdown marker", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+    if (!previousShutdownWasClean) {
+      yield* Effect.logWarning("server did not shut down cleanly; holding queued messages", {});
+      yield* holdQueuedThreadsAfterCrash;
+    }
     yield* drainQueuedThreads;
     const startupIndex = indexReadModel(yield* orchestrationEngine.getReadModel());
     yield* Effect.forEach(

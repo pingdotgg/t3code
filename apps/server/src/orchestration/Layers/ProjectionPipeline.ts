@@ -300,6 +300,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            queueHeldAt: null,
             pinnedAt: null,
             pinOrderKey: null,
             titleRegenerationRequestId: null,
@@ -421,6 +422,36 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledOverride: event.payload.reason === "user" ? "active" : null,
             settledAt: null,
             updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.queue-held": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            queueHeldAt: event.payload.heldAt,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.queue-released": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            queueHeldAt: null,
+            updatedAt: event.occurredAt,
           });
           return;
         }
@@ -1192,6 +1223,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: event.payload.queuedTurn.sourceProposedPlan?.planId ?? null,
             createdAt: event.payload.queuedTurn.createdAt,
             updatedAt: event.payload.queuedTurn.updatedAt,
+            queuePosition: event.payload.queuedTurn.queuePosition ?? null,
             failedAt: event.payload.queuedTurn.failedAt,
             failureMessage: event.payload.queuedTurn.failureMessage,
           });
@@ -1221,6 +1253,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             queuedTurnId: event.payload.queuedTurnId,
           });
           return;
+
+        case "thread.queued-turn-reordered": {
+          // Positions are rewritten for every listed turn so the stored order
+          // is a dense 0..n-1 sequence rather than a sparse rewrite of the
+          // moved entries only.
+          yield* Effect.forEach(
+            event.payload.orderedQueuedTurnIds,
+            (queuedTurnId, index) =>
+              projectionQueuedTurnRepository.getById({ queuedTurnId }).pipe(
+                Effect.flatMap((existing) =>
+                  Option.isNone(existing)
+                    ? Effect.void
+                    : projectionQueuedTurnRepository.upsert({
+                        ...existing.value,
+                        queuePosition: index,
+                        updatedAt: event.payload.reorderedAt,
+                      }),
+                ),
+              ),
+            { concurrency: 1, discard: true },
+          );
+          return;
+        }
 
         case "thread.queued-turn-failed": {
           const existing = yield* projectionQueuedTurnRepository.getById({
