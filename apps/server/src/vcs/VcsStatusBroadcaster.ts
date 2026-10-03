@@ -695,10 +695,24 @@ export const make = Effect.gen(function* () {
         );
       }
 
-      return Effect.succeed([
-        existing.fiber,
-        new Map([...activePollers].filter(([activeCwd]) => activeCwd !== cwd)),
-      ] as const);
+      // Drop the cached status for this cwd in the same critical section that
+      // removes the poller, so a concurrent retainRemotePoller (which reloads
+      // the cache and installs a fresh poller) cannot have its new entry wiped
+      // by this release. Otherwise the cache keeps one entry per cwd for the
+      // broadcaster's lifetime; a future subscriber re-loads and re-seeds it.
+      return Ref.update(cacheRef, (cache) => {
+        if (!cache.has(cwd)) {
+          return cache;
+        }
+        const nextCache = new Map(cache);
+        nextCache.delete(cwd);
+        return nextCache;
+      }).pipe(
+        Effect.as([
+          existing.fiber,
+          new Map([...activePollers].filter(([activeCwd]) => activeCwd !== cwd)),
+        ] as const),
+      );
     });
 
     if (pollerToInterrupt) {

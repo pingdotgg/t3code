@@ -150,18 +150,16 @@ describe("browserSurfaceStore", () => {
     });
   });
 
-  it("hides a surface when its current lease is released", () => {
+  it("removes a surface entry when its current lease is released", () => {
     const tabId = "released-browser-surface";
     const lease = acquireBrowserSurface(tabId);
     lease.present({ x: 10, y: 20, width: 900, height: 640 }, true);
 
     lease.release();
+    // A stale present() from the released lease must not resurrect the entry.
     lease.present({ x: 0, y: 0, width: 1, height: 1 }, true);
 
-    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toMatchObject({
-      visible: false,
-      owner: null,
-    });
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toBeUndefined();
   });
 
   it("keeps the requested layer with the active surface lease", () => {
@@ -190,11 +188,7 @@ describe("browserSurfaceStore", () => {
 
     fittedLease.release();
 
-    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toMatchObject({
-      fittedSourceContent: null,
-      fitSourceContent: false,
-      owner: null,
-      visible: false,
-    });
+    // Release removes the entry entirely, fitted presentation state included.
+    expect(useBrowserSurfaceStore.getState().byTabId[tabId]).toBeUndefined();
   });
 });

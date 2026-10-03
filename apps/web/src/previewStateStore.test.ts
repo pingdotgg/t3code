@@ -17,6 +17,7 @@ import {
   previewStateAtom,
   readThreadPreviewState,
   reconcilePreviewServerSessions,
+  removePreviewThread,
   rememberPreviewUrl,
   resetPreviewStateForTests,
   setActivePreviewTab,
@@ -70,6 +71,27 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, makeSnapshot());
     expect(readThreadPreviewState(ref).snapshot?.tabId).toBe("tab_a");
     expect(readThreadPreviewState(otherRef)).toEqual(__testing.EMPTY_THREAD_PREVIEW_STATE);
+  });
+
+  it("removePreviewThread resets a deleted thread's state and leaves other threads intact", () => {
+    applyPreviewServerSnapshot(ref, makeSnapshot());
+    applyPreviewServerSnapshot(otherRef, makeSnapshot({ threadId: "thread-2", tabId: "tab_b" }));
+
+    removePreviewThread(ref);
+
+    expect(readThreadPreviewState(ref)).toEqual(__testing.EMPTY_THREAD_PREVIEW_STATE);
+    expect(readThreadPreviewState(otherRef).snapshot?.tabId).toBe("tab_b");
+
+    // A later event for the removed thread re-seeds from empty and still lands.
+    const reopened = makeSnapshot({ updatedAt: "2026-01-01T00:01:00.000Z" });
+    applyPreviewServerEvent(ref, {
+      type: "opened",
+      threadId: "thread-1",
+      tabId: reopened.tabId,
+      createdAt: reopened.updatedAt,
+      snapshot: reopened,
+    });
+    expect(readThreadPreviewState(ref).snapshot?.tabId).toBe("tab_a");
   });
 
   it("opened event seeds the snapshot and remembers the URL", () => {

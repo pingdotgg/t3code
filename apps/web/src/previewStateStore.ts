@@ -65,9 +65,16 @@ const emptyPreviewStateAtom = Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW
   Atom.withLabel("preview:empty-thread"),
 );
 
+// Idle-TTL, not keepAlive: keepAlive pinned one registry node per thread key
+// ever visited for the process lifetime. Threads with live sessions stay
+// resident because the observed aggregate `activePreviewSessionsAtom` reads
+// them; only idle threads are collected, re-seeding from EMPTY on next use and
+// repopulating from the next server snapshot (see usePreviewSession).
+const PREVIEW_STATE_IDLE_TTL_MS = 5 * 60_000;
+
 export const previewStateAtom = Atom.family((threadKey: string) =>
   Atom.make<ThreadPreviewState>(EMPTY_THREAD_PREVIEW_STATE).pipe(
-    Atom.keepAlive,
+    Atom.setIdleTTL(PREVIEW_STATE_IDLE_TTL_MS),
     Atom.withLabel(`preview:thread:${threadKey}`),
   ),
 );
@@ -462,6 +469,24 @@ export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
 export function isPreviewSupportedInRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(window.desktopBridge?.preview);
+}
+
+/**
+ * Drop a deleted thread's preview state. Resets the atom to EMPTY (the family
+ * entry is only weakly held, so the registry drops the node once idle) and
+ * removes the key from the active-session index so the desktop aggregate view
+ * stops enumerating it.
+ */
+export function removePreviewThread(ref: ScopedThreadRef): void {
+  const threadKey = scopedThreadKey(ref);
+  appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
+  changedPreviewThreadKeys.delete(threadKey);
+  appAtomRegistry.update(activePreviewThreadKeysAtom, (current) => {
+    if (!current.keys.has(threadKey)) return current;
+    const keys = new Set(current.keys);
+    keys.delete(threadKey);
+    return { keys };
+  });
 }
 
 export function resetPreviewStateForTests(): void {
