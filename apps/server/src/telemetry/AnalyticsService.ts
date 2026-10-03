@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
@@ -260,9 +261,10 @@ export const make = Effect.gen(function* () {
     function* (event, properties) {
       if (!telemetryConfig.enabled || !identifier) return;
 
-      // Telemetry is best effort: an event without a uuid is not sent.
-      const uuid = yield* crypto.randomUUIDv7.pipe(Effect.option);
-      if (Option.isNone(uuid)) return;
+      // Telemetry is best effort: an event without a uuid is not sent. The
+      // Node implementation throws (a defect) rather than failing, so catch both.
+      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
+      if (Exit.isFailure(uuid)) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);
       if (enqueueResult.dropped) {
