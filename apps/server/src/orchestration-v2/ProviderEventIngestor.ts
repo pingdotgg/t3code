@@ -392,16 +392,52 @@ export const layer: Layer.Layer<
                 nodeId: input.event.node.id,
               }),
             ];
-          case "subagent.updated":
+          case "subagent.updated": {
+            const subagent = input.event.subagent;
+            const subagentEvent = yield* makeDomainEvent(input, {
+              type: "subagent.updated",
+              threadId: subagent.threadId,
+              payload: subagent,
+              runId: subagent.runId,
+              nodeId: subagent.id,
+            });
+            // A native subagent's thread starts on the parent's model when the
+            // provider names the real one later (a Claude agent file's model
+            // arrives with its first reply). Clients read the thread's model.
+            if (
+              subagent.origin !== "provider_native" ||
+              subagent.childThreadId === null ||
+              subagent.model === null
+            ) {
+              return [subagentEvent];
+            }
+            const childThread = yield* projections
+              .getThread(subagent.childThreadId)
+              .pipe(
+                Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)),
+              );
+            if (childThread === null || childThread.modelSelection.model === subagent.model) {
+              return [subagentEvent];
+            }
+            const now = yield* DateTime.now;
             return [
+              subagentEvent,
               yield* makeDomainEvent(input, {
-                type: "subagent.updated",
-                threadId: input.event.subagent.threadId,
-                payload: input.event.subagent,
-                runId: input.event.subagent.runId,
-                nodeId: input.event.subagent.id,
+                type: "thread.model-selection-updated",
+                threadId: childThread.id,
+                // The parent's options belong to the parent's model.
+                payload: {
+                  ...childThread,
+                  modelSelection: {
+                    instanceId: childThread.modelSelection.instanceId,
+                    model: subagent.model,
+                  },
+                  updatedAt: now,
+                },
+                occurredAt: now,
               }),
             ];
+          }
           case "message.updated":
             return [
               yield* makeDomainEvent(input, {
