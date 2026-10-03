@@ -4,6 +4,7 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   formatGitActionElapsed,
+  hasActivatableGitMenuEntry,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -122,6 +123,33 @@ describe("git action result toast timing", () => {
       timeout: 0,
       dismissAfterVisibleMs: 10_000,
     });
+  });
+});
+
+describe("hasActivatableGitMenuEntry", () => {
+  it("is false for a clean, up-to-date branch whose actions are all disabled", () => {
+    const items = buildMenuItems(status(), false);
+    assert.isTrue(items.length > 0 && items.every((item) => item.disabled));
+    assert.isFalse(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("is true once an action can run", () => {
+    const items = buildMenuItems(status({ hasWorkingTreeChanges: true }), false);
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: false, hasStatusError: false }),
+    );
+  });
+
+  it("stays true while the menu still offers publishing or an error to read", () => {
+    const items = buildMenuItems(status(), false);
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items, canPublishRepository: true, hasStatusError: false }),
+    );
+    assert.isTrue(
+      hasActivatableGitMenuEntry({ items: [], canPublishRepository: false, hasStatusError: true }),
+    );
   });
 });
 
