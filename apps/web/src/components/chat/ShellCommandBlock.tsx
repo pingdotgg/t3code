@@ -1,8 +1,8 @@
 import {
-  commandDisplayText,
   commandHighlightLanguage,
+  withVisibleControlCharacters,
 } from "@t3tools/client-runtime/work-log/command-label";
-import { Suspense } from "react";
+import { Suspense, use, useMemo } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
@@ -11,6 +11,13 @@ import { HighlightedTokens } from "./HighlightedTokens";
 // Shell words wrap as a unit, so `--exclude` or a quoted string is not split
 // at a hyphen; a word longer than the line still breaks anywhere.
 const WORD_CLASS_NAME = "inline-block max-w-full [overflow-wrap:anywhere]";
+
+// The shell parser loads with the first expanded command, not with the timeline.
+let embeddedScriptsModule: Promise<typeof import("../../lib/embeddedScripts")> | undefined;
+function loadEmbeddedScripts() {
+  embeddedScriptsModule ??= import("../../lib/embeddedScripts");
+  return embeddedScriptsModule;
+}
 
 /** Same layout as the highlighted version, so the grammar arriving never reflows the block. */
 function PlainWords({ code }: { code: string }) {
@@ -28,22 +35,39 @@ function PlainWords({ code }: { code: string }) {
   );
 }
 
-/** The command a command_execution item ran, without a `bash -lc` wrapper, syntax highlighted. */
+function HighlightedCommand({ code, theme }: { code: string; theme: "light" | "dark" }) {
+  const { embeddedScripts } = use(loadEmbeddedScripts());
+  const language = commandHighlightLanguage(code);
+  // Only shell syntax nests scripts; PowerShell's own grammar colors its strings.
+  const embedded = useMemo(
+    () => (language === "shellscript" ? embeddedScripts(code) : []),
+    [code, embeddedScripts, language],
+  );
+  return (
+    <HighlightedTokens
+      code={code}
+      language={language}
+      embedded={embedded}
+      theme={theme}
+      wordClassName={WORD_CLASS_NAME}
+    />
+  );
+}
+
+/**
+ * The command a command_execution item ran, syntax highlighted. Scripts inside
+ * it, such as a `bash -lc` script or a Python heredoc, get their own grammar.
+ */
 export function ShellCommandBlock({ command }: { command: string }) {
   const { resolvedTheme } = useTheme();
-  const code = commandDisplayText(command);
+  const code = withVisibleControlCharacters(command.trim());
   if (!code) return null;
   const plain = <PlainWords code={code} />;
   return (
     <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border/50 bg-background/60 p-2 font-mono text-2xs leading-relaxed text-foreground/85 select-text">
       <RenderErrorBoundary fallback={plain} resetKeys={[code]}>
         <Suspense fallback={plain}>
-          <HighlightedTokens
-            code={code}
-            language={commandHighlightLanguage(code)}
-            theme={resolvedTheme}
-            wordClassName={WORD_CLASS_NAME}
-          />
+          <HighlightedCommand code={code} theme={resolvedTheme} />
         </Suspense>
       </RenderErrorBoundary>
     </pre>

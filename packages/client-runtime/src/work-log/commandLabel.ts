@@ -1379,7 +1379,12 @@ const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
  * characters made visible. Callers retain the original for details.
  */
 export function commandDisplayText(command: string): string {
-  return withoutShellWrapper(command).replace(CONTROL_CHARACTERS, (character) =>
+  return withVisibleControlCharacters(withoutShellWrapper(command));
+}
+
+/** Replaces each control character with its control picture; the length does not change. */
+export function withVisibleControlCharacters(text: string): string {
+  return text.replace(CONTROL_CHARACTERS, (character) =>
     character === "\u007f" ? "␡" : String.fromCharCode(0x2400 + character.charCodeAt(0)),
   );
 }
