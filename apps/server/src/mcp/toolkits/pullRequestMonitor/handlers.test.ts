@@ -86,7 +86,7 @@ const makeLayer = (input: {
     start: () => Effect.die("unused"),
     stop: () => Effect.die("unused"),
     status: () => Effect.die("unused"),
-    canDeliverAutomation: () => Effect.succeed(false),
+    automationDeliveryState: () => Effect.succeed("blocked"),
     list: () => Effect.die("unused"),
     subscribeList: () => Stream.empty,
     pollOnce: Effect.void,

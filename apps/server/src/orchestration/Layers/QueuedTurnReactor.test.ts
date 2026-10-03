@@ -1,6 +1,9 @@
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ChildWaitCondition,
+  CollaborationRequestId,
+  CollaborationResponseId,
+  CollaborativeAcceptanceExchangeId,
   CommandId,
   EventId,
   MessageId,
@@ -332,6 +335,7 @@ async function runReactor(
     readonly providerInstances?: ServerSettings["providerInstances"];
     readonly optIn?: boolean;
     readonly monitorEnabled?: boolean;
+    readonly monitorTerminal?: boolean;
     readonly autoMonitorPullRequestsOnCreate?: boolean;
     readonly enableAfterStart?: boolean;
     readonly delegationIdleStallThresholdMs?: number;
@@ -458,9 +462,13 @@ async function runReactor(
     }),
   );
   const monitorLayer = Layer.succeed(PullRequestMonitorService, {
-    canDeliverAutomation: () =>
+    automationDeliveryState: () =>
       Effect.succeed(
-        (options?.monitorEnabled ?? true) && (options?.autoMonitorPullRequestsOnCreate ?? true),
+        options?.monitorTerminal
+          ? "terminal"
+          : (options?.monitorEnabled ?? true) && (options?.autoMonitorPullRequestsOnCreate ?? true)
+            ? "eligible"
+            : "blocked",
       ),
   } as unknown as PullRequestMonitorService["Service"]);
   const layer = QueuedTurnReactorLive.pipe(
@@ -1896,6 +1904,62 @@ describe("QueuedTurnReactor", () => {
     expect(
       resumed.filter((command) => command.type === "thread.queued-turn.dispatch"),
     ).toMatchObject([{ type: "thread.queued-turn.dispatch", threadId, queuedTurnId }]);
+  });
+
+  it("dispatches a collaboration response past paused PR feedback", async () => {
+    const model = queuedReadModel({
+      origin: { kind: "pull-request-monitor", repository: "acme/app", number: 42 },
+    });
+    const thread = model.threads[0]!;
+    const responseId = QueuedTurnId.make("collaboration-response");
+    const monitorTurn = thread.queuedTurns![0]!;
+    const responseTurn = {
+      ...monitorTurn,
+      id: responseId,
+      message: {
+        ...monitorTurn.message,
+        messageId: MessageId.make("collaboration-response-message"),
+        text: "The parent decision is ready.",
+      },
+      origin: {
+        kind: "collaboration-response" as const,
+        requestId: CollaborationRequestId.make("request-1"),
+        responseId: CollaborationResponseId.make("response-1"),
+        exchangeId: CollaborativeAcceptanceExchangeId.make("exchange-1"),
+      },
+      createdAt: "2026-03-01T00:00:01.000Z",
+    };
+    const state = {
+      ...model,
+      threads: [{ ...thread, queuedTurns: [monitorTurn, responseTurn] }],
+    };
+
+    const commands = await runReactor(state, monitorSnapshot("head-current"), {
+      monitorEnabled: false,
+    });
+
+    expect(commands).toMatchObject([
+      { type: "thread.queued-turn.dispatch", threadId, queuedTurnId: responseId },
+    ]);
+  });
+
+  it("deletes a terminal monitor turn rather than leaving it queued", async () => {
+    const commands = await runReactor(
+      queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          headSha: "head-current",
+          sourceRevision: "revision-old",
+          events: [{ kind: "behind-base" }],
+        },
+      }),
+      { ...monitorSnapshot("head-current"), state: "closed" },
+      { monitorTerminal: true },
+    );
+
+    expect(commands).toMatchObject([{ type: "thread.queued-turn.delete", threadId, queuedTurnId }]);
   });
 
   it("keeps disabled feedback pending without recording a failure", async () => {

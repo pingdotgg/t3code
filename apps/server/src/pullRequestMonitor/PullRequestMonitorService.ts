@@ -152,6 +152,8 @@ export function associatedOwnerCandidates(
     .map((thread) => ({ threadId: thread.id, title: thread.title }));
 }
 
+export type PullRequestMonitorAutomationDeliveryState = "eligible" | "blocked" | "terminal";
+
 export class PullRequestMonitorService extends Context.Service<
   PullRequestMonitorService,
   {
@@ -164,11 +166,11 @@ export class PullRequestMonitorService extends Context.Service<
     readonly status: (
       input: PullRequestMonitorStatusInput,
     ) => Effect.Effect<PullRequestMonitorStatusResult, PullRequestMonitorError>;
-    /** Cheap dispatch-boundary check for durable feedback queued to an owner thread. */
-    readonly canDeliverAutomation: (input: {
+    /** Cheap dispatch-boundary state check for durable feedback queued to an owner thread. */
+    readonly automationDeliveryState: (input: {
       readonly reference: PullRequestRef;
       readonly threadId: ThreadId;
-    }) => Effect.Effect<boolean, PullRequestMonitorError>;
+    }) => Effect.Effect<PullRequestMonitorAutomationDeliveryState, PullRequestMonitorError>;
     readonly list: (
       input: PullRequestMonitorListInput,
     ) => Effect.Effect<PullRequestMonitorListResult, PullRequestMonitorError>;
@@ -375,27 +377,26 @@ export const layer = Layer.effect(
         };
       });
 
-    const canDeliverAutomation: PullRequestMonitorService["Service"]["canDeliverAutomation"] = (
-      input,
-    ) =>
-      Effect.gen(function* () {
-        const monitor = yield* store.getByProjectRef(input.reference);
-        if (
-          monitor === null ||
-          !monitor.enabled ||
-          monitor.status === "stopped" ||
-          monitor.status === "terminal" ||
-          monitor.ownerThreadId !== input.threadId
-        ) {
-          return false;
-        }
-        const settings = yield* serverSettings.getSettings.pipe(
-          Effect.mapError((cause) =>
-            monitorError("Could not resolve automatic PR feedback policy.", { cause }),
-          ),
-        );
-        return settings.autoMonitorPullRequestsOnCreate;
-      });
+    const automationDeliveryState: PullRequestMonitorService["Service"]["automationDeliveryState"] =
+      (input) =>
+        Effect.gen(function* () {
+          const monitor = yield* store.getByProjectRef(input.reference);
+          if (monitor?.status === "terminal") return "terminal";
+          if (
+            monitor === null ||
+            !monitor.enabled ||
+            monitor.status === "stopped" ||
+            monitor.ownerThreadId !== input.threadId
+          ) {
+            return "blocked";
+          }
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((cause) =>
+              monitorError("Could not resolve automatic PR feedback policy.", { cause }),
+            ),
+          );
+          return settings.autoMonitorPullRequestsOnCreate ? "eligible" : "blocked";
+        });
 
     const start = (input: PullRequestMonitorStartInput) =>
       Effect.gen(function* () {
@@ -1527,7 +1528,7 @@ export const layer = Layer.effect(
       start,
       stop,
       status,
-      canDeliverAutomation,
+      automationDeliveryState,
       list,
       subscribeList: (input) =>
         Stream.concat(

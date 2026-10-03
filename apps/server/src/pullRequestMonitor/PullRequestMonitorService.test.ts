@@ -634,6 +634,13 @@ layer("PullRequestMonitorService", (it) => {
       });
       assert.strictEqual(terminal.monitor.status, "terminal");
       assert.isFalse(terminal.monitor.enabled);
+      assert.strictEqual(
+        yield* service.automationDeliveryState({
+          reference: { projectId, repository: "acme/app", number: 1045 },
+          threadId: owner,
+        }),
+        "terminal",
+      );
 
       const detailCallsBeforeEnsure = pullRequestDetailCalls;
       const snapshotCallsBeforeEnsure = monitorSnapshotCalls;
@@ -1917,7 +1924,10 @@ layer("PullRequestMonitorService", (it) => {
         assert.strictEqual(submitted.monitor.enabled, false);
         assert.strictEqual(submitted.monitor.status, "stopped");
         assert.strictEqual(submitted.ownerThreadId, owner);
-        assert.isFalse(yield* monitors.canDeliverAutomation({ reference, threadId: owner }));
+        assert.strictEqual(
+          yield* monitors.automationDeliveryState({ reference, threadId: owner }),
+          "blocked",
+        );
         assert.strictEqual(
           context.items.some((item) => item.summary.includes("Persist while paused")),
           true,
@@ -1953,12 +1963,15 @@ layer("PullRequestMonitorService", (it) => {
           queueCommands,
         );
         yield* monitors.start({ ...reference, ownerThreadId: owner });
-        assert.isTrue(yield* monitors.canDeliverAutomation({ reference, threadId: owner }));
+        assert.strictEqual(
+          yield* monitors.automationDeliveryState({ reference, threadId: owner }),
+          "eligible",
+        );
         currentSettings = { ...defaultSettings, autoMonitorPullRequestsOnCreate: false };
         const policyDisabled = yield* monitors
-          .canDeliverAutomation({ reference, threadId: owner })
+          .automationDeliveryState({ reference, threadId: owner })
           .pipe(Effect.ensuring(Effect.sync(() => (currentSettings = defaultSettings))));
-        assert.isFalse(policyDisabled);
+        assert.strictEqual(policyDisabled, "blocked");
         currentSnapshot = sampleSnapshot();
       }),
   );
