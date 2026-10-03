@@ -1016,6 +1016,204 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
       });
 
+      describe("Pi model inventories", () => {
+        const defaultModel = {
+          slug: "default",
+          name: "Pi default",
+          isCustom: false,
+          capabilities: null,
+        } as const;
+        const currentModel = {
+          slug: "openai/gpt-6.1-sol",
+          name: "GPT-6.1-Sol",
+          isCustom: false,
+          capabilities: null,
+        } as const;
+        const removedModel = {
+          slug: "openrouter/google/gemini-2.5-pro",
+          name: "Google: Gemini 2.5 Pro",
+          isCustom: false,
+          capabilities: null,
+        } as const;
+        const customModel = {
+          slug: "custom-model",
+          name: "Custom model",
+          isCustom: true,
+          capabilities: null,
+        } as const;
+        const cachedProvider = {
+          instanceId: ProviderInstanceId.make("pi-personal"),
+          driver: ProviderDriverKind.make("pi"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated", type: "pi" },
+          checkedAt: "2026-10-03T00:00:00.000Z",
+          version: "1.0.0",
+          models: [
+            defaultModel,
+            currentModel,
+            removedModel,
+            { ...customModel, slug: "removed-custom" },
+          ],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const refreshedProvider = {
+          ...cachedProvider,
+          checkedAt: "2026-10-03T00:01:00.000Z",
+          models: [defaultModel, currentModel, customModel],
+        } satisfies ServerProvider;
+        const pendingProvider = {
+          ...cachedProvider,
+          status: "warning",
+          version: null,
+          auth: { status: "unknown" },
+          models: [defaultModel, customModel],
+        } satisfies ServerProvider;
+        const failedProvider = {
+          ...pendingProvider,
+          checkedAt: "2026-10-03T00:02:00.000Z",
+          status: "ready",
+          version: "1.0.0",
+          message: "Pi is available, but T3 Code could not refresh its models and commands.",
+        } satisfies ServerProvider;
+
+        it("drops disconnected Pi upstream models after successful discovery", () => {
+          assert.deepStrictEqual(
+            mergeProviderSnapshot(cachedProvider, refreshedProvider).models,
+            refreshedProvider.models,
+          );
+        });
+
+        it("clears discovered Pi models when successful discovery finds no usable models", () => {
+          const signedOutProvider = {
+            ...refreshedProvider,
+            status: "warning",
+            auth: { status: "unauthenticated", type: "pi" },
+            models: [defaultModel, customModel],
+          } satisfies ServerProvider;
+
+          assert.deepStrictEqual(
+            mergeProviderSnapshot(cachedProvider, signedOutProvider).models,
+            signedOutProvider.models,
+          );
+        });
+
+        it("retains Pi inventories during incomplete probes without restoring removed custom models", () => {
+          const incompleteProviders = [
+            pendingProvider,
+            { ...pendingProvider, installed: false },
+            failedProvider,
+            { ...failedProvider, status: "error" },
+          ] satisfies ReadonlyArray<ServerProvider>;
+
+          for (const provider of incompleteProviders) {
+            assert.deepStrictEqual(mergeProviderSnapshot(cachedProvider, provider).models, [
+              defaultModel,
+              customModel,
+              currentModel,
+              removedModel,
+            ]);
+          }
+        });
+
+        it("does not restore disconnected Pi models after a later discovery failure", () => {
+          const afterRemoval = mergeProviderSnapshot(cachedProvider, refreshedProvider);
+          assert.deepStrictEqual(mergeProviderSnapshot(afterRemoval, failedProvider).models, [
+            defaultModel,
+            customModel,
+            currentModel,
+          ]);
+        });
+
+        it.effect(
+          "persists Pi inventory removals across failed refreshes and registry restarts",
+          () =>
+            Effect.gen(function* () {
+              const config = yield* ServerConfig.ServerConfig;
+              const filePath = yield* resolveProviderStatusCachePath({
+                cacheDir: config.providerStatusCacheDir,
+                instanceId: cachedProvider.instanceId,
+              });
+              yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
+              const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+              const instance = {
+                instanceId: cachedProvider.instanceId,
+                driverKind: cachedProvider.driver,
+                continuationIdentity: {
+                  driverKind: cachedProvider.driver,
+                  continuationKey: "pi:instance:pi-personal",
+                },
+                displayName: undefined,
+                enabled: true,
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: cachedProvider.driver,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Effect.succeed(pendingProvider),
+                  refresh: Ref.get(nextProvider),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              } satisfies ProviderInstance;
+              const instanceRegistryLayer = Layer.succeed(
+                ProviderInstanceRegistry.ProviderInstanceRegistry,
+                {
+                  getInstance: (id) =>
+                    Effect.succeed(id === instance.instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                },
+              );
+              const retainedModels = [defaultModel, customModel, currentModel];
+
+              for (const restarted of [false, true]) {
+                yield* Effect.gen(function* () {
+                  const registry = yield* ProviderRegistry.ProviderRegistry;
+                  assert.deepStrictEqual(
+                    (yield* registry.getProviders)[0]?.models,
+                    restarted
+                      ? retainedModels
+                      : [defaultModel, customModel, currentModel, removedModel],
+                  );
+
+                  yield* registry.refreshInstance(instance.instanceId);
+                  assert.deepStrictEqual(
+                    (yield* readProviderStatusCache(filePath))?.models,
+                    restarted ? retainedModels : refreshedProvider.models,
+                  );
+
+                  yield* Ref.set(nextProvider, failedProvider);
+                  const afterFailure = yield* registry.refreshInstance(instance.instanceId);
+                  assert.deepStrictEqual(afterFailure[0]?.models, retainedModels);
+                  assert.deepStrictEqual(
+                    (yield* readProviderStatusCache(filePath))?.models,
+                    retainedModels,
+                  );
+                }).pipe(
+                  Effect.provide(ProviderRegistryLive.pipe(Layer.provide(instanceRegistryLayer))),
+                  Effect.scoped,
+                );
+              }
+            }).pipe(
+              Effect.provide(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-pi-model-cache-",
+                }).pipe(Layer.provideMerge(NodeServices.layer)),
+              ),
+            ),
+        );
+      });
+
       describe("Codex model inventories", () => {
         const cachedProvider = {
           instanceId: ProviderInstanceId.make("codex-personal"),

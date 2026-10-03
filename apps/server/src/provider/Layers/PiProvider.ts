@@ -32,6 +32,7 @@ import {
 } from "../../orchestration-v2/Adapters/piT3McpInjection.ts";
 import {
   makePiRpcConnection,
+  PiRpcError,
   piRecordField as recordField,
   piRecordString as recordString,
 } from "../../orchestration-v2/Adapters/PiRpc.ts";
@@ -103,15 +104,23 @@ function piModelsFromSettings(
 function parseDiscoveredModels(
   data: unknown,
   defaultThinkingLevel: unknown,
-): ReadonlyArray<ServerProviderModel> {
+): Result.Result<ReadonlyArray<ServerProviderModel>, PiRpcError> {
   const models = recordField(data, "models");
-  if (!Array.isArray(models)) return [];
+  if (!Array.isArray(models)) {
+    return Result.fail(
+      new PiRpcError({ operation: "get_available_models", detail: "Invalid model inventory" }),
+    );
+  }
   const seen = new Set<string>();
   const parsed: Array<ServerProviderModel> = [];
   for (const model of models) {
     const provider = recordString(model, "provider");
     const id = recordString(model, "id");
-    if (provider === undefined || id === undefined) continue;
+    if (provider === undefined || id === undefined || provider.trim() === "" || id.trim() === "") {
+      return Result.fail(
+        new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
+      );
+    }
     const slug = `${provider}/${id}`;
     if (seen.has(slug)) continue;
     seen.add(slug);
@@ -122,7 +131,7 @@ function parseDiscoveredModels(
       capabilities: thinkingCapabilitiesForPiModel(model, defaultThinkingLevel),
     });
   }
-  return parsed;
+  return Result.succeed(parsed);
 }
 
 const discoverPiViaRpc = (
@@ -155,9 +164,8 @@ const discoverPiViaRpc = (
     const commandsData = yield* connection
       .request({ type: "get_commands" })
       .pipe(Effect.orElseSucceed(() => undefined));
-    const discoveredModels = parseDiscoveredModels(
-      modelsData,
-      recordString(stateData, "thinkingLevel"),
+    const discoveredModels = yield* Effect.fromResult(
+      parseDiscoveredModels(modelsData, recordString(stateData, "thinkingLevel")),
     );
     const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
     return {
