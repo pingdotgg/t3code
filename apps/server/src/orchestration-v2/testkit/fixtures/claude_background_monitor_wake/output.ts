@@ -39,11 +39,14 @@ export function assertClaudeBackgroundMonitorWakeOutput(
   // that links the task to its Monitor call, so only that entry reads command.
   assert.isAbove(rosterTasks.length, 1);
   for (const task of rosterTasks.slice(1)) {
-    assert.deepEqual(task, {
+    const { startedAt, ...named } = task;
+    assert.deepEqual(named, {
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
+      command: "sleep 8 && echo MONITOR_DONE",
       kind: "monitor",
     });
+    assert.isString(startedAt);
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
 

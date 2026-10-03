@@ -3772,7 +3772,139 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
           .pendingBackgroundTasks;
         assert.deepEqual(roster, [
-          { taskId: longRunning.taskId, kind: "monitor", description: "Monitor 0" },
+          {
+            taskId: longRunning.taskId,
+            kind: "monitor",
+            description: "Monitor 0",
+            command: "sleep 8 && echo MONITOR_DONE",
+            startedAt: DateTime.formatIso(now),
+          },
+        ]);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("names background commands and monitors by what they run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        let frameNumber = 0;
+        const nextUuid = () => `00000000-0000-4000-8000-${String(++frameNumber).padStart(12, "0")}`;
+        const startFrames = (input: {
+          readonly taskId: string;
+          readonly tool: "Bash" | "Monitor";
+          readonly description: string;
+          readonly command: string;
+        }) => {
+          const toolUseId = `toolu_${input.taskId}`;
+          return [
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: `msg_${input.taskId}`,
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: toolUseId,
+                    name: input.tool,
+                    input: {
+                      description: input.description,
+                      command: input.command,
+                      ...(input.tool === "Bash" ? { run_in_background: true } : {}),
+                    },
+                  },
+                ],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 1, output_tokens: 1 },
+              },
+              parent_tool_use_id: null,
+              uuid: nextUuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: input.taskId,
+              tool_use_id: toolUseId,
+              description: input.description,
+              is_backgrounded: true,
+              task_type: "local_bash",
+              uuid: nextUuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: toolUseId,
+                    content: `Started ${input.taskId}.`,
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: nextUuid(),
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          ];
+        };
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-named-background-work"),
+            text: "Start the dev server and watch the refit.",
+            attachments: [],
+          }),
+        );
+        for (const frame of [
+          ...startFrames({
+            taskId: "dev-server",
+            tool: "Bash",
+            description: "Start the dev server",
+            command: "vp run dev",
+          }),
+          ...startFrames({
+            taskId: "refit",
+            tool: "Monitor",
+            description: "refit end",
+            command: "until grep -q DONE refit.log; do sleep 20; done",
+          }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: nextUuid(), result: "Started." }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+          .pendingBackgroundTasks;
+        assert.deepEqual(roster, [
+          {
+            taskId: "dev-server",
+            kind: "command",
+            description: "Start the dev server",
+            command: "vp run dev",
+            startedAt: DateTime.formatIso(now),
+          },
+          {
+            taskId: "refit",
+            kind: "monitor",
+            description: "refit end",
+            command: "until grep -q DONE refit.log; do sleep 20; done",
+            startedAt: DateTime.formatIso(now),
+          },
         ]);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),

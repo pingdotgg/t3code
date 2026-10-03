@@ -797,6 +797,10 @@ const PendingBackgroundTaskFields = {
   taskId: TrimmedNonEmptyString,
   /** The work's name: a subagent's title, a command's description, a monitor's. */
   description: Schema.optional(TrimmedNonEmptyString),
+  /** The shell command a command or monitor runs, capped by the adapter. */
+  command: Schema.optional(TrimmedNonEmptyString),
+  /** When the work started, as far as the adapter saw. */
+  startedAt: Schema.optional(IsoDateTime),
 };
 
 /**
@@ -819,9 +823,11 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
     Schema.Struct({ ...PendingBackgroundTaskFields, kind: Schema.Literal("background_task") }),
   ],
   (kind) => Schema.Struct({ ...PendingBackgroundTaskFields, kind }),
-  ({ taskId, description }) => ({
+  ({ taskId, description, command, startedAt }) => ({
     taskId,
     ...(description === undefined ? {} : { description }),
+    ...(command === undefined ? {} : { command }),
+    ...(startedAt === undefined ? {} : { startedAt }),
     kind: "background_task",
   }),
 );

@@ -400,8 +400,10 @@ function FloatingStatusLabel(props: {
       <StatusLabelRow
         key="background"
         accessibilityLabel={props.status.accessibilityLabel}
+        accessibilityRole="button"
         className="gap-2"
         onLayout={props.onLayout}
+        onPress={props.status.onPress}
       >
         {/* A dev server can run for hours after the agent is done, so only work
             that will wake the agent gets the bolt. */}

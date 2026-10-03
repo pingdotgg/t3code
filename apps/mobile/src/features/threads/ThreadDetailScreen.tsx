@@ -32,6 +32,7 @@ import {
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
 import {
+  formatPendingBackgroundWorkStatus,
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -510,6 +511,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           .map((item) => item.label)
           .join(", ")}`,
         waiting: pendingBackgroundWork.waiting,
+        onPress: () => {
+          const nowMs = Date.now();
+          Alert.alert(
+            pendingBackgroundWork.title,
+            pendingBackgroundWork.items
+              .map((item) =>
+                [item.label, formatPendingBackgroundWorkStatus(item, nowMs), item.command]
+                  .filter((line) => line !== undefined)
+                  .join("\n"),
+              )
+              .join("\n\n"),
+          );
+        },
       };
     }
     if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
