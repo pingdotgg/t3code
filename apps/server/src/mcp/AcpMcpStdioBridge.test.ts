@@ -6,8 +6,14 @@ import * as NodeStream from "node:stream";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 
-import { AcpMcpBridgeError, callAcpMcpTool, runAcpMcpStdioBridge } from "./AcpMcpStdioBridge.ts";
+import {
+  AcpMcpBridgeError,
+  callAcpMcpTool,
+  responsePayloads,
+  runAcpMcpStdioBridge,
+} from "./AcpMcpStdioBridge.ts";
 
 function makeHarness(responder: (request: Request) => Promise<Response> | Response) {
   const input = new NodeStream.PassThrough();
@@ -342,6 +348,111 @@ describe("AcpMcpStdioBridge", () => {
 
       expect(methods).toEqual(["tools/call", "notifications/cancelled"]);
       expect(JSON.parse(written[0]!)).toMatchObject({ id: 7, result: {} });
+    }),
+  );
+});
+
+describe("responsePayloads SSE framing", () => {
+  function sseChunkResponse(chunks: ReadonlyArray<string>): Response {
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  }
+
+  const collectPayloads = (response: Response) =>
+    Stream.runCollect(responsePayloads(response)).pipe(
+      Effect.map((payloads) => Array.from(payloads)),
+    );
+
+  it.effect("parses LF-framed data events", () =>
+    Effect.gen(function* () {
+      const payloads = yield* collectPayloads(
+        sseChunkResponse(['data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n']),
+      );
+      expect(payloads).toEqual([{ jsonrpc: "2.0", id: 1, result: { ok: true } }]);
+    }),
+  );
+
+  it.effect("parses CR-only data events", () =>
+    Effect.gen(function* () {
+      const payloads = yield* collectPayloads(
+        sseChunkResponse(['data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\r\r']),
+      );
+      expect(payloads).toEqual([{ jsonrpc: "2.0", id: 1, result: { ok: true } }]);
+    }),
+  );
+
+  it.effect("dispatches a complete CR-only event while the SSE body stays open", () =>
+    Effect.gen(function* () {
+      const encoder = new TextEncoder();
+      const payloads = yield* Stream.runCollect(
+        responsePayloads(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode('data: {"id":1,"result":{}}\r\r'));
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ).pipe(Stream.take(1)),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      expect(payloads).toEqual([{ id: 1, result: {} }]);
+    }),
+  );
+
+  it.effect("treats a CRLF split across chunks as one line ending", () =>
+    Effect.gen(function* () {
+      const payloads = yield* collectPayloads(
+        sseChunkResponse([
+          'data: {"jsonrpc":"2.0","id":1,"result":',
+          "\r",
+          '\ndata: {"ok":true}}\r\n\r\n',
+        ]),
+      );
+      expect(payloads).toEqual([{ jsonrpc: "2.0", id: 1, result: { ok: true } }]);
+    }),
+  );
+
+  it.effect("parses mixed CR, LF, and CRLF frames from separate chunks", () =>
+    Effect.gen(function* () {
+      const payloads = yield* collectPayloads(
+        sseChunkResponse([
+          'data: {"jsonrpc":"2.0","id":1,"result":{"n":1}}\n\n',
+          'data: {"jsonrpc":"2.0","id":2,"result":{"n":2}}\r\r',
+          'data: {"jsonrpc":"2.0","id":3,"result":{"n":3}}\r\n\r\n',
+          'data: {"jsonrpc":"2.0","id":4,"result":{"n":4}}\n\r\n',
+        ]),
+      );
+      expect(payloads).toEqual([
+        { jsonrpc: "2.0", id: 1, result: { n: 1 } },
+        { jsonrpc: "2.0", id: 2, result: { n: 2 } },
+        { jsonrpc: "2.0", id: 3, result: { n: 3 } },
+        { jsonrpc: "2.0", id: 4, result: { n: 4 } },
+      ]);
+    }),
+  );
+
+  it.effect("joins multiple data lines, ignores comments, and drops incomplete EOF events", () =>
+    Effect.gen(function* () {
+      const payloads = yield* collectPayloads(
+        sseChunkResponse([
+          ": keep-alive\n",
+          "\n",
+          'data: {"jsonrpc":"2.0","id":1,"result":{\n',
+          'data: "ok":true}}\n',
+          "\n",
+          'data: {"jsonrpc":"2.0","id":2,"result":{"dropped":true}}',
+        ]),
+      );
+      expect(payloads).toEqual([{ jsonrpc: "2.0", id: 1, result: { ok: true } }]);
     }),
   );
 });

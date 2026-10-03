@@ -63,25 +63,64 @@ function protocolVersionOf(entry: unknown): string | null {
   return typeof version === "string" && version.length > 0 ? version : null;
 }
 
+/**
+ * Yield each SSE `data:` payload. Consume CR immediately as a line ending;
+ * ignore a following LF so a CRLF split across chunks stays one terminator.
+ */
 async function* sseDataLines(response: Response): AsyncGenerator<string> {
   if (response.body === null) return;
   const decoder = new TextDecoder();
   let buffered = "";
+  const dataLines: Array<string> = [];
+  let skipLf = false;
+
+  const consumeLine = (line: string): string | undefined => {
+    if (line.length === 0) {
+      const data = dataLines.join("\n");
+      dataLines.length = 0;
+      return data.length > 0 ? data : undefined;
+    }
+    if (line.startsWith(":")) return undefined;
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice("data:".length).trimStart());
+    }
+    return undefined;
+  };
+
+  const drain = (): Array<string> => {
+    const events: Array<string> = [];
+    let index = 0;
+    let lineStart = 0;
+    while (index < buffered.length) {
+      const code = buffered.charCodeAt(index);
+      if (skipLf) {
+        skipLf = false;
+        if (code === 10) {
+          index += 1;
+          lineStart = index;
+          continue;
+        }
+      }
+      if (code !== 10 && code !== 13) {
+        index += 1;
+        continue;
+      }
+      const event = consumeLine(buffered.slice(lineStart, index));
+      if (event !== undefined) events.push(event);
+      skipLf = code === 13;
+      index += 1;
+      lineStart = index;
+    }
+    buffered = buffered.slice(lineStart);
+    return events;
+  };
+
   for await (const chunk of response.body) {
     buffered += decoder.decode(chunk as Uint8Array, { stream: true });
-    let separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
-    while (separatorIndex !== -1) {
-      const rawEvent = buffered.slice(0, separatorIndex);
-      buffered = buffered.slice(separatorIndex).replace(/^(?:\r?\n){2}/u, "");
-      const data = rawEvent
-        .split(/\r?\n/u)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trimStart())
-        .join("\n");
-      if (data.length > 0) yield data;
-      separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
-    }
+    for (const event of drain()) yield event;
   }
+  buffered += decoder.decode();
+  for (const event of drain()) yield event;
 }
 
 const discardResponseBody = (response: Response): Effect.Effect<void> =>
