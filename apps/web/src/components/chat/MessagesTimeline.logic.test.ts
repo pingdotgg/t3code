@@ -28,7 +28,6 @@ import {
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
-  shouldPreserveAssistantLineBreaks,
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
@@ -328,17 +327,6 @@ describe("work entry labels", () => {
       });
     },
   );
-});
-
-describe("shouldPreserveAssistantLineBreaks", () => {
-  it("preserves Claude insight formatting without changing regular markdown", () => {
-    expect(
-      shouldPreserveAssistantLineBreaks(
-        "★ Insight ─────────────────\\nFirst observation\\nSecond observation\\n─────────────────",
-      ),
-    ).toBe(true);
-    expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
-  });
 });
 
 describe("computeMessageDurationStart", () => {

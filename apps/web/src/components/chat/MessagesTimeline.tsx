@@ -5,6 +5,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { renderAssistantInsightsAsMarkdown } from "@t3tools/client-runtime/assistant-insights";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -197,7 +198,6 @@ import {
   resolveTimelineMinimapTopPercent,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
-  shouldPreserveAssistantLineBreaks,
   toolGroupAction,
   workEntryDisplayLabel,
   workEntryReadOutput,
@@ -2484,11 +2484,10 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           listRef={ctx.listRef}
         >
           <ChatMarkdown
-            text={messageText}
+            text={renderAssistantInsightsAsMarkdown(messageText)}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
             isStreaming={Boolean(row.message.streaming)}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
