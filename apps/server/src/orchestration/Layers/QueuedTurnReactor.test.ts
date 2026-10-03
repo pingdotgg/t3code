@@ -336,6 +336,7 @@ async function runReactor(
     readonly optIn?: boolean;
     readonly monitorEnabled?: boolean;
     readonly monitorTerminal?: boolean;
+    readonly monitorOwnerChanged?: boolean;
     readonly autoMonitorPullRequestsOnCreate?: boolean;
     readonly enableAfterStart?: boolean;
     readonly delegationIdleStallThresholdMs?: number;
@@ -466,9 +467,12 @@ async function runReactor(
       Effect.succeed(
         options?.monitorTerminal
           ? "terminal"
-          : (options?.monitorEnabled ?? true) && (options?.autoMonitorPullRequestsOnCreate ?? true)
-            ? "eligible"
-            : "blocked",
+          : options?.monitorOwnerChanged
+            ? "owner-changed"
+            : (options?.monitorEnabled ?? true) &&
+                (options?.autoMonitorPullRequestsOnCreate ?? true)
+              ? "eligible"
+              : "blocked",
       ),
   } as unknown as PullRequestMonitorService["Service"]);
   const layer = QueuedTurnReactorLive.pipe(
@@ -1924,6 +1928,29 @@ describe("QueuedTurnReactor", () => {
     const commands = await runReactor(pausedParent, monitorSnapshot("head-current"));
 
     expect(commands).toEqual([]);
+  });
+
+  it("returns stale-recipient feedback to durable retry after ownership changes", async () => {
+    const retriedDeliveryIds: string[] = [];
+    const deliveryId = "owner-changed-delivery";
+    const commands = await runReactor(
+      queuedReadModel({
+        origin: {
+          kind: "pull-request-monitor",
+          repository: "acme/app",
+          number: 42,
+          deliveryId,
+        },
+      }),
+      monitorSnapshot("head-current"),
+      {
+        monitorOwnerChanged: true,
+        onRetryQueuedDelivery: (id) => retriedDeliveryIds.push(id),
+      },
+    );
+
+    expect(retriedDeliveryIds).toEqual([deliveryId]);
+    expect(commands).toMatchObject([{ type: "thread.queued-turn.delete", threadId, queuedTurnId }]);
   });
 
   it("dispatches a collaboration response past paused PR feedback", async () => {

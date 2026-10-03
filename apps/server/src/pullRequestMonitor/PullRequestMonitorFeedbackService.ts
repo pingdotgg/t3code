@@ -129,6 +129,20 @@ function stableDeliveryIds(input: {
   return { batchKey, deliveryId, commandId, messageId };
 }
 
+function retargetDelivery(
+  delivery: PullRequestMonitorFeedbackDelivery,
+  ownerThreadId: ThreadId,
+): PullRequestMonitorFeedbackDelivery {
+  if (delivery.targetThreadId === ownerThreadId) return delivery;
+  const ownerKey = stableHash([delivery.batchKey, ownerThreadId]);
+  return {
+    ...delivery,
+    targetThreadId: ownerThreadId,
+    commandId: CommandId.make(`command:pr-monitor-feedback:${delivery.batchKey}:owner:${ownerKey}`),
+    messageId: MessageId.make(`message:pr-monitor-feedback:${delivery.batchKey}:owner:${ownerKey}`),
+  };
+}
+
 function eventSummary(event: PullRequestMonitorActionableEvent): string {
   const detail = event.detail ?? event.sourceId ?? event.kind;
   return `${event.kind}: ${detail}`.slice(0, 500);
@@ -735,6 +749,17 @@ export const layer = Layer.effect(
           return;
         }
 
+        // A delivered batch can be retried after its owner changes. Use a new command
+        // identity for the new recipient so the old thread's receipt cannot swallow it.
+        const targetedDelivery = retargetDelivery(delivery, ownerThreadId);
+        if (targetedDelivery !== delivery) {
+          yield* feedbackStore.updateDelivery({
+            ...targetedDelivery,
+            nextAttemptAt: now,
+            receiptJson: null,
+          });
+        }
+
         // Bounded events reconstructed from durable revision payloads.
         const events: Array<PullRequestMonitorActionableEvent> = [];
         const eventsByRevision = new Map<
@@ -823,8 +848,8 @@ export const layer = Layer.effect(
                       .map((revision) => revision.summary);
               return sendQueuedTurn({
                 threadId: ownerThreadId,
-                commandId: CommandId.make(`${delivery.commandId}${suffix}`),
-                messageId: MessageId.make(`${delivery.messageId}${suffix}`),
+                commandId: CommandId.make(`${targetedDelivery.commandId}${suffix}`),
+                messageId: MessageId.make(`${targetedDelivery.messageId}${suffix}`),
                 text: buildWakePrompt({
                   ...promptInput,
                   events: turnEvents,
@@ -864,7 +889,7 @@ export const layer = Layer.effect(
             updatedAt: now,
           });
           yield* feedbackStore.updateDelivery({
-            ...delivery,
+            ...targetedDelivery,
             status: attemptCount >= MAX_DELIVERY_ATTEMPTS ? "suppressed" : "failed",
             attemptCount,
             lastError: message.slice(0, 1000),
@@ -879,16 +904,16 @@ export const layer = Layer.effect(
         }
 
         yield* feedbackStore.updateDelivery({
-          ...delivery,
+          ...targetedDelivery,
           status: "delivered",
           attemptCount: delivery.attemptCount + 1,
           lastError: null,
           nextAttemptAt: null,
           deliveredAt: now,
           receiptJson: encodeUnknownJson({
-            deliveryId: delivery.id,
-            commandId: delivery.commandId,
-            messageId: delivery.messageId,
+            deliveryId: targetedDelivery.id,
+            commandId: targetedDelivery.commandId,
+            messageId: targetedDelivery.messageId,
             deliveredVia: "thread.queued-turn.create",
           }),
         });
@@ -993,6 +1018,7 @@ export const layer = Layer.effect(
           if (!delivery) {
             return yield* monitorError(`Feedback delivery '${input.deliveryId}' was not found.`);
           }
+          if (delivery.status === "failed" || delivery.status === "suppressed") return;
           const now = yield* isoNow();
           yield* feedbackStore.updateDelivery({
             ...delivery,

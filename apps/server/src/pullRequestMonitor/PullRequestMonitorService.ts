@@ -152,7 +152,11 @@ export function associatedOwnerCandidates(
     .map((thread) => ({ threadId: thread.id, title: thread.title }));
 }
 
-export type PullRequestMonitorAutomationDeliveryState = "eligible" | "blocked" | "terminal";
+export type PullRequestMonitorAutomationDeliveryState =
+  | "eligible"
+  | "blocked"
+  | "terminal"
+  | "owner-changed";
 
 export class PullRequestMonitorService extends Context.Service<
   PullRequestMonitorService,
@@ -386,10 +390,11 @@ export const layer = Layer.effect(
             monitor === null ||
             !monitor.enabled ||
             monitor.status === "stopped" ||
-            monitor.ownerThreadId !== input.threadId
+            monitor.ownerThreadId === null
           ) {
             return "blocked";
           }
+          if (monitor.ownerThreadId !== input.threadId) return "owner-changed";
           const settings = yield* serverSettings.getSettings.pipe(
             Effect.mapError((cause) =>
               monitorError("Could not resolve automatic PR feedback policy.", { cause }),

@@ -2430,7 +2430,9 @@ layer("PullRequestMonitorService", (it) => {
       const feedback = yield* PullRequestMonitorFeedbackService;
       const feedbackStore = yield* PullRequestMonitorFeedbackStore.make;
       const owner = ThreadId.make("thr_delivery_owner");
+      const newOwner = ThreadId.make("thr_delivery_new_owner");
       seedThread(owner);
+      seedThread(newOwner);
       // The owner is mid-turn while the finding arrives.
       knownThreads.set(owner, {
         projectId,
@@ -2489,14 +2491,48 @@ layer("PullRequestMonitorService", (it) => {
       assert.isFalse(dispatchedCommands.some((command) => command.type === "thread.turn.start"));
 
       const delivery = deliveries[0]!;
+      yield* monitors.transferOwnership({
+        monitorId: started.monitor.id,
+        toThreadId: newOwner,
+        reason: "human-owner-selection",
+      });
+      assert.strictEqual(
+        yield* monitors.automationDeliveryState({
+          reference: { projectId, repository: "acme/app", number: 67 },
+          threadId: owner,
+        }),
+        "owner-changed",
+      );
       yield* feedback.retryQueuedDelivery({
         deliveryId: delivery.id,
-        reason: "dispatch revalidation unavailable",
+        reason: "queued recipient no longer owns the monitor",
       });
       const retried = yield* feedbackStore.listDeliveries({ monitorId: started.monitor.id });
       assert.strictEqual(retried[0]?.status, "failed");
       assert.strictEqual(retried[0]?.deliveredAt, null);
-      assert.strictEqual(retried[0]?.lastError, "dispatch revalidation unavailable");
+      assert.strictEqual(retried[0]?.lastError, "queued recipient no longer owns the monitor");
+      yield* feedbackStore.updateDelivery({
+        ...retried[0]!,
+        nextAttemptAt: "1970-01-01T00:00:00.000Z",
+        receiptJson: null,
+      });
+
+      dispatchedCommands.length = 0;
+      const queuedBeforeRetry = queuedMessages.length;
+      yield* feedback.flushDueDeliveries;
+
+      const redelivered = yield* feedbackStore.listDeliveries({ monitorId: started.monitor.id });
+      assert.strictEqual(redelivered[0]?.status, "delivered");
+      assert.strictEqual(redelivered[0]?.targetThreadId, newOwner);
+      assert.notStrictEqual(redelivered[0]?.commandId, delivery.commandId);
+      assert.notStrictEqual(redelivered[0]?.messageId, delivery.messageId);
+      assert.isTrue(
+        dispatchedCommands.some(
+          (command) =>
+            command.type === "thread.queued-turn.create" && command.threadId === newOwner,
+        ),
+      );
+      assert.strictEqual(queuedMessages.length, queuedBeforeRetry + 1);
       currentSnapshot = sampleSnapshot();
     }),
   );

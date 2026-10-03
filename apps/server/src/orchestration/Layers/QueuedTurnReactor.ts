@@ -258,6 +258,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       });
       const dispatchableTurns = [];
       const deliveryStates = new Map<string, PullRequestMonitorAutomationDeliveryState>();
+      const requeuedDeliveryIds = new Set<string>();
       let settings: ServerSettings | undefined;
       for (const turn of eligibleTurns) {
         const origin = turn.origin;
@@ -298,6 +299,32 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
           yield* orchestrationEngine.dispatch({
             type: "thread.queued-turn.delete",
             commandId: serverCommandId("queued-turn.delete-stale-monitor"),
+            threadId,
+            queuedTurnId: turn.id,
+            deletedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+        if (deliveryState === "owner-changed") {
+          if (origin.deliveryId === undefined) {
+            yield* Effect.logWarning("queued PR monitor turn has no durable delivery to requeue", {
+              threadId,
+              queuedTurnId: turn.id,
+              repository: origin.repository,
+              pullRequestNumber: origin.number,
+            });
+            continue;
+          }
+          if (!requeuedDeliveryIds.has(origin.deliveryId)) {
+            yield* monitorFeedback.retryQueuedDelivery({
+              deliveryId: PullRequestMonitorFeedbackDeliveryId.make(origin.deliveryId),
+              reason: "Queued PR feedback owner changed before dispatch.",
+            });
+            requeuedDeliveryIds.add(origin.deliveryId);
+          }
+          yield* orchestrationEngine.dispatch({
+            type: "thread.queued-turn.delete",
+            commandId: serverCommandId("queued-turn.delete-owner-changed-monitor"),
             threadId,
             queuedTurnId: turn.id,
             deletedAt: new Date().toISOString(),
