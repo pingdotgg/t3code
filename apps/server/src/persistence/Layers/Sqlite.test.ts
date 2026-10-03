@@ -94,3 +94,13 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     assert.equal(rows[0]?.timeout, 5000);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("enables checkpoint_fullfsync in the shared persistence setup", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{
+      readonly checkpoint_fullfsync: number;
+    }>`PRAGMA checkpoint_fullfsync`;
+    assert.equal(rows[0]?.checkpoint_fullfsync, 1);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
