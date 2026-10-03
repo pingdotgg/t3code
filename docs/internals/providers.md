@@ -54,13 +54,19 @@ and removal must respect those leases instead of replacing executables under a r
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
 [Grok probes](../../apps/server/src/provider/Layers/GrokProvider.ts) avoid authentication and
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
-explicit setup or model refresh; background checks use initialization only.
+explicit setup or model refresh. Background checks resolve the install on disk and do not start
+the agent.
+
+They read [usage limits](../../apps/server/src/provider/Layers/antigravityUsageLimits.ts) over HTTP.
+The stored refresh token becomes an access token that stays in memory, and the token file is never
+written. Google does not rotate the refresh token on that grant, so the read cannot race the agent's
+own refresh.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;
 a successful callback HTTP request is not proof that provider authentication finished. The native
-process owns token exchange and storage.
+process owns the sign-in code exchange and token storage.
 
 Managed ChatGPT sign-in for a remote environment can finish on a local primary. The
 [primary handoff](../../apps/server/src/provider/CodexChatGptHandoff.ts) uses an ephemeral
