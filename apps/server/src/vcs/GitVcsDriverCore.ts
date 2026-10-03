@@ -1109,15 +1109,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
+  // `refName` null resolves the checked-out branch's upstream; a branch name
+  // resolves that branch's upstream.
+  const resolveUpstreamOf = Effect.fn("resolveUpstreamOf")(function* (
+    cwd: string,
+    refName: string | null,
+  ) {
+    const upstreamSpec = refName === null ? "@{upstream}" : `${refName}@{upstream}`;
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
-      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      ["rev-parse", "--abbrev-ref", "--symbolic-full-name", upstreamSpec],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
 
-    if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
+    // Without an upstream, git echoes the spec back instead of a ref.
+    if (upstreamRef.length === 0 || upstreamRef.includes("@{")) {
       return null;
     }
 
@@ -1130,6 +1137,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       parseUpstreamRefByFirstSeparator(upstreamRef)
     );
   });
+
+  const resolveCurrentUpstream = (cwd: string) => resolveUpstreamOf(cwd, null);
 
   const fetchRemoteForStatus = (
     gitCommonDir: string,
@@ -1568,16 +1577,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         continue;
       }
       if (normalizedCandidate === refName) {
-        if (
-          options?.allowRemoteOfCurrent &&
-          primaryRemoteName &&
-          (yield* remoteBranchExists({
-            cwd,
-            remoteName: primaryRemoteName,
-            refName: normalizedCandidate,
-          }))
-        ) {
-          return `${primaryRemoteName}/${normalizedCandidate}`;
+        if (options?.allowRemoteOfCurrent) {
+          // The branch's remote copy is the one it tracks: a default branch
+          // following `upstream/main` while `origin` is a fork compares with
+          // `upstream/main`, so a clean checkout level with it reads +0 −0.
+          // The primary remote's copy stays the fallback for a branch without
+          // an upstream.
+          const tracking = yield* resolveUpstreamOf(cwd, refName).pipe(
+            Effect.orElseSucceed(() => null),
+          );
+          if (
+            tracking !== null &&
+            (yield* remoteBranchExists({
+              cwd,
+              remoteName: tracking.remoteName,
+              refName: tracking.branchName,
+            }))
+          ) {
+            return `${tracking.remoteName}/${tracking.branchName}`;
+          }
+          if (
+            primaryRemoteName &&
+            (yield* remoteBranchExists({
+              cwd,
+              remoteName: primaryRemoteName,
+              refName: normalizedCandidate,
+            }))
+          ) {
+            return `${primaryRemoteName}/${normalizedCandidate}`;
+          }
         }
         continue;
       }
