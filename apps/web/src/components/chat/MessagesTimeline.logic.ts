@@ -1760,6 +1760,13 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
+    // Stamp the latest activity's start, not the turn's, so a stalled turn
+    // shows how long it has been quiet. Start times stay fixed while text
+    // streams, which keeps the incremental streaming path in parity.
+    const thinkingCreatedAt = maxIsoTimestamp(
+      input.activeTurnStartedAt ?? null,
+      timelineEntries.at(-1)?.createdAt ?? null,
+    );
     // A failed latest tool hands the row back to thinking, but its group
     // stays reachable through the same disclosure the live row offers.
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
@@ -1769,7 +1776,7 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: thinkingCreatedAt,
         groupId,
         expanded,
       });
@@ -1786,7 +1793,7 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: thinkingCreatedAt,
       });
     }
   }
