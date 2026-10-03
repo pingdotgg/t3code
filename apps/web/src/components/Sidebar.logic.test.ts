@@ -1646,6 +1646,47 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
+  it("sorts projects by the name shown in the list, ignoring activity", () => {
+    const sorted = sortProjectsForSidebar(
+      [
+        makeProject({
+          id: ProjectId.make("project-recent"),
+          title: "zeta",
+          updatedAt: "2026-03-09T10:10:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.make("project-10"),
+          title: "Project 10",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.make("project-2"),
+          title: "project 2",
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        makeProject({
+          id: ProjectId.make("project-alpha"),
+          title: "Alpha",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      [
+        makeThread({
+          projectId: ProjectId.make("project-recent"),
+          updatedAt: "2026-03-09T12:00:00.000Z",
+        }),
+      ],
+      "name",
+    );
+
+    expect(sorted.map((project) => project.title)).toEqual([
+      "Alpha",
+      "project 2",
+      "Project 10",
+      "zeta",
+    ]);
+  });
+
   it("preserves manual project ordering", () => {
     const projects = [
       makeProject({ id: ProjectId.make("project-2"), title: "Second" }),
@@ -1855,6 +1896,29 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+
+  it("sorts grouped projects by the label shown in the picker", () => {
+    const alphaId = ProjectId.make("project-alpha");
+    const zebraId = ProjectId.make("project-zebra");
+    const projects = [
+      {
+        ...makeProject({ id: zebraId, title: "Alpha folder" }),
+        displayName: "zebra",
+        projectKey: "logical-zebra",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: zebraId }],
+      },
+      {
+        ...makeProject({ id: alphaId, title: "Zebra folder" }),
+        displayName: "alpha",
+        projectKey: "logical-alpha",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: alphaId }],
+      },
+    ];
+
+    expect(
+      sortLogicalProjectsForSidebar(projects, [], "name").map((project) => project.projectKey),
+    ).toEqual(["logical-alpha", "logical-zebra"]);
   });
 });
 

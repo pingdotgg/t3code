@@ -428,6 +428,8 @@ export function applySidebarThreadDrop<
 type SidebarProject = {
   id: string;
   title: string;
+  // Grouped rows show this label instead of the representative title.
+  displayName?: string | undefined;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
@@ -1290,10 +1292,13 @@ export function getFallbackThreadIdAfterDelete<
     )[0]?.id ?? null
   );
 }
+
+const projectNameCollator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+
 export function getProjectSortTimestamp(
   project: SidebarProject,
   projectThreads: readonly ThreadSortInput[],
-  sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
+  sortOrder: Exclude<SidebarProjectSortOrder, "manual" | "name">,
 ): number {
   if (projectThreads.length > 0) {
     return projectThreads.reduce(
@@ -1316,6 +1321,16 @@ function sortProjectsByActivity<TProject extends SidebarProject>(
 ): TProject[] {
   if (sortOrder === "manual") {
     return [...projects];
+  }
+
+  if (sortOrder === "name") {
+    return projects.toSorted(
+      (left, right) =>
+        projectNameCollator.compare(
+          left.displayName || left.title,
+          right.displayName || right.title,
+        ) || compareTies(left, right),
+    );
   }
 
   // Each project's timestamp walks all of its threads, so compute it once
