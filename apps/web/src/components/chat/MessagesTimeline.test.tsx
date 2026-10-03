@@ -1290,7 +1290,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Fork chat from this response"');
   });
 
-  it("renders turn-scoped changed files by default", async () => {
+  it("renders cumulative changed files, matching the unfiltered turn diff", async () => {
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");
@@ -1334,13 +1334,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("Changed files");
-    expect(markup).toContain("+5");
+    expect(markup).toContain("+15");
     expect(markup).toContain("-1");
     expect(markup).toContain("plan.md");
-    expect(markup).not.toContain("unrelated.ts");
+    expect(markup).toContain("unrelated.ts");
   });
 
-  it("hides explicit empty-turn state without falling back to snapshot", async () => {
+  it("hides the card when the cumulative summary is empty", async () => {
     const { useUiStateStore } = await import("../../uiStateStore");
     useUiStateStore.setState({ changedFilesDiffScope: "turn" });
     const assistantMessageId = MessageId.make("message-assistant");
@@ -1370,7 +1370,7 @@ describe("MessagesTimeline", () => {
               {
                 turnId: TurnId.make("turn-1"),
                 completedAt: "2026-04-22T19:03:33.000Z",
-                files: [{ path: "src/snapshot.ts", additions: 2, deletions: 0 }],
+                files: [],
                 turnFiles: [],
               },
             ],

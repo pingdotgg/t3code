@@ -1552,9 +1552,9 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   workspaceRoot: string | undefined;
 }) {
   if (!turnSummary) return null;
+  // Cumulative changed files, matching the unfiltered turn diff the card opens.
   const snapshotFiles = turnSummary.files;
-  const turnFiles = turnSummary.turnFiles ?? [];
-  if (snapshotFiles.length === 0 && turnFiles.length === 0) return null;
+  if (snapshotFiles.length === 0) return null;
 
   return (
     <AssistantChangedFilesSectionInner
@@ -1580,8 +1580,7 @@ function AssistantChangedFilesSectionInner({
   workspaceRoot: string | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const turnFiles = turnSummary.turnFiles ?? [];
-  const visibleFiles = turnFiles;
+  const visibleFiles = turnSummary.files;
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
   if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 
