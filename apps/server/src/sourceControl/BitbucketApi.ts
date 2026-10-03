@@ -40,6 +40,8 @@ const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
 const MAX_REDIRECTS = 3;
+/** A wedged endpoint parks the caller forever without this; Bitbucket's p99 is far below. */
+const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 
 const BitbucketApiEnvConfig = Config.all({
   baseUrl: Config.String("T3CODE_BITBUCKET_API_BASE_URL").pipe(
@@ -712,6 +714,7 @@ export const make = Effect.gen(function* () {
   ): Effect.Effect<S["Type"], BitbucketApiError, S["DecodingServices"]> =>
     withAuth(request.pipe(HttpClientRequest.acceptJson)).pipe(
       Effect.flatMap(httpClient.execute),
+      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
       Effect.mapError(
         (cause) =>
           new BitbucketRequestError({
@@ -906,6 +909,7 @@ export const make = Effect.gen(function* () {
         : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
     return withAuth(withBody).pipe(
       Effect.flatMap(httpClient.execute),
+      Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
       Effect.mapError(
         (cause): BitbucketApiError => new BitbucketRequestError({ operation: "request", cause }),
       ),

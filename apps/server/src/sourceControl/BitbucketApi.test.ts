@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -64,13 +65,17 @@ function makeLayer(input: {
   readonly requestFailure?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientError.HttpClientError;
+  /** The endpoint accepts the request but never answers. */
+  readonly stall?: boolean;
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly env?: Record<string, string>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
-    input.requestFailure
-      ? Effect.fail(input.requestFailure(request))
-      : Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
+    input.stall
+      ? Effect.never
+      : input.requestFailure
+        ? Effect.fail(input.requestFailure(request))
+        : Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
   );
   const gitMock = {
     readConfigValue: vi.fn<GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"]>(() =>
@@ -984,3 +989,50 @@ it.effect("cuts a response short rather than reading an unbounded diff into memo
     ),
   ),
 );
+
+it.effect("fails a wedged JSON request after the request timeout", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json({}),
+    stall: true,
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const child = yield* Effect.forkChild(
+      Effect.flip(
+        bitbucket.getPullRequest({
+          cwd: "/repo",
+          reference: "42",
+        }),
+      ),
+    );
+    while (execute.mock.calls.length === 0) {
+      yield* Effect.yieldNow;
+    }
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(child);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "getPullRequest");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("fails a wedged raw request after the request timeout", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json({}),
+    stall: true,
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const child = yield* Effect.forkChild(
+      Effect.flip(bitbucket.request({ method: "GET", url: "/user" })),
+    );
+    while (execute.mock.calls.length === 0) {
+      yield* Effect.yieldNow;
+    }
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(child);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "request");
+  }).pipe(Effect.provide(layer));
+});
