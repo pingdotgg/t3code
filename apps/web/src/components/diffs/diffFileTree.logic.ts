@@ -42,6 +42,86 @@ export function diffFileTreeEntries(
 }
 
 /**
+ * Pierre stores one filesystem. A diff path that is also a directory prefix of another
+ * path (`office` and `office/config.ts`, or the reverse) cannot be inserted as-is.
+ * The file keeps a zero-width suffix so the row label stays the file name and the
+ * directory can still be created. Callers translate with `selectionPath` and `modelPath`.
+ */
+const DIFF_FILE_TREE_FILE_MARK = "\u200b";
+
+const identityPath = (path: string) => path;
+
+export interface DiffFileTreeModel {
+  /** Paths safe to pass to Pierre. Same array as the input when nothing collides. */
+  readonly paths: ReadonlyArray<string>;
+  /** Pierre path to the diff path a click should open. */
+  readonly selectionPath: (modelPath: string) => string;
+  /** Diff path to the path stored in the tree. */
+  readonly modelPath: (path: string) => string;
+}
+
+function collidingFilePaths(paths: ReadonlyArray<string>): ReadonlySet<string> | null {
+  if (paths.length < 2) return null;
+  const unique = [...new Set(paths)].toSorted();
+  const colliding = new Set<string>();
+  for (let index = 0; index < unique.length; index += 1) {
+    const path = unique[index]!;
+    const directoryPrefix = `${path}/`;
+    for (let next = index + 1; next < unique.length; next += 1) {
+      const other = unique[next]!;
+      if (!other.startsWith(path)) break;
+      if (other.startsWith(directoryPrefix)) {
+        colliding.add(path);
+        break;
+      }
+    }
+  }
+  return colliding.size === 0 ? null : colliding;
+}
+
+function modelPathForCollidingFile(path: string, occupied: Set<string>): string {
+  let modelPath = path;
+  const collides = (candidate: string) => {
+    if (occupied.has(candidate)) return true;
+    const prefix = `${candidate}/`;
+    for (const other of occupied) {
+      if (other.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+  do {
+    modelPath += DIFF_FILE_TREE_FILE_MARK;
+  } while (collides(modelPath));
+  return modelPath;
+}
+
+export function diffFileTreeModel(paths: ReadonlyArray<string>): DiffFileTreeModel {
+  const colliding = collidingFilePaths(paths);
+  if (colliding === null) {
+    return { paths, selectionPath: identityPath, modelPath: identityPath };
+  }
+  const occupied = new Set(paths);
+  const modelPaths = paths.map((path) => {
+    if (!colliding.has(path)) return path;
+    const modelPath = modelPathForCollidingFile(path, occupied);
+    occupied.add(modelPath);
+    return modelPath;
+  });
+  const selectionByModelPath = new Map<string, string>();
+  const modelBySelectionPath = new Map<string, string>();
+  paths.forEach((path, index) => {
+    const modelPath = modelPaths[index]!;
+    selectionByModelPath.set(modelPath, path);
+    modelBySelectionPath.set(path, modelPath);
+  });
+  return {
+    paths: modelPaths,
+    selectionPath: (modelPath) => selectionByModelPath.get(modelPath) ?? modelPath,
+    modelPath: (path) => modelBySelectionPath.get(path) ?? path,
+  };
+}
+
+/**
  * Every directory on the way to each file, registered with the trailing slash Pierre uses for
  * directory ids. Parents come before children so the tree can add them in order.
  */
