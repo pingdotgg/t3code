@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -197,6 +199,43 @@ describe("runProcess", () => {
       expect(error).not.toHaveProperty("args");
       expect(error).not.toHaveProperty("resolvedArgs");
       expect(error.message).not.toContain("secret-token-value");
+    }),
+  );
+
+  it.effect("turns a synchronous bad-architecture spawn exception into a typed failure", () =>
+    Effect.gen(function* () {
+      const cause = Object.assign(new Error("spawn Unknown system error -86"), {
+        errno: -86,
+        syscall: "spawn",
+        code: "Unknown system error -86",
+      });
+      const spawner = makeSpawner(() =>
+        Effect.sync(() => {
+          throw cause;
+        }),
+      );
+      const error = yield* runWith(spawner)({ command: "gh", args: ["--version"] }).pipe(
+        Effect.provideService(SpawnExecutableResolution, () => "/usr/local/bin/gh"),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("ProcessSpawnError");
+      if (error._tag !== "ProcessSpawnError") return expect.fail("Expected ProcessSpawnError");
+      expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
+      const platformError = error.cause as PlatformError.PlatformError;
+      expect(platformError.reason).toMatchObject({ pathOrDescriptor: "/usr/local/bin/gh" });
+      expect(platformError.cause).toBe(cause);
+    }),
+  );
+
+  it.effect("does not turn unrelated spawner defects into process failures", () =>
+    Effect.gen(function* () {
+      const defect = new TypeError("unexpected spawner bug");
+      const exit = yield* runWith(makeSpawner(() => Effect.die(defect)))({
+        command: "gh",
+        args: ["--version"],
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(defect);
     }),
   );
 

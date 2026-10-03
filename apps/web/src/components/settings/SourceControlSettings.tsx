@@ -217,7 +217,9 @@ function itemSummary({
   }
 
   if (item.status !== "available") {
-    return <span>Not available on this server: {item.installHint}</span>;
+    return (
+      <span>Not available on this server: {optionLabel(item.detail) ?? item.installHint}</span>
+    );
   }
 
   if (auth) {

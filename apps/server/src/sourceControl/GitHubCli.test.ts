@@ -546,6 +546,28 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it("classifies bad CPU type as unavailable and names the executable", () => {
+    const context = { command: "gh", cwd: "/repo" } as const;
+    const error = new VcsProcessSpawnError({
+      operation: "GitHubCli.execute",
+      ...context,
+      cause: PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "spawn",
+        pathOrDescriptor: "/usr/local/bin/gh",
+        cause: Object.assign(new Error("spawn Unknown system error -86"), {
+          errno: -86,
+          syscall: "spawn",
+        }),
+      }),
+    });
+    const failure = GitHubCli.fromVcsError(context, error);
+    assert.equal(failure._tag, "GitHubCliUnavailableError");
+    expect(failure.detail).toContain("/usr/local/bin/gh");
+    expect(failure.detail).toContain("incompatible CPU architecture");
+  });
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({

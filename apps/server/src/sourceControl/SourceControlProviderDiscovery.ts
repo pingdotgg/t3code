@@ -1,15 +1,20 @@
 import * as NodeUtil from "node:util";
-import type {
-  SourceControlProviderAuth,
-  SourceControlProviderDiscoveryItem,
-  SourceControlProviderInfo,
-  SourceControlProviderKind,
+import {
+  VcsProcessSpawnError,
+  type SourceControlProviderAuth,
+  type SourceControlProviderDiscoveryItem,
+  type SourceControlProviderInfo,
+  type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import { badCpuTypeDetail } from "../processSpawnError.ts";
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
+
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
 export interface SourceControlAuthProbeInput {
   readonly stdout: string;
@@ -92,6 +97,10 @@ export function firstNonEmptyLine(text: string): Option.Option<string> {
 }
 
 export function detailFromCause(cause: unknown): Option.Option<string> {
+  if (isVcsProcessSpawnError(cause)) {
+    const detail = badCpuTypeDetail(cause.cause);
+    if (detail !== undefined) return Option.some(detail);
+  }
   if (cause instanceof Error && cause.message.trim().length > 0) {
     return Option.some(cause.message.trim());
   }
@@ -255,7 +264,10 @@ export function probeSourceControlProvider(input: {
       if (item.status !== "available") {
         return Effect.succeed({
           ...item,
-          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
+          auth: unknownAuth(
+            Option.getOrUndefined(item.detail) ??
+              "Hosting integration command was not found on the server PATH.",
+          ),
         } satisfies SourceControlProviderDiscoveryItem);
       }
 

@@ -9,8 +9,9 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { isBadCpuTypeError, isSpawnSystemError } from "./processSpawnError.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -318,9 +319,37 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       }),
     )
     .pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProcessSpawnError({
+      // Node can throw before emitting the child's error event (for example EBADARCH).
+      // Keep OS spawn failures in the typed error channel; unrelated defects remain defects.
+      Effect.catchDefect((cause) =>
+        isSpawnSystemError(cause)
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "spawn",
+                pathOrDescriptor: spawnCommand.command,
+                cause,
+              }),
+            )
+          : Effect.die(cause),
+      ),
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          if (isBadCpuTypeError(cause)) {
+            const env = { ...(yield* HostProcessEnvironment), ...input.env };
+            const resolveExecutable = yield* SpawnExecutableResolution;
+            const platform = yield* HostProcessPlatform;
+            const path = resolveExecutable(input.command, platform, env) ?? spawnCommand.command;
+            cause = PlatformError.systemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "spawn",
+              pathOrDescriptor: path,
+              cause: cause.cause,
+            });
+          }
+          return yield* new ProcessSpawnError({
             command: input.command,
             argumentCount: input.args.length,
             cwd: input.cwd,
@@ -329,7 +358,8 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             resolvedArgumentCount: spawnCommand.args.length,
             shell: spawnCommand.shell,
             cause,
-          }),
+          });
+        }),
       ),
     );
 

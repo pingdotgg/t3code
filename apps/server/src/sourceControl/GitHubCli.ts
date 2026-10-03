@@ -16,12 +16,14 @@ import * as Schema from "effect/Schema";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessSpawnError,
   type SourceControlRepositoryVisibility,
   type VcsError,
 } from "@t3tools/contracts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
+import { badCpuTypeDetail, isBadCpuTypeError } from "../processSpawnError.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubGraphQlBudget from "./githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
@@ -31,6 +33,8 @@ import {
   decodeGitHubPullRequestListJson,
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
+
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -89,6 +93,10 @@ export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnava
   gitHubCliFailureFields,
 ) {
   get detail(): string {
+    if (isVcsProcessSpawnError(this.cause)) {
+      const detail = badCpuTypeDetail(this.cause.cause);
+      if (detail !== undefined) return detail;
+    }
     return "GitHub CLI (`gh`) is required but not available on PATH.";
   }
 
@@ -232,7 +240,7 @@ export function fromVcsError(
   if (
     error._tag === "VcsProcessSpawnError" &&
     error.cause instanceof PlatformError.PlatformError &&
-    error.cause.reason._tag === "NotFound" &&
+    (error.cause.reason._tag === "NotFound" || isBadCpuTypeError(error.cause)) &&
     error.cause.reason.module === "ChildProcess" &&
     error.cause.reason.method === "spawn"
   ) {
