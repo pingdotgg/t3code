@@ -138,6 +138,8 @@ export interface EnvironmentThreadShell {
   readonly lastVisitedAt?: string | null;
   /** Pending title regeneration marker; null when no request is in flight. */
   readonly titleRegeneration?: { readonly requestId: string; readonly startedAt: string } | null;
+  /** Latest failed title generation; absent when the last one did not fail. */
+  readonly titleRegenerationFailure?: { readonly requestId: string; readonly message: string };
   readonly deletedAt: string | null;
   readonly source: OrchestrationV2ThreadShell;
 }
@@ -274,6 +276,9 @@ export function presentThreadShell(
             requestId: thread.titleRegeneration.requestId,
             startedAt: iso(thread.titleRegeneration.startedAt),
           },
+    ...(thread.titleRegenerationFailure === undefined
+      ? {}
+      : { titleRegenerationFailure: thread.titleRegenerationFailure }),
     deletedAt: nullableIso(thread.deletedAt),
     source: thread,
   };

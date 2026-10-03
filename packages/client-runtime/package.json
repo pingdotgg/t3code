@@ -295,6 +295,10 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/title-regeneration": {
+      "types": "./src/state/titleRegeneration.ts",
+      "default": "./src/state/titleRegeneration.ts"
+    },
     "./state/turn-item-presentation": {
       "types": "./src/state/turnItemPresentation.ts",
       "default": "./src/state/turnItemPresentation.ts"

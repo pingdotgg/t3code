@@ -1412,6 +1412,9 @@ export function threadShellFromProjection(
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
+    ...(projection.thread.titleRegenerationFailure
+      ? { titleRegenerationFailure: projection.thread.titleRegenerationFailure }
+      : {}),
     limitRecovery: projection.thread.limitRecovery ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1636,6 +1639,9 @@ function shellFromState(input: {
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
+    ...(input.state.thread.titleRegenerationFailure
+      ? { titleRegenerationFailure: input.state.thread.titleRegenerationFailure }
+      : {}),
     limitRecovery: input.state.thread.limitRecovery ?? null,
     deletedAt: input.state.thread.deletedAt,
   };

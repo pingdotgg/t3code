@@ -1,6 +1,9 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { waitForTitleRegenerationFailure } from "@t3tools/client-runtime/state/title-regeneration";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -9,6 +12,7 @@ import { Alert, Platform } from "react-native";
 import { withThreadDismissal } from "./thread-dismissal";
 import { showConfirmDialog, showTextInputDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -29,6 +33,8 @@ import {
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
+
+const TITLE_REGENERATION_TIMEOUT_MS = 5 * 60_000;
 
 /** Version skew: never send settle/unsettle to a server that predates them
     (capability defaults false on decode for older servers). */
@@ -497,11 +503,27 @@ export function useThreadListActions(): {
       titleRegenerationInFlightThreadKeys.current.add(key);
       selectionHaptic();
       try {
+        const requestId = CommandId.make(uuidv4());
+        // Generation runs in the background after the command is accepted, so
+        // start watching before sending it.
+        const watcher = new AbortController();
+        void waitForTitleRegenerationFailure({
+          registry: appAtomRegistry,
+          atom: environmentThreadShells.threadShellAtom(
+            scopeThreadRef(thread.environmentId, thread.id),
+          ),
+          requestId,
+          timeoutMs: TITLE_REGENERATION_TIMEOUT_MS,
+          signal: watcher.signal,
+        }).then((failure) => {
+          if (failure !== null) Alert.alert("Could not regenerate title", failure);
+        });
         const result = await updateThreadMetadata({
           environmentId: thread.environmentId,
-          input: { threadId: thread.id, regenerateTitle: true },
+          input: { commandId: requestId, threadId: thread.id, regenerateTitle: true },
         });
         if (result._tag === "Failure") {
+          watcher.abort();
           const error = Cause.squash(result.cause);
           Alert.alert(
             "Could not regenerate title",

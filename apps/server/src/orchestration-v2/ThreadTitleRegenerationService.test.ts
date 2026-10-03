@@ -407,6 +407,89 @@ describe("ThreadTitleRegenerationService", () => {
         const projection = yield* threads.getThreadProjection(threadId);
         assert.equal(projection.thread.title, "Seed title");
         assert.isNotOk(projection.thread.titleRegeneration);
+        // A defect's message is internal, so clients get a fixed reason.
+        assert.deepStrictEqual(projection.thread.titleRegenerationFailure, {
+          requestId,
+          message: "The thread title could not be generated.",
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("records the provider's reason until the next regeneration starts", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: "Codex is not authenticated.",
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:reason:create",
+          thread: "thread:title:reason",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:reason:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:reason:1", threadId });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const failure = { requestId, message: "Codex is not authenticated." };
+        const projection = yield* threads.getThreadProjection(threadId);
+        assert.deepStrictEqual(projection.thread.titleRegenerationFailure, failure);
+        const shell = yield* threads.getThreadShell(threadId);
+        assert.deepStrictEqual(shell?.titleRegenerationFailure, failure);
+
+        yield* armRegeneration({ command: "command:title:reason:2", threadId });
+
+        const rearmed = yield* threads.getThreadShell(threadId);
+        assert.isUndefined(rearmed?.titleRegenerationFailure);
+        assert.equal(rearmed?.titleRegeneration?.requestId, "command:title:reason:2");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("caps a long provider reason", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        generateTitle: () =>
+          Effect.fail(
+            new TextGenerationError({
+              operation: "generateThreadTitle",
+              detail: `Codex CLI command failed: ${"x".repeat(2_000)}`,
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const threadId = yield* createThread({
+          command: "command:title:long:create",
+          thread: "thread:title:long",
+        });
+        yield* dispatchUserMessage({
+          command: "command:title:long:message",
+          threadId,
+          text: "Some conversation",
+        });
+        const requestId = yield* armRegeneration({ command: "command:title:long:1", threadId });
+
+        yield* titleRegeneration.execute({ threadId, requestId, kind: { type: "regenerate" } });
+
+        const projection = yield* threads.getThreadProjection(threadId);
+        const message = projection.thread.titleRegenerationFailure?.message ?? "";
+        assert.equal(message.length, 500);
+        assert.isTrue(message.startsWith("Codex CLI command failed: x"));
+        assert.isTrue(message.endsWith("…"));
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -501,6 +584,10 @@ it.effect.each(["success", "exhausted", "stale", "interrupted"] as const)(
         if (outcome === "interrupted")
           assert.equal(projection.thread.titleRegeneration?.requestId, requestId);
         else assert.isNotOk(projection.thread.titleRegeneration);
+        assert.deepStrictEqual(
+          projection.thread.titleRegenerationFailure ?? null,
+          outcome === "exhausted" ? { requestId, message: "Temporary failure" } : null,
+        );
       }).pipe(Effect.provide(harness.layer));
     }),
 );
