@@ -100,11 +100,17 @@ const INTERPRETERS: Record<string, Interpreter> = {
   node: {
     language: "javascript",
     inline: flagIn("-e", "--eval", "-p", "--print"),
-    valueOptions: new Set(["-r", "--require", "--import", "--loader"]),
+    valueOptions: new Set(["-r", "--require", "--import", "--loader", "-C", "--conditions"]),
     stdin: "without-script-file",
   },
   bun: { language: "typescript", inline: flagIn("-e", "--eval", "-p", "--print"), stdin: "never" },
-  deno: { language: "typescript", inline: () => false, stdin: "never", subcommand: "eval" },
+  deno: {
+    language: "typescript",
+    inline: () => false,
+    valueOptions: new Set(["-c", "--config", "--import-map", "--ext", "--env-file"]),
+    stdin: "never",
+    subcommand: "eval",
+  },
   ruby: {
     language: "ruby",
     inline: flagIn("-e"),
