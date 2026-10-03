@@ -484,6 +484,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     settledAt: thread.settledAt ?? null,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
+    queueHeldAt: thread.queueHeldAt ?? null,
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -712,6 +713,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.settledAt === right.settledAt &&
     left.snoozedUntil === right.snoozedUntil &&
     left.snoozedAt === right.snoozedAt &&
+    left.queueHeldAt === right.queueHeldAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&

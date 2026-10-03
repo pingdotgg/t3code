@@ -25,6 +25,7 @@ import {
   listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
+  findThreadById,
   requireWritableProjectForThread,
   requireThread,
   requireThreadAbsent,
@@ -280,6 +281,7 @@ function collaborationQueueEvent(
   >["delivery"],
   origin: NonNullable<OrchestrationQueuedTurn["origin"]>,
   createdAt: string,
+  queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>,
 ): PlannedOrchestrationEvent {
   return {
     ...withEventBase({
@@ -295,6 +297,10 @@ function collaborationQueueEvent(
         id: delivery.queuedTurnId,
         threadId,
         message: delivery.message,
+        // Assigned here too, not only on the enqueue command path: a turn
+        // created without a position sorts after every positioned turn, so a
+        // later PR-monitor message could overtake a collaboration request.
+        queuePosition: nextQueuePosition(queuedTurns),
         ...(delivery.modelSelection !== undefined
           ? { modelSelection: delivery.modelSelection }
           : {}),
@@ -2122,6 +2128,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               exchangeId: request.exchangeId,
             },
             command.createdAt,
+            recipient.queuedTurns ?? [],
           ),
         );
       }
@@ -2195,6 +2202,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             exchangeId: request.exchangeId,
           },
           command.createdAt,
+          findThreadById(readModel, request.senderThreadId)?.queuedTurns ?? [],
         ),
       ];
       return events;
@@ -3014,6 +3022,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           queuedTurn: {
             ...command.continuation,
             origin: { ...handoffOrigin, role: "continuation" },
+            queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
           },
         },
       });
@@ -4605,6 +4614,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             interactionMode: command.interactionMode,
             createdAt: command.createdAt,
             updatedAt: command.createdAt,
+            queuePosition: nextQueuePosition(thread.queuedTurns ?? []),
             failedAt: null,
             failureMessage: null,
           },

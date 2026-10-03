@@ -91,6 +91,18 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
     ? Deferred.succeed(deferred, exit.value)
     : Deferred.failCause(deferred, exit.cause);
 
+export /**
+ * Whether this exit should leave the shutdown marker set.
+ *
+ * Success counts. So does an interruption with no typed failure or defect:
+ * that is how NodeRuntime reports SIGINT/SIGTERM, which are ordinary shutdowns
+ * rather than crashes. Anything else is a real failure.
+ */
+function isGracefulRuntimeExit(exit: Exit.Exit<unknown, unknown>): boolean {
+  if (Exit.isSuccess(exit)) return true;
+  return Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause);
+}
+
 export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const commandQueue = yield* Queue.unbounded<QueuedCommand>();
@@ -375,12 +387,15 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
   // and everything flushed. A kill between that point and process exit still
   // leaves the marker unset, which is what keeps the next boot holding queues.
   //
-  // It is also gated on a successful exit, because a failed or interrupted
-  // runtime is a crash from the queue's point of view — recording "clean" there
-  // would drain queued prompts unprompted, which is the case this exists to
-  // prevent.
+  // "Clean" means the runtime finished or was asked to stop, not that it
+  // succeeded. NodeRuntime interrupts the main fiber on SIGINT/SIGTERM so scoped
+  // finalizers can run, so an ordinary desktop quit or terminal Ctrl-C arrives
+  // here as an *interrupted* exit, not a success. Gating on `Exit.isSuccess`
+  // would classify every normal shutdown as a crash and hold all restored
+  // queues. Only a genuine failure or defect — an unhandled error or a thrown
+  // defect — leaves the marker unset.
   yield* Effect.addFinalizer((exit) =>
-    Exit.isSuccess(exit)
+    isGracefulRuntimeExit(exit)
       ? shutdownMarker.recordCleanShutdown(new Date().toISOString()).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("failed to record clean shutdown", {
@@ -388,7 +403,9 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
             }),
           ),
         )
-      : Effect.void,
+      : Effect.logWarning("server exited with a failure; next boot will hold queued messages", {
+          reason: Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "unknown",
+        }).pipe(Effect.asVoid),
   );
   yield* Effect.addFinalizer(() => Scope.close(reactorScope, Exit.void));
   yield* Effect.addFinalizer((exit) =>

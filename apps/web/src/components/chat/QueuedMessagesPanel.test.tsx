@@ -95,6 +95,73 @@ function moveButtonStates(html: string, direction: "up" | "down"): boolean[] {
     .map((tag) => /\sdisabled(?:=""|\s|>)/.test(tag.replace(/\sclass="[^"]*"/, "")));
 }
 
+/**
+ * Crash recovery holds queues whose only turns are hidden ones — a child nudge,
+ * or a healthy workspace-handoff continuation. Those live on dedicated surfaces
+ * with no resume control, so this panel is the only place the hold can be
+ * released. Returning null when no rows are visible left such a queue stuck.
+ */
+describe("QueuedMessagesPanel hold banner", () => {
+  const healthyHandoffOrigin = {
+    kind: "workspace-handoff",
+    role: "continuation",
+    branch: "feature/handoff",
+    worktreePath: "/tmp/handoff",
+  } as OrchestrationQueuedTurn["origin"];
+
+  function renderHeld(queuedTurns: ReadonlyArray<OrchestrationQueuedTurn>) {
+    return renderToStaticMarkup(
+      <QueuedMessagesPanel
+        queuedTurns={queuedTurns}
+        queueHeldAt="2026-01-01T00:00:05.000Z"
+        editingQueuedTurnId={null}
+        editingText=""
+        onStartEditingQueuedTurn={() => {}}
+        onCancelEditingQueuedTurn={() => {}}
+        onSaveEditingQueuedTurn={() => {}}
+        onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
+      />,
+    );
+  }
+
+  it("offers resume when the only queued turn is a hidden handoff", () => {
+    const html = renderHeld([queuedTurn("handoff", "Continue", healthyHandoffOrigin)]);
+
+    expect(html).toContain("Queue held after restart");
+    expect(html).toContain("Resume queue");
+  });
+
+  it("offers resume when the only queued turn is a child nudge", () => {
+    const html = renderHeld([
+      queuedTurn("nudge", "Generated prompt", { kind: "child-nudge" } as never),
+    ]);
+
+    expect(html).toContain("Queue held after restart");
+    expect(html).toContain("Resume queue");
+  });
+
+  it("still renders nothing when unheld and every turn is hidden", () => {
+    const html = renderToStaticMarkup(
+      <QueuedMessagesPanel
+        queuedTurns={[queuedTurn("handoff", "Continue", healthyHandoffOrigin)]}
+        queueHeldAt={null}
+        editingQueuedTurnId={null}
+        editingText=""
+        onStartEditingQueuedTurn={() => {}}
+        onCancelEditingQueuedTurn={() => {}}
+        onSaveEditingQueuedTurn={() => {}}
+        onDeleteQueuedTurn={() => {}}
+        onMoveQueuedTurn={() => {}}
+        onReleaseQueue={() => {}}
+      />,
+    );
+
+    expect(html).toBe("");
+  });
+});
+
 describe("QueuedMessagesPanel reorder bounds", () => {
   const hiddenHandoffOrigin = {
     kind: "workspace-handoff",

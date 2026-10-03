@@ -177,6 +177,14 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
   const monitorFeedback = yield* PullRequestMonitorFeedbackService;
   const serverSettings = yield* ServerSettingsService;
   const wakeScope = yield* Effect.scope;
+  // Closed until crash-recovery holds are installed. The domain-event consumer
+  // is forked before `beginSession` runs, and TurnLifecycleRuntime starts
+  // provider ingestion before this reactor, so a readiness-changing event can
+  // arrive for a restored thread while that thread is still unheld. Without
+  // this gate the queued prompt dispatches in that window — the exact case the
+  // hold exists to prevent. Drops during the window are safe: the startup sweep
+  // drains everything drainable once the barrier opens.
+  let recoveryBarrierOpen = false;
   const drainingThreadIds = new Set<ThreadId>();
   const pendingThreadIds = new Set<ThreadId>();
   const scheduledChildWakes = new Set<string>();
@@ -196,6 +204,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
     });
 
   const drainThread = Effect.fn("QueuedTurnReactor.drainThread")(function* (threadId: ThreadId) {
+    if (!recoveryBarrierOpen) return;
     if (drainingThreadIds.has(threadId)) {
       pendingThreadIds.add(threadId);
       return;
@@ -253,11 +262,13 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
         }
         if (!followUp.reason) eligibleTurns.push(turn);
       }
-      eligibleTurns.sort((left, right) => {
-        const leftUser = left.origin === undefined ? 0 : 1;
-        const rightUser = right.origin === undefined ? 0 : 1;
-        return leftUser - rightUser || compareQueuedTurns(left, right);
-      });
+      // Explicit positions win outright. This used to prioritise origin-less
+      // (user) turns ahead of every automated one, which meant a user could move
+      // a monitor message above a user message, see the new order in the queue
+      // panel, and still have the reactor dispatch them the other way round. The
+      // position is assigned at every creation path, so it is always present and
+      // compareQueuedTurns is the single authority on order.
+      eligibleTurns.sort(compareQueuedTurns);
       let nextQueuedTurn = eligibleTurns[0];
       if (eligibleTurns.some((turn) => turn.origin?.kind === "pull-request-monitor")) {
         const settings = yield* serverSettings.getSettings;
@@ -801,6 +812,7 @@ const makeQueuedTurnReactor = Effect.gen(function* () {
       yield* Effect.logWarning("server did not shut down cleanly; holding queued messages", {});
       yield* holdQueuedThreadsAfterCrash;
     }
+    recoveryBarrierOpen = true;
     yield* drainQueuedThreads;
     const startupIndex = indexReadModel(yield* orchestrationEngine.getReadModel());
     yield* Effect.forEach(

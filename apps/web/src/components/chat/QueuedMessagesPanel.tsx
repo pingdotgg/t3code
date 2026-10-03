@@ -68,7 +68,11 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel({
   const visibleQueuedTurns = queuedTurns.flatMap((queuedTurn, queueIndex) =>
     isHiddenQueuedTurn(queuedTurn) ? [] : [{ queuedTurn, queueIndex }],
   );
-  if (visibleQueuedTurns.length === 0) {
+  // The hold banner must render even with no visible rows: crash recovery holds
+  // queues whose only turns are hidden ones (a child nudge, a healthy workspace
+  // handoff), and those live on dedicated surfaces that have no resume control.
+  // Returning null here would leave such a queue held with no way to release it.
+  if (visibleQueuedTurns.length === 0 && queueHeldAt === null) {
     return null;
   }
 
