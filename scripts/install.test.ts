@@ -21,9 +21,21 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
       let sawPartialProgress = false;
       let output = "";
       await NodeFSP.mkdir(NodePath.join(root, stem));
-      await NodeFSP.writeFile(NodePath.join(root, stem, "t3"), "#!/bin/sh\necho 't3 v1.2.3'\n", {
-        mode: 0o755,
-      });
+      // Prints the path it was started with, so the test sees what argv[1] is.
+      await NodeFSP.writeFile(
+        NodePath.join(root, stem, "t3"),
+        `#!/bin/sh\nif [ "$1" = --version ]; then echo 't3 v1.2.3'; else printf '%s\\n' "$0"; fi\n`,
+        { mode: 0o755 },
+      );
+      // A quote and a space in the home path exercise the launcher's quoting.
+      const home = NodePath.join(root, "it's home");
+      const bin = NodePath.join(root, "bin");
+      // Older installers linked bin/t3 to the executable. Reinstalling must
+      // replace that link, not write through it.
+      const oldExecutable = NodePath.join(root, "old-t3");
+      await NodeFSP.writeFile(oldExecutable, "old");
+      await NodeFSP.mkdir(bin);
+      await NodeFSP.symlink(oldExecutable, NodePath.join(bin, "t3"));
       await NodeFSP.writeFile(
         NodePath.join(root, stem, "payload"),
         NodeCrypto.randomBytes(64 * 1024),
@@ -61,8 +73,8 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
           TERM: "xterm",
           NO_COLOR: "1",
           T3CODE_VERSION: version,
-          T3CODE_HOME: NodePath.join(root, "home"),
-          T3CODE_INSTALL_BIN_DIR: NodePath.join(root, "bin"),
+          T3CODE_HOME: home,
+          T3CODE_INSTALL_BIN_DIR: bin,
           T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${address.port}`,
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -81,13 +93,14 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
           child.on("error", reject);
           child.on("close", resolve);
         });
-        const versions = NodePath.join(root, "home/runtime/versions");
+        const versions = NodePath.join(home, "runtime/versions");
         if (fail) {
           expect(code).not.toBe(0);
           expect(output).toContain("500");
           expect(output).not.toContain("100%");
           expect(output).not.toContain("Installed T3 Code");
           expect(await NodeFSP.readdir(versions)).toEqual([]);
+          expect(await NodeFSP.readlink(NodePath.join(bin, "t3"))).toBe(oldExecutable);
         } else {
           expect(code).toBe(0);
           expect(sawPartialProgress).toBe(true);
@@ -98,10 +111,26 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "linux")("installer termi
             await NodeFSP.readFile(NodePath.join(versions, version, ".install-complete"), "utf8"),
           ).toBe("1.2.3\n");
           expect(
-            NodeChildProcess.execFileSync(NodePath.join(root, "bin/t3"), ["--version"], {
+            NodeChildProcess.execFileSync(NodePath.join(bin, "t3"), ["--version"], {
               encoding: "utf8",
             }).trim(),
           ).toBe("t3 v1.2.3");
+          // bin/t3 is now a script that runs the executable by absolute path.
+          const executable = NodePath.join(versions, version, "t3");
+          expect((await NodeFSP.lstat(NodePath.join(bin, "t3"))).isSymbolicLink()).toBe(false);
+          expect(await NodeFSP.readFile(NodePath.join(bin, "t3"), "utf8")).toBe(
+            `#!/bin/sh\nexec '${executable.replaceAll("'", "'\\''")}' "$@"\n`,
+          );
+          expect(await NodeFSP.readFile(oldExecutable, "utf8")).toBe("old");
+          // Started as a bare `t3` from another folder, the executable still
+          // sees its absolute path.
+          expect(
+            NodeChildProcess.execFileSync("t3", ["probe"], {
+              cwd: root,
+              env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+              encoding: "utf8",
+            }).trim(),
+          ).toBe(executable);
           expect(await NodeFSP.readdir(versions)).toEqual([version]);
         }
       } finally {
