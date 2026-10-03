@@ -16,7 +16,7 @@ import * as Path from "effect/Path";
  */
 
 /** How often the file is checked while its command runs. */
-export const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
+const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
 /** Give up looking for a file Claude Code never wrote (a newer layout, or Windows). */
 const MAX_LOCATE_ATTEMPTS = 40;
 /** Bytes read per poll. A faster writer skips ahead: only the tail is shown anyway. */
@@ -110,7 +110,12 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
         if (text.length > 0) yield* input.onChunk(text);
       }
     }
-    if (last) return;
+    if (last) {
+      // A command that ended mid-character still shows a replacement character.
+      const rest = decoder.decode();
+      if (rest.length > 0) yield* input.onChunk(rest);
+      return;
+    }
     last = yield* pause;
   }
 });

@@ -67,7 +67,7 @@ export const EMPTY_TERMINAL_OUTPUT: TerminalOutputState = {
 export const TERMINAL_OUTPUT_TAIL_CHARS = 64 * 1024;
 
 /** Lines that cursor movement can still reach; older output is fixed. */
-export const LIVE_LINES = 64;
+const LIVE_LINES = 64;
 
 // Longest fragment we will hold waiting for an escape sequence to finish.
 const MAX_PENDING_ESCAPE = 64;
@@ -324,7 +324,8 @@ class Terminal {
 
   moveTo(row: number, col: number): void {
     this.row = Math.max(0, Math.min(this.lines.length - 1, row));
-    this.col = Math.max(0, col);
+    // A huge column (ESC[999999999C) would otherwise pad a line past any string limit.
+    this.col = Math.max(0, Math.min(TERMINAL_OUTPUT_TAIL_CHARS, col));
   }
 
   csi(params: string, final: string): void {
@@ -524,10 +525,30 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
+  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
+  let shownLines = 1;
+  for (
+    let index = state.text.indexOf("\n");
+    index !== -1;
+    index = state.text.indexOf("\n", index + 1)
+  ) {
+    shownLines += 1;
+  }
+  const reachable = Math.min(LIVE_LINES, shownLines) - 1;
+  const up = (row: number) => Math.min(lastRow - row, reachable);
+  const goTo = (row: number, col: number) =>
+    (up(row) > 0 ? `${ESC}[${up(row)}A` : "") + `${ESC}[${col + 1}G`;
   let suffix = "";
-  if (screen.row < lastRow) suffix += `${ESC}[${lastRow - screen.row}A`;
-  if (screen.row < lastRow || screen.col !== lineLength(screen.lines[screen.row]!)) {
-    suffix += `${ESC}[${screen.col + 1}G`;
+  if (screen.saved !== null) {
+    suffix += `${goTo(screen.saved.row, screen.saved.col)}${ESC}7`;
+    if (up(screen.saved.row) > 0) suffix += `${ESC}[${up(screen.saved.row)}B`;
+  }
+  if (
+    screen.saved !== null ||
+    screen.row < lastRow ||
+    screen.col !== lineLength(screen.lines[screen.row]!)
+  ) {
+    suffix += goTo(screen.row, screen.col);
   }
   if (screen.pen !== "") suffix += sgr(screen.pen);
   return state.text + suffix + state.pending;

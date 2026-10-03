@@ -120,6 +120,32 @@ describe("terminalOutputResumeText", () => {
   });
 });
 
+describe("terminalOutputResumeText with a saved cursor or trimmed output", () => {
+  it("restores a cursor saved before the resync", () => {
+    const source = feed(["abc\u001b7def"]);
+    const viewer = appendTerminalOutput(
+      appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(source)),
+      "\u001b8X",
+    );
+    expect(viewer.text).toBe("abcXef");
+  });
+
+  it("stays on the right line when early output was trimmed away", () => {
+    const lines = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n");
+    const source = feed([lines, "\u001b[1A\rLINE"], 120);
+    const viewer = appendTerminalOutput(
+      appendTerminalOutput(EMPTY_TERMINAL_OUTPUT, terminalOutputResumeText(source), 120),
+      " edited",
+      120,
+    );
+    expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("survives a huge cursor move without throwing", () => {
+    expect(() => normalizeTerminalOutput("a\u001b[999999999999Cb")).not.toThrow();
+  });
+});
+
 describe("terminalOutputTail", () => {
   it("never begins on a lone low surrogate", () => {
     const text = `${"a".repeat(10)}😀${"b".repeat(4)}`;

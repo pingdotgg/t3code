@@ -230,6 +230,18 @@ layer("CommandOutputHub", (it) => {
       ),
   );
 
+  it.effect("a row that is not a known command fails instead of waiting forever", () =>
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      const error = yield* hub
+        .subscribe({ threadId, itemId: ITEM_ID })
+        .pipe(Stream.runDrain, Effect.flip);
+      assert.equal(error._tag, "OrchestrationV2CommandOutputError");
+      assert.equal(error.message, "No such command.");
+    }),
+  );
+
   it.effect("every viewer of one command reconstructs the same text", () =>
     Effect.scoped(
       Effect.gen(function* () {

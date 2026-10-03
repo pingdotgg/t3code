@@ -39,7 +39,7 @@ export const COMMAND_OUTPUT_FRAME_INTERVAL_MS = 100;
 /** After a subscriber falls behind and is sent the whole tail, it waits this long. */
 export const COMMAND_OUTPUT_REPLACE_INTERVAL_MS = 500;
 /** Raw text a subscriber may accumulate before it is sent the tail instead. */
-export const COMMAND_OUTPUT_MAX_APPEND_CHARS = 16 * 1024;
+const COMMAND_OUTPUT_MAX_APPEND_CHARS = 16 * 1024;
 /** Running commands tracked at once; the least recently written is dropped beyond this. */
 const MAX_LIVE_COMMANDS = 64;
 /** Finished tails kept for a settle that reports no output of its own (an interrupt). */
@@ -88,7 +88,7 @@ function isSettled(item: OrchestrationV2TurnItem): boolean {
 }
 
 /** The output a row shows from a persisted item, bounded before normalization. */
-export function persistedCommandOutput(output: string | undefined): {
+function persistedCommandOutput(output: string | undefined): {
   readonly text: string;
   readonly truncated: boolean;
 } {
@@ -187,6 +187,7 @@ export const make = Effect.gen(function* () {
         // The persisted item says when the command is done and what it finally printed.
         // Providers that report output only in item snapshots (ACP, Pi) stream through here too.
         let snapshotOutput: string | undefined;
+        let lost: Cause.Cause<unknown> | undefined;
         let settled: Extract<OrchestrationV2TurnItem, { type: "command_execution" }> | undefined;
         const observe = (item: OrchestrationV2TurnItem | undefined) =>
           Effect.suspend(() => {
@@ -214,12 +215,24 @@ export const make = Effect.gen(function* () {
                 ? observe(stored.event.payload)
                 : Effect.void,
             ),
+            // Without its event stream the row can never settle: end with an error
+            // instead of waiting forever.
             Effect.catchCause((cause) =>
-              Effect.logWarning("command output subscription lost its event stream", { cause }),
+              Effect.sync(() => {
+                lost = cause;
+              }).pipe(Effect.andThen(Queue.offer(wake, undefined))),
             ),
             Effect.forkScoped,
           );
-        yield* observe(yield* projections.getTurnItem(target.threadId, target.itemId));
+        const item = yield* projections.getTurnItem(target.threadId, target.itemId);
+        // Only command rows have output; anything else would hold a subscription open forever.
+        if (item?.type !== "command_execution") {
+          return yield* new OrchestrationV2CommandOutputError({
+            threadId: target.threadId,
+            message: "No such command.",
+          });
+        }
+        yield* observe(item);
         yield* Queue.offer(wake, undefined);
 
         let lastFrameAt: number | undefined;
@@ -227,10 +240,17 @@ export const make = Effect.gen(function* () {
         let ended = false;
         const nextFrame = Effect.gen(function* (): Effect.fn.Return<
           OrchestrationV2CommandOutputFrame,
-          Cause.Done
+          Cause.Done | OrchestrationV2CommandOutputError
         > {
           if (ended) return yield* Cause.done();
           yield* Queue.take(wake);
+          if (lost !== undefined) {
+            return yield* new OrchestrationV2CommandOutputError({
+              threadId: target.threadId,
+              message: "Lost the thread's event stream.",
+              cause: Cause.squash(lost),
+            });
+          }
           const now = yield* Clock.currentTimeMillis;
           if (lastFrameAt !== undefined && now - lastFrameAt < throttle) {
             yield* Effect.sleep(throttle - (now - lastFrameAt));
@@ -276,13 +296,14 @@ export const make = Effect.gen(function* () {
           Stream.filter((frame) => frame.kind !== "append" || frame.text.length > 0),
         );
       }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new OrchestrationV2CommandOutputError({
-              threadId: target.threadId,
-              message: "Failed to read command output.",
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          cause instanceof OrchestrationV2CommandOutputError
+            ? cause
+            : new OrchestrationV2CommandOutputError({
+                threadId: target.threadId,
+                message: "Failed to read command output.",
+                cause,
+              }),
         ),
       ),
     );

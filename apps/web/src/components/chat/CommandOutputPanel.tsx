@@ -15,16 +15,21 @@ import { useEnvironmentQuery } from "../../state/query";
 const FOLLOW_SLACK_PX = 8;
 
 function spanCss(style: TerminalSpanStyle): CSSProperties {
-  const decorations = [style.underline ? "underline" : "", style.strike ? "line-through" : ""]
-    .filter(Boolean)
-    .join(" ");
+  const decorations =
+    style.underline && style.strike
+      ? "underline line-through"
+      : style.underline
+        ? "underline"
+        : style.strike
+          ? "line-through"
+          : undefined;
   return {
     ...(style.color === undefined ? {} : { color: style.color }),
     ...(style.backgroundColor === undefined ? {} : { backgroundColor: style.backgroundColor }),
     ...(style.bold ? { fontWeight: 600 } : {}),
     ...(style.dim ? { opacity: 0.65 } : {}),
     ...(style.italic ? { fontStyle: "italic" } : {}),
-    ...(decorations === "" ? {} : { textDecorationLine: decorations }),
+    ...(decorations === undefined ? {} : { textDecorationLine: decorations }),
   };
 }
 

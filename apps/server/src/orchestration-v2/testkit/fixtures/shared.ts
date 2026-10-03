@@ -103,7 +103,7 @@ export const TURN_INTERRUPT_PROMPT =
 export const TURN_INTERRUPT_MID_TOOL_PROMPT =
   "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
 /** A command that prints over a few seconds, with colour and a carriage-return redraw. */
-export const COMMAND_OUTPUT_STREAMING_COMMAND =
+const COMMAND_OUTPUT_STREAMING_COMMAND =
   "for i in 1 2 3 4; do printf '\\033[32mstream line %s\\033[0m\\n' $i; sleep 1; done; printf 'progress 50%%\\rprogress 100%%\\n'";
 export const COMMAND_OUTPUT_STREAMING_PROMPT = `Run this exact shell command in the foreground and wait for it to finish: \`${COMMAND_OUTPUT_STREAMING_COMMAND}\`. Then respond exactly: command output fixture complete`;
 export const TURN_INTERRUPT_RECOVERY_PROMPT =

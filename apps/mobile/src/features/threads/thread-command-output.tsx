@@ -18,16 +18,21 @@ import { useEnvironmentQuery } from "../../state/query";
 const FOLLOW_SLACK = 8;
 
 function spanStyle(style: TerminalSpanStyle): TextStyle {
-  const decorations = [style.underline ? "underline" : "", style.strike ? "line-through" : ""]
-    .filter(Boolean)
-    .join(" ") as TextStyle["textDecorationLine"];
+  const decorations =
+    style.underline && style.strike
+      ? "underline line-through"
+      : style.underline
+        ? "underline"
+        : style.strike
+          ? "line-through"
+          : undefined;
   return {
     ...(style.color === undefined ? {} : { color: style.color }),
     ...(style.backgroundColor === undefined ? {} : { backgroundColor: style.backgroundColor }),
     ...(style.bold ? { fontWeight: "600" as const } : {}),
     ...(style.dim ? { opacity: 0.65 } : {}),
     ...(style.italic ? { fontStyle: "italic" as const } : {}),
-    ...(decorations === "" ? {} : { textDecorationLine: decorations }),
+    ...(decorations === undefined ? {} : { textDecorationLine: decorations }),
   };
 }
 

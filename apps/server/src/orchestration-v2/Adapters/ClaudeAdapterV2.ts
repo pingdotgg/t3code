@@ -1851,9 +1851,10 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
     const stderr =
       typeof value === "object" && value !== null && "stderr" in value ? value.stderr : undefined;
     if (typeof stdout === "string" || typeof stderr === "string") {
-      return [stdout, stderr]
-        .filter((part): part is string => typeof part === "string" && part.length > 0)
-        .join("\n");
+      // Claude trims trailing newlines from each stream, so stderr needs one to start a line.
+      const out = typeof stdout === "string" ? stdout : "";
+      const err = typeof stderr === "string" ? stderr : "";
+      return out.length > 0 && err.length > 0 && !out.endsWith("\n") ? `${out}\n${err}` : out + err;
     }
     if (typeof output.fallbackValue === "string") return output.fallbackValue;
   }
