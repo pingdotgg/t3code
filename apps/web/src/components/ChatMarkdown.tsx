@@ -92,6 +92,7 @@ import remarkGfm from "remark-gfm";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
+import { mathKind, mayContainMath, remarkChatMath } from "../markdown-math";
 import {
   artifactTemplateFromHastProperties,
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
@@ -99,6 +100,7 @@ import {
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { MarkdownMath } from "./chat/MarkdownMath";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -472,7 +474,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
+    // Fence languages plus the two math classes `remarkChatMath` emits.
+    code: [
+      ["className", /^language-./, "math-inline", "math-display"],
+      "dataCodeMeta",
+      "dataInlineCode",
+    ],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
@@ -510,6 +517,22 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+const CHAT_MARKDOWN_MATH_REMARK_PLUGINS = [remarkChatMath, ...CHAT_MARKDOWN_REMARK_PLUGINS];
+
+const CHAT_MARKDOWN_MATH_REMARK_PLUGINS_WITH_BREAKS = [
+  remarkChatMath,
+  ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+];
+
+function chatMarkdownRemarkPlugins(lineBreaks: boolean, math: boolean) {
+  if (math) {
+    return lineBreaks
+      ? CHAT_MARKDOWN_MATH_REMARK_PLUGINS_WITH_BREAKS
+      : CHAT_MARKDOWN_MATH_REMARK_PLUGINS;
+  }
+  return lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS;
+}
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypeRaw,
@@ -3349,6 +3372,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const MarkdownCodeOrMath: NonNullable<Components["code"]> = (props) => {
+  const math = mathKind(props.className);
+  if (!math) return CHAT_MARKDOWN_COMPONENTS.code(props);
+  return <MarkdownMath tex={nodeToPlainText(props.children)} display={math === "display"} />;
+};
+
+// Only messages parsed with math enabled can typeset, so raw HTML carrying the
+// math classes stays an ordinary code element while the setting is off.
+const CHAT_MARKDOWN_MATH_COMPONENTS = {
+  ...CHAT_MARKDOWN_COMPONENTS,
+  code: MarkdownCodeOrMath,
+} satisfies Components;
+
 function ChatMarkdown({
   text,
   className,
@@ -3369,13 +3405,15 @@ function ChatMarkdown({
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  const math =
+    useClientSettings((settings) => settings.mathRenderingEnabled) && mayContainMath(text);
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...chatMarkdownRemarkPlugins(lineBreaks, math),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [extraRemarkPlugins, incrementalParsing, lineBreaks, math],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
@@ -3397,7 +3435,7 @@ function ChatMarkdown({
           remarkPlugins={remarkPlugins}
           rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
           skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
+          components={math ? CHAT_MARKDOWN_MATH_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
           {text}

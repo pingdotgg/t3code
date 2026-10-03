@@ -1750,6 +1750,22 @@ code {
   margin: 0.65rem 0;
 }
 
+/* Wide display equations scroll instead of clipping or widening the message. */
+.chat-markdown .chat-markdown-math-display {
+  display: block;
+  margin: 0.65rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.chat-markdown .chat-markdown-math-display .katex-display {
+  margin: 0;
+}
+
+.chat-markdown .chat-markdown-math-source {
+  white-space: pre-wrap;
+}
+
 .chat-markdown h1,
 .chat-markdown h2,
 .chat-markdown h3,
