@@ -53,7 +53,7 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import type { ProviderInstance, ProviderInstanceAppearance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
@@ -297,20 +297,26 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(stampSourceAppearance(source, snapshot));
+  return readAppearance(source.appearance).pipe(
+    Effect.map((appearance) => stampAppearance(snapshot, appearance)),
+  );
 };
+
+const readAppearance = (
+  appearance: ProviderSnapshotSource["appearance"],
+): Effect.Effect<ProviderInstanceAppearance | undefined> => appearance ?? Effect.succeed(undefined);
 
 // Appearance comes from instance config, not the driver. Strip it before
 // stamping so a cleared icon or badge never survives from a cached snapshot.
-const stampSourceAppearance = (
-  source: ProviderSnapshotSource,
+const stampAppearance = (
   snapshot: ServerProvider,
+  appearance: ProviderInstanceAppearance | undefined,
 ): ServerProvider => {
   const { icon: _icon, badgeLabel: _badgeLabel, ...rest } = snapshot;
   return {
     ...rest,
-    ...(source.appearance?.icon ? { icon: source.appearance.icon } : {}),
-    ...(source.appearance?.badgeLabel ? { badgeLabel: source.appearance.badgeLabel } : {}),
+    ...(appearance?.icon ? { icon: appearance.icon } : {}),
+    ...(appearance?.badgeLabel ? { badgeLabel: appearance.badgeLabel } : {}),
   };
 };
 
@@ -731,6 +737,32 @@ export const ProviderRegistryLive = Layer.effect(
             continue;
           }
           newlyAdded.push([instanceId, instance] as const);
+        }
+
+        // Appearance edits keep the instance, so restamp the snapshots of
+        // every carried-over instance with what it should look like now.
+        const carriedAppearance = new Map<
+          ProviderInstanceId,
+          ProviderInstanceAppearance | undefined
+        >();
+        for (const [instanceId, instance] of carriedOver) {
+          carriedAppearance.set(instanceId, yield* readAppearance(instance.appearance));
+        }
+        if (carriedAppearance.size > 0) {
+          const [previousProviders, providers] = yield* Ref.modify(
+            providersRef,
+            (previousProviders) => {
+              const providers = previousProviders.map((provider) =>
+                carriedAppearance.has(provider.instanceId)
+                  ? stampAppearance(provider, carriedAppearance.get(provider.instanceId))
+                  : provider,
+              );
+              return [[previousProviders, providers] as const, providers];
+            },
+          );
+          if (haveProvidersChanged(previousProviders, providers)) {
+            yield* PubSub.publish(changesPubSub, providers);
+          }
         }
 
         const rebuiltInstanceIds = new Set(

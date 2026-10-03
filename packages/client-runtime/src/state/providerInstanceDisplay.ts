@@ -122,12 +122,12 @@ interface InstanceGlyphIdentity {
   readonly acpRegistryAgentId?: string | undefined;
 }
 
-// Two instances look alike when they draw the same glyph: a chosen logo wins
-// over the driver's, and ACP agents each have their own registry glyph.
+// Two instances look alike when they draw the same glyph: a chosen logo this
+// client knows wins over the driver's, and ACP agents each have their own.
 function instanceGlyphKey(entry: InstanceGlyphIdentity): string {
-  if (entry.icon) return `icon:${entry.icon}`;
-  if (entry.driverKind === "acpRegistry") return `acp:${entry.acpRegistryAgentId ?? ""}`;
-  return `icon:${entry.driverKind}`;
+  const glyphDriver = resolveProviderInstanceGlyphDriver(entry);
+  if (glyphDriver === "acpRegistry") return `acp:${entry.acpRegistryAgentId ?? ""}`;
+  return `logo:${glyphDriver}`;
 }
 
 /**

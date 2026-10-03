@@ -16,7 +16,7 @@ import { AppState, Pressable, View, type ColorValue } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, type ProviderGlyphAppearance } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
@@ -53,7 +53,7 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly iconUrl?: string | null | undefined;
+  readonly provider: (ProviderGlyphAppearance & { readonly iconUrl?: string }) | undefined;
   readonly status?: OrchestrationV2Subagent["status"];
 }) {
   return (
@@ -61,7 +61,12 @@ function SubagentAvatar(props: {
       accessible={false}
       className="relative h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
+      <ProviderIcon
+        provider={props.item.driver}
+        iconUrl={props.provider?.iconUrl}
+        appearance={props.provider}
+        size={15}
+      />
       {props.status ? (
         <SubagentStatusDot
           placement="provider"
@@ -105,8 +110,8 @@ export function ThreadSubagentGroup(props: {
   const label = `${agents.length} subagents`;
   const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
   const expanded = props.expandedRows[props.anchorKey] ?? false;
-  const iconUrl = (item: SubagentItem) =>
-    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+  const providerFor = (item: SubagentItem) =>
+    config?.providers.find((provider) => provider.instanceId === item.providerInstanceId);
   return (
     <WorkLogBlock>
       {grouped ? (
@@ -120,7 +125,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} provider={providerFor(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (
@@ -185,7 +190,7 @@ export function ThreadSubagentGroup(props: {
               >
                 <SubagentAvatar
                   item={agent.item}
-                  iconUrl={iconUrl(agent.item)}
+                  provider={providerFor(agent.item)}
                   status={agent.status}
                 />
                 <View className="min-w-0 flex-1 gap-0.5">

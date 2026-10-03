@@ -54,17 +54,23 @@ import * as Stream from "effect/Stream";
 import { buildUnavailableProviderSnapshot } from "../unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
-import type { AnyProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+import type {
+  AnyProviderDriver,
+  ProviderInstance,
+  ProviderInstanceAppearance,
+} from "../ProviderDriver.ts";
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh
- * child scope its `create` effect ran in + the original `entry` envelope
- * so `reconcile` can cheaply detect "no-op" updates.
+ * child scope its `create` effect ran in + the latest `entry` envelope
+ * so `reconcile` can cheaply detect "no-op" updates + the instance's
+ * appearance, which reconcile edits in place.
  */
 interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
+  readonly appearance: Ref.Ref<ProviderInstanceAppearance>;
 }
 
 /**
@@ -86,6 +92,18 @@ interface RegistryState {
  */
 const entryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean =>
   Equal.equals(a, b);
+
+const entryAppearance = (entry: ProviderInstanceConfig): ProviderInstanceAppearance => ({
+  icon: entry.icon,
+  badgeLabel: entry.badgeLabel,
+});
+
+/** Equality ignoring appearance, which changes without rebuilding the runtime. */
+const runtimeEntryEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boolean => {
+  const { icon: _aIcon, badgeLabel: _aBadge, ...aRuntime } = a;
+  const { icon: _bIcon, badgeLabel: _bBadge, ...bRuntime } = b;
+  return Equal.equals(aRuntime, bRuntime);
+};
 
 /**
  * Resolve an entry's enabled state. An explicit false on either the
@@ -202,18 +220,14 @@ const buildEntry = <R>(input: {
       };
     }
 
+    const appearance = yield* Ref.make(entryAppearance(entry));
     return {
       kind: "live" as const,
       live: {
-        instance:
-          entry.icon || entry.badgeLabel
-            ? {
-                ...createResult.success,
-                appearance: { icon: entry.icon, badgeLabel: entry.badgeLabel },
-              }
-            : createResult.success,
+        instance: { ...createResult.success, appearance: Ref.get(appearance) },
         scope: childScope,
         entry,
+        appearance,
       },
     };
   });
@@ -242,13 +256,17 @@ const makeReconcile = <R>(input: {
       //    to live scopes at all times.
       const removedIds: Array<ProviderInstanceId> = [];
       const replacedIds = new Set<ProviderInstanceId>();
+      const restyledIds = new Set<ProviderInstanceId>();
       for (const [instanceId, live] of previousEntries) {
         if (!nextKeys.has(instanceId)) {
           removedIds.push(instanceId);
           continue;
         }
         const nextEntry = configMap[instanceId];
-        if (nextEntry !== undefined && !entryEqual(live.entry, nextEntry)) {
+        if (nextEntry === undefined || entryEqual(live.entry, nextEntry)) continue;
+        if (runtimeEntryEqual(live.entry, nextEntry)) {
+          restyledIds.add(instanceId);
+        } else {
           replacedIds.add(instanceId);
         }
       }
@@ -272,6 +290,12 @@ const makeReconcile = <R>(input: {
         nextOrder.push(instanceId);
 
         const existing = previousEntries.get(instanceId);
+        if (existing !== undefined && restyledIds.has(instanceId)) {
+          // Appearance-only update: keep the runtime, swap what it looks like.
+          yield* Ref.set(existing.appearance, entryAppearance(entry));
+          builtEntries.set(instanceId, { ...existing, entry });
+          continue;
+        }
         if (existing !== undefined && !replacedIds.has(instanceId)) {
           // No-op update: keep the existing live entry and scope.
           builtEntries.set(instanceId, existing);
@@ -307,6 +331,7 @@ const makeReconcile = <R>(input: {
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
+        restyledIds.size > 0 ||
         builtEntries.size !== previousEntries.size;
       const unavailableChanged =
         builtUnavailable.size !== previousUnavailable.size ||

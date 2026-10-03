@@ -74,8 +74,12 @@ export interface ProviderInstance {
   readonly continuationIdentity: ProviderContinuationIdentity;
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
-  /** Set by the instance registry from config; drivers leave it unset. */
-  readonly appearance?: ProviderInstanceAppearance | undefined;
+  /**
+   * Current icon and badge label from config. Set by the instance registry,
+   * which updates it in place so editing them never rebuilds the runtime.
+   * Drivers leave it unset.
+   */
+  readonly appearance?: Effect.Effect<ProviderInstanceAppearance> | undefined;
   readonly enabled: boolean;
   readonly snapshot: ServerProviderShape;
   readonly snapshotForCwd?: (cwd: string) => Effect.Effect<ServerProvider, ProviderDriverError>;

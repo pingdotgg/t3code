@@ -412,6 +412,7 @@ function SidebarProviderStack(props: {
             driverKind={entry.driverKind}
             displayName={entry.displayName}
             icon={entry.icon}
+            badgeLabel={entry.badgeLabel}
             acpRegistryAgentId={entry.acpRegistryAgentId}
             acpRegistryIconUrl={entry.acpRegistryIconUrl}
             iconClassName="size-3 opacity-35 grayscale"
@@ -510,6 +511,7 @@ function SidebarThreadTooltip({
               }
               accentColor={providerEntry?.accentColor}
               icon={providerEntry?.icon}
+              badgeLabel={providerEntry?.badgeLabel}
               acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
               acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
               // Initials would swallow a size-3 glyph: accent dot, name in label.

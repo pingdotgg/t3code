@@ -12,10 +12,19 @@ import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { AppText as Text } from "./AppText";
 
+/** What a configured instance chose to look like; a `ServerProvider` satisfies it. */
+export interface ProviderGlyphAppearance {
+  readonly icon?: string | undefined;
+  readonly badgeLabel?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly accentColor?: string | undefined;
+}
+
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
   readonly iconUrl?: string | null | undefined;
   readonly size?: number;
+  readonly appearance?: ProviderGlyphAppearance | undefined;
 };
 
 function AcpRegistryFallbackIcon(props: { readonly color: string; readonly size: number }) {
@@ -72,8 +81,35 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+  const appearance = props.appearance;
+  if (isProviderInstanceInitialsIcon(appearance?.icon)) {
+    return (
+      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+        <Text
+          className={appearance?.accentColor ? undefined : "text-foreground-muted"}
+          style={{
+            fontSize: size * 0.38,
+            fontWeight: "700",
+            lineHeight: size * 0.5,
+            color: appearance?.accentColor,
+          }}
+        >
+          {resolveProviderInstanceBadgeLabel({
+            displayName: appearance?.displayName ?? "",
+            badgeLabel: appearance?.badgeLabel,
+          })}
+        </Text>
+      </View>
+    );
+  }
+  const provider = props.provider
+    ? resolveProviderInstanceGlyphDriver({
+        driverKind: props.provider as ProviderDriverKind,
+        icon: appearance?.icon,
+      })
+    : props.provider;
 
-  if (props.provider?.trim().toLowerCase() === "antigravity") {
+  if (provider?.trim().toLowerCase() === "antigravity") {
     return (
       <Image
         source={require("../../assets/antigravity.png")}
@@ -82,11 +118,11 @@ export function ProviderIcon(props: ProviderIconProps) {
       />
     );
   }
-  if (props.provider === "acpRegistry") {
+  if (provider === "acpRegistry") {
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }
 
-  if (props.provider === "claudeAgent") {
+  if (provider === "claudeAgent") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">
         <Path
@@ -97,7 +133,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "grok") {
+  if (provider === "grok") {
     const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (
       <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -113,7 +149,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "cursor") {
+  if (provider === "cursor") {
     return (
       <Svg width={size} height={size} viewBox="0 0 466.73 532.09" fill="none">
         <Path
@@ -124,7 +160,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "pi") {
+  if (provider === "pi") {
     const foreground = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (
       <Svg width={size} height={size} viewBox="165.29 165.29 469.43 469.43" fill="none">
@@ -138,7 +174,7 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
-  if (props.provider === "opencode") {
+  if (provider === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
         <Path d="M24 32H8V16H24V32Z" fill={isDarkMode ? "#4B4646" : "#CFCECD"} />
@@ -179,35 +215,16 @@ export function ProviderInstanceIcon(props: {
   readonly showBadge?: boolean;
   readonly surfaceColor: string;
 }) {
-  const size = props.size ?? 16;
-  const badgeLabel = resolveProviderInstanceBadgeLabel(props);
-  const glyphProvider = props.provider
-    ? resolveProviderInstanceGlyphDriver({
-        driverKind: props.provider as ProviderDriverKind,
-        icon: props.icon,
-      })
-    : props.provider;
   return (
     <View style={{ position: "relative" }}>
-      {isProviderInstanceInitialsIcon(props.icon) ? (
-        <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-          <Text
-            className={props.accentColor ? undefined : "text-foreground-muted"}
-            style={{
-              fontSize: size * 0.38,
-              fontWeight: "700",
-              lineHeight: size * 0.5,
-              color: props.accentColor,
-            }}
-          >
-            {badgeLabel}
-          </Text>
-        </View>
-      ) : (
-        <View style={{ opacity: 0.6 }}>
-          <ProviderIcon iconUrl={props.iconUrl} provider={glyphProvider} size={size} />
-        </View>
-      )}
+      <View style={{ opacity: 0.6 }}>
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          provider={props.provider}
+          size={props.size}
+          appearance={props}
+        />
+      </View>
       {props.showBadge ? (
         <View
           className={props.accentColor ? undefined : "bg-card"}
@@ -235,7 +252,7 @@ export function ProviderInstanceIcon(props: {
               color: props.accentColor ? "#ffffff" : undefined,
             }}
           >
-            {badgeLabel}
+            {resolveProviderInstanceBadgeLabel(props)}
           </Text>
         </View>
       ) : null}

@@ -63,7 +63,7 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
 import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import type { ProviderInstance, ProviderInstanceAppearance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
@@ -2506,7 +2506,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           } as const satisfies ServerProvider;
           const makeInstance = (
             provider: ServerProvider,
-            appearance?: ProviderInstance["appearance"],
+            appearance?: Effect.Effect<ProviderInstanceAppearance>,
           ): ProviderInstance => ({
             instanceId: provider.instanceId,
             driverKind: provider.driver,
@@ -2533,8 +2533,12 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
+          const kimiAppearance = yield* Ref.make<ProviderInstanceAppearance>({
+            icon: "initials",
+            badgeLabel: "KI",
+          });
           const instances = [
-            makeInstance(kimiProvider, { icon: "initials", badgeLabel: "KI" }),
+            makeInstance(kimiProvider, Ref.get(kimiAppearance)),
             makeInstance(plainProvider),
           ];
           const changes = yield* PubSub.unbounded<void>();
@@ -2579,6 +2583,23 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               icon: undefined,
               badgeLabel: undefined,
             });
+
+            // The registry restyles in place and announces a change.
+            yield* Ref.set(kimiAppearance, { icon: "codex", badgeLabel: undefined });
+            yield* PubSub.publish(changes, undefined);
+            let restyled = (yield* registry.getProviders).find(
+              (provider) => provider.instanceId === "claude_kimi",
+            );
+            for (let attempt = 0; attempt < 50 && restyled?.icon !== "codex"; attempt += 1) {
+              yield* Effect.yieldNow;
+              restyled = (yield* registry.getProviders).find(
+                (provider) => provider.instanceId === "claude_kimi",
+              );
+            }
+            assert.deepStrictEqual(
+              { icon: restyled?.icon, badgeLabel: restyled?.badgeLabel },
+              { icon: "codex", badgeLabel: undefined },
+            );
           }).pipe(Effect.provide(runtimeServices));
         }),
       );

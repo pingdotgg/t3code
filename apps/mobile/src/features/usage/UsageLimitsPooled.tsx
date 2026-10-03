@@ -360,7 +360,11 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
           <>
             <View className="gap-2">
               <View className="flex-row items-center gap-2">
-                <ProviderIcon provider={account.driver} size={24} />
+                <ProviderIcon
+                  provider={account.driver}
+                  appearance={{ ...account, displayName: account.displayName ?? undefined }}
+                  size={24}
+                />
                 <Text className="flex-1 text-xl font-t3-bold text-foreground">
                   {account.displayName ?? DRIVER_LABEL[account.driver] ?? account.driver}
                 </Text>

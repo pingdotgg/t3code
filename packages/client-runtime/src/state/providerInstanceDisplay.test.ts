@@ -165,6 +165,12 @@ describe("shouldShowInstanceBadge", () => {
     expect(shouldShowInstanceBadge(openAiLogo, [claudeLogo, openAiLogo, codexDefault])).toBe(true);
   });
 
+  it("treats an unknown chosen icon as the driver glyph it falls back to", () => {
+    const claudeDefault = { driverKind: claude };
+    const futureLogo = { driverKind: claude, icon: "future-logo" };
+    expect(shouldShowInstanceBadge(futureLogo, [claudeDefault, futureLogo])).toBe(true);
+  });
+
   it("never badges an initials glyph, which already shows the label", () => {
     const entry = { driverKind: claude, icon: "initials", accentColor: "#ff8800" };
     expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(false);
