@@ -329,7 +329,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     lockPath: string,
   ) {
     for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
-      const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
+      const acquired = yield* Effect.acquireRelease(
+        fileSystem.writeFileString(lockPath, "", { flag: "wx" }),
+        () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+      ).pipe(
         Effect.as(true),
         Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
       );
@@ -442,7 +445,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       } satisfies AvailableRelayClient;
     }).pipe(
       Effect.scoped,
-      Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
       Effect.catchIf(
         (cause) => !(cause instanceof RelayClientInstallError),
         (cause) =>
@@ -463,7 +465,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
           type: "progress",
           stage,
         }),
-      ),
+      ).pipe(Effect.scoped),
     );
   const install = installWithProgress(() => Effect.void);
 
