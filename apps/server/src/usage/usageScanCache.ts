@@ -24,7 +24,9 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
 // v4: records carry Claude fast mode, which v3 rows never captured.
-const USAGE_SCAN_CACHE_VERSION = 4 as const;
+// v5: Claude's `<synthetic>` placeholder messages are no longer records, and
+// v4 entries would keep serving them for every transcript that never grows.
+const USAGE_SCAN_CACHE_VERSION = 5 as const;
 
 export interface CachedFile {
   readonly size: number;

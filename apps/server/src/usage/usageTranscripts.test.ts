@@ -78,6 +78,17 @@ describe("parseClaudeLine", () => {
     expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
     expect(parseClaudeLine("not json")).toBeNull();
   });
+
+  it("ignores messages Claude Code generated locally", () => {
+    const line = (model: string) =>
+      parseClaudeLine(
+        claudeLine({ messageId: "msg_3", contentType: "text", outputTokens: 0, model }),
+      );
+
+    expect(line("<synthetic>")).toBeNull();
+    // A real response is billed under its own model, whatever it says.
+    expect(line("claude-fable-5")?.model).toBe("claude-fable-5");
+  });
 });
 
 describe("parseCodexLine", () => {

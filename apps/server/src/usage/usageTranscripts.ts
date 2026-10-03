@@ -134,7 +134,9 @@ export function parseClaudeRecord(parsed: unknown): UsageRecord | null {
   if (timestampMs === null) return null;
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
+  // Claude Code stamps `<synthetic>` on messages it writes locally, such as the
+  // placeholder after an interrupted turn. They never reached the API.
+  if (model.length === 0 || model === "<synthetic>") return null;
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;

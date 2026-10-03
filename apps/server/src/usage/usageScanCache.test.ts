@@ -141,7 +141,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 3 };
+    const previous = { ...encoded, version: 4 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
