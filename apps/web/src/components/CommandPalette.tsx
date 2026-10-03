@@ -84,7 +84,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -425,6 +425,8 @@ function errorMessage(error: unknown): string {
   return "An error occurred.";
 }
 
+const currentMarker = <span className="text-xs text-muted-foreground/70">Current</span>;
+
 const OVERLAY_MODE_BY_COMMAND = {
   "commandPalette.toggle": "command",
   "filePicker.toggle": "files",
@@ -474,6 +476,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
   const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
+  const hasProjects = useProjects().length > 0;
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
   const routeTarget = useParams({
@@ -542,6 +546,15 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         dispatch({ _tag: "OpenChangeTheme" });
         return;
       }
+      // Inert where the sidebar has no project scope to set: the legacy
+      // sidebar, or no projects. The event then stays with its other handlers.
+      if (command === "sidebar.filterProject" && !legacySidebarEnabled && hasProjects) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        dispatch({ _tag: "OpenFilterProject" });
+        return;
+      }
       if (command === "themeEditor.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -571,7 +584,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     appearanceMode,
+    hasProjects,
     keybindings,
+    legacySidebarEnabled,
     navigate,
     previewOpen,
     resolvedTheme,
@@ -772,6 +787,9 @@ function OpenCommandPaletteDialog(props: {
     }
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const sidebarProjectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
+  const setSidebarProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  const legacySidebarEnabled = useLegacySidebarEnabled();
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
@@ -940,6 +958,12 @@ function OpenCommandPaletteDialog(props: {
       ),
     [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  // A persisted scope whose project is not in the catalog reads as unscoped.
+  const scopedProjectGroupKey = projectGroups.some(
+    (group) => group.projectKey === sidebarProjectScopeKey,
+  )
+    ? sidebarProjectScopeKey
+    : null;
   const contextualProjectRef = useMemo(
     () =>
       resolveThreadActionProjectRef({
@@ -2181,6 +2205,62 @@ function OpenCommandPaletteDialog(props: {
       groups: [{ value: "themes", label: "Change theme", items: [] }],
     });
   }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
+
+  // Same scope the sidebar's project menu writes, so either control can set
+  // or clear it. Hidden where that menu is: no projects, or the legacy sidebar.
+  const filterProjectItem: CommandPaletteSubmenuItem = {
+    kind: "submenu",
+    value: "action:filter-project",
+    searchTerms: ["filter threads by project", "sidebar", "scope", "all projects"],
+    title: "Filter threads by project",
+    icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+    shortcutCommand: "sidebar.filterProject",
+    groups: [
+      {
+        value: "project-filter",
+        label: "Filter threads by project",
+        items: [
+          {
+            kind: "action",
+            value: "project-filter:all",
+            title: "All projects",
+            searchTerms: ["all projects", "clear", "reset"],
+            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+            titleTrailingContent: scopedProjectGroupKey === null ? currentMarker : undefined,
+            run: async () => setSidebarProjectScopeKey(null),
+          },
+          ...projectGroups.map((group) => ({
+            kind: "action" as const,
+            value: `project-filter:${group.projectKey}`,
+            title: group.displayName,
+            searchTerms: [
+              group.displayName,
+              ...group.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]),
+            ],
+            icon: projectFavicon(group),
+            titleTrailingContent:
+              scopedProjectGroupKey === group.projectKey ? currentMarker : undefined,
+            run: async () => setSidebarProjectScopeKey(group.projectKey),
+          })),
+        ],
+      },
+    ],
+  };
+  const canFilterByProject = !legacySidebarEnabled && projectGroups.length > 0;
+  if (canFilterByProject) actionItems.push(filterProjectItem);
+
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "filter-project") return;
+    clearOpenIntent();
+    if (!canFilterByProject) return;
+    browseNavigation.invalidate();
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
+    setAddProjectCloneFlow(null);
+    setViewStack([]);
+    pushPaletteView(filterProjectItem);
+  });
 
   actionItems.push({
     kind: "action",

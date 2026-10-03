@@ -166,6 +166,11 @@ On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
 
+To show one project's threads, use the project menu beside the sidebar search. On web
+and desktop you can also run **Filter threads by project** from the command palette.
+Choose **All projects** to clear the filter. `sidebar.filterProject` opens that list
+directly; it has no default shortcut, so assign one in **Settings → Keybindings**.
+
 Use **Settings → Keybindings** to find or customize shortcuts for searching files
 and copying a thread reference. A copied reference uses the thread's pull request
 link when available, otherwise its thread ID. See [keybindings](./keybindings.md)
