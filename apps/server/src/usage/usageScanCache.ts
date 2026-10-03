@@ -25,10 +25,18 @@ import type { CodexScanState, UsageRecord, UsageSpeed } from "./usageTranscripts
 // re-parses only its appended bytes instead of starting over.
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
-// way, so v4 Claude and Grok entries still load; v4 Codex entries are dropped
-// and re-parsed, since they were all recorded as standard.
+// way, so v4 entries still load; see `decodeScanCache` for v4 Codex entries.
 const USAGE_SCAN_CACHE_VERSION = 5 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
+
+/**
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ */
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
 
 /** Serialised as the index into this list. */
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
@@ -242,7 +250,6 @@ export function decodeScanCache(document: unknown): ScanCache {
     const entry = raw as Partial<SerializedFile>;
     if (typeof entry.s !== "number" || typeof entry.m !== "number") continue;
     if (entry.p !== "claude" && entry.p !== "codex" && entry.p !== "grok") continue;
-    if (entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION) continue;
     if (!isRecordArray(entry.r) || !isRecordArray(entry.t)) continue;
     // Position fields feed byte offsets and a Buffer allocation in the reader,
     // so anything outside their real ranges must reject the entry: a bogus
@@ -262,7 +269,11 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
-    const codexState = decodeCodexState(entry.cs);
+    // v4 Codex records predate service tiers, so they all priced as standard.
+    // Keep them, because the rollout may be gone, but make a live rollout
+    // re-parse whole: no file has size -1, and a zero position cannot resume.
+    const legacyCodex = entry.p === "codex" && version < USAGE_SCAN_CACHE_VERSION;
+    const codexState = legacyCodex ? null : decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
     const provider: UsageProviderKind = entry.p;
@@ -271,17 +282,14 @@ export function decodeScanCache(document: unknown): ScanCache {
     if (records === null || tailRecords === null) continue;
 
     cache.set(path, {
-      size: entry.s,
+      size: legacyCodex ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
       records,
       tailRecords,
-      position: {
-        resumeOffset: entry.o,
-        guardLength: entry.gl,
-        guardHash: entry.gh,
-        codexState,
-      },
+      position: legacyCodex
+        ? { resumeOffset: 0, guardLength: 0, guardHash: 0, codexState: null }
+        : { resumeOffset: entry.o, guardLength: entry.gl, guardHash: entry.gh, codexState },
     });
   }
 

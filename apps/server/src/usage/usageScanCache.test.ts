@@ -149,24 +149,6 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
 
-  it("keeps v4 Claude entries but re-parses v4 Codex entries, which lack a tier", () => {
-    const cache = cacheWith([["/claude.jsonl", 100, [record({ speed: "fast" })]]]);
-    cache.set("/codex.jsonl", {
-      size: 80,
-      mtimeMs: 400,
-      provider: "codex",
-      records: [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })],
-      tailRecords: [],
-      position: position(),
-    });
-    const v4 = { ...encodeScanCache(cache), version: 4 };
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(v4)));
-
-    expect([...restored.keys()]).toEqual(["/claude.jsonl"]);
-    expect(restored.get("/claude.jsonl")).toEqual(cache.get("/claude.jsonl"));
-  });
-
   it("interns repeated model and session strings", () => {
     const encoded = encodeScanCache(
       cacheWith([["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:" }), record()]]]),
