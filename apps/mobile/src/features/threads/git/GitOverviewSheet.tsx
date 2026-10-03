@@ -17,7 +17,15 @@ import {
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import {
+  Alert,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from "react-native";
 
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -58,8 +66,10 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
+  const fitToContents = Platform.OS === "android" && !isInspector;
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
@@ -234,13 +244,15 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const content = (
     <ScrollView
       alwaysBounceVertical
-      className="flex-1 android:bg-sheet-solid ios:bg-screen"
+      className={`${fitToContents ? "shrink grow-0" : "flex-1"} android:bg-sheet-solid ios:bg-screen`}
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
       contentContainerStyle={{
         paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
         paddingTop: 8,
+        // Android ignores contentInset, so reserve the navigation bar in the scrollable content.
+        paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 18) + 18 : undefined,
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
@@ -454,15 +466,21 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       collapsable={false}
       className={
         Platform.OS === "android"
-          ? "flex-1 bg-header"
+          ? isInspector
+            ? "flex-1 bg-header"
+            : "bg-header"
           : isInspector
             ? "flex-1 border-l border-border bg-sheet"
             : "flex-1 bg-sheet"
       }
+      style={fitToContents ? { maxHeight: windowHeight * 0.92 } : undefined}
     >
       {!isInspector ? (
         <NativeStackScreenOptions
-          options={{ sheetCornerRadius: Platform.OS === "android" ? 28 : undefined }}
+          options={{
+            sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
+            sheetAllowedDetents: fitToContents ? "fitToContents" : undefined,
+          }}
         />
       ) : null}
       {isInspector ? (
@@ -527,7 +545,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         />
       )}
 
-      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+      <MaterialScreenContent fitToContents={fitToContents} insetHorizontal={layout.usesSplitView}>
         {content}
       </MaterialScreenContent>
     </View>
