@@ -139,7 +139,7 @@ export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
 function claudeContextWindow(modelSelection: ModelSelection): number | null {
-  if (modelSelection.model === "claude-opus-4-6" || modelSelection.model === "claude-opus-4-7") {
+  if (modelSelection.model === "claude-opus-4-7") {
     return 1_000_000;
   }
   return resolveClaudeCatalogContextWindow(BUNDLED_CLAUDE_MODEL_CATALOG, modelSelection) === "1m"
@@ -816,9 +816,12 @@ export function makeClaudeQueryOptions(input: {
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
   const selectionSettings =
-    Object.keys(compiledSelection.settings).length === 0
+    Object.keys(compiledSelection.settings).length === 0 && compiledSelection.env === undefined
       ? undefined
-      : (compiledSelection.settings as ClaudeSdkSettings);
+      : ({
+          ...compiledSelection.settings,
+          ...(compiledSelection.env === undefined ? {} : { env: compiledSelection.env }),
+        } as ClaudeSdkSettings);
   const querySettings =
     selectionSettings === undefined
       ? input.sdkSettings

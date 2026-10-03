@@ -232,6 +232,68 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.deepEqual(options.supportedDialogKinds, ["resume_return"]);
   });
 
+  it.each([
+    ["200k", "claude-opus-4-6", "1"],
+    ["1m", "claude-opus-4-6[1m]", "0"],
+  ])("passes the %s context window alongside other selection settings", (window, model, env) => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-opus-4-6",
+        options: [
+          { id: "contextWindow", value: window },
+          { id: "fastMode", value: true },
+        ],
+      },
+      nativeThreadId: "native-thread-context-window",
+      resume: false,
+      cwd: "/workspace",
+    });
+
+    assert.equal(options.model, model);
+    assert.deepEqual(options.settings, {
+      fastMode: true,
+      env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: env },
+      showThinkingSummaries: true,
+    });
+  });
+
+  it("preserves the context window environment when applying automatic compaction", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-opus-4-6",
+        options: [{ id: "contextWindow", value: "200k" }],
+      },
+      nativeThreadId: "native-thread-context-auto-compact",
+      resume: false,
+      cwd: "/workspace",
+      settings: AUTO_COMPACT_CLAUDE_SETTINGS,
+    });
+
+    assert.deepEqual(options.settings, {
+      env: { CLAUDE_CODE_DISABLE_1M_CONTEXT: "1" },
+      autoCompactWindow: 300_000,
+      showThinkingSummaries: true,
+    });
+  });
+
+  it("omits the settings env key for a model without a context selector", () => {
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      },
+      nativeThreadId: "native-thread-fixed-context",
+      resume: false,
+      cwd: "/workspace",
+    });
+
+    assert.notProperty(options.settings, "env");
+    assert.deepEqual(options.settings, { alwaysThinkingEnabled: false });
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     assert.deepEqual(
       ClaudeAdapterV2.claudeUserInputQuestions({
@@ -842,6 +904,23 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
 });
 
 describe("ClaudeAdapterV2 context usage", () => {
+  it.each([
+    ["200k", 200_000],
+    ["1m", 1_000_000],
+  ] as const)("projects Opus 4.6 usage against its %s context window", (window, maxTokens) => {
+    const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      { input_tokens: 42_000, output_tokens: 1_000 },
+      {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-opus-4-6",
+        options: [{ id: "contextWindow", value: window }],
+      },
+      "2026-08-29T00:00:00.000Z",
+    );
+
+    assert.equal(usage.maxTokens, maxTokens);
+  });
+
   it("projects assistant usage against the selected context window", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {

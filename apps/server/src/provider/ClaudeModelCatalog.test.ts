@@ -4,9 +4,11 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import type { ModelManifestData } from "./ModelManifest.ts";
 import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowEnv,
   resolveClaudeCatalogContextWindowTokens,
   resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
@@ -71,6 +73,48 @@ const manifest = (): ModelManifestData => ({
 });
 
 describe("Claude model catalog", () => {
+  it.each([
+    ["claude-opus-4-6", "200k", "1"],
+    ["claude-opus-4-6", "1m", "0"],
+    ["opus-4.6", "200k", "1"],
+    ["opus-4.6", "1m", "0"],
+  ])("selects the runtime context window for %s at %s", (model, window, expected) => {
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextWindowEnv(BUNDLED_CLAUDE_MODEL_CATALOG, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model,
+        options: [{ id: "contextWindow", value: window }],
+      }),
+      { CLAUDE_CODE_DISABLE_1M_CONTEXT: expected },
+    );
+  });
+
+  it.each([
+    ["claude-opus-4-6", "0"],
+    ["claude-sonnet-4-6", "1"],
+  ])("uses the default context window for %s", (model, expected) => {
+    assert.deepStrictEqual(
+      resolveClaudeCatalogContextWindowEnv(BUNDLED_CLAUDE_MODEL_CATALOG, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model,
+      }),
+      { CLAUDE_CODE_DISABLE_1M_CONTEXT: expected },
+    );
+  });
+
+  it.each(["claude-opus-4-7", "claude-haiku-4-5", "claude-custom"])(
+    "leaves context environment unset for %s without a selector",
+    (model) => {
+      assert.isUndefined(
+        resolveClaudeCatalogContextWindowEnv(BUNDLED_CLAUDE_MODEL_CATALOG, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model,
+          options: [{ id: "contextWindow", value: "200k" }],
+        }),
+      );
+    },
+  );
+
   it("resolves capacity from selected options and fixed catalog windows without guessing custom models", () => {
     const source = manifest();
     const profile = source.providers!.claudeAgent!.profiles.synthetic!;

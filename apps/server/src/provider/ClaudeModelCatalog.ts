@@ -249,6 +249,26 @@ export function resolveClaudeCatalogApiModelId(
   return slug;
 }
 
+/**
+ * Claude Code runs a bare 1M-capable slug at 1M unless
+ * `CLAUDE_CODE_DISABLE_1M_CONTEXT` is set, so the model suffix alone cannot
+ * select 200k. For models with a context window selector, state the window
+ * both ways so the selection, not a user's settings.json, decides it (the CLI
+ * also refuses a `[1m]` slug while the variable is set). Models without a
+ * selector keep whatever the user configured.
+ */
+export function resolveClaudeCatalogContextWindowEnv(
+  catalog: ClaudeModelCatalog,
+  modelSelection: ModelSelection,
+): { readonly CLAUDE_CODE_DISABLE_1M_CONTEXT: "0" | "1" } | undefined {
+  const tokensByWindow = resolveClaudeCatalogModel(catalog, modelSelection.model)?.runtime
+    .contextWindowTokens;
+  const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
+  const tokens = contextWindow ? tokensByWindow?.[contextWindow] : undefined;
+  if (tokens === undefined) return undefined;
+  return { CLAUDE_CODE_DISABLE_1M_CONTEXT: tokens <= 200_000 ? "1" : "0" };
+}
+
 export function resolveClaudeCatalogContextWindowTokens(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection | undefined,

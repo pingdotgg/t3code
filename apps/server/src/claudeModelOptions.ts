@@ -12,6 +12,7 @@ import {
   isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogContextWindowEnv,
   resolveClaudeCatalogEffort,
   type ClaudeModelCatalog,
 } from "./provider/ClaudeModelCatalog.ts";
@@ -21,6 +22,8 @@ export interface CompiledClaudeModelSelection {
   readonly effort: string | undefined;
   readonly promptEffort: string | undefined;
   readonly settings: Readonly<Record<string, boolean>>;
+  /** Flag-settings env; it outranks env from the user's settings files. */
+  readonly env: Readonly<Record<string, string>> | undefined;
   readonly queryIdentity: string;
 }
 
@@ -48,12 +51,14 @@ export function compileClaudeModelSelection(
     ...(isClaudeCatalogUltracodeEffort(resolvedEffort) ? { ultracode: true } : {}),
   };
   const apiModelId = resolveClaudeCatalogApiModelId(catalog, selection);
+  const env = resolveClaudeCatalogContextWindowEnv(catalog, selection);
   const promptEffort = resolvePromptInjectedEffort(capabilities, rawEffort) ?? undefined;
   return {
     apiModelId,
     effort,
     promptEffort,
     settings,
-    queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings }),
+    env,
+    queryIdentity: JSON.stringify({ apiModelId, effort: effort ?? null, settings, env }),
   };
 }
