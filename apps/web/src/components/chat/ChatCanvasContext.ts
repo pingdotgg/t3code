@@ -4,6 +4,7 @@ import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLay
 
 export const ChatCanvasContext = createContext<{
   container: { width: number; height: number };
+  lane: { padding: number; minChatWidth: number };
   layout: ReturnType<typeof resolveChatCanvasLayout>;
   previewKey: string | null;
   reportPreview: (preview: ChatCanvasPreview) => void;

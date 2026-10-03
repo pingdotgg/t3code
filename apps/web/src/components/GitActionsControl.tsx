@@ -1880,7 +1880,7 @@ export default function GitActionsControl({
             // the output row expands below.
             <GitActionElapsedTime
               startedAtMs={gitActionProgress.startedAtMs}
-              className="flex h-9 shrink-0 items-center self-start pe-2.5 text-2xs font-normal tabular-nums text-muted-foreground"
+              className="flex h-8 shrink-0 items-center self-start pe-2.5 text-2xs font-normal tabular-nums text-muted-foreground"
             />
           ) : (
             <>
