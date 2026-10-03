@@ -583,62 +583,6 @@ export function VoiceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="This client">
-        <SettingsRow
-          {...searchableSetting("transcription-environment")}
-          description="Run voice transcription on this environment for every thread."
-          control={
-            <Select
-              disabled={!clientSettingsHydrated || operation !== null}
-              value={
-                selectedEnvironmentId
-                  ? environmentValue(selectedEnvironmentId)
-                  : PRIMARY_ENVIRONMENT
-              }
-              onValueChange={(value) => {
-                if (!value) return;
-                if (value === PRIMARY_ENVIRONMENT) {
-                  void updateClientSettings({ voiceTranscriptionEnvironmentId: null });
-                  return;
-                }
-                const selectedEnvironment = environments.find(
-                  (environment) => environmentValue(environment.environmentId) === value,
-                );
-                if (selectedEnvironment)
-                  void updateClientSettings({
-                    voiceTranscriptionEnvironmentId: selectedEnvironment.environmentId,
-                  });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
-                <SelectValue>{selectedEnvironmentLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value={PRIMARY_ENVIRONMENT}>
-                  {primaryEnvironment
-                    ? `${primaryEnvironment.label} (Primary)`
-                    : "Primary environment"}
-                </SelectItem>
-                {unavailableSelectedEnvironmentId !== null ? (
-                  <SelectItem value={environmentValue(unavailableSelectedEnvironmentId)}>
-                    Selected environment (Unavailable)
-                  </SelectItem>
-                ) : null}
-                {environments
-                  .filter((environment) => environment.environmentId !== primaryEnvironmentId)
-                  .map((environment) => (
-                    <SelectItem
-                      key={environment.environmentId}
-                      value={environmentValue(environment.environmentId)}
-                    >
-                      {environment.label}
-                    </SelectItem>
-                  ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-      </SettingsSection>
       <SettingsSection title="Input">
         <MicrophoneTest
           key={selectedMicrophone}
@@ -725,10 +669,61 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
-      <SettingsSection
-        title={`Transcription on ${selectedEnvironmentLabel}`}
-        id={searchableSetting("local-voice-input").id}
-      >
+      <SettingsSection title="Transcription" id={searchableSetting("local-voice-input").id}>
+        <SettingsRow
+          {...searchableSetting("transcription-environment")}
+          description="Choose where voice transcription runs for every thread."
+          control={
+            <Select
+              disabled={!clientSettingsHydrated || operation !== null}
+              value={
+                selectedEnvironmentId
+                  ? environmentValue(selectedEnvironmentId)
+                  : PRIMARY_ENVIRONMENT
+              }
+              onValueChange={(value) => {
+                if (!value) return;
+                if (value === PRIMARY_ENVIRONMENT) {
+                  void updateClientSettings({ voiceTranscriptionEnvironmentId: null });
+                  return;
+                }
+                const selectedEnvironment = environments.find(
+                  (environment) => environmentValue(environment.environmentId) === value,
+                );
+                if (selectedEnvironment)
+                  void updateClientSettings({
+                    voiceTranscriptionEnvironmentId: selectedEnvironment.environmentId,
+                  });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Transcription environment" className="max-w-80">
+                <SelectValue>{selectedEnvironmentLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value={PRIMARY_ENVIRONMENT}>
+                  {primaryEnvironment
+                    ? `${primaryEnvironment.label} (Primary)`
+                    : "Primary environment"}
+                </SelectItem>
+                {unavailableSelectedEnvironmentId !== null ? (
+                  <SelectItem value={environmentValue(unavailableSelectedEnvironmentId)}>
+                    Selected environment (Unavailable)
+                  </SelectItem>
+                ) : null}
+                {environments
+                  .filter((environment) => environment.environmentId !== primaryEnvironmentId)
+                  .map((environment) => (
+                    <SelectItem
+                      key={environment.environmentId}
+                      value={environmentValue(environment.environmentId)}
+                    >
+                      {environment.label}
+                    </SelectItem>
+                  ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
         <TranscriptionTest
           key={`${environmentId}:${activeModel?.id}:${selectedMicrophone}`}
           prepared={prepared}

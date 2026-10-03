@@ -68,7 +68,7 @@ export function VoicePostProcessingSettings() {
       : settings.speechPostProcessingPrompt.mode;
 
   return (
-    <SettingsSection title="Improve transcripts">
+    <SettingsSection title="Post-processing">
       <SettingsRow
         {...searchableSetting("speech-post-processing")}
         description="Enable cleanup for this client. Cleanup runs on each thread’s environment using its configured provider."
