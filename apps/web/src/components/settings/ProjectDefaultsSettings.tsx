@@ -8,6 +8,13 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
+import { useBrowserDefaults } from "../../browser/browserDefaults";
+import { isElectron } from "../../env";
+import {
+  getClientSettings,
+  useClientSettingsHydrated,
+  useUpdateClientSettings,
+} from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -15,6 +22,7 @@ import {
   resolveDefaultProviderModelSelection,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
+import type { SidebarProjectGroupMember } from "../../sidebarProjectGrouping";
 import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
@@ -496,8 +504,77 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               />
             }
           />
+          {isProjectScope && isElectron ? (
+            <ProjectBrowserProfileRow members={scope.members} />
+          ) : null}
         </>
       )}
     </SettingsSection>
+  );
+}
+
+/**
+ * Client-local like the profiles it names, so it writes each checkout's
+ * physical key directly instead of routing through the scoped server settings.
+ */
+function ProjectBrowserProfileRow({
+  members,
+}: {
+  members: ReadonlyArray<SidebarProjectGroupMember>;
+}) {
+  const { profiles, profileId: globalProfileId, projectProfileIds } = useBrowserDefaults();
+  const settingsHydrated = useClientSettingsHydrated();
+  const updateClientSettings = useUpdateClientSettings();
+  const listedProfiles = profiles.filter((profile) => profile.kind !== "incognito");
+  const globalProfile = listedProfiles.find((profile) => profile.id === globalProfileId);
+  const memberOverrides = members.map((member) =>
+    listedProfiles.find((profile) => profile.id === projectProfileIds[member.physicalProjectKey]),
+  );
+  const effective = new Set(memberOverrides.map((profile) => profile ?? globalProfile));
+  // Checkouts set separately can disagree; show that instead of one of them.
+  const selected = effective.size === 1 ? [...effective][0] : undefined;
+
+  const setProjectProfile = (profileId: string | null) => {
+    const next = { ...getClientSettings().browserProjectProfileIds };
+    for (const member of members) {
+      if (profileId === null) delete next[member.physicalProjectKey];
+      else next[member.physicalProjectKey] = profileId;
+    }
+    void updateClientSettings({ browserProjectProfileIds: next });
+  };
+
+  return (
+    <SettingsRow
+      {...searchableSetting("project-browser-profile")}
+      description="New tabs in this project, including ones agents open, use this profile."
+      resetAction={
+        memberOverrides.some(Boolean) ? (
+          <SettingResetButton
+            label="project browser profile"
+            onClick={() => setProjectProfile(null)}
+          />
+        ) : null
+      }
+      control={
+        <Select
+          disabled={!settingsHydrated}
+          value={selected?.id ?? null}
+          onValueChange={(value) => {
+            if (value !== null) setProjectProfile(value);
+          }}
+        >
+          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Browser profile">
+            <SelectValue>{selected?.name ?? "Mixed"}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {listedProfiles.map((profile) => (
+              <SelectItem hideIndicator key={profile.id} value={profile.id}>
+                {profile.name}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }
