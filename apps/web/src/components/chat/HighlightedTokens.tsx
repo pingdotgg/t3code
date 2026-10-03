@@ -41,13 +41,14 @@ export function HighlightedTokens({
   const lines = useMemo(
     () =>
       keyedLines(
+        code,
         highlighter.codeToTokens(code, { lang: language, theme: resolveDiffThemeName(theme) })
           .tokens,
       ),
     [code, highlighter, language, theme],
   );
 
-  return lines.map(({ key, tokens }, index) => (
+  return lines.map(({ key, tokens, ending }) => (
     <span key={key}>
       {wordClassName
         ? wordsOf(tokens).map((part) =>
@@ -68,19 +69,28 @@ export function HighlightedTokens({
               {token.content}
             </span>
           ))}
-      {index < lines.length - 1 ? "\n" : null}
+      {ending}
     </span>
   ));
 }
 
-/** Keys each line by its start offset, which stays unique when several lines are empty. */
-function keyedLines<Token extends SyntaxToken>(lines: ReadonlyArray<ReadonlyArray<Token>>) {
+/**
+ * Keys each line by its start offset, which stays unique when several lines
+ * are empty, and pairs it with the line ending `code` has after it. Shiki drops
+ * `\n` and `\r\n` from tokens alike, so CRLF has to come back from the source.
+ */
+export function keyedLines<Token extends SyntaxToken>(
+  code: string,
+  lines: ReadonlyArray<ReadonlyArray<Token>>,
+) {
+  const endings = code.match(/\r?\n/gu) ?? [];
   let lineStart = 0;
-  return lines.map((tokens) => {
+  return lines.map((tokens, index) => {
     const text = tokens.map((token) => token.content).join("");
     const key = `${lineStart}:${text}`;
-    lineStart += text.length + 1;
-    return { key, tokens };
+    const ending = endings[index] ?? "";
+    lineStart += text.length + ending.length;
+    return { key, tokens, ending };
   });
 }
 
