@@ -83,9 +83,14 @@ describe("evaluatePullRequestWatch", () => {
         running: 0,
       },
     ]);
-    // Rerunning one of them is not news until the rerun finishes.
+    // Rerunning one of them is not news until the rerun finishes, and then it is.
     const rerunning = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
-    assert.deepEqual(evaluatePullRequestWatch(final.next, rerunning, noRemarks).changes, []);
+    const quiet = evaluatePullRequestWatch(final.next, rerunning, noRemarks);
+    assert.deepEqual(quiet.changes, []);
+    assert.equal(
+      evaluatePullRequestWatch(quiet.next, finished, noRemarks).changes[0]?.kind,
+      "checks-failed",
+    );
 
     // A push that fails the same way before a pass ever sees it pending is still news.
     const pushed = detail({ ...failing, headSha: "bbbbbbbbbb" });

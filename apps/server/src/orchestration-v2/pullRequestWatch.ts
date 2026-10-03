@@ -71,13 +71,10 @@ export function evaluatePullRequestWatch(
 
   let checks = restarted ? null : watch.checks;
   // An early failure is reported while other checks run, and the final result once they finish.
-  // A rerun that leaves another failure in place is not news until it finishes.
-  if (
-    outcome !== null &&
-    outcome !== "pending" &&
-    outcome !== checks &&
-    !(checks === "failed" && outcome === "failing")
-  ) {
+  // A rerun that leaves another failure in place is recorded quietly and reported when it ends.
+  if (checks === "failed" && outcome === "failing") {
+    checks = "failing";
+  } else if (outcome !== null && outcome !== "pending" && outcome !== checks) {
     changes.push(
       outcome === "passing"
         ? { kind: "checks-passed", count: detail.checks.length }
