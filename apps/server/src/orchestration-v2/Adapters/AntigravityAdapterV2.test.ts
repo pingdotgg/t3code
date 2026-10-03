@@ -221,6 +221,17 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/write_text_file"),
       );
       assert.equal(yield* fileSystem.readFileString(insidePath), "inside");
+      const workspaceAlias = path.join(outside, "workspace-alias");
+      yield* fileSystem.symlink(workspace, workspaceAlias);
+      const nestedPath = path.join(workspaceAlias, "new", "nested", "inside.ts");
+      yield* writeTextFile(
+        { sessionId: "mock-session-1", path: nestedPath, content: "nested" },
+        context("fs/write_text_file"),
+      );
+      assert.equal(
+        yield* fileSystem.readFileString(path.join(workspace, "new", "nested", "inside.ts")),
+        "nested",
+      );
       const pasted = yield* readTextFile(
         { sessionId: "mock-session-1", path: attachment },
         context("fs/read_text_file"),
