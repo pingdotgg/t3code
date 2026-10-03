@@ -77,7 +77,7 @@ function CommentIdentity({
       ? new URL(`/${encodeURIComponent(actor.login)}`, detail.url).toString()
       : null;
   return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
       <Tooltip>
         <TooltipTrigger
@@ -214,7 +214,7 @@ function CollapsedComment({
     <Collapsible open={open} onOpenChange={setOpen}>
       <article className="group rounded-lg border border-border/60 [contain-intrinsic-block-size:44px] [content-visibility:auto]">
         <div className="p-3">
-          <div className="flex flex-wrap items-start gap-2">
+          <div className="flex flex-wrap items-baseline gap-2">
             <CommentIdentity comment={comment} detail={detail} />
             <CollapsibleTrigger
               ref={statusTriggerRef}
@@ -668,8 +668,8 @@ export function PullRequestSummaryTab({
         // highlighted code, and the conversation is below the description either way.
         className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-start gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
@@ -683,12 +683,19 @@ export function PullRequestSummaryTab({
             <Button
               size="xs"
               variant="ghost"
-              className="-mt-1 shrink-0"
+              className="shrink-0"
               disabled={pendingFinding !== null && pendingFinding !== undefined}
               onClick={() => onFixFinding(finding)}
             >
-              <HammerIcon className="size-3" />
-              {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixFindingLabel}
+              {/* Export the text baseline rather than the hammer icon's bottom edge. */}
+              <span className="inline-flex items-baseline gap-1">
+                <HammerIcon className="size-3 self-center" />
+                <span>
+                  {pendingFinding === pullRequestFindingKey(finding)
+                    ? "Preparing..."
+                    : fixFindingLabel}
+                </span>
+              </span>
             </Button>
           ) : null}
           {reactionBar}
