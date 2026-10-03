@@ -1917,6 +1917,7 @@ describe("incremental orchestration updates", () => {
         checkpointRef: CheckpointRef.make("checkpoint-1"),
         status: "ready",
         files: [{ path: "snapshot.ts", kind: "modified", additions: 2, deletions: 1 }],
+        transitionFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 1 }],
         agentTouchedPaths: ["turn.ts"],
         turnFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 0 }],
         assistantMessageId: MessageId.make("assistant-1"),
@@ -1928,6 +1929,7 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.turnDiffSummaries).toMatchObject([
       {
         files: [{ path: "snapshot.ts", kind: "modified", additions: 2, deletions: 1 }],
+        transitionFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 1 }],
         agentTouchedPaths: ["turn.ts"],
         turnFiles: [{ path: "turn.ts", kind: "modified", additions: 1, deletions: 0 }],
       },

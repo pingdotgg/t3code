@@ -20,7 +20,7 @@ layer("113_ProjectionThreadContext", (it) => {
       assert.isFalse(yield* hasContextColumn("projection_thread_messages"));
       assert.isFalse(yield* hasContextColumn("projection_queued_turns"));
 
-      yield* runMigrations({ toMigrationInclusive: 113 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       assert.isTrue(yield* hasContextColumn("projection_thread_messages"));
       assert.isTrue(yield* hasContextColumn("projection_queued_turns"));
     }),
@@ -28,7 +28,7 @@ layer("113_ProjectionThreadContext", (it) => {
 
   it.effect("is safe to replay when the column already exists", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 113 });
+      yield* runMigrations({ toMigrationInclusive: 114 });
       const migration = yield* Effect.promise(() => import("./113_ProjectionThreadContext.ts"));
       yield* migration.default;
 

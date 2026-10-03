@@ -197,6 +197,9 @@ const make = Effect.gen(function* () {
     );
 
   const getTurnDiffFileDelta: DiffStateQueryShape["getTurnDiffFileDelta"] = (input) =>
+    // Unfiltered: DiffFileDelta.metadata is range-wide by contract, and
+    // applyDiffFileDelta assigns it to the whole snapshot, so scoping this diff
+    // to one path would report a single-file header for the full file set.
     getTurnDiffState(input).pipe(
       Effect.map((state) => {
         const delta = toFileDelta({ state, path: input.path });

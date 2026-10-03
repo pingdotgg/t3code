@@ -31,6 +31,7 @@ export const ProjectionCheckpoint = Schema.Struct({
   files: Schema.Array(OrchestrationCheckpointFile),
   agentTouchedPaths: Schema.Array(TrimmedNonEmptyString),
   turnFiles: Schema.Array(OrchestrationCheckpointFile),
+  transitionFiles: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });

@@ -4659,6 +4659,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           files: command.files,
           agentTouchedPaths: command.agentTouchedPaths,
           turnFiles: command.turnFiles,
+          transitionFiles: command.transitionFiles,
           assistantMessageId: command.assistantMessageId ?? null,
           completedAt: command.completedAt,
         },

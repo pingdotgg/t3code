@@ -1599,9 +1599,10 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   workspaceRoot: string | undefined;
 }) {
   if (!turnSummary) return null;
-  const snapshotFiles = turnSummary.files;
-  const turnFiles = turnSummary.turnFiles ?? [];
-  if (snapshotFiles.length === 0 && turnFiles.length === 0) return null;
+  // The turn's own transition set, matching the single-turn range the card opens.
+  // `files` is cumulative and would advertise earlier turns' changes here.
+  const turnFiles = turnSummary.transitionFiles ?? turnSummary.turnFiles ?? [];
+  if (turnFiles.length === 0) return null;
 
   return (
     <AssistantChangedFilesSectionInner
@@ -1627,8 +1628,7 @@ function AssistantChangedFilesSectionInner({
   workspaceRoot: string | undefined;
 }) {
   const [collapsed, setCollapsed] = useState(false);
-  const turnFiles = turnSummary.turnFiles ?? [];
-  const visibleFiles = turnFiles;
+  const visibleFiles = turnSummary.transitionFiles ?? turnSummary.turnFiles ?? [];
   const summaryStat = summarizeTurnDiffStats(visibleFiles);
   if (summaryStat.additions === 0 && summaryStat.deletions === 0) return null;
 

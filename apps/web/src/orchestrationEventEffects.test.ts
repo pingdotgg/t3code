@@ -106,6 +106,7 @@ describe("deriveOrchestrationBatchEffects", () => {
         files: [],
         agentTouchedPaths: [],
         turnFiles: [],
+        transitionFiles: [],
         assistantMessageId: MessageId.make("assistant-1"),
         completedAt: "2026-02-27T00:00:03.000Z",
       }),

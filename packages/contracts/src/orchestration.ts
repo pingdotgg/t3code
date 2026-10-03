@@ -711,6 +711,9 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -2041,6 +2044,9 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.optional(MessageId),
   checkpointTurnCount: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -2601,6 +2607,9 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
@@ -3206,6 +3215,9 @@ const ProjectionCheckpointRow = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   turnFiles: OrchestrationCheckpointFiles.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  transitionFiles: OrchestrationCheckpointFiles.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
