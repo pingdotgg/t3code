@@ -6,6 +6,7 @@ import { defineConfig } from "vite";
 import pkg from "./package.json" with { type: "json" };
 
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { vitestWebWorkerAlias } from "../../scripts/lib/vitestWebWorkerAlias.ts";
 import {
   clientConfigurationFingerprint,
   clientSourceFingerprint,
@@ -59,6 +60,12 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
 export default defineConfig({
+  // `pnpm test` runs this package's own test script, so Vitest resolves this
+  // config rather than the repository root one. Any test-only setting must be
+  // mirrored here or it silently does not apply.
+  test: {
+    alias: vitestWebWorkerAlias,
+  },
   plugins: [
     {
       name: "t3-client-build-stamp",
