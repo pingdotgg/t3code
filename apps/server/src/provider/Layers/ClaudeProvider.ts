@@ -172,6 +172,11 @@ function apiProviderAuthMetadata(
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
 
+// `get_usage` makes the CLI fetch the account's usage from Anthropic, which
+// takes 2.7–4.3s on a Max account with Claude Code 2.1.283. The shared 4s
+// budget cut it off on most probes and showed "Could not read limits."
+const CLAUDE_USAGE_TIMEOUT_MS = 15_000;
+
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
  * health check from configured MCP servers.
@@ -366,7 +371,11 @@ const probeClaudeCapabilities = (
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         const usageResult = yield* Effect.tryPromise(() =>
           q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-        ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result);
+        ).pipe(
+          Effect.timeout(CLAUDE_USAGE_TIMEOUT_MS),
+          Effect.tapError((cause) => Effect.logWarning("Claude usage read failed.", { cause })),
+          Effect.result,
+        );
         const usage = Result.isSuccess(usageResult)
           ? {
               rate_limits_available: usageResult.success.rate_limits_available,

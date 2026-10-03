@@ -158,7 +158,7 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
       decodeClaudeSettings({ binaryPath: "claude" }),
     ).pipe(Effect.forkChild);
     yield* Deferred.await(usageStarted);
-    yield* TestClock.adjust("4 seconds");
+    yield* TestClock.adjust("15 seconds");
     const capabilities = yield* Fiber.join(probe);
     assert.equal(capabilities?.email, "dev@example.com");
     assert.equal(capabilities?.subscriptionType, "pro");
@@ -168,5 +168,42 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
     ]);
     assert.equal(capabilities?.usage, undefined);
     assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("keeps usage that answers after the shared 4 second budget", () =>
+  Effect.gen(function* () {
+    const usageStarted = yield* Deferred.make<void>();
+    let answerUsage: (() => void) | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(() => {
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com", subscriptionType: "max", tokenSource: "oauth" },
+          commands: [],
+        }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
+          Deferred.doneUnsafe(usageStarted, Effect.void);
+          return new Promise((resolve) => {
+            answerUsage = () =>
+              resolve({
+                rate_limits_available: true,
+                rate_limits: { five_hour: { utilization: 22, resets_at: "2026-09-28T09:50:00Z" } },
+              });
+          });
+        },
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const probe = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(usageStarted);
+    yield* TestClock.adjust("5 seconds");
+    answerUsage?.();
+    const capabilities = yield* Fiber.join(probe);
+    assert.deepEqual(capabilities?.usage, {
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: 22, resets_at: "2026-09-28T09:50:00Z" } },
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
