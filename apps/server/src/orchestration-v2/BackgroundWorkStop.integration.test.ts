@@ -38,9 +38,9 @@ const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
-// A Codex turn leaves a dev server running, then the thread moves to another
+// Codex turns leave commands running, then the thread moves to another
 // provider thread (a provider switch). Stop on the newer, settled run must
-// still reach the Codex session that owns the dev server.
+// reach both provider threads and end all of the Codex work.
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -226,50 +226,33 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         yield* Fiber.join(settled);
         yield* worker.drain();
 
-        // The thread moved on: a later run settled on another provider thread
-        // whose session is gone.
-        const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
-        const runId = RunId.make("run:after-switch");
-        const attemptId = RunAttemptId.make("attempt:after-switch");
-        const nodeId = NodeId.make("node:after-switch");
-        yield* sink.write({
-          events: [
+        const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
+          .providerThreads[0]!;
+        // A settled run with its root node, attempt, provider turn and,
+        // optionally, a command it left running.
+        const settledRun = (input: {
+          readonly ordinal: number;
+          readonly providerThreadId: ProviderThreadId;
+          readonly runningCommandId?: TurnItemId;
+        }) => {
+          const runId = RunId.make(`run:${input.ordinal}`);
+          const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
+          const nodeId = NodeId.make(`node:${input.ordinal}`);
+          const providerTurnId = ProviderTurnId.make(`provider-turn:${input.ordinal}`);
+          const events: Array<OrchestrationV2DomainEvent> = [
             {
-              id: EventId.make("switch:provider-thread"),
-              type: "provider-thread.updated",
-              threadId,
-              occurredAt: now,
-              payload: {
-                id: otherProviderThreadId,
-                driver,
-                providerInstanceId: instanceId,
-                providerSessionId: null,
-                appThreadId: threadId,
-                ownerNodeId: null,
-                nativeThreadRef: null,
-                nativeConversationHeadRef: null,
-                status: "idle",
-                firstRunOrdinal: 2,
-                lastRunOrdinal: 2,
-                handoffIds: [],
-                forkedFrom: null,
-                createdAt: now,
-                updatedAt: now,
-              },
-            },
-            {
-              id: EventId.make("switch:run"),
+              id: EventId.make(`run:${input.ordinal}`),
               type: "run.created",
               threadId,
               occurredAt: now,
               payload: {
                 id: runId,
                 threadId,
-                ordinal: 2,
+                ordinal: input.ordinal,
                 providerInstanceId: instanceId,
                 modelSelection,
-                providerThreadId: otherProviderThreadId,
-                userMessageId: MessageId.make("message:after-switch"),
+                providerThreadId: input.providerThreadId,
+                userMessageId: MessageId.make(`message:${input.ordinal}`),
                 rootNodeId: nodeId,
                 activeAttemptId: attemptId,
                 status: "completed",
@@ -281,7 +264,7 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               },
             },
             {
-              id: EventId.make("switch:node"),
+              id: EventId.make(`node:${input.ordinal}`),
               type: "node.updated",
               threadId,
               runId,
@@ -295,8 +278,8 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
                 kind: "root_turn",
                 status: "completed",
                 countsForRun: true,
-                providerThreadId: otherProviderThreadId,
-                providerTurnId: null,
+                providerThreadId: input.providerThreadId,
+                providerTurnId,
                 nativeItemRef: null,
                 runtimeRequestId: null,
                 checkpointScopeId: null,
@@ -305,7 +288,7 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               },
             },
             {
-              id: EventId.make("switch:attempt"),
+              id: EventId.make(`attempt:${input.ordinal}`),
               type: "run-attempt.created",
               threadId,
               occurredAt: now,
@@ -315,8 +298,8 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
                 attemptOrdinal: 1,
                 rootNodeId: nodeId,
                 providerInstanceId: instanceId,
-                providerThreadId: otherProviderThreadId,
-                providerTurnId: ProviderTurnId.make("provider-turn:after-switch"),
+                providerThreadId: input.providerThreadId,
+                providerTurnId,
                 reason: "initial",
                 status: "completed",
                 startedAt: now,
@@ -324,22 +307,79 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               },
             },
             {
-              id: EventId.make("switch:turn"),
+              id: EventId.make(`provider-turn:${input.ordinal}`),
               type: "provider-turn.updated",
               threadId,
               occurredAt: now,
               payload: {
-                id: ProviderTurnId.make("provider-turn:after-switch"),
-                providerThreadId: otherProviderThreadId,
+                id: providerTurnId,
+                providerThreadId: input.providerThreadId,
                 nodeId,
                 runAttemptId: attemptId,
                 nativeTurnRef: null,
-                ordinal: 1,
+                ordinal: input.ordinal,
                 status: "completed",
                 startedAt: now,
                 completedAt: now,
               },
             },
+          ];
+          if (input.runningCommandId !== undefined) {
+            events.push({
+              id: EventId.make(`command:${input.ordinal}`),
+              type: "turn-item.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                id: input.runningCommandId,
+                threadId,
+                runId,
+                nodeId,
+                providerThreadId: input.providerThreadId,
+                providerTurnId,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: input.ordinal * 100,
+                status: "running",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                type: "command_execution",
+                input: "vp run test --watch",
+              },
+            });
+          }
+          return { runId, providerTurnId, events };
+        };
+
+        // Codex leaves a second command in a later run. Then the thread moves
+        // on to another provider thread, which also has a live session.
+        const watcherId = TurnItemId.make("turn-item:watcher");
+        const laterCodexRun = settledRun({
+          ordinal: 2,
+          providerThreadId: codexProviderThread.id,
+          runningCommandId: watcherId,
+        });
+        const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
+        const latestRun = settledRun({ ordinal: 3, providerThreadId: otherProviderThreadId });
+        yield* sink.write({
+          events: [
+            ...laterCodexRun.events,
+            {
+              id: EventId.make("provider-thread:other"),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...codexProviderThread,
+                id: otherProviderThreadId,
+                firstRunOrdinal: 3,
+                lastRunOrdinal: 3,
+              },
+            },
+            ...latestRun.events,
           ],
         });
 
@@ -347,18 +387,25 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
           type: "run.interrupt",
           commandId: CommandId.make("stop-background-work"),
           threadId,
-          runId,
+          runId: latestRun.runId,
         });
         yield* worker.drain();
 
-        assert.deepEqual(
+        // Stop reaches both provider threads. The Codex one is interrupted at
+        // its latest pending work, so its settle covers both of its runs.
+        assert.sameDeepMembers(
           interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
-          [[codexTurn.providerThreadId, codexTurn.id]],
+          [
+            [otherProviderThreadId, latestRun.providerTurnId],
+            [codexProviderThread.id, laterCodexRun.providerTurnId],
+          ],
         );
         const after = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(
-          after.turnItems.find((item) => item.id === devServerId)?.status,
-          "interrupted",
+        assert.deepEqual(
+          [devServerId, watcherId].map(
+            (id) => after.turnItems.find((item) => item.id === id)?.status,
+          ),
+          ["interrupted", "interrupted"],
         );
       }).pipe(
         Effect.provide(

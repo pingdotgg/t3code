@@ -8115,23 +8115,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Work on a dead session is settled with this run's below.
       const otherProviderInterrupts: Array<PendingOrchestrationEffectV2> = [];
       if (hasBackgroundWork) {
-        const checkedProviderThreadIds = new Set<string>([providerThread.id]);
+        const runOrdinals = new Map(
+          projection.runs.map((candidate) => [candidate.id, candidate.ordinal]),
+        );
+        const runOrdinalOf = (item: (typeof projection.turnItems)[number]) =>
+          item.runId === null ? -1 : (runOrdinals.get(item.runId) ?? -1);
+        // Each provider thread is interrupted at its latest pending item: that
+        // item's run bounds the settle follow-up, which must cover all of the
+        // thread's work.
+        const latestItemByProviderThread = new Map<
+          OrchestrationV2ProviderThread["id"],
+          (typeof projection.turnItems)[number]
+        >();
         for (const item of pendingBackgroundTurnItems({
           turnItems: projection.turnItems,
           runs: projection.runs,
         })) {
+          if (
+            item.providerThreadId == null ||
+            item.providerThreadId === providerThread.id ||
+            item.providerTurnId === null
+          ) {
+            continue;
+          }
+          const latest = latestItemByProviderThread.get(item.providerThreadId);
+          if (latest === undefined || runOrdinalOf(item) > runOrdinalOf(latest)) {
+            latestItemByProviderThread.set(item.providerThreadId, item);
+          }
+        }
+        for (const item of latestItemByProviderThread.values()) {
           const owner = projection.providerThreads.find(
             (candidate) => candidate.id === item.providerThreadId,
           );
           if (
             owner === undefined ||
-            checkedProviderThreadIds.has(owner.id) ||
             owner.providerSessionId === null ||
             item.providerTurnId === null
           ) {
             continue;
           }
-          checkedProviderThreadIds.add(owner.id);
           const ownerSession = yield* providerSessions
             .get(owner.providerSessionId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
