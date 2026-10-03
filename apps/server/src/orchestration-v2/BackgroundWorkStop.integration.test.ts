@@ -229,11 +229,11 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
         // A settled run with its root node, attempt, provider turn and,
-        // optionally, a command it left running.
+        // optionally, a command or native subagent it left running.
         const settledRun = (input: {
           readonly ordinal: number;
           readonly providerThreadId: ProviderThreadId;
-          readonly runningCommandId?: TurnItemId;
+          readonly runningItem?: { readonly id: TurnItemId; readonly kind: "command" | "subagent" };
         }) => {
           const runId = RunId.make(`run:${input.ordinal}`);
           const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
@@ -324,49 +324,73 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               },
             },
           ];
-          if (input.runningCommandId !== undefined) {
+          const item = input.runningItem;
+          if (item !== undefined) {
+            const base = {
+              id: item.id,
+              threadId,
+              runId,
+              nodeId,
+              providerThreadId: input.providerThreadId,
+              providerTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: input.ordinal * 100,
+              status: "running",
+              title: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            } as const;
             events.push({
-              id: EventId.make(`command:${input.ordinal}`),
+              id: EventId.make(`item:${input.ordinal}`),
               type: "turn-item.updated",
               threadId,
               runId,
               occurredAt: now,
-              payload: {
-                id: input.runningCommandId,
-                threadId,
-                runId,
-                nodeId,
-                providerThreadId: input.providerThreadId,
-                providerTurnId,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: input.ordinal * 100,
-                status: "running",
-                title: null,
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-                type: "command_execution",
-                input: "vp run test --watch",
-              },
+              payload:
+                item.kind === "command"
+                  ? { ...base, type: "command_execution", input: "vp run test --watch" }
+                  : {
+                      ...base,
+                      // A native subagent item names its own provider thread
+                      // but its parent's provider turn.
+                      providerThreadId: ProviderThreadId.make("provider-thread:codex-subagent"),
+                      type: "subagent",
+                      subagentId: NodeId.make(`subagent:${input.ordinal}`),
+                      origin: "provider_native",
+                      driver,
+                      providerInstanceId: instanceId,
+                      childThreadId: null,
+                      prompt: "Review the change",
+                      result: null,
+                    },
             });
           }
           return { runId, providerTurnId, events };
         };
 
-        // Codex leaves a second command in a later run. Then the thread moves
-        // on to another provider thread, which also has a live session.
+        // Later Codex runs leave a second command and a native subagent. Then
+        // the thread moves on to another provider thread, which also has a
+        // live session.
         const watcherId = TurnItemId.make("turn-item:watcher");
-        const laterCodexRun = settledRun({
+        const watcherRun = settledRun({
           ordinal: 2,
           providerThreadId: codexProviderThread.id,
-          runningCommandId: watcherId,
+          runningItem: { id: watcherId, kind: "command" },
+        });
+        const reviewerId = TurnItemId.make("turn-item:reviewer");
+        const reviewerRun = settledRun({
+          ordinal: 3,
+          providerThreadId: codexProviderThread.id,
+          runningItem: { id: reviewerId, kind: "subagent" },
         });
         const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
-        const latestRun = settledRun({ ordinal: 3, providerThreadId: otherProviderThreadId });
+        const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
         yield* sink.write({
           events: [
-            ...laterCodexRun.events,
+            ...watcherRun.events,
+            ...reviewerRun.events,
             {
               id: EventId.make("provider-thread:other"),
               type: "provider-thread.updated",
@@ -375,8 +399,8 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
               payload: {
                 ...codexProviderThread,
                 id: otherProviderThreadId,
-                firstRunOrdinal: 3,
-                lastRunOrdinal: 3,
+                firstRunOrdinal: 4,
+                lastRunOrdinal: 4,
               },
             },
             ...latestRun.events,
@@ -392,20 +416,21 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
         yield* worker.drain();
 
         // Stop reaches both provider threads. The Codex one is interrupted at
-        // its latest pending work, so its settle covers both of its runs.
+        // its latest pending work, the subagent's parent turn, so its settle
+        // covers all three Codex runs.
         assert.sameDeepMembers(
           interrupts.map((interrupt) => [interrupt.providerThread.id, interrupt.providerTurnId]),
           [
             [otherProviderThreadId, latestRun.providerTurnId],
-            [codexProviderThread.id, laterCodexRun.providerTurnId],
+            [codexProviderThread.id, reviewerRun.providerTurnId],
           ],
         );
         const after = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
-          [devServerId, watcherId].map(
+          [devServerId, watcherId, reviewerId].map(
             (id) => after.turnItems.find((item) => item.id === id)?.status,
           ),
-          ["interrupted", "interrupted"],
+          ["interrupted", "interrupted", "interrupted"],
         );
       }).pipe(
         Effect.provide(

@@ -8120,53 +8120,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         const runOrdinalOf = (item: (typeof projection.turnItems)[number]) =>
           item.runId === null ? -1 : (runOrdinals.get(item.runId) ?? -1);
-        // Each provider thread is interrupted at its latest pending item: that
-        // item's run bounds the settle follow-up, which must cover all of the
-        // thread's work.
-        const latestItemByProviderThread = new Map<
+        // Each provider thread is interrupted at its latest pending work: that
+        // turn's run bounds the settle follow-up, which must cover all of the
+        // thread's work. The target comes from the item's provider turn, since
+        // a native subagent item names its own provider thread but its
+        // parent's turn; interrupting the parent's turn reaches the subagent.
+        const latestTurnByProviderThread = new Map<
           OrchestrationV2ProviderThread["id"],
-          (typeof projection.turnItems)[number]
+          { readonly turn: (typeof projection.providerTurns)[number]; readonly runOrdinal: number }
         >();
         for (const item of pendingBackgroundTurnItems({
           turnItems: projection.turnItems,
           runs: projection.runs,
         })) {
-          if (
-            item.providerThreadId == null ||
-            item.providerThreadId === providerThread.id ||
-            item.providerTurnId === null
-          ) {
-            continue;
-          }
-          const latest = latestItemByProviderThread.get(item.providerThreadId);
-          if (latest === undefined || runOrdinalOf(item) > runOrdinalOf(latest)) {
-            latestItemByProviderThread.set(item.providerThreadId, item);
+          const turn = projection.providerTurns.find(
+            (candidate) => candidate.id === item.providerTurnId,
+          );
+          if (turn === undefined || turn.providerThreadId === providerThread.id) continue;
+          const runOrdinal = runOrdinalOf(item);
+          const latest = latestTurnByProviderThread.get(turn.providerThreadId);
+          if (latest === undefined || runOrdinal > latest.runOrdinal) {
+            latestTurnByProviderThread.set(turn.providerThreadId, { turn, runOrdinal });
           }
         }
-        for (const item of latestItemByProviderThread.values()) {
+        for (const { turn } of latestTurnByProviderThread.values()) {
           const owner = projection.providerThreads.find(
-            (candidate) => candidate.id === item.providerThreadId,
+            (candidate) => candidate.id === turn.providerThreadId,
           );
-          if (
-            owner === undefined ||
-            owner.providerSessionId === null ||
-            item.providerTurnId === null
-          ) {
-            continue;
-          }
+          if (owner === undefined || owner.providerSessionId === null) continue;
           const ownerSession = yield* providerSessions
             .get(owner.providerSessionId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
           if (Option.isNone(ownerSession)) continue;
           otherProviderInterrupts.push({
-            id: `effect:${command.commandId}:provider-turn.interrupt:${item.providerTurnId}`,
+            id: `effect:${command.commandId}:provider-turn.interrupt:${turn.id}`,
             commandId: command.commandId,
             threadId: command.threadId,
             request: {
               type: "provider-turn.interrupt",
               providerSessionId: owner.providerSessionId,
               providerThreadId: owner.id,
-              providerTurnId: item.providerTurnId,
+              providerTurnId: turn.id,
             },
           });
         }
