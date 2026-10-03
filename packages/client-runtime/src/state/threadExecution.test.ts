@@ -478,6 +478,18 @@ describe("threadRuntimeCanArchive", () => {
 });
 
 describe("presentPendingBackgroundWork", () => {
+  it.each(["Subagent:", "Subagent:   "])(
+    "falls back to the subagent noun when %s has no display name",
+    (description) => {
+      const presentation = presentPendingBackgroundWork([
+        { taskId: "unnamed", kind: "subagent", description },
+      ]);
+
+      expect(presentation?.title).toBe("Waiting on a subagent");
+      expect(presentation?.items[0]?.label).toBe("subagent");
+    },
+  );
+
   it.each([
     "/root/luna_window_properties",
     "Subagent: /root/luna_window_properties",

@@ -296,15 +296,17 @@ export function presentPendingBackgroundWork(
   const items = tasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
+      const label =
+        task.kind === "subagent" && description !== undefined
+          ? formatSubagentDisplayTitle(description).trim()
+          : description;
       return {
         taskId: task.taskId,
         kind: task.kind,
         label:
-          description === undefined || description.length === 0
+          label === undefined || label.length === 0
             ? BACKGROUND_WORK_KINDS[task.kind].singular
-            : task.kind === "subagent"
-              ? formatSubagentDisplayTitle(description)
-              : description,
+            : label,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
     })
