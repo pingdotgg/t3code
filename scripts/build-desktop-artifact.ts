@@ -2785,7 +2785,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          // Matches the app id from setDesktopName, so docks group the running
+          // window under this launcher rather than the hidden URL handler.
+          StartupWMClass: "com.t3tools.T3Code",
         },
       },
     };
