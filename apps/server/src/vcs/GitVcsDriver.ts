@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type SourceControlProviderKind,
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -211,11 +212,13 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  provider?: SourceControlProviderKind | undefined;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
   prNumber: number;
+  provider?: SourceControlProviderKind | undefined;
 }
 
 export interface GitResolveCommitInput {
@@ -353,7 +356,7 @@ export class GitVcsDriver extends Context.Service<
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
     ) => Effect.Effect<void, GitCommandError>;
-    /** Fetches `refs/pull/<n>/head` without writing a branch, for heads that exist nowhere else. */
+    /** Fetches the host's pull/merge request head ref without writing a branch. */
     readonly fetchPullRequestHeadCommit: (
       input: GitFetchPullRequestHeadCommitInput,
     ) => Effect.Effect<GitResolveCommitResult, GitCommandError>;

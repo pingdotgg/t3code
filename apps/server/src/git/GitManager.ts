@@ -212,6 +212,7 @@ interface ResolvedPullRequest {
 }
 
 interface PullRequestHeadRemoteInfo {
+  provider?: SourceControlProviderKind | undefined;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
   headRepositoryOwnerLogin?: string | null | undefined;
@@ -680,11 +681,13 @@ function shouldPreferSshRemote(url: string | null): boolean {
 }
 
 function toPullRequestHeadRemoteInfo(pr: {
+  provider: SourceControlProviderKind;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
   headRepositoryOwnerLogin?: string | null | undefined;
 }): PullRequestHeadRemoteInfo {
   return {
+    provider: pr.provider,
     ...(pr.isCrossRepository !== undefined ? { isCrossRepository: pr.isCrossRepository } : {}),
     ...(pr.headRepositoryNameWithOwner !== undefined
       ? { headRepositoryNameWithOwner: pr.headRepositoryNameWithOwner }
@@ -928,6 +931,7 @@ export const make = Effect.gen(function* () {
         yield* gitCore.fetchPullRequestBranch({
           cwd,
           prNumber: pullRequest.number,
+          provider: pullRequest.provider,
           branch: localBranch,
         });
         return;
@@ -975,6 +979,7 @@ export const make = Effect.gen(function* () {
           .fetchPullRequestBranch({
             cwd,
             prNumber: pullRequest.number,
+            provider: pullRequest.provider,
             branch: localBranch,
           })
           .pipe(
@@ -2444,9 +2449,13 @@ export const make = Effect.gen(function* () {
           // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
           // from `origin/main` whose head branch has since been deleted still resolves — and
           // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
+          .fetchPullRequestHeadCommit({
+            cwd: worktreePath,
+            prNumber: pullRequest.number,
+            provider: pullRequestSummary.provider,
+          })
           .pipe(
-            // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
+            // A host that publishes no pull request head ref leaves the remote-tracking branch,
             // taken only where it is the head branch's own rather than whatever the checkout
             // happened to be cut from.
             Effect.catch(() =>

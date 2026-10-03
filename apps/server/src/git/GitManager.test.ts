@@ -5517,6 +5517,58 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("materializes and refreshes GitLab worktrees without source repository metadata", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "author"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mr.txt"), "first head\n");
+      yield* runGit(repoDir, ["add", "mr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "First MR head"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/90/head"]);
+      const firstHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const provider = yield* GitLabSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabCli.GitLabCli)({
+            getMergeRequest: () =>
+              Effect.succeed({
+                number: 90,
+                title: "Fork MR",
+                url: "https://gitlab.com/group/project/-/merge_requests/90",
+                baseRefName: "main",
+                headRefName: "feature/mr",
+                isCrossRepository: true,
+              }),
+          }),
+        ),
+      );
+      const { manager } = yield* makeManager({ sourceControlProvider: provider });
+      const input = { cwd: repoDir, reference: "90", mode: "worktree" } as const;
+      const created = yield* preparePullRequestThread(manager, input);
+      const worktreePath = created.worktreePath!;
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(firstHead);
+
+      yield* runGit(repoDir, ["checkout", "author"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "mr.txt"), "updated head\n");
+      yield* runGit(repoDir, ["add", "mr.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Updated MR head"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/90/head"]);
+      const updatedHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const result = yield* preparePullRequestThread(manager, input);
+
+      expect(result.worktreePath && NodeFS.realpathSync.native(result.worktreePath)).toBe(
+        NodeFS.realpathSync.native(worktreePath),
+      );
+      expect(result.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
+    }),
+  );
+
   it.effect("never moves an unrelated local branch that shares the fork head branch name", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

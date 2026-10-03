@@ -20,6 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type SourceControlProviderKind,
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
@@ -43,6 +44,8 @@ import {
 import * as ServerConfig from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const pullRequestHeadRef = (provider: SourceControlProviderKind | undefined, number: number) =>
+  provider === "gitlab" ? `refs/merge-requests/${number}/head` : `refs/pull/${number}/head`;
 const gitProcesses = Semaphore.makeUnsafe(8);
 // `git worktree add` checks out the full tree, so on large repositories it can
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
@@ -3331,7 +3334,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--quiet",
           "--no-tags",
           remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+          `+${pullRequestHeadRef(input.provider, input.prNumber)}:refs/heads/${input.branch}`,
         ],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
@@ -3359,7 +3362,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          remoteName,
+          pullRequestHeadRef(input.provider, input.prNumber),
+        ],
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },

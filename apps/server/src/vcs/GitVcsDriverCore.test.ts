@@ -3523,3 +3523,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
     );
   });
 });
+
+describe("pull request head refs", () => {
+  it.effect.each(["gitlab", "github"] as const)(
+    "fetches %s pull request heads without moving the checkout",
+    (provider) =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        yield* initRepoWithCommit(remote);
+        yield* writeTextFile(remote, "mr-head.txt", "remote head\n");
+        yield* git(remote, ["add", "mr-head.txt"]);
+        yield* git(remote, ["commit", "-m", "MR head"]);
+        const head = yield* git(remote, ["rev-parse", "HEAD"]);
+        const ref = provider === "gitlab" ? "refs/merge-requests/42/head" : "refs/pull/42/head";
+        yield* git(remote, ["update-ref", ref, head]);
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const original = yield* git(cwd, ["rev-parse", "HEAD"]);
+        assert.notStrictEqual(original, head);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.fetchPullRequestBranch({ cwd, prNumber: 42, branch: "pr-42", provider });
+        assert.strictEqual(yield* git(cwd, ["rev-parse", "pr-42"]), head);
+        assert.strictEqual(yield* git(cwd, ["rev-parse", "HEAD"]), original);
+        const result = yield* driver.fetchPullRequestHeadCommit({ cwd, prNumber: 42, provider });
+        assert.strictEqual(result.commitSha, head);
+        assert.strictEqual(yield* git(cwd, ["rev-parse", "HEAD"]), original);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+});
