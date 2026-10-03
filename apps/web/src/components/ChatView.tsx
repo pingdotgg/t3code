@@ -2950,6 +2950,7 @@ export default function ChatView(props: ChatViewProps) {
     const disconnectAction =
       canDisconnectActiveEnvironment && activeEnvironmentUnavailableState ? (
         <Button
+          className="rounded-tr-[0.875rem] sm:rounded-tr-[0.75rem] in-[[data-composer-banner-surface=floating]]:rounded-br-[0.875rem] sm:in-[[data-composer-banner-surface=floating]]:rounded-br-[0.75rem]"
           size="xs"
           variant="ghost"
           disabled={disconnectingEnvironment}
