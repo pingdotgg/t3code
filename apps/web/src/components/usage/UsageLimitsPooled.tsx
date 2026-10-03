@@ -14,7 +14,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useRef } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -130,6 +130,8 @@ function Row({ label, children }: { readonly label: string; readonly children: R
   );
 }
 
+type SegmentPopoverOpenChange = (open: boolean, close: () => void) => void;
+
 /**
  * Everything about one account in one window: plan, where it is signed in,
  * the email on request, reset time and share of the pool it restores, and the
@@ -230,6 +232,7 @@ function PoolSegment({
   now,
   index,
   showAccountName,
+  onOpenChange,
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
@@ -239,13 +242,15 @@ function PoolSegment({
   /** 1-based position in the bar, shown on the strip and its legend row to tie them together. */
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly onOpenChange: SegmentPopoverOpenChange;
 }) {
-  const [open, setOpen] = useState(false);
+  const actionsRef = useRef<{ close: () => void; unmount: () => void } | null>(null);
+  const closePopover = useCallback(() => actionsRef.current?.close(), []);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover actionsRef={actionsRef} onOpenChange={(open) => onOpenChange(open, closePopover)}>
       <PopoverTrigger
         openOnHover
         render={
@@ -315,7 +320,7 @@ function PoolSegment({
           reset={reset}
           now={now}
           redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
+          closePopover={closePopover}
         />
       ) : (
         <PopoverPopup side="top" sideOffset={6}>
@@ -453,10 +458,12 @@ function PoolBar({
   pool,
   color,
   now,
+  onSegmentOpenChange,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly onSegmentOpenChange: SegmentPopoverOpenChange;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   return (
@@ -476,6 +483,7 @@ function PoolBar({
               now={now}
               index={position + 1}
               showAccountName={pool.columns.length > 1}
+              onOpenChange={onSegmentOpenChange}
             />
           ) : null,
         )}
@@ -494,12 +502,14 @@ function PoolWindowCard({
   now,
   label,
   description,
+  onSegmentOpenChange,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
   readonly label?: string | undefined;
   readonly description?: string | undefined;
+  readonly onSegmentOpenChange: SegmentPopoverOpenChange;
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
@@ -520,7 +530,7 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} color={color} now={now} onSegmentOpenChange={onSegmentOpenChange} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -528,7 +538,15 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  now,
+  onSegmentOpenChange,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+  readonly onSegmentOpenChange: SegmentPopoverOpenChange;
+}) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
@@ -554,6 +572,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             now={now}
             label={details?.label}
             description={details?.description}
+            onSegmentOpenChange={onSegmentOpenChange}
           />
         );
       })}
@@ -577,6 +596,16 @@ export function UsageLimitsPooled({
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
+  const openSegmentRef = useRef<(() => void) | null>(null);
+  const handleSegmentOpenChange = useCallback<SegmentPopoverOpenChange>((open, close) => {
+    const current = openSegmentRef.current;
+    if (open) {
+      if (current !== close) current?.();
+      openSegmentRef.current = close;
+    } else if (current === close) {
+      openSegmentRef.current = null;
+    }
+  }, []);
   const externalLinks = collectExternalUsageLinks(presentations);
   const cursorPromptAt =
     Math.max(
@@ -593,7 +622,7 @@ export function UsageLimitsPooled({
       {pools.map((pool, index) => (
         <Fragment key={pool.driver}>
           {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
+          <PoolSection pool={pool} now={now} onSegmentOpenChange={handleSegmentOpenChange} />
         </Fragment>
       ))}
       {cursorPromptAt === pools.length ? cursorPrompt : null}
