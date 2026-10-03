@@ -7846,16 +7846,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
         ),
       );
-      const stoppedRunId = projection.attempts.find(
-        (attempt) => attempt.id === stopped.providerTurn?.runAttemptId,
-      )?.runId;
-      const stoppedRun = projection.runs.find((run) => run.id === stoppedRunId);
+      const stoppedTurn = stopped.providerTurn;
+      const stoppedAttempt = projection.attempts.find(
+        (attempt) => attempt.id === stoppedTurn?.runAttemptId,
+      );
+      const stoppedRun = projection.runs.find((run) => run.id === stoppedAttempt?.runId);
+      if (stoppedRun === undefined || stoppedAttempt === undefined || stoppedTurn === undefined) {
+        return;
+      }
+      const now = yield* DateTime.now;
+      // The interrupt waited for this turn's terminal to project. A turn still
+      // running here was already settled by its adapter, which had nothing to
+      // stop and reported nothing, so no terminal will ever end this run.
+      const orphaned =
+        stoppedTurn.status === "running" &&
+        stoppedRun.status === "running" &&
+        stoppedRun.activeAttemptId === stoppedAttempt.id;
+      if (orphaned) {
+        yield* interruptOrphanedRun({
+          command,
+          events,
+          run: stoppedRun,
+          attempt: stoppedAttempt,
+          providerTurn: stoppedTurn,
+          now,
+        });
+      }
       // A new turn may have started since Stop; its work is not this Stop's.
       if (
-        stoppedRun === undefined ||
         projection.runs.some(
           (run) =>
-            run.status === "preparing" || run.status === "starting" || run.status === "running",
+            !(orphaned && run.id === stoppedRun.id) &&
+            (run.status === "preparing" || run.status === "starting" || run.status === "running"),
         )
       ) {
         return;
@@ -7866,8 +7888,116 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection,
         stoppedProviderThreadId: command.providerThreadId,
         throughRunOrdinal: stoppedRun.ordinal,
-        now: yield* DateTime.now,
+        now,
       });
+    });
+
+  /**
+   * Ends a run as Stop would have, for a turn whose terminal its adapter had
+   * already emitted but the run never projected. Matches the terminal events
+   * RunExecutionService writes for an interrupted turn.
+   */
+  const interruptOrphanedRun = (input: {
+    readonly command: Extract<
+      OrchestrationV2InternalCommand,
+      { readonly type: "thread.background-work.settle" }
+    >;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly run: OrchestrationV2Run;
+    readonly attempt: OrchestrationV2RunAttempt;
+    readonly providerTurn: OrchestrationV2ProviderTurn;
+    readonly now: DateTime.Utc;
+  }) =>
+    Effect.gen(function* () {
+      const { run, attempt, providerTurn, now } = input;
+      const records = yield* projectionStore
+        .getThreadRecords(run.threadId, ["nodes", "providerThreads"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: run.threadId, cause }),
+          ),
+        );
+      const rootNode = records.nodes.find((node) => node.id === run.rootNodeId);
+      const providerThread = records.providerThreads.find(
+        (candidate) => candidate.id === providerTurn.providerThreadId,
+      );
+      const emitEvent = emit(input.events, input.command);
+      yield* emitEvent({
+        type: "provider-turn.updated",
+        threadId: run.threadId,
+        nodeId: providerTurn.nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: { ...providerTurn, status: "interrupted", completedAt: now },
+      });
+      yield* emitEvent({
+        type: "run-attempt.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        nodeId: attempt.rootNodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: { ...attempt, status: "interrupted", completedAt: now },
+      });
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        nodeId: attempt.rootNodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+          threadId: run.threadId,
+          runId: run.id,
+          nodeId: attempt.rootNodeId,
+          providerThreadId: providerTurn.providerThreadId,
+          providerTurnId: providerTurn.id,
+          nativeItemRef: null,
+          parentItemId: idAllocator.derive.runSignalTurnItem({
+            runId: run.id,
+            signal: "interrupt-request",
+          }),
+          ordinal: run.ordinal * 100 + 98,
+          status: "interrupted",
+          title: "Interrupted",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "run_interrupt_result",
+          message: "Run interrupted by user",
+        },
+      });
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        nodeId: attempt.rootNodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: { ...run, status: "interrupted", completedAt: now },
+      });
+      if (rootNode !== undefined) {
+        yield* emitEvent({
+          type: "node.updated",
+          threadId: run.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...rootNode, status: "interrupted", completedAt: now },
+        });
+      }
+      if (providerThread !== undefined) {
+        yield* emitEvent({
+          type: "provider-thread.updated",
+          threadId: run.threadId,
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...providerThread, status: "idle", updatedAt: now },
+        });
+      }
     });
 
   const dispatchRunInterrupt = (

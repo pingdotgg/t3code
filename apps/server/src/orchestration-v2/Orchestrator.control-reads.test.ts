@@ -534,3 +534,183 @@ it.effect("settles only the stopped run's background work, once", () =>
     ]);
   }).pipe(Effect.provide(testLayer)),
 );
+
+// Stop on a turn its adapter had already settled: the adapter reports nothing
+// and the run never projected the turn's end (#15197). The settle follow-up
+// ends that run, but not one whose live attempt superseded the stopped turn.
+it.effect("ends a stopped run whose settled turn never projected its end", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const seedRunningRun = (name: string, options: { readonly steered: boolean }) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`thread:${name}`);
+        const providerThreadId = ProviderThreadId.make(`provider-thread:${name}`);
+        const runId = RunId.make(`run:${name}`);
+        const attemptId = RunAttemptId.make(`attempt:${name}`);
+        const nodeId = NodeId.make(`node:${name}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:${name}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create-${name}`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: name,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* projections.apply({
+          id: EventId.make(`${name}:provider-thread`),
+          type: "provider-thread.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: providerThreadId,
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "active",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`${name}:run`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal: 1,
+            providerInstanceId: instanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: MessageId.make(`message:${name}`),
+            rootNodeId: nodeId,
+            activeAttemptId: options.steered
+              ? RunAttemptId.make(`attempt:${name}:steer`)
+              : attemptId,
+            status: "running",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`${name}:node`),
+          type: "node.updated",
+          threadId,
+          runId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId,
+            parentNodeId: null,
+            rootNodeId: nodeId,
+            kind: "root_turn",
+            status: "running",
+            countsForRun: true,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`${name}:attempt`),
+          type: "run-attempt.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: attemptId,
+            runId,
+            attemptOrdinal: 1,
+            rootNodeId: nodeId,
+            providerInstanceId: instanceId,
+            providerThreadId,
+            providerTurnId,
+            reason: "initial",
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* projections.apply({
+          id: EventId.make(`${name}:turn`),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: providerTurnId,
+            providerThreadId,
+            nodeId,
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.background-work.settle",
+          commandId: CommandId.make(`stop-${name}:background-work-settled`),
+          threadId,
+          providerThreadId,
+          providerTurnId,
+        });
+        const projection = yield* projections.getThreadProjection(threadId);
+        return {
+          run: projection.runs.find((run) => run.id === runId)?.status,
+          attempt: projection.attempts.find((attempt) => attempt.id === attemptId)?.status,
+          providerTurn: projection.providerTurns.find((turn) => turn.id === providerTurnId)?.status,
+          rootNode: projection.nodes.find((node) => node.id === nodeId)?.status,
+          providerThread: projection.providerThreads.find(
+            (thread) => thread.id === providerThreadId,
+          )?.status,
+          interruptResult: projection.turnItems.some(
+            (item) => item.runId === runId && item.type === "run_interrupt_result",
+          ),
+        };
+      });
+
+    assert.deepEqual(yield* seedRunningRun("orphaned-stop", { steered: false }), {
+      run: "interrupted",
+      attempt: "interrupted",
+      providerTurn: "interrupted",
+      rootNode: "interrupted",
+      providerThread: "idle",
+      interruptResult: true,
+    });
+    assert.deepEqual(yield* seedRunningRun("steered-stop", { steered: true }), {
+      run: "running",
+      attempt: "running",
+      providerTurn: "running",
+      rootNode: "running",
+      providerThread: "active",
+      interruptResult: false,
+    });
+  }).pipe(Effect.provide(testLayer)),
+);
